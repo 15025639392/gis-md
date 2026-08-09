@@ -114,6 +114,11 @@ public:
     VectorTileTree& tree() { return tree_; }
     /// 已 commit 的瓦片数(诊断)。
     size_t activeTileCount() const { return activeTiles_.size(); }
+
+    /// 是否还有瓦片在 worker 上镶嵌(产物尚未回到渲染线程)。帧级按需渲染
+    /// 用:停帧会让 update() 不再被调用 → 收件箱永远没人排空 → 该瓦片
+    /// 永远 commit 不上去,底图停在半成品且零报错。
+    bool hasTessellationInFlight() const { return !tessellating_.empty(); }
     /// 已镶好、等待 commit 的瓦片数(诊断:持续 >0 说明上传闸偏紧)。
     size_t pendingCommitCount() const { return readyMeshes_.size(); }
 

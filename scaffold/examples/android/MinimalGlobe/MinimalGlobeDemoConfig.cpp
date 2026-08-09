@@ -274,6 +274,7 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     config.terrainPageStore = true;
     // GPU 逐区间计时(见 header)。功耗排查期开着;结论落地后关掉。
     config.gpuPassTiming = kMeasureGpuPassTiming;
+    config.frameGating = kEnableFrameGating;
     config.fixedSimulationJulianDate = kFixedSimulationJulianDate;
     if (kEnableInstancedI3dmDemo) {
         // 默认固定时间是宾州凌晨(树在夜侧无光照=全黑),实例化观察改用当地白天

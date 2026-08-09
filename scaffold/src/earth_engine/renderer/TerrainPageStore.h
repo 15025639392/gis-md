@@ -249,6 +249,16 @@ public:
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
     int lastVisiblePageCount() const { return lastVisiblePageCount_; }
 
+    /// 是否还有页在等 fetch / 合成 / 上传。帧级按需渲染据此判「还不能停帧」——
+    /// 影像是异步到达的,停帧就没人跑 drainReadyUploads,到货永远灌不进 array,
+    /// 表现为该片区**永久停在粗页**且没有任何报错。
+    bool hasWorkInFlight() const {
+        for (const auto& entry : pages_) {
+            if (!entry.second.uploadComplete()) return true;
+        }
+        return false;
+    }
+
     /// 在 applyPerFrameCommandState 里对每个 terrain 命令调用(**无相机,只 bind**):
     /// 若该瓦片本帧 determination 建了间接纹理(TileIndir)→ 绑 array slot20 + 间接纹理
     /// slot21 + 写 pageStoreParams(enabled=1,gridN);否则不动(mappedRaster fallback)。

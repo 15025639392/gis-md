@@ -123,6 +123,24 @@ public:
                         double yawPerFrameRad);
     bool scriptedPanActive() const { return scriptedPanActive_; }
 
+    /// pan 惯性的"已经停了"阈值(rad/s)。低于它不再产生任何位移,故等价于零。
+    /// **三处必须同用这一个常量**:运动闸、自清零、isSelfAnimating 判据。
+    /// 各写各的字面量正是这类 bug 的温床 —— 判据比消费者宽一点点,表现就是
+    /// 「拖一下之后永远不再空闲」,而画面上完全看不出区别。
+    static constexpr double kMinInertiaAngularVelocity = 0.0001;
+
+    /// 相机是否仍在自行演进(与外部输入无关的持续变化)。帧级按需渲染据此判定
+    /// 「停手之后还得再画几帧」—— 惯性滑行/脚本平移期间画面每帧都在变,停帧
+    /// 会把滑行冻在半途。
+    ///
+    /// ⚠️ 只报**自主演进**,不报「手指正按着」:后者由输入事件置事件型脏位,
+    /// 两条路径分开才不会出现「手指不动但按着 → 既无事件又无自主演进 → 判定
+    /// 空闲」这种两边都不认领的缝。
+    bool isSelfAnimating() const {
+        return scriptedPanActive_ || hasZoomInertia_ ||
+               inertiaAngularVelocity_ > kMinInertiaAngularVelocity;
+    }
+
     // ---- 相机状态 ----
 
     /// 设置相机到地球中心的距离（地球半径单位，默认 7.0）

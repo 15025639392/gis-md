@@ -227,6 +227,65 @@ void Engine::logGpuPassTiming() {
     platformLog(LogLevel::Info, "GpuPass", "%s", line);
 }
 
+void Engine::setFrameGatingEnabled(bool enabled) {
+    frameGatingEnabled_ = enabled;
+    // 关→开、开→关都从"要画"起步:关闭时若停在空闲态,没人再来置脏位。
+    requestRender("gatingToggled");
+}
+
+void Engine::requestRender(const char* reason) {
+    renderRequestReason_.store(reason ? reason : "unknown",
+                               std::memory_order_relaxed);
+    renderRequested_.store(true, std::memory_order_release);
+}
+
+bool Engine::needsFrame() {
+    if (!frameGatingEnabled_) return true;
+
+    // 停帧前的余量帧:子系统"这一帧报干净"与"画面已经稳定"常差一两帧(上传
+    // 在本帧末落地、下一帧才画得出来)。没有余量会停在倒数第二帧上,症状是
+    // 「最后一块瓦片永远不出现」。
+    constexpr int kSettleFrames = 3;
+
+    const char* reason = nullptr;
+    bool needs = true;
+    const char* convergingReason = nullptr;
+    // 事件型:exchange 消费一次。**必须消费**,否则一次输入让循环永远跑下去。
+    if (renderRequested_.exchange(false, std::memory_order_acq_rel)) {
+        reason = renderRequestReason_.load(std::memory_order_relaxed);
+        settleFrames_ = kSettleFrames;
+    } else if (!lastFramePresented_) {
+        // 上一帧被 presentation hold 扣住没呈现。hold 的活性兜底是"连续扣住
+        // N 帧后强制呈现"的计数器,而计数器只在 render() 里前进 —— 停帧会让
+        // 它永远停在原地,hold 从"暂态"变成"永久黑屏"。
+        reason = "held";
+        settleFrames_ = kSettleFrames;
+    } else if (scene_ && scene_->hasConvergingWork(&convergingReason)) {
+        reason = convergingReason;
+        settleFrames_ = kSettleFrames;
+    } else if (settleFrames_ > 0) {
+        --settleFrames_;
+        reason = "settle";
+    } else {
+        reason = "idle";
+        needs = false;
+    }
+    // 进/出空闲各打一行。没有这两行,"停帧了"和"卡死了"在 logcat 里读数完全
+    // 相同 —— 都是"什么都不打"。
+    if (!needs && !wasIdle_) {
+        platformLog(LogLevel::Info, "FrameGate",
+                    "idle after frame=%llu",
+                    static_cast<unsigned long long>(
+                        scene_ ? scene_->frameState().frameId : 0));
+        wasIdle_ = true;
+    } else if (needs && wasIdle_) {
+        platformLog(LogLevel::Info, "FrameGate", "wake reason=%s",
+                    reason ? reason : "?");
+        wasIdle_ = false;
+    }
+    return needs;
+}
+
 void Engine::setTerrainPageStoreEnabled(bool enabled) {
     terrainPageStoreEnabled_ = enabled;
     terrainPageStoreInitFailed_ = false;
@@ -297,6 +356,15 @@ bool Engine::render(double deltaSeconds) {
             deltaSeconds = 1.0 / 60.0;
         }
         lastRenderTime_ = nowSec;
+        // 帧级按需渲染开着时,两帧之间可能隔了**几十秒**的空闲。原样喂下去,
+        // 所有按 dt 积分的东西都会一步跳完:惯性一帧甩出去、geomorph 直接跳到
+        // 终态、帧预算的时间片判定认为这一帧早已超支(于是本帧一个加载都不发)。
+        // 这不是"数值大一点",是让恢复的第一帧变成一次系统性的行为异常。
+        // 钳到一个正常帧长上界:空闲期本来就没有需要补上的动画进度。
+        constexpr double kMaxAutoDeltaSeconds = 1.0 / 15.0;
+        if (deltaSeconds > kMaxAutoDeltaSeconds) {
+            deltaSeconds = kMaxAutoDeltaSeconds;
+        }
     }
 
     // 北极星 Phase 2c 地形 GPU 位移(默认开,P5):惰性建共享位移模板池并挂到内部
@@ -431,6 +499,7 @@ bool Engine::render(double deltaSeconds) {
         }
     }
     if (scene_->shouldHoldPresentationFrame()) {
+        lastFramePresented_ = false;
         scene_->recordEngineTiming(Scene::EngineTimingScope::BeginFrame, 0.0);
         scene_->recordEngineTiming(Scene::EngineTimingScope::SceneRender, 0.0);
         scene_->recordEngineTiming(Scene::EngineTimingScope::EndFrame, 0.0);
@@ -570,6 +639,7 @@ bool Engine::render(double deltaSeconds) {
             perf::nowMs() - startMs);
     }
 
+    lastFramePresented_ = scenePresented;
     scene_->finishEngineFrame(perf::nowMs() - frameStartMs);
     const Diagnostics& diag = scene_->diagnostics();
     // 北极星 VT PoC 头行段(仅在 PoC 活跃时追加,默认关时为空 → 零污染):

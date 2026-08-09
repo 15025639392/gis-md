@@ -228,6 +228,11 @@ struct EarthSceneConfig {
     /// 场景下 ~8 段/帧。仅 GLES(Metal 后端为 no-op)。判读边界见
     /// renderer/GpuFrameTiming.h。
     bool gpuPassTiming = false;
+    /// 帧级按需渲染(默认关):画面与在途工作都收敛后停止排帧,宿主线程真正
+    /// 睡下去,直到输入/异步产物把它唤醒。对齐 maplibre 的事件型+收敛型双
+    /// 判据(见 Engine::setFrameGatingEnabled 的注释)。
+    /// ⚠️ 失效方向是"画面冻住且零报错",接线新的异步产物时必须同步置脏位。
+    bool frameGating = false;
 };
 
 } // namespace earth_engine

@@ -178,6 +178,13 @@ constexpr bool kMeasureVtIndirectionSamplePoC = false;
 // 作废)见 renderer/GpuFrameTiming.h —— 不读那三条,这些数会被用来下错结论。
 constexpr bool kMeasureGpuPassTiming = true;
 
+// kEnableFrameGating:帧级按需渲染。收敛后停止排帧,渲染线程真正睡下去。
+// 静止是地图 app 的绝大多数时间,这段时间此前是逐 vsync 全量重建+重绘 ——
+// 实测静止场景 GPU busy 86%、渲染线程 64% 单核,全部是纯浪费。
+// ⚠️ 失效方向不是画错,是**画面冻住且零报错**:新接的异步产物若不置脏位,
+// 它落地时没人消费。判据与接线见 Engine::setFrameGatingEnabled。
+constexpr bool kEnableFrameGating = true;
+
 // 注:北极星 SVT 页存储(terrainPageStore)已随 decouple 升为生产主路径默认开
 // (见 MinimalGlobeDemoConfig.cpp 中 config.terrainPageStore = true 及 §15.3⑤),
 // 不再由灰度常量门控;A/B 测时直接改那行为 false。

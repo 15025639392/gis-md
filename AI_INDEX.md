@@ -1935,21 +1935,21 @@ Tuning constants (.cpp:21-39): **`kMaxInertiaAngularVelocityRadPerSec`** = 5.0, 
 | `onDragEnd` | .cpp:203-208 | Clears drag/grab; inertia already set by last `applyAnchorDrag` |
 | `onPinchGesture` | .cpp:146-284 | Interrupts drag inertia; first call picks surface anchor at pinch center + earth-up normal at screen center. Per-frame: jerk-clamped scale drives dolly along view dir (clamped to `kMaxDistanceEarthRadii`), rotate intent → `rotateCameraAroundPoint`, tilt intent (`|dy|` dominant) → `rotateCameraVerticalAroundPoint`, then `keepAnchorAtScreenPoint`; center-pan blends anchor by `kPinchAnchorFollow`. No-anchor branch (.cpp:270-283) dollies along view dir |
 | `onPinchEnd` | .cpp:459-478 | Clears pinch state/inertia |
-| `update` | .cpp:480-491 | Touch inertia: cubic-eased slerp of `touchInertiaRotation_`→identity, decayed by `kTouchInertiaDecayStep` (.cpp:480-491); angular inertia: `angleAxis(v·dt)`, exp damping (.cpp:480-491). `orbitMode_` off → `syncDistanceFromCamera` and return; on → rebuild eye = `-rotation_·(+Z)·distance·R`, `lookAt(earthCenter)` (.cpp:908-910) |
-| `setDistance` | .cpp:688-695 | Enables `orbitMode_`; clamps to [`kMinDistanceEarthRadii`,`kMaxDistanceEarthRadii`] |
-| `setRotation` | .cpp:697-701 | Enables `orbitMode_`; normalizes quat |
-| `viewDistance` | .cpp:724-744 | Keeps target→eye bearing, places eye at clamped distance from target, `lookAt`; sets `orbitMode_=false` |
-| `applyRotationAroundAxis` | .cpp:746-751 | `orbitMode_` → compose into `rotation_`; else `applyCameraRotation` |
-| `applyCameraRotation` | .cpp:761-768 | Rotates eye/dir/up about earth center, composes `rotation_`, syncs distance |
-| `rotateCameraAroundPoint` | .cpp:770-783 | Rotates eye about arbitrary `center` by `angleAxis` |
-| `rotateCameraVerticalAroundPoint` | .cpp:785-845 | Tilt about `camera_->right()` around center; guards against up flipping and against dropping below `minSlope` |
-| `syncDistanceFromCamera` | .cpp:908-910 | `distance_ = |eye|/kEarthRadiusMeters` |
+| `update` | .cpp:480-491 | Touch inertia: cubic-eased slerp of `touchInertiaRotation_`→identity, decayed by `kTouchInertiaDecayStep` (.cpp:480-491); angular inertia: `angleAxis(v·dt)`, exp damping (.cpp:480-491). `orbitMode_` off → `syncDistanceFromCamera` and return; on → rebuild eye = `-rotation_·(+Z)·distance·R`, `lookAt(earthCenter)` (.cpp:916-918) |
+| `setDistance` | .cpp:696-703 | Enables `orbitMode_`; clamps to [`kMinDistanceEarthRadii`,`kMaxDistanceEarthRadii`] |
+| `setRotation` | .cpp:705-709 | Enables `orbitMode_`; normalizes quat |
+| `viewDistance` | .cpp:732-752 | Keeps target→eye bearing, places eye at clamped distance from target, `lookAt`; sets `orbitMode_=false` |
+| `applyRotationAroundAxis` | .cpp:754-759 | `orbitMode_` → compose into `rotation_`; else `applyCameraRotation` |
+| `applyCameraRotation` | .cpp:769-776 | Rotates eye/dir/up about earth center, composes `rotation_`, syncs distance |
+| `rotateCameraAroundPoint` | .cpp:778-791 | Rotates eye about arbitrary `center` by `angleAxis` |
+| `rotateCameraVerticalAroundPoint` | .cpp:793-853 | Tilt about `camera_->right()` around center; guards against up flipping and against dropping below `minSlope` |
+| `syncDistanceFromCamera` | .cpp:916-918 | `distance_ = |eye|/kEarthRadiusMeters` |
 | `clampEyeAltitude` | .cpp:484-486 | Wraps `clampEyeToMinAltitude` with `terrainHeightFunc_` |
 | `keepAnchorAtScreenPoint` | .cpp:488-513 | Pick ray → grab sphere; rotates so screen point aligns to `anchorNormal` via cross-product axis, `atan2(len,dot)` angle |
-| `intersectGrabSphere` | .cpp:1248-1250 | Ray/sphere (radius `grabbedRadiusMeters_`) intersection; nearest positive root |
-| `pickSurfacePoint` | .cpp:1411-1422 | Tries injected `surfacePicker_` (terrain), falls back to grab-sphere pick |
-| `grabSurfacePoint` | .cpp:1424-1461 | Picks anchor, stores `grabbedRadiusMeters_`/`grabbedPoint_`/`grabbedNormal_` |
-| `applyAnchorDrag` | .cpp:1463-1546 | Picks new screen point → rotation from `targetPoint` normal to `grabbedNormal_` (cross/`atan2`), `applyCameraRotation`, clamps altitude; feeds smoothed angular inertia and sets `touchInertiaRotation_`/`touchInertiaScale_=1.0` |
+| `intersectGrabSphere` | .cpp:1256-1258 | Ray/sphere (radius `grabbedRadiusMeters_`) intersection; nearest positive root |
+| `pickSurfacePoint` | .cpp:1419-1430 | Tries injected `surfacePicker_` (terrain), falls back to grab-sphere pick |
+| `grabSurfacePoint` | .cpp:1432-1469 | Picks anchor, stores `grabbedRadiusMeters_`/`grabbedPoint_`/`grabbedNormal_` |
+| `applyAnchorDrag` | .cpp:1471-1554 | Picks new screen point → rotation from `targetPoint` normal to `grabbedNormal_` (cross/`atan2`), `applyCameraRotation`, clamps altitude; feeds smoothed angular inertia and sets `touchInertiaRotation_`/`touchInertiaScale_=1.0` |
 
 Terrain wiring: `setSurfacePicker`/`setTerrainHeightFunc` (.cpp:158-160) are Scene-injected; picker feeds `pickSurfacePoint`, height func feeds altitude clamping. When unset, both fall back to bare WGS84 sphere at `grabbedRadiusMeters_`.
 
@@ -1993,8 +1993,8 @@ Reverse-Z projection (.cpp:67-98): maps `z_eye=near(1)→z_ndc=1`, `z_eye=far(1e
 | `setRenderDevice` | .cpp:126-146 | Creates Renderer + SceneRenderPipeline, calls **`renderer_->initialize()` (no-arg)**, inits environment GPU resources; null device tears both down. **No globe mesh built or passed** — `GlobeMesh`/`Globe::createMesh` deleted |
 | `update(dt)` | .cpp:156-170 | Phase 1. Builds `SceneFrameUpdateInput` via `frameRuntime_.makeFrameUpdateInput` and calls `SceneFrameUpdateCoordinator::update` (static) |
 | `render()` | .cpp:207-231 | Phase 2. Guards on `renderer_`/`renderPipeline_`/`isReady()`; builds `SceneRenderPipeline::Context` from frameState + coordinator getters; `beforeSubmit` lambda = `updatePresentationTrace`; feeds result diagnostics back to telemetry |
-| `interactionContext()` | .cpp:379-385 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
-| Tileset API | .cpp:290-293 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
+| `interactionContext()` | .cpp:420-426 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
+| Tileset API | .cpp:331-334 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
 
 No `globeMesh_` member and no `struct GlobeMesh` forward-decl remain (both deleted post-refactor). Two-phase flow: `update(dt)` mutates FrameState + runs tileset selection; `render()` reads the same FrameState, builds ordered RenderCommands, submits. No rendering in update; no selection in render. Behavior change: with no fallback-globe path, nothing is drawn before tiles load (clear color only).
 
@@ -3116,20 +3116,20 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:55-64 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:66-71 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:73-109 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:278-661 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:279). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:283-283). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:295-295). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:324-324). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:696-698 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:700-707 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:337-722 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:338). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:342-342). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:354-354). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:383-383). |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:769-759 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:773-768 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:767-769 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:775-777 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:840-830 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:848-838 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:796-798 | `scene_->hasTerrain()`. |
-| `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:805-821 | Picking + selection forwards. |
+| `hasTerrain()` | .h:94, .cpp:869-859 | `scene_->hasTerrain()`. |
+| `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:866-882 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:847-854 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:852-854 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:725-727, 242-244 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:917-915 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:925-915 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:798-788, 242-244 | `isReady` = `scene_ && scene_->isReady()`. |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
 Post-refactor: the fallback-globe path is gone. `Renderer::initialize()` no longer builds globe buffers/shader, `SceneRenderPipeline` no longer inserts a fallback-globe command, and `Globe`/`GlobeMesh`/`GlobeVertex` were deleted — before tiles load the frame is clear-color only. The `Diagnostics` globe-fallback counter fields were deleted along with the fallback path.

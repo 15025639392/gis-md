@@ -908,6 +908,13 @@ static void renderFrame() {
         gMvtSource->update(
             MvtVectorSource::horizonViewRectangle(camCarto, minRadius),
             std::max(1.0, camCarto.height()));
+        // MVT 源归应用层所有,引擎的收敛判据看不见它 —— 它自己在途时必须
+        // 主动置脏位,否则瓦片正在解码/镶嵌途中被停帧,产物落地后没人消费,
+        // 底图永久停在半成品。tessellating 的那批也算(worker 还没回来)。
+        if (gMvtSource->tree().pendingCount() > 0 ||
+            gMvtSource->hasTessellationInFlight()) {
+            gEngine->requestRender("mvtPending");
+        }
         static uint64_t mvtLogCounter = 0;
         if (++mvtLogCounter % 120 == 1) {
             LOGI("VectorE1 mvt: active=%zu meshes=%zu loaded=%zu pending=%zu "
@@ -1173,13 +1180,16 @@ public:
         }
     }
 
+    /// 投递任务并**置引擎脏位**。
+    ///
+    /// 脏位置在这里而不是逐个调用点上,是整个 gating 设计的关键:任务队列是
+    /// UI 线程改变引擎状态的**唯一**通道(输入、surface 变更、demo 各按钮、
+    /// 图层增删),所以"有任务进来"与"有事发生"等价。逐站点加 requestRender
+    /// 有 16 个调用点,漏一个的症状是"这个按钮按了没反应",而且只在 gating
+    /// 开启时才复现 —— 对齐 maplibre 把事件型脏位收成单入口 `_update()` 的
+    /// 理由:枚举脏源应该是"审一个函数",不是"审整个代码库"。
     void post(std::function<void()> task) {
-        if (!running_.load()) return;  // 线程未运行时任务直接丢弃
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            tasks_.push_back(std::move(task));
-        }
-        wake();
+        postInternal(std::move(task), /*markDirty=*/true);
     }
 
     /// 投递任务并等待其在渲染线程执行完（诊断读取等需要返回值的场景）。
@@ -1189,10 +1199,13 @@ public:
         if (!running_.load()) return false;
         auto done = std::make_shared<std::promise<void>>();
         auto future = done->get_future();
-        post([done, task = std::move(task)]() {
+        // **不置脏位**:runSync 是只读查询通道(调试面板轮询诊断字符串)。
+        // 把它算成"有事发生",面板每秒一问就等于永不空闲 —— 测量台自己
+        // 把被测对象顶住了。
+        postInternal([done, task = std::move(task)]() {
             task();
             done->set_value();
-        });
+        }, /*markDirty=*/false);
         return future.wait_for(timeout) == std::future_status::ready;
     }
 
@@ -1205,6 +1218,18 @@ public:
     }
 
 private:
+    void postInternal(std::function<void()> task, bool markDirty) {
+        if (!running_.load()) return;  // 线程未运行时任务直接丢弃
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            tasks_.push_back(std::move(task));
+        }
+        if (markDirty && gEngine) {
+            gEngine->requestRender("task");
+        }
+        wake();
+    }
+
     void wake() {
         // 持锁 wake：TLS looper 在渲染线程退出时释放，线程退出前在同一把
         // 锁下置空 looper_，保证 wake 期间目标存活（否则跨线程 UAF）
@@ -1231,7 +1256,13 @@ private:
         if (!running_.load() || paused_.load()) return;
         drainTasks();   // 输入先于渲染，保证事件同帧生效
         renderFrame();
-        postFrameIfNeeded();
+        // 帧级按需渲染:引擎说不用再画就不排下一次 vsync 回调,线程回到
+        // ALooper_pollOnce(-1) 真正睡下去。再次醒来只可能由 post()(输入/
+        // 任务,内含 ALooper_wake)或 setPaused(false) 触发 —— 所以任何异步
+        // 产物落地都必须走 post() 或先置引擎脏位,否则就是永久冻屏。
+        if (!gEngine || gEngine->needsFrame()) {
+            postFrameIfNeeded();
+        }
     }
 
     void drainTasks() {
@@ -1274,6 +1305,13 @@ private:
             // 帧回调在 pollOnce 内部分发；post()/stop() 经 ALooper_wake 唤醒
             ALooper_pollOnce(-1, nullptr, &events, &data);
             drainTasks();
+            // gating 开启后线程会停在上面那句 pollOnce 上,帧回调不再自续。
+            // 任务(输入事件等)只把脏位置上,真正把循环重新拉起来的是这里 ——
+            // 漏了它,输入进得来但画面不动。
+            if (gEngine && gEngine->frameGatingEnabled() &&
+                gEngine->needsFrame()) {
+                postFrameIfNeeded();
+            }
         }
 
         drainTasks();
@@ -1314,6 +1352,7 @@ static void postInputEvent(const InputEvent& event) {
     gRenderThread.post([stamped]() {
         if (gEngine) {
             gEngine->onInputEvent(stamped);
+            gEngine->requestRender("input");
         }
     });
 }

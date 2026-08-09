@@ -73,6 +73,18 @@ public:
     }
     // 非 const:内部要累计"已连续扣住多少帧"以保证活性(见 .cpp 实现注释)。
     bool shouldHoldPresentationFrame();
+
+    /// 场景是否仍有"会让下一帧长得不一样"的在途工作。帧级按需渲染的**收敛型**
+    /// 判据(事件型脏位在 Engine 侧)。
+    ///
+    /// ⚠️ 只读**权威**状态,绝不读 Diagnostics —— 那套聚合每 15 帧才刷新一次
+    /// (见 SceneRenderPipeline::aggregateDiagnostics),且注释写明"纯诊断消费、
+    /// 无功能逻辑读取"。拿一个最多陈旧 15 帧的 pending 计数去判停帧,失效方向
+    /// 恰好是最坏的那个:它会在真的还有在途时报 0 → 停帧 → 到货没人消费 →
+    /// 画面永久停在半成品且无任何报错。
+    ///
+    /// outReason 非空时写入首个命中的原因(机制信号用,勿据此做逻辑分支)。
+    bool hasConvergingWork(const char** outReason) const;
     void setSelectorViewOverride(
         std::vector<SelectorView> selectorViews);
     void clearSelectorViewOverride();

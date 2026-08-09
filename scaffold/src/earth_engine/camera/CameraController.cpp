@@ -517,7 +517,9 @@ void CameraController::updateInternal(double deltaSeconds) {
     // drag event's full rotation EVERY FRAME (~36x the event delta in total,
     // frame-rate dependent), which flung the camera hundreds of kilometers
     // after one swipe when input events were coalesced under load.
-    if (!dragging_ && inertiaAngularVelocity_ > 0.0001 && deltaSeconds > 0.0) {
+    if (!dragging_ &&
+        inertiaAngularVelocity_ > kMinInertiaAngularVelocity &&
+        deltaSeconds > 0.0) {
         double angle = inertiaAngularVelocity_ * deltaSeconds;
         glm::dquat delta = glm::angleAxis(angle, inertiaAxis_);
         if (orbitMode_) {
@@ -529,6 +531,12 @@ void CameraController::updateInternal(double deltaSeconds) {
             resolveConstraints(cctx);
         }
         inertiaAngularVelocity_ *= std::exp(-kInertiaDampingPerSecond * deltaSeconds);
+        // 掉到阈值以下就归零。指数衰减永远够不到 0,留着那个小尾巴的话
+        // 「是否还在动」这个问题就永远答"是"(zoom 惯性早就是这么自清的,
+        // pan 这条一直缺)。
+        if (inertiaAngularVelocity_ <= kMinInertiaAngularVelocity) {
+            inertiaAngularVelocity_ = 0.0;
+        }
     }
 
     // Zoom 惯性滑行：沿视线朝锚点按对数距离指数逼近（distance*=exp(-r·dt)），

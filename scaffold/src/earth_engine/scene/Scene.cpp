@@ -18,6 +18,8 @@
 #include "../renderer/IconAtlas.h"
 #include "../renderer/Renderer.h"
 #include "../tiling/Tileset.h"
+#include "../layers/ActivatedRasterOverlay.h"
+#include "../renderer/TerrainPageStore.h"
 
 #include <utility>
 #include <algorithm>
@@ -228,6 +230,45 @@ bool Scene::render() {
         sceneSurfaceHeightPixels_});
     telemetry_->replaceRenderDiagnostics(renderResult.diagnostics);
     return renderResult.presentable;
+}
+
+bool Scene::hasConvergingWork(const char** outReason) const {
+    auto hit = [outReason](const char* reason) {
+        if (outReason) *outReason = reason;
+        return true;
+    };
+
+    // ① 相机自主演进(惯性滑行/脚本平移)。手指按着不动不算 —— 那条走事件型
+    //    脏位,两条路径分开才不会出现两边都不认领的缝。
+    if (cameraController_ && cameraController_->isSelfAnimating()) {
+        return hit("cameraAnimating");
+    }
+
+    // ② 瓦片流式:网络在途 + 已到未消化。hasPendingWork() 是带锁的权威读数,
+    //    不是每 15 帧刷新的 Diagnostics。
+    auto tilesetBusy = [](const Tileset* tileset) {
+        if (!tileset) return false;
+        if (tileset->pendingRequests() > 0) return true;
+        for (const ActivatedRasterOverlay* overlay : tileset->rasterOverlays()) {
+            if (overlay && overlay->hasPendingWork()) return true;
+        }
+        return false;
+    };
+    if (tilesetBusy(tilesets_->primary())) return hit("terrainPending");
+    if (tilesetBusy(tilesets_->pendingPrimary())) return hit("pendingPrimary");
+    for (const auto& content : tilesets_->contentTilesets()) {
+        if (tilesetBusy(content.get())) return hit("contentPending");
+    }
+
+    // ③ 页存储:影像异步到达,停帧就没人跑 drainReadyUploads,到货永远灌不进
+    //    array —— 表现是该片区永久停在粗页且零报错。
+    if (renderer_ && renderer_->terrainPageStore() &&
+        renderer_->terrainPageStore()->hasWorkInFlight()) {
+        return hit("pageStoreInFlight");
+    }
+
+    if (outReason) *outReason = "idle";
+    return false;
 }
 
 bool Scene::shouldHoldPresentationFrame() {

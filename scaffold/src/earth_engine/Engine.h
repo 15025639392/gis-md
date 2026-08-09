@@ -4,6 +4,7 @@
 #include "scene/Diagnostics.h"
 #include "scene/FrameState.h"
 #include "tiling/TileOcclusionCallback.h"
+#include <atomic>
 #include <memory>
 #include <cstdint>
 #include <vector>
@@ -218,6 +219,32 @@ public:
     /// 作废)见 renderer/GpuFrameTiming.h,下结论前必须读。
     bool setGpuPassTimingEnabled(bool enabled);
     bool gpuPassTimingEnabled() const { return gpuPassTimingEnabled_; }
+
+    // ---- 帧级按需渲染(默认关) ----
+    //
+    // 对齐 maplibre 的三 flag 结构(map.ts `_update` / `triggerRepaint` /
+    // `_render` 帧尾续帧判定):**事件型**脏位 + **收敛型**在途判据,帧尾合并
+    // 决定要不要排下一帧。两类性质不同,不能合并成一个 bool:
+    //   事件型 = 外部输入/API 变更,漏一个 → 该事件不刷新(症状局部、可复现)
+    //   收敛型 = 子系统自报"我还没收敛",自己会置位,漏不掉
+    // maplibre 之所以敢做这件事,是因为事件型只有一个入口(`_update`),枚举
+    // 脏源被压缩成"审一个函数的调用点"。我们照抄这条:事件型只认 requestRender。
+    //
+    // ⚠️ 停帧的失效方向是最坏的那种:不是画错,是**画面冻住且零报错**。所以
+    // 判据一律取保守侧(拿不准 → 继续画),并配机制信号 FrameGate 记录每次
+    // 进入/退出空闲的原因。
+
+    /// 开关。关闭时 needsFrame() 恒 true(与接线前逐 vsync 全量重画等价)。
+    void setFrameGatingEnabled(bool enabled);
+    bool frameGatingEnabled() const { return frameGatingEnabled_; }
+
+    /// 事件型脏位。**可从任意线程调用**(异步产物落地、输入事件、SDK 变更)。
+    /// reason 只进日志,不参与逻辑。
+    void requestRender(const char* reason);
+
+    /// 帧尾判定:还需要排下一帧吗?宿主循环据此决定是否投递下一次 vsync 回调。
+    /// 未开启 gating 时恒 true。
+    bool needsFrame();
     /// C-2c:页上传后的 GPU 叠画钩子(矢量走这条)。页存储可能因 surface 重建而
     /// 重新创建,故指针存在 Engine 上、每次建store时重新挂上。不持有。
     /// C-2c:渲染器(叠画方拿着色器用)。场景未就绪时为 nullptr。
@@ -268,6 +295,19 @@ private:
     bool gpuPassTimingEnabled_ = false;
     uint64_t lastLoggedGpuFrameId_ = 0;
     uint64_t gpuPassResultCount_ = 0;
+
+    // 帧级按需渲染。renderRequested_ 是事件型脏位(任意线程置位,渲染线程消费);
+    // settleFrames_ 是停帧前的余量帧 —— 子系统"这一帧报干净"与"画面已经稳定"
+    // 之间常差一两帧(上传在本帧末落地、下一帧才画出来),没有余量会停在倒数
+    // 第二帧上,表现为"最后一块瓦片永远不出现"。
+    std::atomic<bool> renderRequested_{true};
+    std::atomic<const char*> renderRequestReason_{"init"};
+    bool frameGatingEnabled_ = false;
+    /// 上一帧是否真的呈现了(false = 被 presentation hold 扣住)。
+    bool lastFramePresented_ = true;
+    int settleFrames_ = 0;
+    bool wasIdle_ = false;
+    uint64_t framesSinceIdleLog_ = 0;
 
     // 北极星 合成方案 门③ Step3 页存储原型开关 + 短路。
     bool terrainPageStoreEnabled_ = false;
