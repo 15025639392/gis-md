@@ -242,7 +242,7 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
     char buildDetail[448];
     std::snprintf(buildDetail, sizeof(buildDetail),
-        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f clampH=%.0f/%.0f(t%d/l%d) batch=%.2f(b%d/c%d) mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
+        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f clampH=%.0f/%.0f(t%d/a%d/l%d/hi%d/ir%d) batch=%.2f(b%d/c%d) mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
         skyMs,
         atmosphereMs,
         layerCommandsMs,
@@ -252,7 +252,10 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
         lastClampMinHeight_,
         lastClampMaxHeight_,
         lastClampTightTiles_,
+        lastClampAncestorTiles_,
         lastClampLooseTiles_,
+        lastHeightIndexTiles_,
+        lastHeightIrregularTiles_,
         batchMs,
         context.diagnostics.terrainBatches,
         context.diagnostics.batchedTerrainCommands,
@@ -472,13 +475,25 @@ void SceneRenderPipeline::buildLayerCommands(
     // 分桶策略:优先用**测得真高度**的瓦片汇总;一个都没有(启动/纯 loose 期)
     // 才退回 loose 桶 —— 那种情形下宁可要 10km 的体也不能让路网整片消失
     // (体矮了穿不透地形 = 没有,不是变淡)。
+    //
+    // ⚠️ **loose 不等于"这块地面高度不可知"**。包围体的收紧只发生在瓦片载入
+    // **自己**的内容之后,而计划里大量瓦片是靠祖先的高度图上屏的 —— 它们的
+    // 包围体永远停在占位常量。实测(2026-08-09):冷启动直接落在宽视野
+    // (25000m)时 t0/l20,**一块 tight 都没有**,于是上面那套分桶整体退到
+    // 10km 体;必须"先近景加载再拉远"才凑得出 tight 瓦片。也就是说这条通路
+    // 此前只在特定操作路径上生效,用户一打开就落在宽视野则全程空转。
+    // 补法:loose 瓦片改问高度服务"谁供了这块的几何"(向上找第一块带
+    // heightmap 的祖先),拿祖先那对实测值。祖先范围覆盖整块祖先 → 只会比
+    // 这块真实需要的更宽,不会更窄,安全方向不变。
     double clampMinHeight = std::numeric_limits<double>::max();
     double clampMaxHeight = std::numeric_limits<double>::lowest();
     double looseMinHeight = std::numeric_limits<double>::max();
     double looseMaxHeight = std::numeric_limits<double>::lowest();
-    // 机制信号:tight/loose 各多少瓦片参与汇总。只看 clampH 那对数分不清
-    // 「本帧真没有 loose 瓦片」和「判据没认出 loose」—— 两者读数一模一样。
+    // 机制信号:tight/ancestor/loose 各多少瓦片参与汇总。只看 clampH 那对数
+    // 分不清「本帧真没有 loose 瓦片」和「判据没认出 loose」—— 两者读数一模
+    // 一样;a 与 t 分开记则进一步分得清"自己就是 tight"与"靠祖先兜到的"。
     int clampTightTiles = 0;
+    int clampAncestorTiles = 0;
     int clampLooseTiles = 0;
     // 逐瓦片快照:worker 侧按自己那块的矩形取局部范围,而不是全屏一个 union
     // (union 让平原上的路背着山地的相对高差,而体高直接换算成 fill)。
@@ -504,17 +519,32 @@ void SceneRenderPipeline::buildLayerCommands(
                  std::abs(bv.maximumHeight -
                           TileBoundsMetrics::kDefaultTerrainMaximumHeight) <=
                      MathUtils::Epsilon5);
+            double tileMinHeight = bv.minimumHeight;
+            double tileMaxHeight = bv.maximumHeight;
             if (looseHeights) {
-                ++clampLooseTiles;
-                looseMinHeight = std::min(looseMinHeight, bv.minimumHeight);
-                looseMaxHeight = std::max(looseMaxHeight, bv.maximumHeight);
-                continue;
+                // 占位包围体 → 问"谁供了这块的几何"。取到就当 tight 用:
+                // 那是祖先高度图里的实测值,不是常量。
+                const std::optional<std::pair<double, double>> ancestorRange =
+                    terrainForClamp->heightService().heightRangeForArea(
+                        bv.region);
+                if (!ancestorRange) {
+                    ++clampLooseTiles;
+                    looseMinHeight = std::min(looseMinHeight, bv.minimumHeight);
+                    looseMaxHeight = std::max(looseMaxHeight, bv.maximumHeight);
+                    continue;
+                }
+                ++clampAncestorTiles;
+                tileMinHeight = ancestorRange->first;
+                tileMaxHeight = ancestorRange->second;
+            } else {
+                ++clampTightTiles;
             }
-            ++clampTightTiles;
-            clampMinHeight = std::min(clampMinHeight, bv.minimumHeight);
-            clampMaxHeight = std::max(clampMaxHeight, bv.maximumHeight);
+            clampMinHeight = std::min(clampMinHeight, tileMinHeight);
+            clampMaxHeight = std::max(clampMaxHeight, tileMaxHeight);
+            // cell 的矩形用**本计划瓦片**的,不是祖先的 —— 逐瓦片局部范围
+            // 要的就是这个粒度;换成祖先矩形等于把收窄退回祖先档。
             clampCells->push_back(FeatureRenderLayer::TerrainHeightRangeCell{
-                bv.region, bv.minimumHeight, bv.maximumHeight});
+                bv.region, tileMinHeight, tileMaxHeight});
         }
         if (clampMaxHeight < clampMinHeight && looseMaxHeight >= looseMinHeight) {
             clampMinHeight = looseMinHeight;
@@ -522,6 +552,15 @@ void SceneRenderPipeline::buildLayerCommands(
         }
     }
     lastClampTightTiles_ = clampTightTiles;
+    lastClampAncestorTiles_ = clampAncestorTiles;
+    lastHeightIndexTiles_ =
+        terrainForClamp
+            ? static_cast<int>(terrainForClamp->heightService().indexedCount())
+            : 0;
+    lastHeightIrregularTiles_ =
+        terrainForClamp
+            ? static_cast<int>(terrainForClamp->heightService().irregularCount())
+            : 0;
     lastClampLooseTiles_ = clampLooseTiles;
     lastClampRangeApplied_ = clampMaxHeight >= clampMinHeight;
     lastClampMinHeight_ = lastClampRangeApplied_ ? clampMinHeight : 0.0;

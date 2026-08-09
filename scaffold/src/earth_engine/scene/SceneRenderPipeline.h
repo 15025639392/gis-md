@@ -103,10 +103,18 @@ private:
     mutable double lastClampMinHeight_ = 0.0;
     mutable double lastClampMaxHeight_ = 0.0;
     mutable bool lastClampRangeApplied_ = false;
-    /// 参与贴地高度汇总的瓦片数:tight = 测得真高度,loose = 占位 -1000/9000。
-    /// 只有一对 clampH 数时,「没有 loose 瓦片」与「loose 判据失效」读数相同。
+    /// 参与贴地高度汇总的瓦片数:tight = 瓦片自己测得的真高度,ancestor =
+    /// 包围体是占位值、改由高度服务向上找到的祖先高度图供的实测值,
+    /// loose = 连祖先都没有、只能吃占位 -1000/9000。
+    /// 只有一对 clampH 数时,「没有 loose 瓦片」与「loose 判据失效」读数相同;
+    /// t 与 a 再分开,才看得出这一帧的范围是自产的还是靠祖先兜的。
     mutable int lastClampTightTiles_ = 0;
+    mutable int lastClampAncestorTiles_ = 0;
     mutable int lastClampLooseTiles_ = 0;
+    /// 高度服务索引里的瓦片数。a=0 有两个完全不同的病因:索引本身是空的,
+    /// 还是索引有货但祖先链没覆盖到 —— 少了这个数,两者读数相同。
+    mutable int lastHeightIndexTiles_ = 0;
+    mutable int lastHeightIrregularTiles_ = 0;
     PolarCapRenderer polarCap_;
     mutable TerrainInstanceBatcher terrainBatcher_;
     // BatchDet 判因行的节流计数(独立于帧号,与 PageDet 同模式)。

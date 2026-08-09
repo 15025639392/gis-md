@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace earth_engine {
 
@@ -111,6 +112,15 @@ std::size_t TerrainHeightService::irregularCount() const {
     return count;
 }
 
+std::size_t TerrainHeightService::indexedCount() const {
+    refreshIfStale();
+    std::size_t count = 0;
+    for (const ZoomLevel& level : levels_) {
+        count += level.cells.size();
+    }
+    return count + irregularCount();
+}
+
 void TerrainHeightService::refreshIfStale() const {
     const std::uint64_t generation =
         TileRenderContentState::heightmapGeneration();
@@ -180,6 +190,78 @@ void TerrainHeightService::rebuild() const {
     }
     std::sort(populatedZoomsDesc_.begin(), populatedZoomsDesc_.end(),
               [](int a, int b) { return a > b; });
+}
+
+std::optional<std::pair<double, double>>
+TerrainHeightService::heightRangeForArea(const Rectangle& area) const {
+    refreshIfStale();
+
+    // 枚举上限:太深的档一块块数过去不划算,而且那种档必然不是"整块覆盖"
+    // 的那一档(area 比 cell 大几个数量级)。跳过即可,下一档更粗更可能覆盖。
+    constexpr int kMaxCellsPerZoom = 4096;
+
+    for (const int z : populatedZoomsDesc_) {
+        if (z < 0 || static_cast<std::size_t>(z) >= levels_.size()) {
+            continue;
+        }
+        const ZoomLevel& level = levels_[static_cast<std::size_t>(z)];
+        if (level.cells.empty()) {
+            continue;
+        }
+
+        // 两个对角点定出 cell 下标区间,但要取**内部**点:cell 是半开区间,
+        // 东/北边界属于下一块。area 恰好等于某块瓦片矩形是常态(调用方传的
+        // 就是包围体矩形),用边界点会平白多要一圈邻居,于是"整块覆盖"永远
+        // 不成立 —— 判据看起来在工作,实则恒为 nullopt。
+        const double insetX =
+            std::min(1e-9, (area.east() - area.west()) * 0.25);
+        const double insetY =
+            std::min(1e-9, (area.north() - area.south()) * 0.25);
+        // y 方向随 scheme 约定可能与纬度反向,故取 min/max 而不是假设某一端更小。
+        const TileKey a = scheme_->positionToTile(area.west() + insetX,
+                                                 area.south() + insetY, z);
+        const TileKey b = scheme_->positionToTile(area.east() - insetX,
+                                                 area.north() - insetY, z);
+        const int x0 = std::min(a.x, b.x);
+        const int x1 = std::max(a.x, b.x);
+        const int y0 = std::min(a.y, b.y);
+        const int y1 = std::max(a.y, b.y);
+        const long long cells =
+            static_cast<long long>(x1 - x0 + 1) * (y1 - y0 + 1);
+        if (cells <= 0 || cells > kMaxCellsPerZoom) {
+            continue;
+        }
+
+        double minHeight = std::numeric_limits<double>::max();
+        double maxHeight = std::numeric_limits<double>::lowest();
+        bool fullyCovered = true;
+        for (int x = x0; x <= x1 && fullyCovered; ++x) {
+            for (int y = y0; y <= y1; ++y) {
+                const auto it = level.cells.find(packCell(x, y));
+                if (it == level.cells.end() || !it->second) {
+                    fullyCovered = false;
+                    break;
+                }
+                // 索引只保证"有 heightmap";实测区间是另一条写入路径
+                // (TileLoadResultMetadataApplicator)。缺了就当这档没覆盖,
+                // 不要拿一对默认 0 冒充实测值 —— 0/0 的体等于贴地整片消失。
+                const TileRenderContentState& renderContent =
+                    it->second->content.renderContent;
+                if (!renderContent.hasTerrainHeightRange()) {
+                    fullyCovered = false;
+                    break;
+                }
+                minHeight =
+                    std::min(minHeight, renderContent.terrainMinimumHeight());
+                maxHeight =
+                    std::max(maxHeight, renderContent.terrainMaximumHeight());
+            }
+        }
+        if (fullyCovered && maxHeight >= minHeight) {
+            return std::make_pair(minHeight, maxHeight);
+        }
+    }
+    return std::nullopt;
 }
 
 std::optional<TerrainHeightService::Sample> TerrainHeightService::sample(

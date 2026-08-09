@@ -49,6 +49,23 @@ public:
         const CancellationToken& token);
     void cancelAndErase(const std::string& cacheKey);
 
+    /// 标记「本次取消是 **stale 差集回收**,瓦片本身还在」。
+    ///
+    /// 取消有两个成因,善后完全相反:
+    ///   • stale 回收 —— 瓦片还在计划里,只是这一轮没被 markNeeded。必须给
+    ///     它落一个终态,否则它永远停在 ContentLoading(请求侧记账已清、
+    ///     pending 归 0,瓦片侧没人推 → 调度器认为"还在加载"不再请求 →
+    ///     永久卡死零报错。真机 2026-08-09 冷启动宽视野实测 80 块)。
+    ///   • 瓦片销毁(clearChildrenRecursively 等)—— 瓦片已从注册表摘掉,
+    ///     迟到的结果必须整个丢弃,否则终态提交那一步的 ensureTile 会把它
+    ///     **重新建出来**。
+    /// 两者都经 cancelAndErase 这一个出口,token 上分不出来,故由调用方在
+    /// 取消前显式标记。标记在回调落地时消费(恰好一次)。
+    void markStaleCancelled(const std::string& cacheKey);
+
+    /// 取走该 key 的 stale 取消标记(有则返回 true 并清除)。
+    bool takeStaleCancelled(const std::string& cacheKey);
+
     void markDestroyingAndCancelRequests();
     void clearAfterCallbacksComplete();
 
@@ -77,6 +94,8 @@ private:
     /// 恒 ⊆ pendingRequests_(同上,parity 一并看住)。
     std::unordered_map<std::string, std::shared_ptr<std::atomic<int>>>
         priorityCells_;
+    /// stale 回收取消过、但回调还没落地的 key(见 markStaleCancelled)。
+    std::unordered_set<std::string> staleCancelledKeys_;
     uint64_t neededFrameSeq_ = 0;
     bool destroying_ = false;
 };

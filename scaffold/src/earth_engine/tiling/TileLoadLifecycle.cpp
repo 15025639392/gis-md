@@ -100,6 +100,9 @@ size_t TileLoadLifecycle::sweepStaleRequests(uint64_t maxAgeFrames) {
     const std::vector<std::string> stale =
         requestState_.advanceFrameAndCollectStale(maxAgeFrames);
     for (const std::string& cacheKey : stale) {
+        // 先标记再取消:回调落地时据此决定「落终态解卡」还是「整个丢弃」
+        // (瓦片销毁那条路不标记,迟到结果不能把瓦片 ensureTile 回来)。
+        requestState_.markStaleCancelled(cacheKey);
         requestState_.cancelAndErase(cacheKey);
         pendingLoads_.eraseCacheKey(cacheKey);
     }

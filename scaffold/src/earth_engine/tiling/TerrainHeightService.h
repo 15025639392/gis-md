@@ -1,9 +1,13 @@
 #pragma once
 
+#include "../core/math/Rectangle.h"
+#include "TileKey.h"
+
 #include <array>
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace earth_engine {
@@ -67,6 +71,23 @@ public:
                                  double latitudeRadians,
                                  Interp interp) const;
 
+    /// 覆盖 area 的地形实测高度区间 (min, max)。
+    ///
+    /// 用途:一块**没有自己内容**的计划瓦片,包围体永远停在占位常量
+    /// (-1000/9000) —— 收紧只发生在瓦片载入自己的内容之后。但它上屏的
+    /// 几何并非凭空来的,数据就在别的瓦片里;这里按**矩形**去问,而不是
+    /// 按 TileKey 上溯:计划瓦片的 key 未必与带高度图的瓦片同属一套网格
+    /// (真机实测:计划 z12/3259/1697 的 z8 祖先应是 203/106,而索引里
+    /// 是 202/107 —— 按 key 走的祖先链根本对不上)。矩形是两套网格之间
+    /// 唯一共通的坐标。
+    ///
+    /// 取档规则:深→浅,只接受**整块 area 都被该档索引覆盖**的那一档。
+    /// 部分覆盖就下一档 —— 缺的那部分若被漏掉,区间会比真实地面窄,而
+    /// 贴地体窄了穿不透地形是**整片消失**,不是变淡。
+    /// 无任何档能完整覆盖返回 nullopt。
+    std::optional<std::pair<double, double>> heightRangeForArea(
+        const Rectangle& area) const;
+
     /// 地形高度世界的全局强代次(TileRenderContentState::heightmapGeneration
     /// 的轻头文件直通)。相机探针失效、矢量重钳节流与本服务的索引重建共用
     /// 这一个信号源;替代 contentBytesUsed 弱代理。
@@ -89,6 +110,11 @@ public:
 
     /// 诊断:bounds != scheme 矩形而进溢出列表的瓦片数(生产稳态应恒 0)。
     std::size_t irregularCount() const;
+
+    /// 诊断:索引里的瓦片数(带 heightmap 的地形瓦片)。**索引为空**与
+    /// 「索引有货但查询点没覆盖」在 sample()/heightRangeForTile() 的返回值上
+    /// 读数完全相同(都是 nullopt),而两者的病因与修法毫无关系。
+    std::size_t indexedCount() const;
 
     /// 诊断:自构造以来的索引重建次数(稳态帧不应增长)。
     std::uint64_t rebuildCount() const { return rebuildCount_; }

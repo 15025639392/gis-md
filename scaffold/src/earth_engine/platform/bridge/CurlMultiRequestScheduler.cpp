@@ -644,6 +644,15 @@ private:
                 request->easy = nullptr;
             }
             request->active = false;
+            // 取消此前是**完全静默**的:只有 start 行、没有任何收尾行,于是
+            // "请求被取消"与"请求挂死不返回"在日志里读数一模一样(实测:134
+            // 发起 / 99 完成,消失的 35 个查不出去向)。两者的病因与修法毫无
+            // 关系,必须分得开。
+            platformLog(LogLevel::Info, "EarthNet",
+                        "cancel seq=%llu src=%s url=%s",
+                        static_cast<unsigned long long>(request->sequence),
+                        request->notifyCancelCallback ? "external" : "handle",
+                        request->url.c_str());
             // 仅 externalCancel 桥接路径补回调(code=-1,恰好一次):从
             // active 摘除后不会再有任何完成路径触发它,不补这一发,引擎侧
             // retired-token 永不清账 → markDestroyingCancelAndWait 销毁时
@@ -706,6 +715,11 @@ private:
                     .count();
 
             if (request->cancelled.load(std::memory_order_acquire)) {
+                // 同上:取消也要留痕,否则与"挂死"读数相同。
+                platformLog(LogLevel::Info, "EarthNet",
+                            "cancel seq=%llu src=drain url=%s",
+                            static_cast<unsigned long long>(request->sequence),
+                            request->url.c_str());
                 cleanupEasy(request);
                 request->easy = nullptr;
                 request->active = false;

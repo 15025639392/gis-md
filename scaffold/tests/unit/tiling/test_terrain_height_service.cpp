@@ -320,3 +320,96 @@ TEST(TerrainHeightServiceParityTest, RenderGridConsistentPathMatchesLegacy) {
         }
     }
 }
+
+// === heightRangeForArea:计划瓦片的"地面高度所在区间"从哪来 ===
+//
+// 背景(真机实测 2026-08-09):包围体的收紧只发生在瓦片载入**自己**的内容
+// 之后,而宽视野下计划里的瓦片大量没有自己的内容 —— 它们的包围体永远停在
+// 占位常量 -1000/9000。冷启动直接落在宽视野时 t0/l20,一块 tight 都没有,
+// 贴地体高度整体退化成 10km。
+//
+// 按**矩形**问而不是按 TileKey 上溯,是因为两边未必同属一套网格(实测:
+// 计划 z12/3259/1697 的 z8 祖先应是 203/106,索引里是 202/107)。
+
+TEST(TerrainHeightServiceTest, HeightRangeForAreaUsesCoveringTile) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TerrainHeightService service(registry, *scheme);
+
+    const TileKey key{kScheme, 2, 1, 1};
+    TilesetTile* tile = putTerrainTile(registry, *scheme, key, 42.0f);
+    tile->content.renderContent.setTerrainHeightRange(120.0, 880.0);
+
+    // area 取该瓦片矩形的正中一小块:落在这块瓦片内部,不碰边界。
+    const Rectangle full = scheme->tileToRectangle(key);
+    const double cx = (full.west() + full.east()) * 0.5;
+    const double cy = (full.south() + full.north()) * 0.5;
+    const double dx = (full.east() - full.west()) * 0.1;
+    const double dy = (full.north() - full.south()) * 0.1;
+    const auto range = service.heightRangeForArea(
+        Rectangle(cx - dx, cy - dy, cx + dx, cy + dy));
+    ASSERT_TRUE(range.has_value());
+    EXPECT_DOUBLE_EQ(range->first, 120.0);
+    EXPECT_DOUBLE_EQ(range->second, 880.0);
+}
+
+TEST(TerrainHeightServiceTest, HeightRangeForAreaFallsBackToFullyCoveringZoom) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TerrainHeightService service(registry, *scheme);
+
+    // 粗档整块覆盖;细档只有一块(部分覆盖)。部分覆盖的那档必须被跳过 ——
+    // 拿它的区间会比真实地面窄,窄了贴地整片消失。
+    const TileKey coarseKey{kScheme, 1, 1, 0};
+    TilesetTile* coarse = putTerrainTile(registry, *scheme, coarseKey, 7.0f);
+    coarse->content.renderContent.setTerrainHeightRange(-55.0, 1545.0);
+
+    const TileKey fineKey{kScheme, 2, 2, 0};
+    TilesetTile* fine = putTerrainTile(registry, *scheme, fineKey, 9.0f);
+    fine->content.renderContent.setTerrainHeightRange(10.0, 20.0);
+
+    const Rectangle coarseRect = scheme->tileToRectangle(coarseKey);
+    const auto range = service.heightRangeForArea(coarseRect);
+    ASSERT_TRUE(range.has_value());
+    EXPECT_DOUBLE_EQ(range->first, -55.0);
+    EXPECT_DOUBLE_EQ(range->second, 1545.0);
+}
+
+TEST(TerrainHeightServiceTest, HeightRangeForAreaSkipsTileWithoutMeasuredRange) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TerrainHeightService service(registry, *scheme);
+
+    // 索引只保证"有 heightmap";区间是另一条写入路径。缺了必须当这档没覆盖,
+    // 而不是拿一对默认 0 冒充实测值。
+    const TileKey coarseKey{kScheme, 0, 0, 0};
+    TilesetTile* coarse = putTerrainTile(registry, *scheme, coarseKey, 3.0f);
+    coarse->content.renderContent.setTerrainHeightRange(10.0, 20.0);
+
+    const TileKey childKey{kScheme, 1, 0, 0};
+    putTerrainTile(registry, *scheme, childKey, 5.0f);  // 有图,无区间
+
+    const Rectangle childRect = scheme->tileToRectangle(childKey);
+    const auto range = service.heightRangeForArea(childRect);
+    ASSERT_TRUE(range.has_value());
+    EXPECT_DOUBLE_EQ(range->first, 10.0);
+    EXPECT_DOUBLE_EQ(range->second, 20.0);
+}
+
+TEST(TerrainHeightServiceTest, HeightRangeForAreaReturnsNulloptWithNoCoverage) {
+    auto scheme = TileScheme::createGeographicTMS();
+    TilesetTileRegistry registry;
+    TerrainHeightService service(registry, *scheme);
+
+    // 别处有货不算覆盖 → nullopt,调用方据此退回 loose 桶(宁可 10km 的体,
+    // 也不能让路网整片消失)。
+    const TileKey elsewhereKey{kScheme, 1, 1, 1};
+    TilesetTile* elsewhere =
+        putTerrainTile(registry, *scheme, elsewhereKey, 9.0f);
+    elsewhere->content.renderContent.setTerrainHeightRange(1.0, 2.0);
+
+    EXPECT_FALSE(service
+                     .heightRangeForArea(scheme->tileToRectangle(
+                         TileKey{kScheme, 1, 0, 0}))
+                     .has_value());
+}

@@ -211,6 +211,14 @@ std::vector<std::string> TilePendingRequestState::advanceFrameAndCollectStale(
     return stale;
 }
 
+void TilePendingRequestState::markStaleCancelled(const std::string& cacheKey) {
+    staleCancelledKeys_.insert(cacheKey);
+}
+
+bool TilePendingRequestState::takeStaleCancelled(const std::string& cacheKey) {
+    return staleCancelledKeys_.erase(cacheKey) > 0;
+}
+
 void TilePendingRequestState::markDestroyingAndCancelRequests() {
     destroying_ = true;
     for (auto& [cacheKey, token] : pendingRequestTokens_) {
@@ -228,6 +236,7 @@ void TilePendingRequestState::clearAfterCallbacksComplete() {
     retiredCallbackTokens_.clear();
     lastNeededSeq_.clear();
     priorityCells_.clear();
+    staleCancelledKeys_.clear();
     destroying_ = false;
 }
 

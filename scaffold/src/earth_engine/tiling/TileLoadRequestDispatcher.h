@@ -132,12 +132,30 @@ public:
              domain](TileContentLoadResult result) mutable {
                 {
                     std::lock_guard<std::mutex> lock(mutex);
-                    if (!requestState.destroying() && !token.isCancelled()) {
+                    // ⚠️取消**也必须入队一个终态**。此前取消是直接丢结果的,
+                    // 于是没有任何东西把瓦片从 ContentLoading 推出去:请求侧
+                    // 记账被下面的 completeContentRequest 清掉(pending 归 0,
+                    // 引擎据此报"已收敛"),瓦片侧却永远停在加载中,调度器看它
+                    // "还在加载"就不再请求 —— 永久卡死且零报错。
+                    // TileTerminalLoadPolicy 里的 case Cancelled(→
+                    // markUnknownTemporaryFailure,退避后重试)本就是为这条
+                    // 路径写的,只是从来没被走到过。
+                    // 真机(2026-08-09,25000m 冷启动):stale 差集回收一次取消
+                    // 35~54 个地形请求 → registry 里 80 块瓦片恒在
+                    // ContentLoading、failTemp 恒 0、此后再不发一个请求,
+                    // 屏幕上地形与影像都没上屏。
+                    // destroying 仍是硬闸:销毁期不该再往队列里放东西。
+                    const bool staleCancelled =
+                        requestState.takeStaleCancelled(cacheKey);
+                    if (!requestState.destroying() &&
+                        (!token.isCancelled() || staleCancelled)) {
                         TileLoadResult loadResult =
                             TileLoadDomainPolicy::normalizeForDomain(
                             domain,
                             TileLoadResult::fromContentResult(
-                                std::move(result)));
+                                token.isCancelled()
+                                    ? TileContentLoadResult::cancelled()
+                                    : std::move(result)));
                         enqueueCompletedLoadResult(
                             pendingLoads,
                             domain,
@@ -227,11 +245,19 @@ public:
              priority](TileLoadResult result) mutable {
                 {
                     std::lock_guard<std::mutex> lock(mutex);
-                    if (!requestState.destroying() && !token.isCancelled()) {
+                    // 同上(内容域那条注释):取消必须落终态,否则瓦片永久
+                    // 停在 ContentLoading。
+                    const bool staleCancelled =
+                        requestState.takeStaleCancelled(cacheKey);
+                    if (!requestState.destroying() &&
+                        (!token.isCancelled() || staleCancelled)) {
                         TileLoadResult normalized =
                             TileLoadDomainPolicy::normalizeForDomain(
                                 TileLoadDomain::TerrainContent,
-                                std::move(result));
+                                token.isCancelled()
+                                    ? TileLoadResult::createTerminal(
+                                          TileLoadStatus::Cancelled)
+                                    : std::move(result));
                         enqueueCompletedLoadResult(
                             pendingLoads,
                             TileLoadDomain::TerrainContent,

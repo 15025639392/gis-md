@@ -882,6 +882,8 @@ TEST(TileLoadRequestDispatcherTest, DropsCancelledContentTerminalCallback) {
     lifecycle.cancelAndEraseCacheKey("cancel-content");
     provider.contentCallback(key, TileContentLoadResult::empty());
 
+    // 未标 stale = 瓦片已销毁那条路:迟到结果整个丢弃。留下终态会让终态
+    // 提交那一步的 ensureTile 把瓦片重新建出来。
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
 
@@ -918,6 +920,7 @@ TEST(TileLoadRequestDispatcherTest, DropsCancelledContentRenderCallback) {
         key,
         TileContentLoadResult::render(std::make_unique<GltfModel>()));
 
+    // 同上:瓦片已销毁,连已下载的 glTF 一起丢。
     EXPECT_FALSE(lifecycle.hasPendingWork());
 }
 
@@ -1142,4 +1145,94 @@ TEST(TileLoadRequestDispatcherTest,
     EXPECT_TRUE(requestState.empty());
     EXPECT_EQ(0u, pendingLoads.gltfTerrainUploadCount());
     EXPECT_EQ(1u, pendingLoads.contentUploadCount());
+}
+
+// === stale 差集回收取消:必须留终态,否则瓦片永久卡在 ContentLoading ===
+//
+// 真机 2026-08-09(25000m 冷启动):sweepStaleRequests 一次取消 35~54 个地形
+// 请求后,registry 里 80 块瓦片恒在 ContentLoading、failTemp 恒 0、此后一个
+// 请求都不再发,地形与影像都没上屏,而引擎报 pending=0「已收敛」。根因是取消
+// 时结果被整个丢弃:请求侧记账被 completeContentRequest 清掉,瓦片侧却没人推
+// 它离开 ContentLoading,调度器看它"还在加载"就永远不再请求。
+//
+// 与上面两个 Drops* 用例成对:那两个是**瓦片已销毁**(不标 stale)必须整个
+// 丢弃;这两个是**瓦片还在**(标了 stale)必须留终态。两条路都经
+// cancelAndErase 一个出口,靠标记区分。
+
+TEST(TileLoadRequestDispatcherTest, StaleCancelledContentLeavesTerminalState) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    DeferredContentProvider provider;
+
+    ASSERT_EQ(TileLoadDispatchResult::Issued,
+              TileLoadRequestDispatcher::requestContent(
+                  lifecycle.mutex(),
+                  lifecycle.condition(),
+                  lifecycle.requestState(),
+                  lifecycle.pendingLoads(),
+                  budget,
+                  provider,
+                  key,
+                  "stale-content",
+                  TileLoadPriorityGroup::Normal,
+                  0.0,
+                  [&issued]() { issued = true; }));
+    ASSERT_TRUE(issued);
+    ASSERT_TRUE(provider.contentCallback);
+
+    lifecycle.requestState().markStaleCancelled("stale-content");
+    lifecycle.cancelAndEraseCacheKey("stale-content");
+    provider.contentCallback(key, TileContentLoadResult::empty());
+
+    EXPECT_EQ(1u, lifecycle.pendingLoads().terminalResultCount());
+    EXPECT_EQ(0u, lifecycle.pendingLoads().uploadCount());
+}
+
+TEST(TileLoadRequestDispatcherTest, StaleCancelledRenderDropsPayloadNotState) {
+    TileLoadLifecycle lifecycle;
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 4;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    const TileKey key{"test", 0, 0, 0};
+    bool issued = false;
+    DeferredContentProvider provider;
+
+    ASSERT_EQ(TileLoadDispatchResult::Issued,
+              TileLoadRequestDispatcher::requestContent(
+                  lifecycle.mutex(),
+                  lifecycle.condition(),
+                  lifecycle.requestState(),
+                  lifecycle.pendingLoads(),
+                  budget,
+                  provider,
+                  key,
+                  "stale-render",
+                  TileLoadPriorityGroup::Normal,
+                  0.0,
+                  [&issued]() { issued = true; }));
+    ASSERT_TRUE(issued);
+
+    lifecycle.requestState().markStaleCancelled("stale-render");
+    lifecycle.cancelAndEraseCacheKey("stale-render");
+    provider.contentCallback(
+        key,
+        TileContentLoadResult::render(std::make_unique<GltfModel>()));
+
+    // 已下载的 glTF 仍然丢弃(不进 upload 车道)—— 我们已经决定不要它了;
+    // 但终态要留下,让瓦片能退出 ContentLoading 并按退避重试。
+    EXPECT_EQ(0u, lifecycle.pendingLoads().uploadCount());
+    EXPECT_EQ(1u, lifecycle.pendingLoads().terminalResultCount());
+}
+
+TEST(TileLoadRequestDispatcherTest, StaleCancelMarkIsConsumedExactlyOnce) {
+    TileLoadLifecycle lifecycle;
+    lifecycle.requestState().markStaleCancelled("k");
+    EXPECT_TRUE(lifecycle.requestState().takeStaleCancelled("k"));
+    EXPECT_FALSE(lifecycle.requestState().takeStaleCancelled("k"));
 }

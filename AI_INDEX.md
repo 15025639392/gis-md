@@ -807,7 +807,7 @@ oracle(TileSelectionEquivalence)。前者自 2026-07-19「release 下 selector
 
 | 文件 | 入口 | 说明 |
 |---|---|---|
-| `TerrainHeightService` (261) | `sample` (TerrainHeightService.cpp:162)、`refreshIfStale` (TerrainHeightService.cpp:102)、`rebuild` (TerrainHeightService.cpp:112);`boundsMatchScheme` (TerrainHeightService.cpp:26)、`usableTerrainTile` (TerrainHeightService.cpp:37)、`commitBestSample` (TerrainHeightService.cpp:77) | 每 Tileset 一个、仅渲染线程。retained heightmap 之上的按 zoom cell 索引 + 质量标签(zoom);`heightmapGeneration` 强代次驱动惰性重建(稳态零重建);"bounds==scheme矩形"不变量破例进 irregular 溢出列表按旧语义线性扫(生产应恒 0,`irregularCount` 供诊断)。与旧 LoadedTerrainHeightSampler 逐点对拍守卫见 test_terrain_height_service.cpp |
+| `TerrainHeightService` (261) | `sample` (TerrainHeightService.cpp:268)、`refreshIfStale` (TerrainHeightService.cpp:125)、`rebuild` (TerrainHeightService.cpp:135);`boundsMatchScheme` (TerrainHeightService.cpp:27)、`usableTerrainTile` (TerrainHeightService.cpp:38)、`commitBestSample` (TerrainHeightService.cpp:79) | 每 Tileset 一个、仅渲染线程。retained heightmap 之上的按 zoom cell 索引 + 质量标签(zoom);`heightmapGeneration` 强代次驱动惰性重建(稳态零重建);"bounds==scheme矩形"不变量破例进 irregular 溢出列表按旧语义线性扫(生产应恒 0,`irregularCount`/`indexedCount` 供诊断;`heightRangeForArea` (TerrainHeightService.cpp:197) 按矩形取"整档覆盖"的实测高度区间,供贴地体高度汇总在包围体还是占位值时兜底)。与旧 LoadedTerrainHeightSampler 逐点对拍守卫见 test_terrain_height_service.cpp |
 
 ### 剔除与高度 — TileSoftwareOcclusionPolicy / TileTerrainHeightRangePolicy / TileViewerRequestVolumePolicy / LoadedTerrainHeightSampler / TileSurface
 
@@ -1081,8 +1081,8 @@ Tracks in-flight network requests and their cancellation tokens (guarded externa
 | `beginTerrainRequest` / `beginContentRequest` | .cpp:66-108 | Reject if destroying/empty/dup; insert key + store `CancellationToken`. |
 | `completeTerrainRequest` / `completeContentRequest` (各 2 个重载) | .cpp:109-136 / :137-161 | Erase from sets + token map. |
 | `cancelAndErase` | .cpp:163-180 | Cancels token, then erases. |
-| `markDestroyingAndCancelRequests` | .cpp:214-221 | Sets `destroying_`, cancels every token. |
-| `clearAfterCallbacksComplete` | .cpp:222-234 | Once `pendingRequests_` drained, clears content keys/tokens and unsets destroying. |
+| `markDestroyingAndCancelRequests` | .cpp:222-229 | Sets `destroying_`, cancels every token. |
+| `clearAfterCallbacksComplete` | .cpp:230-243 | Once `pendingRequests_` drained, clears content keys/tokens and unsets destroying. |
 
 ### TilePendingUploadCompletion.h / .cpp
 
@@ -2143,13 +2143,13 @@ Render flow in `render()` (.cpp:191-286):
 | 2 | `buildSkyCommands` | .cpp:312-351 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
 | 3 | `buildAtmosphereCommands` | .cpp:352-380 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
 | 4 | `buildLayerCommands` | .cpp:381-552 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
-| 5 | `applyMvpUniforms` | .cpp:624-626 | `SceneRenderCommandUniformUpdater::apply` |
-| 6 | `sortAndValidate` | .cpp:633-677 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
-| 5.5 | `assembleTerrainBatches` | .cpp:573-617 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
-| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:684-699 / :656-699 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
-| 7 | `aggregateDiagnostics` | .cpp:755-778 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
-| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:789-837 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
-| — | beforeSubmit → submit | .cpp:222-232 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:872-874) |
+| 5 | `applyMvpUniforms` | .cpp:663-665 | `SceneRenderCommandUniformUpdater::apply` |
+| 6 | `sortAndValidate` | .cpp:672-716 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:612-656 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:723-738 / :744-793 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
+| 7 | `aggregateDiagnostics` | .cpp:794-817 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
+| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:828-876 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
+| — | beforeSubmit → submit | .cpp:222-232 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:911-913) |
 
 Terrain surface = `GltfPrimitive` cmds carrying `terrainRenderContent` (`isTerrainSurfaceCommand`, .cpp:32-35). QM terrain now draws via the 32-byte `TerrainGpuVertex` path (`makeTerrainPrimitiveCommand`, stride 32, `terrainShader`; 2026-07-01); ellipsoid-fallback terrain still uses the 120-byte `GltfGpuVertex` glTF path. `Renderer::terrainShader()` is defined (`kTerrainVertex/FragmentGLSL` + MSL).
 
@@ -2492,7 +2492,7 @@ Cross-platform `PlatformBridge` on libcurl + stb_image (desktop dev + Android/iO
 
 ### bridge/CurlMultiRequestScheduler.h / .cpp
 
-Process-wide singleton (`shared()`, .cpp:803-806) owning one libcurl `multi` handle + dedicated worker thread. **`kDefaultMaximumActiveRequests`** = 20 (.h:15). Public: `get`/`post`/`getBlocking`/`cancelQueuedRequests`/`shutdown`/`maximumActiveRequests` (.h:26-44).
+Process-wide singleton (`shared()`, .cpp:817-820) owning one libcurl `multi` handle + dedicated worker thread. **`kDefaultMaximumActiveRequests`** = 20 (.h:15). Public: `get`/`post`/`getBlocking`/`cancelQueuedRequests`/`shutdown`/`maximumActiveRequests` (.h:26-44).
 
 | Item | Lines | Description |
 | --- | --- | --- |
@@ -2502,13 +2502,13 @@ Process-wide singleton (`shared()`, .cpp:803-806) owning one libcurl `multi` han
 | `RequestHandle` | .cpp:84-115 | `HttpRequest` impl; dtor cancels; `wake()` calls `curl_multi_wakeup` |
 | `Impl` ctor / dtor | .cpp:117-132 | `curl_multi_init`, spawns `run()` worker; dtor → `shutdown` |
 | `request` | .cpp:134-171 | Enqueues into `pending[priorityBucket]` (3 buckets 0-2); immediate `(-1,{})` if stopping |
-| `cancelQueuedRequests` | .cpp:884-887 | Swaps out pending buckets, fires `(-1,{})` callbacks |
-| `shutdown` | .cpp:888-891 | Idempotent; cancels pending+active, joins worker (guards self-join), fires deferred callbacks |
+| `cancelQueuedRequests` | .cpp:898-901 | Swaps out pending buckets, fires `(-1,{})` callbacks |
+| `shutdown` | .cpp:902-905 | Idempotent; cancels pending+active, joins worker (guards self-join), fires deferred callbacks |
 | priority scheduling | .cpp:297-308 | `popNextPendingLocked` drains highest bucket first (High=2→Low=0) |
 | `run` (worker loop) | .cpp:310-353 | start→cancel→start→`curl_multi_perform`→drain; `curl_multi_wait` 50ms timeout; cv-waits when idle |
 | `startRequest` | .cpp:385-443 | Configures easy handle: timeout 15s, connect 5s, follow redirects (max 3), UA `earth-md/0.1`, `NOSIGNAL`; POST fields + Content-Type header |
 | `drainCompletedRequests` | .cpp:470-536 | Reads `CURLMSG_DONE`; status = httpCode or `-1`; body moved to callback only if status==200; Android-only failure log |
-| `getBlocking` | .cpp:835-883 | Sync wrapper over async `get` (default 20s timeout); polls `shouldCancel` every 20ms; cancels on timeout/cancel |
+| `getBlocking` | .cpp:849-897 | Sync wrapper over async `get` (default 20s timeout); polls `shouldCancel` every 20ms; cancels on timeout/cancel |
 
 ### threading/RenderThreadPlacement.h + android/RenderThreadPlacementAndroid.cpp (+ threading/RenderThreadPlacementNoop.cpp)
 
@@ -3249,7 +3249,7 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 
 | Contract | Where | Why |
 |---|---|---|
-| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | SceneRenderPipeline.cpp:872 then :153 (`releaseRenderReferences` body .cpp:432-439 calls `tileset->releaseRenderReferences()`) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
+| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | SceneRenderPipeline.cpp:911 then :153 (`releaseRenderReferences` body .cpp:432-439 calls `tileset->releaseRenderReferences()`) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
 | `processPendingLoads(...)` BEFORE `drainGpuUploadQueue(...)` | TilesetUpdateFrameRuntime.cpp:59 then :143 | `processPendingLoads` is what pushes onto `GpuUploadQueue`; the drain in the same frame pops and does the GPU upload. Reversing the order does not error — it just makes every upload lag one frame, which reads as "loading is always half a beat late" and gets misattributed to network or device. **Machine-checked**: `contracts::Id::LoadsBeforeGpuDrain` (Tileset.cpp:254). |
 | Ref-count keep-alive until GPU consumption | GpuUploadQueue.h (deque of `PendingGpuUpload`); drain finalizes via `uploadToGpu` + `finishRenderResourcePreparation` | CPU-prepared vertex/index bytes and tile state must stay alive from enqueue through upload. The claim is `asyncGpuUploadPending` + a retained lifecycle upload key; three sites must release it (`TilePendingUploadCompletion::eraseUpload`) or the tile is pinned forever. Not machine-checked. |
 
