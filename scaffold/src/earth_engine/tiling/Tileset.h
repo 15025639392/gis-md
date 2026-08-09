@@ -160,6 +160,29 @@ public:
             }
         }
     }
+
+    /// 位移池 ON→OFF 时必须调:摘过幽灵网格的瓦片**没有顶点可回落**,
+    /// 光靠 markContentResourcesDirty 让 prepare 重建 legacy VBO 是建不出来的
+    /// (顶点已释放)。把它们的渲染内容整个清掉 → 走正常重载路径重新解码。
+    /// 返回被清的瓦片数(诊断用)。摘除只发生在生产配置下,本函数只服务
+    /// 运行时调试开关,稳态零调用。
+    std::size_t reloadGhostReleasedTerrainContent(
+        IPrepareRendererResources* pPrepRenderer) {
+        std::size_t reloaded = 0;
+        for (auto& entry : tileRegistry_.tiles()) {
+            TilesetTile* tile = entry.second.get();
+            if (!tile || !tile->content.renderContent.ghostGeometryReleased()) {
+                continue;
+            }
+            tile->content.renderContent.clearRenderContent();
+            tile->rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
+            tile->content.loadState = TileLoadState::Unloaded;
+            tile->content.contentKind = TileContentKind::Unknown;
+            tile->notifyChildMaterializationStateChanged();
+            ++reloaded;
+        }
+        return reloaded;
+    }
     /// 审计用:从**权威容器**重新数一遍"正在把内容加载到终态"的瓦片。
     /// 与 WorkLedger 里 tileContentLoad 的在途数对拍 —— 二者不等 = 有一个
     /// loadState 迁移点没接对账,而那种漏接是静默的(症状要到某次冷启动才

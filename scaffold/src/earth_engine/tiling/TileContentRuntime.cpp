@@ -88,6 +88,7 @@ bool TileContentRuntime::processPendingUploads(
         frame.mainThreadLoadingTimeLimit,
         frame.currentFrameTimeSeconds,
         frame.smoothedMainThreadUploadLimit,
+        frame.allowGhostGeometryRelease,
         interactionActive,
         resourceSmoothingActive,
         budget,
@@ -117,6 +118,7 @@ bool TileContentRuntime::drainGpuUploadQueue(
         frame.mainThreadLoadingTimeLimit,
         frame.currentFrameTimeSeconds,
         frame.smoothedMainThreadUploadLimit,
+        frame.allowGhostGeometryRelease,
         budget,
         maxUploadsPerFrame,
         [this](const TileKey& key) {

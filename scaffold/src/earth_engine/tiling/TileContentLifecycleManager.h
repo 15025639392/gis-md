@@ -47,6 +47,7 @@ public:
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
         uint32_t smoothedMainThreadUploadLimit,
+        bool allowGhostGeometryRelease,
         FrameResourceBudget* budget,
         uint32_t maxUploadsPerFrame,
         EnsureTileFn&& ensureTile,
@@ -62,7 +63,8 @@ public:
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
                 currentFrameTimeSeconds,
-                smoothedMainThreadUploadLimit),
+                smoothedMainThreadUploadLimit,
+                allowGhostGeometryRelease),
             budget,
             maxUploadsPerFrame,
             std::forward<EnsureTileFn>(ensureTile),
@@ -119,6 +121,7 @@ public:
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
         uint32_t smoothedMainThreadUploadLimit,
+        bool allowGhostGeometryRelease,
         bool interactionActive,
         bool resourceSmoothingActive,
         FrameResourceBudget* budget,
@@ -136,7 +139,8 @@ public:
                 maximumSimultaneousTileLoads,
                 mainThreadLoadingTimeLimit,
                 currentFrameTimeSeconds,
-                smoothedMainThreadUploadLimit),
+                smoothedMainThreadUploadLimit,
+                allowGhostGeometryRelease),
             interactionActive,
             resourceSmoothingActive,
             budget,
@@ -181,7 +185,8 @@ private:
         uint32_t maximumSimultaneousTileLoads,
         double mainThreadLoadingTimeLimit,
         double currentFrameTimeSeconds,
-        uint32_t smoothedMainThreadUploadLimit) {
+        uint32_t smoothedMainThreadUploadLimit,
+        bool allowGhostGeometryRelease) {
         return TilesetContentUploadContext{
             loadLifecycle_,
             contentProvider,
@@ -194,7 +199,8 @@ private:
             maximumSimultaneousTileLoads,
             mainThreadLoadingTimeLimit,
             currentFrameTimeSeconds,
-            smoothedMainThreadUploadLimit};
+            smoothedMainThreadUploadLimit,
+            allowGhostGeometryRelease};
     }
 
     TileLoadLifecycle loadLifecycle_;

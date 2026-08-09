@@ -64,6 +64,8 @@ struct TilesetContentUploadContext {
     double mainThreadLoadingTimeLimit = 0.0;
     double currentFrameTimeSeconds = 0.0;
     uint32_t smoothedMainThreadUploadLimit = 1;
+    /// 见 TileContentRuntimeUploadFrame::allowGhostGeometryRelease。
+    bool allowGhostGeometryRelease = false;
 };
 
 class TilesetContentLifecycleCoordinator {
@@ -75,6 +77,27 @@ public:
         const TilesetContentUploadContext& context) {
         return context.pPrepRenderer != nullptr &&
                context.pPrepRenderer->terrainSharedTemplateActive();
+    }
+
+    /// 幽灵网格摘除:地形瓦片的 CPU 网格在共享模板路下从不被绘制,实测近景
+    /// 90 瓦为此常驻 95MB(见 CpuAcct 走账)。放在**内容就位之后**调 ——
+    /// rasterOverlayDetails 的顶点重算只发生在 commit 期
+    /// (ensureProjectionDetailsFromActiveOverlays 唯一调用点),晚于它就再无
+    /// 顶点读者。判据三项全真才摘,任何一项不满足都保持原样(零回归)。
+    static void releaseGhostTerrainGeometryIfEligible(
+        TilesetTile& tile,
+        const TilesetContentUploadContext& context) {
+        if (!context.allowGhostGeometryRelease ||
+            !terrainSharedTemplateActive(context)) {
+            return;
+        }
+        TileRenderContentState& renderContent = tile.content.renderContent;
+        if (!renderContent.isTerrainRenderContent() ||
+            !renderContent.isRenderContentReady() ||
+            !renderContent.allGltfPrimitivesUseSharedTemplate()) {
+            return;
+        }
+        renderContent.releaseGhostTerrainGeometry();
     }
     template <typename LoadRequests,
               typename PrepareUpsampleSourceTileFn,
@@ -236,6 +259,7 @@ public:
                         tile, context.device,
                         context.currentFrameTimeSeconds,
                         terrainSharedTemplateActive(context));
+                    releaseGhostTerrainGeometryIfEligible(tile, context);
                 }
             },
             markResourcesDirty);
@@ -351,6 +375,9 @@ public:
                 std::move(upload->data),
                 &uploadMetrics);
             const double uploadToGpuMs = perf::nowMs() - uploadStartMs;
+            if (success) {
+                releaseGhostTerrainGeometryIfEligible(*tile, context);
+            }
             logSlowDrainPhase(
                 "TilePendingLoad.drainGpuUpload.uploadToGpu",
                 uploadToGpuMs,

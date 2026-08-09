@@ -367,6 +367,17 @@ void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
         if (tileset) {
             tileset->invalidateTerrainDrawCommands();
             tileset->markContentResourcesDirty();
+            // 幽灵网格摘除后 CPU 顶点已释放,markContentResourcesDirty 让
+            // prepare 重走 legacy VBO 也建不出来(无顶点可建)——这些瓦片必须
+            // 整个重载。不做的话关位移池 = 已加载地形永久消失。
+            const std::size_t reloaded =
+                tileset->reloadGhostReleasedTerrainContent(nullptr);
+            if (reloaded > 0) {
+                platformLog(LogLevel::Info, "Terrain",
+                            "displacement pool OFF: reloading %zu "
+                            "ghost-released terrain tiles",
+                            reloaded);
+            }
         }
         scene_->setTerrainDisplacementPool(nullptr);
         terrainDisplacementPool_.reset();

@@ -736,6 +736,67 @@ public:
         invalidateCachedDrawCommands();
     }
 
+    /// 幽灵网格摘除:共享位移模板路下,地形瓦片的 CPU 网格(世界顶点阵 +
+    /// 索引 + runtime.baseVertices 那份重复拷贝)从不被绘制 —— draw 侧必换
+    /// 模板 VBO(GltfDrawCommandBuilder),prepare 侧也已跳过其 GPU 上传
+    /// (skipBakedTerrainGeometry)。实测近景 90 个地形瓦片为此常驻 95MB、
+    /// 占内容缓存预算近一半(见 CpuAcct 走账)。
+    ///
+    /// **摘除前提**(调用方负责,见 GltfRenderResourcePreparer 的判据):
+    ///   ① 该瓦片所有 primitive 都走了共享模板(sharedTemplateGeometry);
+    ///   ② rasterOverlayDetails 已在 commit 期由顶点算好
+    ///      (TileContentUploadCommitter → ensureProjectionDetailsFromActiveOverlays
+    ///       是该函数**唯一**调用点,晚于它就不会再从顶点重算);
+    ///   ③ decoupleImageryFromGeometry=true —— 关掉时 GltfTerrainUpsampler
+    ///      要读**父瓦片**的顶点造子瓦片,父被摘了会产出空网格。
+    /// 顶点数/索引数**不清**(metadata 已在 GpuReadyPrimitive 里留档),清的
+    /// 只是字节。运行时关位移池要靠 ghostGeometryReleased() 把这些瓦片整个
+    /// 重载 —— 没有顶点就没法回落 legacy VBO(见 Engine::setTerrainGpuDisplacementEnabled)。
+    void releaseGhostTerrainGeometry() {
+        if (!gltfModel || ghostGeometryReleased_) {
+            return;
+        }
+        bool changed = false;
+        for (GltfPrimitive& primitive : gltfModel->primitives) {
+            changed |= !primitive.vertices.empty() ||
+                       !primitive.indices.empty() ||
+                       !primitive.runtime.baseVertices.empty();
+            primitive.vertices.clear();
+            primitive.vertices.shrink_to_fit();
+            primitive.indices.clear();
+            primitive.indices.shrink_to_fit();
+            primitive.runtime.baseVertices.clear();
+            primitive.runtime.baseVertices.shrink_to_fit();
+            for (auto& texCoords : primitive.vertexTexCoords) {
+                texCoords.clear();
+                texCoords.shrink_to_fit();
+            }
+        }
+        ghostGeometryReleased_ = true;
+        if (changed) {
+            markRetainedResourcesChanged();
+        }
+    }
+
+    /// 该瓦片的 CPU 网格是否已被摘除(= 不可能再回落 legacy VBO 路径)。
+    bool ghostGeometryReleased() const { return ghostGeometryReleased_; }
+
+    /// 已提交的 glTF primitive 是否**全部**走共享模板几何。摘除判据用:
+    /// 只要有一个 primitive 还靠自己的 per-tile VBO 绘制(水面掩码格式/
+    /// 实例化/上采样),它的顶点就还在被 draw 消费,整瓦片不可摘。
+    bool allGltfPrimitivesUseSharedTemplate() const {
+        if (gltfPrimitiveResources.empty()) {
+            return false;
+        }
+        for (const GltfPrimitiveRenderResources& primitive :
+             gltfPrimitiveResources) {
+            if (!primitive.sharedTemplateGeometry) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     void clearTerrainGpuVertexBytes() {
         if (!gltfModel) {
             return;
@@ -857,6 +918,7 @@ public:
         gltfPrimitiveResources.clear();
         gltfResourcesReady_ = false;
         terrainRenderContent_ = false;
+        ghostGeometryReleased_ = false;
         clearFillContent();
         if (hadHeightmap || hadModel || hadTextures || hadPrimitives) {
             markRetainedResourcesChanged();
@@ -975,6 +1037,9 @@ private:
     Mat4 gltfContentTransform = Mat4::identity();
     bool gltfResourcesReady_ = false;
     bool terrainRenderContent_ = false;
+    // 幽灵网格已摘(见 releaseGhostTerrainGeometry)。clearRenderContent 会连同
+    // 模型一起归零 —— 重载后的新内容必须重新走一遍摘除判据,不能继承旧标记。
+    bool ghostGeometryReleased_ = false;
     // Shadow readiness mirror (see setShadowReadinessMirror). Never set on live
     // tiles, so the readiness predicates keep their model-backed behavior there.
     bool shadowReadinessMirror_ = false;

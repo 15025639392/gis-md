@@ -49,6 +49,11 @@ struct TileContentRuntimeUploadFrame {
     double mainThreadLoadingTimeLimit = 0.0;
     double currentFrameTimeSeconds = 0.0;
     uint32_t smoothedMainThreadUploadLimit = 0;
+    /// 幽灵网格摘除许可(见 TileRenderContentState::releaseGhostTerrainGeometry)。
+    /// = decoupleImageryFromGeometry —— 关掉它时 GltfTerrainUpsampler 要读**父
+    /// 瓦片**的顶点造 z13+ 子瓦片,而父瓦片(z12,自有高度图、fade=1)恰好是摘除
+    /// 的目标,摘了就产出空网格。生产默认 true,该分支不跑。
+    bool allowGhostGeometryRelease = false;
 };
 
 class TileContentRuntime {

@@ -294,6 +294,7 @@ TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
     frame.currentFrameTimeSeconds = currentFrameTimeSeconds_;
     frame.smoothedMainThreadUploadLimit =
         static_cast<uint32_t>(kSmoothedMainThreadUploadLimit);
+    frame.allowGhostGeometryRelease = options_.decoupleImageryFromGeometry;
     return frame;
 }
 
