@@ -176,7 +176,7 @@ constexpr bool kMeasureVtIndirectionSamplePoC = false;
 // 是提交命令的 CPU 成本,对 GPU 侧完全盲目,两者可以差一个数量级且互不预示。
 // 判读的三条边界(TBDR 段边界不精确 / MSAA resolve 不在任何段内 / disjoint 帧
 // 作废)见 renderer/GpuFrameTiming.h —— 不读那三条,这些数会被用来下错结论。
-constexpr bool kMeasureGpuPassTiming = true;
+constexpr bool kMeasureGpuPassTiming = false;
 
 // kEnableFrameGating:帧级按需渲染。收敛后停止排帧,渲染线程真正睡下去。
 // 静止是地图 app 的绝大多数时间,这段时间此前是逐 vsync 全量重建+重绘 ——

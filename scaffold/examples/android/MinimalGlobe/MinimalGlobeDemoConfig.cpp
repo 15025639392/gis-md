@@ -272,7 +272,8 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // 北极星生产主路径:SVT 页存储默认开(配上方 decouple)。稀疏页存储在 capped
     // z12 地形面上贴屏幕界定 z14-17 高清影像(§15 Step B)。A/B 测时改 false。
     config.terrainPageStore = true;
-    // GPU 逐区间计时(见 header)。功耗排查期开着;结论落地后关掉。
+    // GPU 逐区间计时(见 header)。默认关:每帧 ~8 个 timer query,是测量台不是
+    // 生产开销。要查 GPU 时间去哪了就把 header 里那个常量翻 true。
     config.gpuPassTiming = kMeasureGpuPassTiming;
     config.frameGating = kEnableFrameGating;
     config.fixedSimulationJulianDate = kFixedSimulationJulianDate;
