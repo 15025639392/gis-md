@@ -85,6 +85,9 @@ public:
     ///
     /// outReason 非空时写入首个命中的原因(机制信号用,勿据此做逻辑分支)。
     bool hasConvergingWork(const char** outReason) const;
+
+    /// 并行验证期的对拍(见实现注释)。零行为影响,只在不一致时打 ERROR。
+    void auditWorkLedger() const;
     void setSelectorViewOverride(
         std::vector<SelectorView> selectorViews);
     void clearSelectorViewOverride();

@@ -41,6 +41,8 @@ target_sources(earth_engine_core PRIVATE
 # ============================================================
 target_sources(earth_engine_core PRIVATE
     earth_engine/core/async/AsyncSystem.h
+    earth_engine/core/async/WorkLedger.h
+    earth_engine/core/async/WorkLedger.cpp
 )
 
 # ============================================================

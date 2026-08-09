@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../core/async/WorkLedger.h"
+
 #include <cstdint>
 #include <limits>
 #include <memory>
@@ -265,6 +267,20 @@ public:
     ///
     /// 停滞超过 kStalledPageFrames 的页不计入:它不会因为"再画一帧"而变化,
     /// 真到货时 fetch 回调会把页推进、下一次 determination 自然再置进度。
+    /// 页存储的在途登记进 WorkLedger,**Pumped**:它必须在渲染帧里被推进
+    /// (drainReadyUploads 只在帧里跑),停帧 = 到货永远灌不进 array。与网络
+    /// 那类"自己会走完"的 Landing 语义相反,混为一谈就等于没做这个区分。
+    /// 整店一张票(不是逐页):gating 只关心"要不要继续出帧",不关心几页。
+    void syncWorkTicket() {
+        const bool busy = hasWorkInFlight();
+        if (busy && !workTicket_.valid()) {
+            workTicket_ = WorkLedger::shared().acquire(
+                WorkLedger::Kind::Pumped, "terrainPageUpload");
+        } else if (!busy && workTicket_.valid()) {
+            workTicket_.release();
+        }
+    }
+
     bool hasWorkInFlight() const {
         for (const auto& entry : pages_) {
             const PageEntry& pe = entry.second;
@@ -417,6 +433,7 @@ private:
     std::unordered_map<uint64_t, TileIndir> tileIndirs_;  // tileKey → 稀疏间接纹理
     std::unique_ptr<Texture> indirArrayTexture_;  // 合批 Step 2:间接纹理共享 array
     TerrainPageLayerPool indirPool_;              // 间接纹理层 LRU(blockLayers=1)
+    WorkLedger::Ticket workTicket_;
     uint64_t frameId_ = 0;
     int uploadedLayerTotal_ = 0;
 

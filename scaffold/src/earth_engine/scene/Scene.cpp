@@ -1,4 +1,8 @@
 #include "Scene.h"
+
+#include "../core/async/WorkLedger.h"
+
+#include <cstring>
 #include "../debug/PlatformLog.h"
 #include "Camera.h"
 #include "SceneEnvironmentCoordinator.h"
@@ -269,6 +273,63 @@ bool Scene::hasConvergingWork(const char** outReason) const {
 
     if (outReason) *outReason = "idle";
     return false;
+}
+
+void Scene::auditWorkLedger() const {
+    // **并行验证期**:gating 仍读 hasConvergingWork,本函数零行为影响。
+    // 目的是回答一个只能靠实测回答的问题 —— 那条判据到底漏了几个源。
+    // 只打不一致,一致时静默(健康态刷屏会让人学会无视这条日志)。
+    WorkLedger& ledger = WorkLedger::shared();
+
+    // ① 对账完整性:令牌数 vs 从注册表重新数的真值。不等 = 漏接迁移点。
+    std::size_t truth = 0;
+    if (tilesets_) {
+        if (const Tileset* t = tilesets_->primary()) {
+            truth += t->countTilesLoadingContent();
+        }
+        if (const Tileset* t = tilesets_->pendingPrimary()) {
+            truth += t->countTilesLoadingContent();
+        }
+        for (const auto& content : tilesets_->contentTilesets()) {
+            if (content) truth += content->countTilesLoadingContent();
+        }
+    }
+    const int ticketed = ledger.outstandingForLabel("tileContentLoad");
+    if (static_cast<std::size_t>(ticketed) != truth) {
+        platformLog(LogLevel::Error, "WorkLedger",
+                    "audit MISMATCH tileContentLoad ticket=%d registry=%zu "
+                    "—— 有 loadState 迁移点没接 syncContentLoadWorkTicket",
+                    ticketed, truth);
+    }
+
+    // ② 判据分歧:令牌账说忙 vs 旧判据说忙。相机自演进不发令牌(它不是
+    //    "在途"而是持续生产者),故双方都为真时不比、旧判据只因相机而忙时跳过。
+    const char* oldReason = nullptr;
+    const bool oldBusy = hasConvergingWork(&oldReason);
+    if (oldBusy && oldReason && std::strcmp(oldReason, "cameraAnimating") == 0) {
+        return;
+    }
+    const char* ledgerLabel = nullptr;
+    const bool ledgerBusy = ledger.anyOutstanding(&ledgerLabel);
+    if (ledgerBusy == oldBusy) {
+        return;
+    }
+    // 两个方向的含义完全不同,必须分开报:
+    //   ledger 忙 / 旧判据闲 = **旧判据漏了这个源**(gating 会在此时停帧 → 冻屏)
+    //   ledger 闲 / 旧判据忙 = 令牌漏接,或旧判据有它自己的多余来源
+    platformLog(LogLevel::Error, "WorkLedger",
+                "verdict DIVERGE ledger=%s(landing=%d pumped=%d) old=%s(%s)"
+                " —— %s",
+                ledgerBusy ? "busy" : "idle",
+                ledger.outstanding(WorkLedger::Kind::Landing),
+                ledger.outstanding(WorkLedger::Kind::Pumped),
+                oldBusy ? "busy" : "idle",
+                oldReason ? oldReason : "?",
+                ledgerBusy ? "旧判据漏源(此刻停帧=冻屏)" : "令牌漏接或旧判据多源");
+    for (const auto& [label, count] : ledger.outstandingByLabel()) {
+        platformLog(LogLevel::Error, "WorkLedger", "  holding %s x%d",
+                    label.c_str(), count);
+    }
 }
 
 bool Scene::shouldHoldPresentationFrame() {

@@ -501,6 +501,9 @@ void TerrainPageStore::updateVisiblePages(
     const std::vector<TilesetTile*>& visibleTiles,
     const std::vector<RasterOverlayTileProvider*>& providers,
     double terrainMaxScreenSpaceError) {
+    // 放在最前而不是最后:本函数有多处早退,放末尾会被跳过。用上一帧的在途
+    // 状态对账 —— 迟一帧只会多渲一帧(安全方向),而漏对账是永远停不下来。
+    syncWorkTicket();
     ++pageDetFrameCounter_;
     // 逐帧重置合批资格判因:不重置的话 worstResidentRatio_ 会单调下降成历史最差值,
     // 报的就不再是"此刻",而 A/B 里最怕的正是把陈旧值当当前值读。

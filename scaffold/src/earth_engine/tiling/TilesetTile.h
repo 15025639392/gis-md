@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileKey.h"
+#include "../core/async/WorkLedger.h"
 #include "TileLoadState.h"
 #include "TilePlan.h"
 #include "TileContentStateTransition.h"
@@ -230,6 +231,27 @@ struct TilesetTile {
         temporaryFailureRetryNotBeforeMs = 0.0;
     }
 
+    /// 把"这块瓦片正在把内容加载到终态"这件事登记进 WorkLedger。
+    ///
+    /// **对账式,不是配对 acquire/release**:配对要求每一条离开 ContentLoading
+    /// 的路径都记得放手,而漏掉出错路径正是 6028adcdf 那个 bug 的形状(取消时
+    /// 结果被整个丢弃,没人把瓦片推离 ContentLoading,请求账却清了 → 引擎报
+    /// "已收敛"而整屏空白)。对账只看当前状态,重复调用无害、顺序无关。
+    ///
+    /// 令牌跨的是**整个逻辑工作单元**(瓦片走到终态),不是传输腿(HTTP 请求)。
+    /// 这条区分是关键:按请求记账时,请求结束但瓦片卡住的情形账面是干净的;
+    /// 按瓦片记账时,同样的 bug 表现为令牌永不释放 → 永不入睡 + awake reason
+    /// 点名 tileContentLoad,吵得没法忽略。
+    void syncContentLoadWorkTicket() {
+        const bool loading = content.loadState == TileLoadState::ContentLoading;
+        if (loading && !contentLoadTicket_.valid()) {
+            contentLoadTicket_ = WorkLedger::shared().acquire(
+                WorkLedger::Kind::Landing, "tileContentLoad");
+        } else if (!loading && contentLoadTicket_.valid()) {
+            contentLoadTicket_.release();
+        }
+    }
+
     void markContentLoading() {
         const TileLoadState previousLoadState = content.loadState;
         const TileContentKind previousContentKind = content.contentKind;
@@ -240,6 +262,7 @@ struct TilesetTile {
             content.contentKind != previousContentKind) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     void markRenderContentLoaded() {
@@ -253,6 +276,7 @@ struct TilesetTile {
             content.contentKind != previousContentKind) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     void markRenderContentDone() {
@@ -269,6 +293,7 @@ struct TilesetTile {
             content.renderContent.isRenderContentReady() != wasReady) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     template <typename IsCompleteRenderableFn>
@@ -283,6 +308,7 @@ struct TilesetTile {
         content.contentKind = TileContentKind::Render;
         if (markDone) {
             content.loadState = TileLoadState::Done;
+            syncContentLoadWorkTicket();  // 直写 loadState,绕过 mark* 家族
         }
         notifyChildMaterializationStateChanged();
         updateFrameRenderability(
@@ -366,6 +392,7 @@ struct TilesetTile {
             content.contentKind != previousContentKind) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     void markContentFailedTemporarily() {
@@ -378,6 +405,7 @@ struct TilesetTile {
             content.contentKind != previousContentKind) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     void markContentFailedPermanently() {
@@ -390,6 +418,7 @@ struct TilesetTile {
             content.contentKind != previousContentKind) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     void markEmptyContentLoaded() {
@@ -403,6 +432,7 @@ struct TilesetTile {
             content.contentKind != previousContentKind) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     void markEmptyContentDone() {
@@ -415,6 +445,7 @@ struct TilesetTile {
             content.contentKind != previousContentKind) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     void markExternalContentDone() {
@@ -430,6 +461,7 @@ struct TilesetTile {
             unconditionallyRefine != wasUnconditionallyRefined) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     void markContentUnloading() {
@@ -438,6 +470,7 @@ struct TilesetTile {
         if (content.loadState != previousLoadState) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     void markContentUnloaded() {
@@ -451,6 +484,7 @@ struct TilesetTile {
             content.contentKind != previousContentKind) {
             notifyChildMaterializationStateChanged();
         }
+            syncContentLoadWorkTicket();
     }
 
     // ── cesium-native reference counting (Tile::getReferenceCount) ──
@@ -497,6 +531,10 @@ struct TilesetTile {
     uint64_t appliedContentMetadataRevision = 0;
 
     TilesetTile() = default;
+    /// 见 syncContentLoadWorkTicket。move-only,故 TilesetTile 不可拷贝
+    /// (本就由 registry 以智能指针持有,拷贝一份瓦片没有任何合法语义)。
+    WorkLedger::Ticket contentLoadTicket_;
+
     TilesetTile(TileKey k, Rectangle b, TilesetTile* p = nullptr)
         : key(std::move(k)), bounds(b), parent(p) {}
     TilesetTile(const TilesetTile&) = delete;

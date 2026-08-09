@@ -420,6 +420,43 @@ Clips a triangle against an axis-aligned scalar threshold; cesium-native `clipTr
 
 ## 4. core/async, cache, resources, net, gltf
 
+### WorkLedger.h / .cpp — 异步在途的单一账本
+
+「还有活没干完吗」的**唯一**记账处。存在理由:此前该问题由
+`Scene::hasConvergingWork` 在外面重新推导 —— 去问四个各自为政的判据
+(tileset `pendingRequests` / overlay `hasPendingWork` / pageStore
+`hasWorkInFlight` / 相机自演进),正确性 = 四者同时正确,漏一个的症状是
+**画面冻住且零报错**(其中两个已因此被修过)。
+
+**两种令牌语义相反,混用即失去本设计的全部意义**:
+
+| Kind | 谁 | 帧语义 |
+| --- | --- | --- |
+| `Landing` | 在别的线程自己会走完(网络/worker/解码) | 持有期**不出帧**;**释放**时才要一帧去消费 |
+| `Pumped` | 必须在渲染帧里推进(GPU 上传 drain) | 持有期**必须持续出帧** |
+
+| Item | Lines | Description |
+| --- | --- | --- |
+| `Ticket` | .h:46-80 | move-only RAII。析构即释放;`release()` 幂等。move 后源置空 —— 双重释放会让计数变负、判据从此恒说"空闲"(= 退回无 gating 的冻屏) |
+| `acquire` | .cpp:10-24 | 原子加 + label 表记账。`label` 必须静态存活(落地脏位只存指针) |
+| `release` | .cpp:26-41 | Landing 释放时置**落地脏位** + 记 label;label 表按 kind 分两张 |
+| `hasPumpedWork` | .cpp:52-68 | Pumped 在途 = 本帧必须继续出帧;`outLabel` 只从 Pumped 表取(报出一个不驱动帧的 Landing label 会把人引开) |
+| `consumeLanded` | .cpp:70-79 | **exchange 语义,消费一次** —— 不消费则一次到货让循环永远跑下去(`Engine::requestRender` 踩过) |
+| `anyOutstanding` | .cpp:81-91 | 并行验证期与 `hasConvergingWork` 对拍用(那条判据不区分两类) |
+| `outstandingForLabel` | .cpp:93-102 | 审计:与"从权威容器重新数一遍"的真值对拍 |
+
+**接入点**(对账式 `sync*WorkTicket`,不是配对 acquire/release —— 配对要求每条
+出错路径都记得放手,漏掉正是 6028adcdf 的形状):
+
+| 源 | Kind | 对账函数 |
+| --- | --- | --- |
+| 瓦片内容加载到终态 | Landing | `TilesetTile::syncContentLoadWorkTicket`(11 个 `mark*` + 2 处直写 loadState 处调用) |
+| 地形页上传 | Pumped | `TerrainPageStore::syncWorkTicket`(在 `updateVisiblePages` **最前**调用:该函数多处早退,放末尾会被跳过) |
+
+审计:`Scene::auditWorkLedger` 每帧对拍令牌数 vs `Tileset::countTilesLoadingContent`
+的真值,不等即 ERROR(漏接迁移点否则是静默的)。**当前处于并行验证期:gating 仍读
+`hasConvergingWork`,本账本零行为影响。**
+
 ### AsyncSystem.h
 
 cesium-native `CesiumAsync` analog (ThreadPool/Future/AsyncSystem). Header-only, all inline.
@@ -1990,11 +2027,11 @@ Reverse-Z projection (.cpp:67-98): maps `z_eye=near(1)→z_ndc=1`, `z_eye=far(1e
 | Owned coordinators (5) | .h:109-121 | `layers_` (SceneLayerCoordinator), `tilesets_` (SceneTilesetCoordinator), `interaction_` (SceneInteractionCoordinator), `environment_` (SceneEnvironmentCoordinator), `telemetry_` (SceneTelemetryCoordinator) |
 | `renderPipeline_` / `frameRuntime_` | .h:104-105 | Owned `SceneRenderPipeline` + `SceneFrameRuntime` (holds FrameState + RenderCommandList + frame/time counters) |
 | ctor | .cpp:21-43 | Constructs coordinators; sets reverse-Z perspective near=**150.0**, far=**1e12** (.cpp:30-34, "OpenGlobus PlanetCamera reverse-Z defaults"); wires feature-state callback interaction→layers |
-| `setRenderDevice` | .cpp:126-146 | Creates Renderer + SceneRenderPipeline, calls **`renderer_->initialize()` (no-arg)**, inits environment GPU resources; null device tears both down. **No globe mesh built or passed** — `GlobeMesh`/`Globe::createMesh` deleted |
-| `update(dt)` | .cpp:156-170 | Phase 1. Builds `SceneFrameUpdateInput` via `frameRuntime_.makeFrameUpdateInput` and calls `SceneFrameUpdateCoordinator::update` (static) |
-| `render()` | .cpp:207-231 | Phase 2. Guards on `renderer_`/`renderPipeline_`/`isReady()`; builds `SceneRenderPipeline::Context` from frameState + coordinator getters; `beforeSubmit` lambda = `updatePresentationTrace`; feeds result diagnostics back to telemetry |
-| `interactionContext()` | .cpp:420-426 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
-| Tileset API | .cpp:331-334 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
+| `setRenderDevice` | .cpp:132-153 | Creates Renderer + SceneRenderPipeline, calls **`renderer_->initialize()` (no-arg)**, inits environment GPU resources; null device tears both down. **No globe mesh built or passed** — `GlobeMesh`/`Globe::createMesh` deleted |
+| `update(dt)` | .cpp:162-177 | Phase 1. Builds `SceneFrameUpdateInput` via `frameRuntime_.makeFrameUpdateInput` and calls `SceneFrameUpdateCoordinator::update` (static) |
+| `render()` | .cpp:213-238 | Phase 2. Guards on `renderer_`/`renderPipeline_`/`isReady()`; builds `SceneRenderPipeline::Context` from frameState + coordinator getters; `beforeSubmit` lambda = `updatePresentationTrace`; feeds result diagnostics back to telemetry |
+| `interactionContext()` | .cpp:481-488 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
+| Tileset API | .cpp:392-418 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
 
 No `globeMesh_` member and no `struct GlobeMesh` forward-decl remain (both deleted post-refactor). Two-phase flow: `update(dt)` mutates FrameState + runs tileset selection; `render()` reads the same FrameState, builds ordered RenderCommands, submits. No rendering in update; no selection in render. Behavior change: with no fallback-globe path, nothing is drawn before tiles load (clear color only).
 
@@ -2278,9 +2315,9 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 | `initialize(device, Config)` | .cpp:1024-1017 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
 | `updateVisiblePages(view, ...)` | .cpp:548-954 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
 | `applyToTerrainCommand(cmd, tile)` | .cpp:1091-1069 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1141-1103 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `tick()` | .cpp:1145-1178 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
 | `drainInbox` / `kickPageFetches` | .cpp:1214-1226 / :1104-1142 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1298-1281 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `drainReadyUploads` | .cpp:1302-1357 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
 | `erasePageEntry` | .cpp:1076-1032 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:262-329 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:373-379 / :477-496 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
@@ -3116,7 +3153,7 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:55-64 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:66-71 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:73-109 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:348-722 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:349). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:353-342). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:354-354). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:383-383). |
+| `render(deltaSeconds=0)` | .h:57, .cpp:352-782 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:349). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:353-342). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:354-354). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:383-383). |
 | `onInputEvent(InputEvent)` | .h:62, .cpp:780-759 | Forward to `scene_->onInputEvent`. |
 | `onDragStart/Move/End` | .h:65-67, .cpp:784-768 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |

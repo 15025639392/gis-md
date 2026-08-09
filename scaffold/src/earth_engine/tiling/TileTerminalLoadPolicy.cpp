@@ -16,6 +16,7 @@ void markUnknownTemporaryFailure(
     tile.rasterOverlayState.releaseAndClearReferences(pPrepRenderer);
     if (tile.content.contentKind == TileContentKind::Render) {
         tile.content.loadState = TileLoadState::FailedTemporarily;
+        tile.syncContentLoadWorkTicket();  // 直写 loadState,绕过 mark* 家族
         tile.notifyChildMaterializationStateChanged();
     } else {
         tile.markContentFailedTemporarily();

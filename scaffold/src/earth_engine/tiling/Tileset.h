@@ -160,6 +160,22 @@ public:
             }
         }
     }
+    /// 审计用:从**权威容器**重新数一遍"正在把内容加载到终态"的瓦片。
+    /// 与 WorkLedger 里 tileContentLoad 的在途数对拍 —— 二者不等 = 有一个
+    /// loadState 迁移点没接对账,而那种漏接是静默的(症状要到某次冷启动才
+    /// 以"画面冻住零报错"的形式冒出来)。O(注册表),仅诊断周期调用。
+    std::size_t countTilesLoadingContent() const {
+        std::size_t n = 0;
+        for (const auto& entry : tileRegistry_.tiles()) {
+            const TilesetTile* tile = entry.second.get();
+            if (tile && tile->content.loadState ==
+                            TileLoadState::ContentLoading) {
+                ++n;
+            }
+        }
+        return n;
+    }
+
     bool shouldHoldPresentationFrame() const;
     bool requiresBaseImageryPresentationSurface() const;
     const TileScheme& tileScheme() const { return *tileScheme_; }
