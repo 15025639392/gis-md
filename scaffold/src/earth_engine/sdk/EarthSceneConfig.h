@@ -228,6 +228,11 @@ struct EarthSceneConfig {
     /// 场景下 ~8 段/帧。仅 GLES(Metal 后端为 no-op)。判读边界见
     /// renderer/GpuFrameTiming.h。
     bool gpuPassTiming = false;
+
+    /// 黑块探针:swap 前逐帧回读降采样帧统计近黑占比,超阈值逐帧告警
+    /// (logcat `BlackProbe`)。截图/录屏抽样会漏帧,这是唯一不漏的像素级
+    /// 判据。含同步回读(~1-2ms/帧),仅诊断会话开启。
+    bool blackFrameProbe = false;
     /// 帧级按需渲染(默认关):画面与在途工作都收敛后停止排帧,宿主线程真正
     /// 睡下去,直到输入/异步产物把它唤醒。对齐 maplibre 的事件型+收敛型双
     /// 判据(见 Engine::setFrameGatingEnabled 的注释)。

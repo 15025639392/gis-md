@@ -246,6 +246,12 @@ public:
     ///    kFixedSimulationJulianDate),抖动/jitter 类效果必须关。否则合法的
     ///    逐帧变化会让它一直报警 —— 而"一直报警"比没有守卫更糟,人会学会无视。
     void setShadowVerifyEnabled(bool enabled) { shadowVerifyEnabled_ = enabled; }
+
+    /// 黑块探针(漏底/黑块诊断):swap 前逐帧回读降采样帧,近黑占比超阈值逐帧
+    /// 告警,300 帧心跳报活。含同步回读(~1-2ms/帧),仅诊断会话开启。
+    void setBlackFrameProbeEnabled(bool enabled) {
+        blackFrameProbeEnabled_ = enabled;
+    }
     bool shadowVerifyEnabled() const { return shadowVerifyEnabled_; }
 
     void setFrameGatingEnabled(bool enabled);
@@ -319,6 +325,12 @@ private:
     /// 上一帧是否真的呈现了(false = 被 presentation hold 扣住)。
     bool lastFramePresented_ = true;
     int settleFrames_ = 0;
+    // 黑块探针状态(见 setBlackFrameProbeEnabled)。
+    bool blackFrameProbeEnabled_ = false;
+    std::vector<uint8_t> blackProbeScratch_;
+    uint64_t blackProbeFrames_ = 0;
+    uint64_t blackProbeHits_ = 0;
+    double blackProbeWorstFrac_ = 0.0;
     // 影子渲染自检状态(见 setShadowVerifyEnabled)。
     bool shadowVerifyEnabled_ = false;
     int shadowVerifyFramesLeft_ = 0;

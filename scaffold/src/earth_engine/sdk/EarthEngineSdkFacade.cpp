@@ -617,6 +617,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     engine_.setVtIndirectionSamplePocEnabled(config_.vtIndirectionSamplePoc);
     engine_.setTerrainPageStoreEnabled(config_.terrainPageStore);
     engine_.setGpuPassTimingEnabled(config_.gpuPassTiming);
+    engine_.setBlackFrameProbeEnabled(config_.blackFrameProbe);
     engine_.setFrameGatingEnabled(config_.frameGating);
     engine_.setShadowVerifyEnabled(config_.shadowVerifyIdle);
 

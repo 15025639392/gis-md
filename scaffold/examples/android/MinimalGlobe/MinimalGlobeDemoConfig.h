@@ -184,6 +184,12 @@ constexpr bool kMeasureVtIndirectionSamplePoC = false;
 // 作废)见 renderer/GpuFrameTiming.h —— 不读那三条,这些数会被用来下错结论。
 constexpr bool kMeasureGpuPassTiming = false;
 
+// kBlackFrameProbe:黑块探针(漏底/黑块诊断)。swap 前逐帧回读降采样帧,
+// 近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning(logcat `BlackProbe`),300 帧
+// 心跳报活。截图/录屏抽样会漏帧,这是唯一逐帧不漏的像素判据。含同步回读
+// (~1-2ms/帧)——黑块调查期间开,结案后关。
+constexpr bool kBlackFrameProbe = true;
+
 // kEnableFrameGating:帧级按需渲染。收敛后停止排帧,渲染线程真正睡下去。
 // 静止是地图 app 的绝大多数时间,这段时间此前是逐 vsync 全量重建+重绘 ——
 // 实测静止场景 GPU busy 86%、渲染线程 64% 单核,全部是纯浪费。

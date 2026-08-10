@@ -275,6 +275,7 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // GPU 逐区间计时(见 header)。默认关:每帧 ~8 个 timer query,是测量台不是
     // 生产开销。要查 GPU 时间去哪了就把 header 里那个常量翻 true。
     config.gpuPassTiming = kMeasureGpuPassTiming;
+    config.blackFrameProbe = kBlackFrameProbe;
     config.frameGating = kEnableFrameGating;
     config.shadowVerifyIdle = kShadowVerifyIdle;
     config.fixedSimulationJulianDate = kFixedSimulationJulianDate;

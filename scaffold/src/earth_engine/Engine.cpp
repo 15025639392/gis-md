@@ -689,6 +689,56 @@ bool Engine::render(double deltaSeconds) {
     }
 
     lastFramePresented_ = scenePresented;
+    // 黑块探针(漏底/黑块诊断):swap 前逐帧降采样回读,统计近黑像素占比。
+    // 为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有"
+    // (漏底案实测:HoleQual drop=0 的帧仍可能画出黑块 —— 机制信号量的是
+    // "选中未建条",黑块可能来自"画了但纹理黑",两者正交,只有像素级
+    // 逐帧信号能兜底)。近黑判据 RGB 全 ≤8:真实影像的山影是深灰绿,
+    // 大块纯黑只会来自未就绪纹理/清屏底色。含同步回读(~1-2ms/帧),
+    // 仅诊断会话开启。
+    if (blackFrameProbeEnabled_ && device_) {
+        const int grid = device_->captureFrameSample(blackProbeScratch_);
+        if (grid <= 0) {
+            // 回读不可用时必须显式报告并关闭 —— "打开了但没数"与"没黑块"
+            // 读数相同,静默降级会把瞎掉的守卫伪装成绿色(ShadowVerify 踩过)。
+            blackFrameProbeEnabled_ = false;
+            platformLog(LogLevel::Warning, "BlackProbe",
+                        "disabled: 帧采样不可用(后端不支持或回读失败)");
+        } else {
+            const size_t n = blackProbeScratch_.size();
+            int dark = 0;
+            for (size_t i = 0; i + 3 < n; i += 4) {
+                if (blackProbeScratch_[i] <= 8 &&
+                    blackProbeScratch_[i + 1] <= 8 &&
+                    blackProbeScratch_[i + 2] <= 8) {
+                    ++dark;
+                }
+            }
+            const double frac =
+                static_cast<double>(dark) /
+                static_cast<double>(grid * grid);
+            ++blackProbeFrames_;
+            if (frac > blackProbeWorstFrac_) blackProbeWorstFrac_ = frac;
+            // 0.5% ≈ 256² 里 328 像素,一块可见瓦片的量级;低于它的零星
+            // 黑点(文字描边/UI)不报。
+            if (frac >= 0.005) {
+                ++blackProbeHits_;
+                platformLog(LogLevel::Warning, "BlackProbe",
+                            "frame=%llu darkFrac=%.4f dark=%d grid=%d",
+                            static_cast<unsigned long long>(
+                                scene_->frameState().frameId),
+                            frac, dark, grid);
+            }
+            // 心跳:证明探针活着。"无告警"必须能与"没在跑"区分开。
+            if ((blackProbeFrames_ % 300) == 1) {
+                platformLog(LogLevel::Info, "BlackProbe",
+                            "alive frames=%llu hits=%llu worst=%.4f",
+                            static_cast<unsigned long long>(blackProbeFrames_),
+                            static_cast<unsigned long long>(blackProbeHits_),
+                            blackProbeWorstFrac_);
+            }
+        }
+    }
     // 影子渲染自检:在 swap **之前**取帧指纹(见 setShadowVerifyEnabled)。
     // 只在自检窗口里跑 —— 这一步含同步回读,常开会污染所有帧时读数。
     if (shadowVerifyFramesLeft_ > 0 && device_) {
