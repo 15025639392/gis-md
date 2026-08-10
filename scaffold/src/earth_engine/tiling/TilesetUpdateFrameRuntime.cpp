@@ -4,7 +4,11 @@
 #include "TileContentAccess.h"
 #include "TileContentLifecycleManager.h"
 #include "TileFrameWorkCoordinator.h"
+#include "TileRasterOverlayPrefetcher.h"
+#include "TileRasterOverlayReadinessPolicy.h"
 #include "TileRenderPlanFrameRefresher.h"
+#include "TileScheme.h"
+#include "TileSelectionRasterOverlayPreparer.h"
 #include "Tileset.h"
 #include "TilesetProviderDiagnosticsCollector.h"
 #include "TilesetSelectionFrameFacade.h"
@@ -16,7 +20,80 @@ namespace {
 
 constexpr double kPostInteractionResourceSmoothingSeconds = 1.25;
 
+// 根层预载(漏底/黑块根修最后一块,cesium levelZero 语义):钉扎只保证
+// "加载过不淘汰",从未加载过的区域(冷会话捏到新经度)整条祖先链无数据,
+// finalizer 无祖先可回落 → 选中瓦片被丢 → 高空背景即太空黑(真机 BlackProbe
+// darkFrac 51% × HoleQual notex dropz=1-5 逐帧对齐实证)。启动后把全球 z≤2
+// 种入加载队列(Preload 组,不与视野竞争),配合钉扎 → "任何区域任何时刻
+// 都有可画祖先"从此恒成立,最坏是糊到 z2(1/16 分辨率),不再是黑。
+//
+// 深度取 2 不取 3:Geographic-TMS 全球 z≤2 = 42 片(GPU 影像 ~11MB 级),
+// z≤3 到 170 片 ~43MB —— 地板只要"不黑",z3 的驻留由钉扎负责。
+constexpr int kBaseCoveragePreloadMaxZoom = 2;
+// 影像小泵每帧限额:预载瓦片不进渲染集,常规 prefetch 泵永远轮不到它们
+// ("祖先影像只有进过渲染集才开始拉"的根因),这里单独推进;全就绪后每帧
+// 只剩 42 次就绪检查,零成本自愈(overlay 配置变更使就绪位翻假时自动重拉)。
+constexpr int kBaseCoverageImageryPumpPerFrame = 4;
+
 } // namespace
+
+void TilesetUpdateFrameRuntime::runBaseCoveragePreload(
+    Tileset& tileset,
+    const FrameState& frameState,
+    IPrepareRendererResources* pPrepRenderer) {
+    const TileScheme& scheme = *tileset.tileScheme_;
+    if (!tileset.baseCoveragePreloadSeeded_) {
+        for (int z = 0; z <= kBaseCoveragePreloadMaxZoom; ++z) {
+            for (int x = 0; x < scheme.tileCountX(z); ++x) {
+                for (int y = 0; y < scheme.tileCountY(z); ++y) {
+                    const TileKey key{scheme.id(), z, x, y};
+                    if (tileset.contentAccess_.ensureTile(key)) {
+                        tileset.loadQueue_.queue(
+                            key, TileLoadPriorityGroup::Preload, 0.0);
+                    }
+                }
+            }
+        }
+        tileset.baseCoveragePreloadSeeded_ = true;
+        platformLog(LogLevel::Info, "BaseCoverage",
+                    "preload seeded z0..%d", kBaseCoveragePreloadMaxZoom);
+    }
+    if (tileset.rasterOverlays_.empty()) {
+        return;
+    }
+    const std::vector<size_t> overlayOrder =
+        TileSelectionRasterOverlayPreparer::processingOrder(
+            tileset.rasterOverlays_);
+    int pumped = 0;
+    for (int z = 0; z <= kBaseCoveragePreloadMaxZoom; ++z) {
+        for (int x = 0; x < scheme.tileCountX(z); ++x) {
+            for (int y = 0; y < scheme.tileCountY(z); ++y) {
+                TilesetTile* tile = tileset.tileRegistry_.findTile(
+                    TileKey{scheme.id(), z, x, y});
+                if (!tile || !tile->canPrepareRasterOverlays()) {
+                    continue;
+                }
+                if (TileRasterOverlayReadinessPolicy::
+                        requiredBaseImageryDrawableReady(
+                            *tile, tileset.rasterOverlays_)) {
+                    continue;
+                }
+                TileRasterOverlayPrefetcher::prefetch(
+                    *tile,
+                    tileset.rasterOverlays_,
+                    overlayOrder,
+                    tileset.device_,
+                    tileset.options_.maximumScreenSpaceError,
+                    tileset.frameResourceBudget_,
+                    pPrepRenderer,
+                    frameState.frameId);
+                if (++pumped >= kBaseCoverageImageryPumpPerFrame) {
+                    return;
+                }
+            }
+        }
+    }
+}
 
 TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     Tileset& tileset,
@@ -124,6 +201,10 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
         });
     if (frameWork.selectionWork.reusedSelection) {
         tileset.retirePreviousSelectionReferencesForReuse();
+    }
+    // 根层预载(仅承担底图覆盖的 tileset;内容树 pinBaseCoverage 默认关)。
+    if (tileset.options_.pinBaseCoverage) {
+        runBaseCoveragePreload(tileset, frameState, pPrepRenderer);
     }
     // Drain the async GPU upload queue.  Terrain CPU work dispatched to
     // worker threads by processPendingLoads lands here for GPU upload.

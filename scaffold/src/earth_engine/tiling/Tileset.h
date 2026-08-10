@@ -78,10 +78,12 @@ struct TilesetOptions {
     // 默认 false = 忠实 cesium-native(不改 golden);true 才启用。
     bool cullRequestsWhileMoving = false;
     double cullRequestsWhileMovingMultiplier = 60.0;
-    // 根层常驻(漏底根修):z ≤ kPinnedBaseCoverageMaxZoom 的瓦片一经加载
-    // 豁免预算驱逐,保证"选中瓦片必然有可画祖先"。只应对承担底图覆盖的
-    // 地形 tileset 开启(SDK 场景路径设 true);内容树默认 false。
-    // 语义全文见 TileBaseCoveragePin.h。
+    // 根层常驻 + 启动预载(漏底根修):z ≤ kPinnedBaseCoverageMaxZoom 的瓦片
+    // 一经加载豁免预算驱逐;开启后 update 期还会把全球根层(z≤2)种入
+    // Preload 队列并单独推进其影像(见 TilesetUpdateFrameRuntime 的
+    // runBaseCoveragePreload)。只应对承担底图覆盖的地形 tileset 开启
+    // (SDK 场景路径设 true);内容树默认 false。语义全文见
+    // TileBaseCoveragePin.h。
     bool pinBaseCoverage = false;
     // Terrain fill proxy (cesium-js TerrainFillMesh model): give each visible
     // tile still loading real terrain a drape-ready ellipsoid proxy so imagery
@@ -382,6 +384,8 @@ private:
     TileCacheOwnershipManager cacheOwnership_;
     TileRasterUpsampledChildCoordinator rasterUpsampledChildren_;
     uint64_t generation_ = 0;
+    // 根层预载一次性种子(见 TilesetUpdateFrameRuntime::runBaseCoveragePreload)。
+    bool baseCoveragePreloadSeeded_ = false;
     bool interactionActiveForFrame_ = false;
     bool resourceSmoothingActiveForFrame_ = false;
     FrameResourceBudget frameResourceBudget_;
