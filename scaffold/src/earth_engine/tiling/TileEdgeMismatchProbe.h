@@ -119,13 +119,18 @@ struct TileEdgeMismatchProbe {
         Stats compensated;
         /// fadeDiffer 台阶的**可接受性判据**:台阶本身多大不重要,重要的是
         /// 它有没有被裙墙盖住 —— 盖住就只是"两侧高度不同"(设计使然),
-        /// 盖不住就是透天洞(缺陷)。ratio = 台阶 / 本瓦片裙墙高度。
-        /// ⚠️ 取的是**本瓦片**的裙墙,不是两侧较大者:偏保守,ratio>1 未必真漏,
-        /// 但 ratio<=1 一定不漏。先要一个不会漏报的闸,再谈收紧。
+        /// 盖不住就是透天洞(缺陷)。
+        ///
+        /// ⚠️ **必须按高的那一侧取裙墙**:裙墙从瓦片边缘向下挂,能盖住缝的
+        /// 只有**高侧**那道 —— 低侧的裙墙挂在缝底下,盖不到任何东西。而两侧
+        /// 裙墙长度差很多(∝ 瓦片宽度,粗侧长得多),取错边会把结论整个反过来:
+        /// 首版用无符号差值 + 恒取细侧裙墙,读出 overSkirt=26/70,其中把
+        /// 「粗侧在上、粗侧长裙墙盖得住」的那些也算成了漏洞。
         int fadeDifferSamples = 0;
-        int fadeDifferOverSkirt = 0;   // ratio > 1 的样本数
+        int fadeDifferOverSkirt = 0;   // 高侧裙墙也盖不住 = 真漏洞
         float fadeDifferMaxRatio = 0.0f;
-        double fadeDifferSkirtMeters = 0.0;  // 最近一次的裙墙高度(量级参考)
+        int fadeDifferFineAbove = 0;   // 细侧在上(用细侧短裙墙)的样本数
+        double fadeDifferSkirtMeters = 0.0;  // 最近一次高侧裙墙(量级参考)
         int skippedEdges = 0;  // 取不到两侧 heightmap,无法比较
 
         void merge(const Result& o) {
@@ -136,6 +141,7 @@ struct TileEdgeMismatchProbe {
             fadeDifferOverSkirt += o.fadeDifferOverSkirt;
             fadeDifferMaxRatio =
                 std::max(fadeDifferMaxRatio, o.fadeDifferMaxRatio);
+            fadeDifferFineAbove += o.fadeDifferFineAbove;
             if (o.fadeDifferSkirtMeters > 0.0) {
                 fadeDifferSkirtMeters = o.fadeDifferSkirtMeters;
             }
@@ -168,6 +174,11 @@ struct TileEdgeMismatchProbe {
                 Stats& st = (std::fabs(ownFade - ns.fade) > 1e-3f)
                                 ? out.fadeDiffer
                                 : out.fadeUniform;
+                // 邻居(粗侧)的裙墙:它自己的瓦片宽度决定,通常远长于细侧。
+                const double nbrSkirt =
+                    ns.bounds ? calcQuadtreeSkirtHeight(Ellipsoid::WGS84(),
+                                                        *ns.bounds)
+                              : 0.0;
                 ++st.edges;
                 // 吸附节点:自栅格上每 2^lg 一个 → 共 gridN/2^lg + 1 个。
                 const int step = 1 << lg;
@@ -186,14 +197,21 @@ struct TileEdgeMismatchProbe {
                     const float other = terrain_edge::renderedHeight(ns, lon, lat);
                     const float diff = std::fabs(own - other);
                     st.add(diff);
-                    if (&st == &out.fadeDiffer && skirt > 0.0) {
+                    if (&st == &out.fadeDiffer && skirt > 0.0 &&
+                        nbrSkirt > 0.0) {
                         ++out.fadeDifferSamples;
+                        // own > other = 细侧在上 → 只有细侧那道(较短的)
+                        // 裙墙能盖住缝;反之用粗侧那道(较长的)。
+                        const bool fineAbove = own > other;
+                        if (fineAbove) ++out.fadeDifferFineAbove;
+                        const double coveringSkirt =
+                            fineAbove ? skirt : nbrSkirt;
                         const float ratio =
-                            diff / static_cast<float>(skirt);
+                            diff / static_cast<float>(coveringSkirt);
                         out.fadeDifferMaxRatio =
                             std::max(out.fadeDifferMaxRatio, ratio);
                         if (ratio > 1.0f) ++out.fadeDifferOverSkirt;
-                        out.fadeDifferSkirtMeters = skirt;
+                        out.fadeDifferSkirtMeters = coveringSkirt;
                     }
                 }
                 // 补偿后残差:只在 fadeUniform 群体上量(fadeDiffer 的台阶是

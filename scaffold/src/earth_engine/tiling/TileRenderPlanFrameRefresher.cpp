@@ -99,9 +99,10 @@ void logEdgeMismatch(const TilePlan& plan) {
     // 「设计使然」这个说法成立;>0 → 那些是透天洞,不是设计。
     if (window.fadeDifferSamples > 0) {
         platformLog(LogLevel::Info, "SeamDiag",
-                    "  fadeDifferSkirt n=%d overSkirt=%d maxRatio=%.2f "
-                    "skirt=%.1fm",
+                    "  fadeDifferSkirt n=%d overSkirt=%d fineAbove=%d "
+                    "maxRatio=%.2f skirt=%.1fm",
                     window.fadeDifferSamples, window.fadeDifferOverSkirt,
+                    window.fadeDifferFineAbove,
                     static_cast<double>(window.fadeDifferMaxRatio),
                     window.fadeDifferSkirtMeters);
     }
