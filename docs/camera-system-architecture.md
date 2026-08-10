@@ -76,10 +76,17 @@ CameraConstraintSolver → Camera（唯一世界位姿真值）
 
 ### 2.3 关键不变量
 
-- **所有控制器只"提议"世界位姿，不自行钳位、不直接写 `Camera`。**
+- **`CameraConstraintSolver` 是唯一的钳位实现。** 调用点可以有多个（手势期是
+  事件内多步闭环：dolly→twist→pitch→pin 每步都要在合法位姿上继续），但钳位
+  逻辑只有这一处。
+- **绕过钳位直接写 `Camera` 由帧末哨兵的位姿指纹兜底**，不靠"禁止调用"来防。
 - **`onActivate(currentWorldPose)`：控制器接管时从当前世界位姿初始化自身状态 ⇒ 切换零跳变。**
   Tethered 接管时的反解是良态的（frame 已知）；Free 接管时直接存位姿，恒良态。
-- **`CameraConstraintSolver` 是唯一钳位者，`CameraSystem` 是唯一调用它的人。**
+
+> ⚠️ 修订记录：本节初版写的是"所有控制器只提议位姿、`CameraSystem` 是唯一调用
+> solver 的人"。那条**已否决**（74692775b）。它要防的两件事上面两条已经解决，
+> 它自己却制造了"事件内多步闭环 vs 只能提议位姿"的两难——回调注入和返回提议
+> 列表两种绕法，都是在给不存在的问题设计绕法。去掉它是净删除。**别再加回来。**
 
 ### 2.4 推论：orbit 模式整体删除
 
@@ -226,22 +233,28 @@ struct CameraPose {
 
 ---
 
-## 6. 位姿写入的唯一出口
+## 6. 位姿钳位的两条路径
 
-现有 `resolveConstraints(ConstraintContext)` + 帧末指纹哨兵是本次要**保住**的资产，不重写。
-唯一变化：调用权收归 `CameraSystem`。
+帧末指纹哨兵是本次要**保住**的资产。变化是把原先挤在一个
+`resolveConstraints(ConstraintContext)` 里的两条路径拆开——那个 context 的
+`source` 枚举唯一作用就是区分"是不是帧末"，六个调用点各自现场装配一个 3 字段
+结构只为传这一个 bit。
+
+| 路径 | 谁调 | 语义 | user-driven | dt | pinnedAnchor |
+|---|---|---|---|---|---|
+| `clampNow` | 手势 / 惯性（控制器内，直呼 solver） | 我刚动了相机，钳一下 | 恒 true | 0 | 有 |
+| `resolveAtFrameEnd` | `CameraSystem` 帧末 | 检查有没有人绕过我 | 指纹判定 | 真实 dt | 无 |
 
 ```
 每帧 CameraSystem::update(dt)
-  ├─ 1. 帧时钟推进（探针"每帧至多重建一次"的时钟）
+  ├─ 1. solver.beginFrame()（探针"每帧至多重建一次"的时钟）
   ├─ 2. 覆盖层检查（Script / Freeze）
-  ├─ 3. selector.current()->evaluate(dt) → ProposedPose{pose, pinnedAnchor?}
-  ├─ 4. solver.resolve(提议位姿, 语义) → 落定位姿 + groundState
-  └─ 5. 帧末哨兵：指纹比对，收编绕过本系统的裸写
+  ├─ 3. selector.current()->evaluate(dt)   ← 控制器内部按需自行 clampNow
+  └─ 4. resolveAtFrameEnd(dt)：指纹比对，收编绕过的裸写
 ```
 
-手势事件路径不变：仍在事件内立即解约束（否则锚点会漂）。
-**`ProposedPose::pinnedAnchor` 是保锚退出方向的输入，这条线不能在拆分中丢。**
+**手势期必须在事件内闭环钳位**——延到帧末锚点会漂。
+**`clampNow(pinnedAnchor)` 是保锚退出方向的输入，这条线不能在拆分中丢。**
 
 ---
 
