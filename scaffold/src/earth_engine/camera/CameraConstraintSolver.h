@@ -101,13 +101,19 @@ public:
                             double deltaSeconds,
                             const glm::dvec3* pinnedAnchorWorld);
 
-    /// 记录本次约束出口落定的 eye，作为下次扫掠走廊的位移基准。
+    /// 记录本次解算落定的位姿。一次提交同时服务两件事：
+    ///   ① eye = 下次扫掠走廊的位移基准；
+    ///   ② (eye, dir) = 位姿指纹，供帧末哨兵判「期间有没有人绕过钳位裸写」。
+    /// 两者本就同源同时机（都是"上次解算完相机在哪"），分开存只会漂。
     ///
-    /// ⚠️ 必须由编排层在**约束出口末尾恰好调一次**，不能塞进 constrainEye
-    /// 内部自动更新：orbit 分支一次解算里会调用 constrainEye 两轮，两轮必须
-    /// 看到同一个（上一帧的）基准，否则第二轮的 sweep 会拿第一轮的结果当
-    /// 历史，探针半径与走廊方向随之改变。
-    void commitPose(const glm::dvec3& eye);
+    /// ⚠️ 必须在解算落定后调用，不能塞进 constrainEye 内部自动更新：
+    /// constrainEye 开头才读上一次的基准算 sweep，塞进去就变成读自己。
+    void commitPose(const glm::dvec3& eye, const glm::dvec3& direction);
+
+    /// 位姿是否与上次 commitPose 记录的不同（阈值与历史实现一致：位置 1e-6 m、
+    /// 方向 1e-9）。从未提交过时返回 false（没有基准可比，不能算"被改过"）。
+    bool poseChangedSince(const glm::dvec3& eye,
+                          const glm::dvec3& direction) const;
 
 private:
     /// 近场探针按需重建（中心漂移/半径变化/代次变化；每帧至多 1 次）。
@@ -145,9 +151,10 @@ private:
     uint64_t frameIndex_ = 0;
     uint64_t lastProbeRebuildFrame_ = ~0ull;
 
-    // 上次约束出口落定的 eye（扫掠走廊的位移基准，见 commitPose）。
-    bool hasLastResolvedEye_ = false;
+    // 上次解算落定的位姿：eye 作扫掠基准，(eye, dir) 作帧末指纹。见 commitPose。
+    bool hasLastResolvedPose_ = false;
     glm::dvec3 lastResolvedEye_{0.0};
+    glm::dvec3 lastResolvedDirection_{0.0};
 };
 
 } // namespace earth_engine

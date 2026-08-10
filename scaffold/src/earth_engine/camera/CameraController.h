@@ -251,7 +251,7 @@ private:
     /// @return 位姿是否被修改
     bool resolveAtFrameEnd(double deltaSeconds);
 
-    /// 记录解算落定的位姿：指纹（供下次帧末比对）+ solver 扫掠基准，同源同时机。
+    /// 把解算落定的位姿提交给 solver（同时作扫掠基准与帧末指纹）。
     void commitResolvedPose();
 
     /// update() 的原函数体（惯性/回中）；帧末哨兵在 update() 包装层。
@@ -262,11 +262,6 @@ private:
     // 地形探针/突变滤波/碰撞钳位/groundState 全部归它；本类只在
     // resolveConstraints 这一个出口调用它。
     CameraConstraintSolver constraintSolver_;
-    // 上次 resolveConstraints 通过后的位姿指纹：帧末不等 ⇒ 有人绕过控制器
-    // 写了 Camera（Facade/JNI 裸写）,按 user-driven 处理（突变滤波消费）。
-    bool hasLastResolvedPose_ = false;
-    glm::dvec3 lastResolvedEye_{0.0};
-    glm::dvec3 lastResolvedDir_{0.0};
     int viewportWidth_ = 1;
     int viewportHeight_ = 1;
 

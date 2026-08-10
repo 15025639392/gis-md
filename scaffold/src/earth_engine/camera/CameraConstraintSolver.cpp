@@ -60,9 +60,18 @@ void CameraConstraintSolver::setTerrainRevisionFunc(
     terrainRevisionFunc_ = std::move(func);
 }
 
-void CameraConstraintSolver::commitPose(const glm::dvec3& eye) {
+void CameraConstraintSolver::commitPose(const glm::dvec3& eye,
+                                        const glm::dvec3& direction) {
     lastResolvedEye_ = eye;
-    hasLastResolvedEye_ = true;
+    lastResolvedDirection_ = direction;
+    hasLastResolvedPose_ = true;
+}
+
+bool CameraConstraintSolver::poseChangedSince(
+    const glm::dvec3& eye, const glm::dvec3& direction) const {
+    if (!hasLastResolvedPose_) return false;
+    return glm::length(eye - lastResolvedEye_) > 1e-6 ||
+           glm::length(direction - lastResolvedDirection_) > 1e-9;
 }
 
 glm::dvec3 CameraConstraintSolver::constrainEye(
@@ -187,7 +196,7 @@ void CameraConstraintSolver::refreshTerrainProbeIfNeeded(const glm::dvec3& eye,
     const double aglPrev = std::max(0.0, groundState_.heightAboveTerrain);
     // 单帧水平位移(扫掠项):与上次解算位置的水平分量差。
     glm::dvec3 sweepVec(0.0);
-    if (hasLastResolvedEye_) {
+    if (hasLastResolvedPose_) {
         const glm::dvec3 up = glm::normalize(eye);
         const glm::dvec3 d = eye - lastResolvedEye_;
         sweepVec = d - up * glm::dot(d, up);

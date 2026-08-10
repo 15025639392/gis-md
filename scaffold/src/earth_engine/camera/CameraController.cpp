@@ -514,10 +514,8 @@ bool CameraController::resolveAtFrameEnd(double deltaSeconds) {
     // 写入（viewDistance/setNadirOrbitView/回中/scriptedPan/外部裸写）——都是
     // 用户或调用方主动为之，按 user-driven 处理（滤波立即）。
     // 数据驱动 = 位姿没动、只有地形样本变。
-    const bool userDriven =
-        hasLastResolvedPose_ &&
-        (glm::length(camera_->position().raw() - lastResolvedEye_) > 1e-6 ||
-         glm::length(camera_->direction().raw() - lastResolvedDir_) > 1e-9);
+    const bool userDriven = constraintSolver_.poseChangedSince(
+        camera_->position().raw(), camera_->direction().raw());
 
     const glm::dvec3 eye = camera_->position().raw();
     const glm::dvec3 clamped = constraintSolver_.constrainEye(
@@ -531,12 +529,8 @@ bool CameraController::resolveAtFrameEnd(double deltaSeconds) {
 }
 
 void CameraController::commitResolvedPose() {
-    // 位姿指纹：下一次帧末解算与之比对，不等 ⇒ 期间有绕过本类的裸写。
-    lastResolvedEye_ = camera_->position().raw();
-    lastResolvedDir_ = camera_->direction().raw();
-    hasLastResolvedPose_ = true;
-    // solver 的扫掠走廊基准与指纹同源同时机（都在解算落定后恰好提交一次）。
-    constraintSolver_.commitPose(lastResolvedEye_);
+    constraintSolver_.commitPose(camera_->position().raw(),
+                                 camera_->direction().raw());
 }
 
 void CameraController::setMeasurementFreeze(bool frozen) {
