@@ -197,21 +197,27 @@ struct TileEdgeMismatchProbe {
                     const float other = terrain_edge::renderedHeight(ns, lon, lat);
                     const float diff = std::fabs(own - other);
                     st.add(diff);
-                    if (&st == &out.fadeDiffer && skirt > 0.0 &&
-                        nbrSkirt > 0.0) {
+                    if (&st == &out.fadeDiffer) {
                         ++out.fadeDifferSamples;
-                        // own > other = 细侧在上 → 只有细侧那道(较短的)
-                        // 裙墙能盖住缝;反之用粗侧那道(较长的)。
                         const bool fineAbove = own > other;
                         if (fineAbove) ++out.fadeDifferFineAbove;
-                        const double coveringSkirt =
-                            fineAbove ? skirt : nbrSkirt;
-                        const float ratio =
-                            diff / static_cast<float>(coveringSkirt);
-                        out.fadeDifferMaxRatio =
-                            std::max(out.fadeDifferMaxRatio, ratio);
-                        if (ratio > 1.0f) ++out.fadeDifferOverSkirt;
-                        out.fadeDifferSkirtMeters = coveringSkirt;
+                        // ⚠️ 裙墙模型必须跟**当前实现**走,不能跟旧常量走。
+                        // 共享位移模板的裙墙不是 calcQuadtreeSkirtHeight
+                        // (那条 5·maxGeomError·width 的老路已因粗 LOD 膨胀成
+                        // 24-385km 巨墙被废弃,见 TerrainDisplacementTemplate.cpp),
+                        // 而是「从位移后的边顶点垂到椭球面 h=0」——裙顶点被打成
+                        // heightDelta=-1 哨兵、shader 对它跳过位移。
+                        // 于是高侧那道墙覆盖区间恒为 [0, h_high]:只要低侧
+                        // h_low>=0 就一定被盖住,盖不住只发生在低侧落到椭球面
+                        // **以下**(负海拔)时。
+                        const float high = std::max(own, other);
+                        const float low = std::min(own, other);
+                        const float wall = std::max(high, 0.0f);
+                        out.fadeDifferMaxRatio = std::max(
+                            out.fadeDifferMaxRatio,
+                            wall > 0.0f ? diff / wall : 0.0f);
+                        if (low < 0.0f) ++out.fadeDifferOverSkirt;
+                        out.fadeDifferSkirtMeters = wall;
                     }
                 }
                 // 补偿后残差:只在 fadeUniform 群体上量(fadeDiffer 的台阶是
