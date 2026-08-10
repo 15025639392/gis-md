@@ -497,6 +497,7 @@ struct EdgeLutStats {
     int noPool = 0;        // 模板池缺失或档位非法
     int emptyLut = 0;      // 四条边一条也建不出(邻居 heightmap 取不到)
     int uploadFail = 0;    // 层不在驻留 / 尺寸不符
+    int notTemplate = 0;  // 命令不在位移路径上(见 uploadTerrainEdgeLut)
     void reset() { *this = EdgeLutStats{}; }
 };
 EdgeLutStats gEdgeLut;
@@ -513,7 +514,13 @@ bool uploadTerrainEdgeLut(Renderer& renderer, const TilesetTile& tile,
     TerrainDisplacementTemplatePool* pool = renderer.terrainDisplacementPool();
     const int gridSize = cmd.terrainHeightGridSize;
     if (!rec) { ++gEdgeLut.noRecord; return false; }
-    if (!pool || gridSize <= 0) { ++gEdgeLut.noPool; return false; }
+    if (!pool) { ++gEdgeLut.noPool; return false; }
+    // gridSize 只在位移模板 swap 成功时被写进命令。它 <=0 意味着**这条命令
+    // 根本不在位移路径上**(fade=0 的粗瓦片走 baked VBO、fill 代理、或 swap
+    // 失败)—— 那些命令用的是 gltfShader,压根没有吸附分支,LUT 对它们无处可施。
+    // 单列成 notTemplate 而不是并进 noPool:并着看会让 rate 读起来像「补偿层
+    // 有 10~19% 的瓦片失效」,而实际上那些瓦片本来就不该被算进分母。
+    if (gridSize <= 0) { ++gEdgeLut.notTemplate; return false; }
     const TerrainEdgeHeightLut::Data lut =
         TerrainEdgeHeightLut::build(*rec, gridSize);
     if (!lut.hasAny()) {
@@ -560,13 +567,22 @@ void logEdgeLutStats(uint64_t frameNumber) {
     if (gEdgeLut.attempts == 0) { gEdgeLut.reset(); return; }
     platformLog(LogLevel::Info, "SeamDiag",
                 "edgeLut frame=%llu win=%llu attempts=%d ok=%d rate=%.3f "
-                "noRecord=%d noPool=%d emptyLut=%d uploadFail=%d",
+                "applicable=%d appRate=%.3f "
+                "noRecord=%d noPool=%d notTemplate=%d emptyLut=%d "
+                "uploadFail=%d",
                 static_cast<unsigned long long>(frameNumber),
                 static_cast<unsigned long long>(kEdgeLutLogPeriod),
                 gEdgeLut.attempts, gEdgeLut.ok,
                 static_cast<double>(gEdgeLut.ok) / gEdgeLut.attempts,
-                gEdgeLut.noRecord, gEdgeLut.noPool, gEdgeLut.emptyLut,
-                gEdgeLut.uploadFail);
+                // applicable = 真正在位移路径上、LUT 有处可施的那些;appRate
+                // 才是「补偿层覆盖率」。rate 的分母含不适用者,会低估。
+                gEdgeLut.attempts - gEdgeLut.notTemplate,
+                gEdgeLut.attempts > gEdgeLut.notTemplate
+                    ? static_cast<double>(gEdgeLut.ok) /
+                          (gEdgeLut.attempts - gEdgeLut.notTemplate)
+                    : 1.0,
+                gEdgeLut.noRecord, gEdgeLut.noPool, gEdgeLut.notTemplate,
+                gEdgeLut.emptyLut, gEdgeLut.uploadFail);
     gEdgeLut.reset();
 }
 
