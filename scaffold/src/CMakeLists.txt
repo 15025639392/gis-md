@@ -133,6 +133,7 @@ target_sources(earth_engine_core PRIVATE
 # ============================================================
 target_sources(earth_engine_core PRIVATE
     earth_engine/camera/CameraController.h
+    earth_engine/camera/CameraConstraintSolver.cpp
     earth_engine/camera/CameraController.cpp
 )
 

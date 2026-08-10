@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../core/math/Vec3.h"
+#include "CameraConstraintSolver.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cstdint>
@@ -29,31 +30,13 @@ public:
     using SurfacePicker = std::function<bool(float xPixels, float yPixels, Vec3& outPoint)>;
     void setSurfacePicker(SurfacePicker picker);
 
-    /// Returns height above WGS84 ellipsoid (meters) at the given ECEF position,
-    /// or nullopt when no terrain data covers the point (unloaded / no coverage).
-    /// When set, collision clamping uses terrain height instead of bare ellipsoid;
-    /// on nullopt the clamp holds the last known terrain height rather than
-    /// treating the point as sea level (which would let the eye sink into
-    /// not-yet-loaded terrain).
-    using TerrainHeightFunc =
-        std::function<std::optional<double>(const Vec3& ecefPosition)>;
-    void setTerrainHeightFunc(TerrainHeightFunc func);
+    // 地形约束相关的类型与注入口全部归 CameraConstraintSolver；这里保留
+    // 转发别名与转发方法，调用方（Scene 装配、宿主、测试）无需改动。
+    using TerrainHeightFunc = CameraConstraintSolver::TerrainHeightFunc;
+    using TerrainSample = CameraConstraintSolver::TerrainSample;
+    using TerrainAreaSampleFunc = CameraConstraintSolver::TerrainAreaSampleFunc;
 
-    /// 近场区域批量地形采样注入口（碰撞探针/动态 near 数据源）。以
-    /// groundEcef 为中心，对本地 ENU 偏移（米，x=东 y=北）逐点采样，out 与
-    /// offsets 等长，无覆盖点 valid=false。实现方保证渲染网格一致采样——
-    /// 相机不能穿的是上屏的那张面，不是全分辨率理论面。注入后碰撞钳位
-    /// 改用探针（内环+扫掠走廊最大高），TerrainHeightFunc 退为无探针回退。
-    struct TerrainSample {
-        bool valid = false;
-        Vec3 surfaceEcef;      ///< 地形点（含高度）ECEF
-        double heightMeters = 0.0;  ///< 椭球高
-    };
-    using TerrainAreaSampleFunc = std::function<void(
-        const Vec3& groundEcef,
-        double radiusMeters,
-        const std::vector<glm::dvec2>& localOffsetsMeters,
-        std::vector<TerrainSample>& out)>;
+    void setTerrainHeightFunc(TerrainHeightFunc func);
     void setTerrainAreaSampleFunc(TerrainAreaSampleFunc func);
     /// 地形数据代次（瓦片集变更计数的代理）。变化 ⇒ 探针缓存失效。
     void setTerrainRevisionFunc(std::function<uint64_t()> func);
@@ -175,31 +158,19 @@ public:
 
     /// 相机相对地形的一次解算快照，resolveConstraints 每次刷新。纯读，
     /// 供渲染层（动态 near）、测试与诊断消费，不含策略。
-    struct CameraGroundState {
-        /// 是否已至少解算过一次（false ⇒ 消费方退回各自的旧公式）。
-        bool valid = false;
-        /// 滤波后的近场地形高（椭球高，米）。高空快速路径不采样时保持上值。
-        double terrainHeightMeters = 0.0;
-        /// AGL = 相机椭球高 − terrainHeightMeters。
-        double heightAboveTerrain = 0.0;
-        /// eye 到近场地形几何的保守最小三维距离（米）：探针采样最小距离与
-        /// "盘外墙"下界（盘外地形水平偏移 ≥ R_probe、高度 ≤ 9000m ⇒ 距离
-        /// ≥ √(R²+max(0,H−9000)²)）取 min；高空快速路径 = 椭球高 − 9000；
-        /// 无探针时退化为竖直 AGL。动态 near 消费。
-        double nearestGeometryMeters = 0.0;
-        /// 本次解算是否拿到了有效地形样本（false = 快速路径/无覆盖）。
-        bool hasTerrainData = false;
-    };
-    const CameraGroundState& groundState() const { return groundState_; }
+    using CameraGroundState = CameraConstraintSolver::GroundState;
+    const CameraGroundState& groundState() const {
+        return constraintSolver_.groundState();
+    }
 
-    /// 碰撞净空 ↔ 动态 near 的耦合契约（禁止单独改动其一）：净空保证
-    /// "最近地形几何 ≥ kMinClearanceMeters"，near = Ratio×最近几何 ≥ Floor
-    /// 才能既压住 z_ndc 病态区又不切脚下地面。
-    static constexpr double kMinClearanceMeters = 50.0;
-    static constexpr double kNearFloorMeters = 5.0;
-    static constexpr double kNearSafetyRatio = 0.5;
-    static_assert(kNearSafetyRatio * kMinClearanceMeters >= kNearFloorMeters,
-                  "near 下限超过净空×安全比:近平面会切进脚下地面");
+    // 碰撞净空 ↔ 动态 near 的耦合契约（含 static_assert）归 solver 持有；
+    // 这里转发，动态 near 的消费方（SceneFrameUpdateCoordinator）不需改动。
+    static constexpr double kMinClearanceMeters =
+        CameraConstraintSolver::kMinClearanceMeters;
+    static constexpr double kNearFloorMeters =
+        CameraConstraintSolver::kNearFloorMeters;
+    static constexpr double kNearSafetyRatio =
+        CameraConstraintSolver::kNearSafetyRatio;
 
     /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。
     double headingRadians() const;
@@ -262,24 +233,6 @@ private:
     void applyCameraRotation(const glm::dquat& delta);
     void syncDistanceFromCamera();
 
-    /// 地形碰撞解算：把 eye 钳到滤波后地形高 + 视觉下限之上（仅抬升，不下压），
-    /// 途中刷新探针/滤波与 groundState_。仅允许 resolveConstraints 调用。
-    /// @param pinnedAnchorWorld 非空时退出方向沿 eye→anchor 直线（方向与
-    ///        dir/up 全不变 ⇒ 锚点像素严格不动）；该直线近水平（后退换不来
-    ///        高度）时退回大地法线径向抬升。
-    glm::dvec3 constrainEyeAgainstTerrain(const glm::dvec3& eye,
-                                          bool userDriven,
-                                          double deltaSeconds,
-                                          const glm::dvec3* pinnedAnchorWorld);
-    /// 近场探针按需重建（中心漂移/半径变化/代次变化；每帧至多 1 次）。
-    void refreshTerrainProbeIfNeeded(const glm::dvec3& eye,
-                                     const Vec3& surface);
-    /// 非对称地形突变滤波：用户驱动/上升/小变动立即，数据驱动大幅下降
-    /// 按 τ 指数逼近（见 .cpp 常量说明）。
-    void updateFilteredTerrainHeight(double rawHeightMeters,
-                                     bool userDriven,
-                                     double deltaSeconds);
-
     /// 相机位姿合法性的唯一出口（choke point）。手势/惯性路径在事件内调用；
     /// update() 帧末哨兵兜底收编所有未显式路由的位姿写入（orbit 重建、
     /// viewDistance/setNadirOrbitView、回中、scriptedPan、外部绕过控制器
@@ -307,31 +260,9 @@ private:
 
     Camera* camera_;
     SurfacePicker surfacePicker_;
-    TerrainHeightFunc terrainHeightFunc_;
-    // 滤波后的近场地形高(米)。无数据时保持现值(保守回退,防 dip→pop)；
-    // 数据驱动的突变经非对称滤波(updateFilteredTerrainHeight)。
-    double filteredTerrainHeight_ = 0.0;
-    CameraGroundState groundState_;
-
-    // 近场地形探针(区域批量采样缓存):同心环(旋转对称,near 口径=全部采样点
-    // 三维最小距离)+扫掠走廊(单帧大位移跨越的山脊,碰撞口径)。每帧至多重建
-    // 1 次,手势期高频事件共享同帧探针。
-    TerrainAreaSampleFunc terrainAreaSampleFunc_;
-    std::function<uint64_t()> terrainRevisionFunc_;
-    struct TerrainProbe {
-        bool valid = false;
-        bool hasData = false;
-        glm::dvec3 centerSurfaceEcef{0.0};
-        double radiusMeters = 0.0;
-        uint64_t revision = 0;
-        /// 碰撞口径:内环(r≤0.15R)+扫掠走廊采样的最大地形高。
-        double collisionMaxHeight = 0.0;
-        /// near 口径:全部有效采样的三维地形点(动态 near 消费)。
-        std::vector<glm::dvec3> samplePointsEcef;
-    };
-    TerrainProbe terrainProbe_;
-    uint64_t frameIndex_ = 0;
-    uint64_t lastProbeRebuildFrame_ = ~0ull;
+    // 地形探针/突变滤波/碰撞钳位/groundState 全部归它；本类只在
+    // resolveConstraints 这一个出口调用它。
+    CameraConstraintSolver constraintSolver_;
     // 上次 resolveConstraints 通过后的位姿指纹：帧末不等 ⇒ 有人绕过控制器
     // 写了 Camera（Facade/JNI 裸写）,按 user-driven 处理（突变滤波消费）。
     bool hasLastResolvedPose_ = false;
