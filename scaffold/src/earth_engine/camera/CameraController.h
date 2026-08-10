@@ -222,9 +222,6 @@ private:
     glm::dquat applyPinchPin(float targetX, float targetY);
     void applyAnchorDrag(float xPixels, float yPixels, double timestamp);
     void applyRotationAroundAxis(const glm::dvec3& axis, double angle);
-    void rotateCameraAroundPoint(const glm::dvec3& center,
-                                 const glm::dvec3& axis,
-                                 double angle);
     /// @return 是否实际施加（被守卫拒绝时返回 false，供 Pitch 反 wind-up）
     bool rotateCameraVerticalAroundPoint(const glm::dvec3& center,
                                          double angle,
@@ -233,7 +230,6 @@ private:
     /// 预算（不动相机，与锚点钉合严格正交），松手后 update() 指数消费。
     void accrueRecenterBudget(double zoomOutLogStep);
     void consumeRecenterBudget(double deltaSeconds);
-    void applyCameraRotation(const glm::dquat& delta);
 
     /// 手势/惯性路径的位姿钳位：调用方刚显式动过相机，故恒 user-driven、
     /// 无帧间隔（dt=0）。与帧末哨兵是**两条性质不同的路径**——前者是"我刚动了，
@@ -319,7 +315,7 @@ private:
     double adapterTwistRadians_ = 0.0;
     // 双指 pan 惯性累积（EMA，静止帧自然衰减向 0）：松手时种进与单指拖拽
     // 共用的 inertiaAxis_/inertiaAngularVelocity_ 通道。zoomInertiaAnchor_
-    // 是固定世界点，pan 惯性转的是相机（applyCameraRotation），世界点不动，
+    // 是固定世界点，pan 惯性转的是相机（rotateAboutOrigin），世界点不动，
     // 双惯性并行无需同转锚点——dolly 朝固定世界点在任意相机旋转下都正确。
     glm::dvec3 pinchPanAxis_{0.0, 1.0, 0.0};
     double pinchPanAngularVelocity_ = 0.0;

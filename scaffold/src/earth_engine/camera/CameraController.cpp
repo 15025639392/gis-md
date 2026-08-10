@@ -1,4 +1,5 @@
 #include "CameraController.h"
+#include "CameraPoseOps.h"
 #include "../debug/PlatformLog.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -292,9 +293,8 @@ void CameraController::onPinchGesture(const PinchInput& input) {
         pinchAppliedTwistRadians_ =
             static_cast<double>(input.twistFromStartRadians);
         if (std::abs(twistStep) > 0.0) {
-            rotateCameraAroundPoint(anchorWorld,
-                                    pinchAnchorNormal_.raw(),
-                                    twistStep);
+            camera_ops::rotateAboutPoint(*camera_, anchorWorld,
+                                         pinchAnchorNormal_.raw(), twistStep);
         }
 
         // ③ pitch（仅 Pitch 模式）：质心 Y 相对基线的绝对映射，绕锚点
@@ -442,7 +442,7 @@ void CameraController::updateInternal(double deltaSeconds) {
         deltaSeconds > 0.0) {
         double angle = inertiaAngularVelocity_ * deltaSeconds;
         glm::dquat delta = glm::angleAxis(angle, inertiaAxis_);
-        applyCameraRotation(delta);
+        camera_ops::rotateAboutOrigin(*camera_, delta);
         clampNow(nullptr);
         inertiaAngularVelocity_ *= std::exp(-kInertiaDampingPerSecond * deltaSeconds);
         // 掉到阈值以下就归零。指数衰减永远够不到 0,留着那个小尾巴的话
@@ -618,27 +618,8 @@ void CameraController::applyRotationAroundAxis(const glm::dvec3& axis, double an
     if (glm::length(axis) < 1e-10 || std::abs(angle) < 1e-12) {
         return;
     }
-    applyCameraRotation(glm::angleAxis(angle, glm::normalize(axis)));
-}
-
-void CameraController::applyCameraRotation(const glm::dquat& delta) {
-    const glm::dvec3 eye = delta * camera_->position().raw();
-    const glm::dvec3 direction = delta * camera_->direction().raw();
-    const glm::dvec3 up = delta * camera_->up().raw();
-    camera_->setView(Vec3(eye), Vec3(direction), Vec3(up));
-}
-
-void CameraController::rotateCameraAroundPoint(const glm::dvec3& center,
-                                               const glm::dvec3& axis,
-                                               double angle) {
-    if (glm::length(axis) < 1e-10 || std::abs(angle) < 1e-12) {
-        return;
-    }
-    const glm::dquat delta = glm::angleAxis(angle, glm::normalize(axis));
-    const glm::dvec3 eye = center + delta * (camera_->position().raw() - center);
-    const glm::dvec3 direction = delta * camera_->direction().raw();
-    const glm::dvec3 up = delta * camera_->up().raw();
-    camera_->setView(Vec3(eye), Vec3(direction), Vec3(up));
+    camera_ops::rotateAboutOrigin(
+        *camera_, glm::angleAxis(angle, glm::normalize(axis)));
 }
 
 bool CameraController::rotateCameraVerticalAroundPoint(const glm::dvec3& center,
@@ -756,7 +737,7 @@ void CameraController::consumeRecenterBudget(double deltaSeconds) {
         recenterBudgetRadians_,
         theta * (1.0 - std::exp(-kRecenterSettleRatePerSecond * deltaSeconds)));
     // 绕相机自身位置旋转：eye 不动，仅视线向地心方向收敛 → 球心向屏幕中心靠。
-    rotateCameraAroundPoint(eye, axis, step);
+    camera_ops::rotateAboutPoint(*camera_, eye, axis, step);
     recenterBudgetRadians_ -= step;
     if (recenterBudgetRadians_ < 1e-9) {
         recenterBudgetRadians_ = 0.0;
@@ -819,7 +800,8 @@ void CameraController::resetNorthUp() {
     // 变化 -α，故抵消 heading 需转 +heading。
     const glm::dvec3 axis =
         Ellipsoid::WGS84().geodeticSurfaceNormal(camera_->position()).raw();
-    rotateCameraAroundPoint(camera_->position().raw(), axis, heading);
+    camera_ops::rotateAboutPoint(*camera_, camera_->position().raw(),
+                                 axis, heading);
 }
 
 bool CameraController::debugAnchorWorld(Vec3& outWorld) const {
@@ -981,7 +963,7 @@ glm::dquat CameraController::applyPinchPin(float targetX, float targetY) {
             static_cast<double>(targetX) - lastPinchCentroidX_,
             static_cast<double>(targetY) - lastPinchCentroidY_);
     }
-    applyCameraRotation(delta);
+    camera_ops::rotateAboutOrigin(*camera_, delta);
 
     // pin 是唯一的横向运动通道，山区双指横移可能把 eye 转进地形——钉合后
     // 必须做碰撞解算（dolly 分支已各自解过）。
@@ -1124,7 +1106,7 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
         delta = spinTurntableDelta(xPixels, yPixels);
     }
 
-    applyCameraRotation(delta);
+    camera_ops::rotateAboutOrigin(*camera_, delta);
     {
         const glm::dvec3 anchorWorld = grabbedPoint_.raw();
         clampNow(hasGrabbedPoint_ ? &anchorWorld : nullptr);
