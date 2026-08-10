@@ -39,6 +39,17 @@ struct TileEdgeSnapResolver {
     };
 
     static void resolve(TilePlan& plan) {
+        // **先撤上一帧的章,再清向量**。下面的主循环只遍历本帧计划内的瓦片,
+        // 上帧在计划内、本帧不在的瓦片永远等不到清空 —— 那正是真机 SIGSEGV
+        // 的成因(它带着上帧的记录进 draw,而记录里的 tile/neighbor 裸指针
+        // 指向的瓦片可能已被 TileSubtreeRemovalCoordinator 擦除)。
+        // 上帧盖过章的瓦片恰好就在上帧的 edgeSnapRecords 里,逐个撤即可,
+        // 不必扫注册表。
+        for (const TileEdgeSnapRecord& stale : plan.edgeSnapRecords) {
+            if (stale.tile) {
+                stale.tile->selectionFrameState.edgeSnapRecordValid = false;
+            }
+        }
         plan.edgeSnapRecords.clear();
         // 渲染集索引:占屏 cell(selectedKey)→ (八度, entry)。仅本帧选中条目
         // (fading 条目画在过渡层,不参与边界几何契约)。
@@ -58,10 +69,10 @@ struct TileEdgeSnapResolver {
                 e.selectedTile->selectionFrameState;
             if (!e.selectedThisFrame || e.usesAncestorFallback) {
                 state.edgeSnapPacked = 0.0f;
-                state.edgeSnapRecord = nullptr;
+                state.edgeSnapRecordValid = false;
                 continue;
             }
-            state.edgeSnapRecord = nullptr;
+            state.edgeSnapRecordValid = false;
             const int own = entryOctave(e);
             const TileKey& k = e.selectedKey;
             // 边序与 shader 解码约定一致:W + 8·E + 64·N + 512·S。
@@ -82,14 +93,14 @@ struct TileEdgeSnapResolver {
                 rec.neighbor[i] = edges[i].entry;
             }
             if (rec.hasAnySnap()) {
+                // 按值写进瓦片 + 盖本帧帧号。此前是「先 push_back、填满后再回填
+                // 元素指针」—— 那条路对本帧内的重分配是安全的,但挡不住跨帧:
+                // 本帧不在计划内的瓦片不会被遍历到,它上帧留下的指针指向的是
+                // 已经重分配掉的旧存储(见 TileSelectionFrameState 注释)。
+                state.edgeSnapRecord = rec;
+                state.edgeSnapRecordValid = true;
+                // 探针仍按计划遍历这个向量(同帧内消费,安全)。
                 plan.edgeSnapRecords.push_back(rec);
-            }
-        }
-        // 回填必须**等向量填满之后**:填充期的 push_back 会重分配,先前取的
-        // 元素指针全部失效(这类悬垂在真机上表现为偶发错帧,极难定位)。
-        for (const TileEdgeSnapRecord& rec : plan.edgeSnapRecords) {
-            if (rec.tile) {
-                rec.tile->selectionFrameState.edgeSnapRecord = &rec;
             }
         }
     }

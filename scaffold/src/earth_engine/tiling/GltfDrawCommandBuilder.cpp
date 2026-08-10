@@ -505,7 +505,11 @@ constexpr uint64_t kEdgeLutLogPeriod = 60;
 bool uploadTerrainEdgeLut(Renderer& renderer, const TilesetTile& tile,
                           const RenderCommand& cmd) {
     ++gEdgeLut.attempts;
-    const TileEdgeSnapRecord* rec = tile.selectionFrameState.edgeSnapRecord;
+    // 只认解析器本帧盖过章的记录:记录里的 rec.tile / rec.neighbor[] 是裸指针,
+    // 跨帧后指向的瓦片可能已被 TileSubtreeRemovalCoordinator 擦除
+    // (真机 SIGSEGV 的成因,见 TileSelectionFrameState 注释)。
+    const TileEdgeSnapRecord* rec =
+        tile.selectionFrameState.validEdgeSnapRecord();
     TerrainDisplacementTemplatePool* pool = renderer.terrainDisplacementPool();
     const int gridSize = cmd.terrainHeightGridSize;
     if (!rec) { ++gEdgeLut.noRecord; return false; }
