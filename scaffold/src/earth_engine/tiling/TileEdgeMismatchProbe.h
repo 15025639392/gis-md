@@ -99,11 +99,28 @@ struct TileEdgeMismatchProbe {
     struct Result {
         Stats fadeUniform;
         Stats fadeDiffer;
+        /// **补偿后残差**(①-1 边 LUT 生效之后真正剩下的接边错位)。
+        ///
+        /// 为什么必须单独量:上面 fadeUniform 的每个样本值 `|own − other|`
+        /// 恰好**就是 LUT delta 的定义式**(见 TerrainEdgeHeightLut::build)。
+        /// 于是吸附节点处补偿后按构造恒 0 —— 拿 fadeUniform 去判断"接缝还剩
+        /// 多少"会系统性高估,它量的是补偿**前**的原始 ε。
+        ///
+        /// 节点之间才是残差的真正来源:细侧沿「相邻两节点补偿值的线性插值」
+        /// 走直线,粗侧走它自己的几何。两者只在「吸附步长恰好落在粗侧顶点格
+        /// 上」时重合。因此这里两侧都用粗邻居的渲染高度求值 —— own 项在差
+        /// 中相消,残差只取决于粗侧被线性插值近似得有多好。
+        ///
+        /// ⚠️ 量不到的两项(读数为 0 不代表画面为 0):LUT 差值的 16bit 量化
+        /// 地板 ±0.031m;以及 LUT 上传失败时 shader 退回自吸附的那条路径
+        /// (由 SeamDiag edgeLut 的 rate 单独盯,不在本读数里)。
+        Stats compensated;
         int skippedEdges = 0;  // 取不到两侧 heightmap,无法比较
 
         void merge(const Result& o) {
             fadeUniform.merge(o.fadeUniform);
             fadeDiffer.merge(o.fadeDiffer);
+            compensated.merge(o.compensated);
             skippedEdges += o.skippedEdges;
         }
     };
@@ -146,6 +163,34 @@ struct TileEdgeMismatchProbe {
                         ownFade;
                     const float other = terrain_edge::renderedHeight(ns, lon, lat);
                     st.add(std::fabs(own - other));
+                }
+                // 补偿后残差:只在 fadeUniform 群体上量(fadeDiffer 的台阶是
+                // 设计使然,①-1 本就不管它)。节点区间内取三个分数位置。
+                if (&st != &out.fadeUniform || nodes < 2) continue;
+                for (int j = 0; j + 1 < nodes; j += stride) {
+                    const double ta =
+                        static_cast<double>(j * step) / ownGrid;
+                    const double tb = std::min(
+                        static_cast<double>((j + 1) * step) / ownGrid, 1.0);
+                    double lonA = 0.0, latA = 0.0, lonB = 0.0, latB = 0.0;
+                    terrain_edge::edgePoint(rec.tile->bounds, edge,
+                                            std::min(ta, 1.0), lonA, latA);
+                    terrain_edge::edgePoint(rec.tile->bounds, edge, tb,
+                                            lonB, latB);
+                    const float hA = terrain_edge::renderedHeight(ns, lonA, latA);
+                    const float hB = terrain_edge::renderedHeight(ns, lonB, latB);
+                    for (float frac : {0.25f, 0.5f, 0.75f}) {
+                        const double t = ta + (tb - ta) * frac;
+                        double lon2 = 0.0, lat2 = 0.0;
+                        terrain_edge::edgePoint(rec.tile->bounds, edge,
+                                                std::min(t, 1.0), lon2, lat2);
+                        // 细侧补偿后 = lerp(节点处粗侧渲染高度)
+                        const float fine = hA + (hB - hA) * frac;
+                        const float coarse =
+                            terrain_edge::renderedHeight(ns, lon2, lat2);
+                        out.compensated.add(std::fabs(fine - coarse));
+                    }
+                    ++out.compensated.edges;
                 }
             }
         }

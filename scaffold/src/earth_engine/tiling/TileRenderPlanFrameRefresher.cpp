@@ -79,17 +79,22 @@ void logEdgeMismatch(const TilePlan& plan) {
     }
     char uniformText[160];
     char differText[160];
+    char compText[160];
     // fadeUniform 是 ①-1 的目标群体,A/B 只看它;fadeDiffer 是设计使然的
     // 压平台阶,列出来只为佐证"大数字来自它、不是 ε"。
     formatEdgeStats(window.fadeUniform, "fadeUniform", uniformText,
                     sizeof(uniformText));
     formatEdgeStats(window.fadeDiffer, "fadeDiffer", differText,
                     sizeof(differText));
+    // compensated 才是「①-1 之后还剩多少」的读数;fadeUniform 是补偿**前**的
+    // 原始 ε(它的样本值就是 LUT delta 的定义式,拿它判残余会系统性高估)。
+    formatEdgeStats(window.compensated, "compensated", compText,
+                    sizeof(compText));
     platformLog(LogLevel::Info, "SeamDiag",
-                "edgeMismatch frame=%llu win=%llu %s %s skipped=%d",
+                "edgeMismatch frame=%llu win=%llu %s %s %s skipped=%d",
                 static_cast<unsigned long long>(plan.frameId),
                 static_cast<unsigned long long>(kEdgeMismatchLogPeriod),
-                uniformText, differText, window.skippedEdges);
+                uniformText, differText, compText, window.skippedEdges);
     window = TileEdgeMismatchProbe::Result{};
 }
 
