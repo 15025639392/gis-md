@@ -10,11 +10,11 @@
 namespace earth_engine {
 
 MvtVectorSource::MvtVectorSource(Options options, Sinks sinks, FetchFn fetch,
-                                 ThreadPool* decodePool)
+                                 std::shared_ptr<ThreadPool> decodePool)
     : options_(std::move(options)),
       sinks_(std::move(sinks)),
       fetch_(std::move(fetch)),
-      decodePool_(decodePool),
+      decodePool_(std::move(decodePool)),
       tree_(options_.tree),
       inbox_(std::make_shared<Inbox>()) {}
 
@@ -72,9 +72,13 @@ void MvtVectorSource::update(const Rectangle& viewRect,
     // 一份样式一变就失效的网格。
     for (const TileKey& key : result.requestTiles) {
         std::weak_ptr<Inbox> weakInbox = inbox_;
-        ThreadPool* pool = decodePool_;
-        fetch_(key, [key, weakInbox, pool](int statusCode,
-                                           std::vector<uint8_t> body) {
+        // pool 只持 weak(与 inbox 同一纪律,此前只做了一半):本回调在 curl
+        // 线程异步送达 —— 取消也会补送 callback(-1) —— 可能晚于宿主拆除,
+        // 裸指针 enqueue 已析构的线程池 = destroyed mutex abort(tombstone_22)。
+        std::weak_ptr<ThreadPool> weakPool = decodePool_;
+        const bool hadPool = decodePool_ != nullptr;
+        fetch_(key, [key, weakInbox, weakPool, hadPool](
+                        int statusCode, std::vector<uint8_t> body) {
             auto work = [key, weakInbox, body = std::move(body), statusCode]() {
                 auto inbox = weakInbox.lock();
                 if (!inbox) return;
@@ -88,8 +92,12 @@ void MvtVectorSource::update(const Rectangle& viewRect,
                     inbox->failed.push_back(key);
                 }
             };
-            if (pool) pool->enqueue(std::move(work));
-            else work();
+            if (auto pool = weakPool.lock()) {
+                pool->enqueue(std::move(work));
+            } else if (!hadPool) {
+                work();
+            }
+            // hadPool 且锁不上 = 宿主已拆除:丢弃(inbox 也已随之失效)。
         });
     }
 

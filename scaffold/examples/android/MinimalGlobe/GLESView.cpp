@@ -137,7 +137,9 @@ static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
 // E1:MVT 解码 + 镶嵌的 worker 池。独立于引擎的瓦片加载池 —— 底图镶嵌是
 // 突发型重负载(换 zoom 时整视口一起来),混进地形/影像池会挤掉它们的
 // 加载额度。2 线程:再多也只是把内存峰值抬高,commit 侧本就有帧预算。
-static std::unique_ptr<ThreadPool> gMvtWorkerPool;
+// shared_ptr:MvtVectorSource 的 HTTP 回调对 pool 持 weak(见其 ctor 注释),
+// 拆除后迟到的取消回调安全丢弃,不再 enqueue 已析构线程池。
+static std::shared_ptr<ThreadPool> gMvtWorkerPool;
 // HttpRequest 是取消句柄(析构即取消),须持有到完成;完成 id 攒起来
 // 由下一次发请求时(渲染线程)剪除,避免在 curl 回调线程里析构句柄。
 struct MvtFetchInflight {
@@ -366,7 +368,7 @@ static bool createEngine() {
             // demo 侧不再设 —— 两处真相会在相机飞离本区时打架。
             gMvtBasemapLayer = basemapLayer.get();
 
-            gMvtWorkerPool = std::make_unique<ThreadPool>(2);
+            gMvtWorkerPool = std::make_shared<ThreadPool>(2);
             MvtVectorSource::Options mvtOpts;
             // E2:道路分级过滤从数据侧(tippecanoe -j)搬回样式侧。改分级
             // 策略不再需要重切整套瓦片,同一份数据也能给不同样式复用 ——
@@ -436,7 +438,7 @@ static bool createEngine() {
             };
             gMvtSource = std::make_unique<MvtVectorSource>(
                 mvtOpts, std::move(sinks), std::move(fetchFn),
-                gMvtWorkerPool.get());
+                gMvtWorkerPool);
             gEngine->addFeatureRenderLayer(std::move(basemapLayer));
             LOGI("VectorP4 MVT basemap installed: %s (z%d-%d)",
                  minimal_globe_demo::kMvtBasemapUrlTemplate,

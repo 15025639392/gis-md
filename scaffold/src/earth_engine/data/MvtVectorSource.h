@@ -92,8 +92,12 @@ public:
     };
 
     /// decodePool 为空则在 fetch 回调线程就地解码+镶嵌(仍不占渲染线程)。
+    /// decodePool 用 shared_ptr:HTTP 完成/取消回调在 curl 线程**异步**送达
+    /// (取消也会补送 callback(-1)),可能晚于宿主拆除 —— 回调里对 pool 只持
+    /// weak,锁不上就丢弃工作。裸指针版真机崩过(tombstone_22:回调 enqueue
+    /// 已析构线程池 = destroyed mutex abort)。
     MvtVectorSource(Options options, Sinks sinks, FetchFn fetch,
-                    ThreadPool* decodePool = nullptr);
+                    std::shared_ptr<ThreadPool> decodePool = nullptr);
 
     /// 渲染线程每帧调用:驱动树、发缺瓦片请求、消化 worker 产物、
     /// 按渲染集差分 commit/drop 瓦片网格。
@@ -139,7 +143,7 @@ private:
     Options options_;
     Sinks sinks_;
     FetchFn fetch_;
-    ThreadPool* decodePool_ = nullptr;
+    std::shared_ptr<ThreadPool> decodePool_;
 
     VectorTileTree tree_;
     /// 已 commit 到渲染层的瓦片(退出渲染集时 drop)。
