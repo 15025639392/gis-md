@@ -7,6 +7,7 @@
 #include "TileRenderPlanFinalizer.h"
 #include "TileEdgeMismatchProbe.h"
 #include "TileEdgeSnapResolver.h"
+#include "TerrainEdgeHeightLut.h"
 #include "TilesetTile.h"
 #include "../debug/PlatformLog.h"
 #include "../layers/ActivatedRasterOverlay.h"
@@ -288,6 +289,22 @@ void TileRenderPlanFrameRefresher::refresh(
         });
     // 机制 B:渲染集定稿后解析每瓦片 4 边邻居八度差(边吸附输入)。
     TileEdgeSnapResolver::resolve(tilePlan);
+    // ①-1(A′):紧跟 resolve 就地把边高度差表建成纯数据 —— 记录里的
+    // tile/neighbor 裸指针在本函数返回后不再被任何人触碰(探针 logEdgeMismatch
+    // 也在下面同帧吃完)。draw 侧只按 key 查 edgeLutTables,瓦片何时被淘汰
+    // 析构与它无关。档位用无迟滞预测值,与 resolve 的八度判定同源;draw 实际
+    // 档不符时消费端跳过(SeamDiag predM1/predM2 观测,实测静止 0、变档 ~2%)。
+    tilePlan.edgeLutTables.clear();
+    for (const TileEdgeSnapRecord& rec : tilePlan.edgeSnapRecords) {
+        if (!rec.tile) continue;
+        const int predGrid = terrainGridSizeForSse(
+            rec.tile->selectionFrameState.screenSpaceError);
+        TerrainEdgeLutTable table = TerrainEdgeHeightLut::build(rec, predGrid);
+        if (table.hasAny()) {
+            tilePlan.edgeLutTables.emplace(terrainEdgeCellKey(rec.tile->key),
+                                           std::move(table));
+        }
+    }
     logEdgeMismatch(tilePlan);
     refreshFrameCredits(tilePlan, rasterOverlays);
     refreshFrameProgress(tilePlan);

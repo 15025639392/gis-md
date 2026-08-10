@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../renderer/RenderCommand.h"
+#include "TerrainEdgeLutTable.h"
 
 #include <array>
 #include <cstdint>
@@ -29,6 +30,10 @@ struct GltfDrawCommandBuildContext {
     // 纹理就绪时,盖章期把命令换成"后代模板几何 + 祖先高度子矩形采样"(真边
     // 真裙墙,无 discard 切缝);任一资源未就绪回落旧 discard 裁剪(mode 1)。
     const TilesetTile* surfaceClipDescendant = nullptr;
+    // ①-1(A′):本帧边高度差表(TilePlan::edgeLutTables,resolve 阶段建成的
+    // 纯数据)。draw 按 terrainEdgeCellKey(tile.key) 查表,不再触碰任何瓦片/
+    // entry 指针。nullptr = 无表(该 tileset 无地形吸附路径)。
+    const TerrainEdgeLutTableMap* edgeLutTables = nullptr;
 };
 
 struct GltfDrawCommandBuildTimings {

@@ -32,32 +32,18 @@ namespace earth_engine {
 /// 节点序号 j = a/snapStep。对不上就是把错位换个地方而已。
 struct TerrainEdgeHeightLut {
     static constexpr int kEdges = TileEdgeSnapRecord::kEdgeCount;
-    /// 最大节点数。最密情形 = dense 档(gridN=256)邻居只粗一个八度(step=2)
-    /// → 256/2+1 = 129。
-    static constexpr int kMaxNodes = 129;
-    struct Data {
-        /// 存**差值**:邻居在该节点渲染出的高度 − 本瓦片该纹素渲染出的高度。
-        /// shader 侧 `hA/hB` 照旧取自纹理,再加上这里的差 → 两侧于是在共享边上
-        /// 求值同一个函数。差值形式让失效路径天然安全:delta=0 = 改前行为。
-        float delta[kEdges][kMaxNodes] = {};
-        /// 0 = 该边不吸附,或邻居数据取不到 → shader 退回自纹理吸附(改前行为,
-        /// 不会更差)。
-        int nodeCount[kEdges] = {};
-        bool hasAny() const {
-            for (int e = 0; e < kEdges; ++e) {
-                if (nodeCount[e] > 0) return true;
-            }
-            return false;
-        }
-        int filledEdges() const {
-            int n = 0;
-            for (int e = 0; e < kEdges; ++e) n += nodeCount[e] > 0 ? 1 : 0;
-            return n;
-        }
-    };
+    static_assert(kEdges == TerrainEdgeLutTable::kEdges,
+                  "记录边序与表边序必须同一契约");
+    static constexpr int kMaxNodes = TerrainEdgeLutTable::kMaxNodes;
+    /// 表类型移居 TerrainEdgeLutTable.h(跨阶段纯数据载体,挂在 TilePlan 上);
+    /// 这里保留别名让构建端叙述不变。
+    using Data = TerrainEdgeLutTable;
 
-    /// 为一个吸附瓦片构建四条边的差值表。ownGridSize = 该瓦片本帧的位移模板
-    /// 档位(从 draw 命令的 terrainHeightGridSize 读真值,不要另猜)。
+    /// 为一个吸附瓦片构建四条边的差值表。**A′ 契约:只在 resolve 阶段调用**——
+    /// rec 里的 tile/neighbor 裸指针仅在产出它们的同一阶段有效,draw 侧一律
+    /// 查 TilePlan::edgeLutTables,不得再触碰本函数。
+    /// ownGridSize = 无迟滞预测档(terrainGridSizeForSse 单参),draw 实际档
+    /// 不符时由消费端跳过上传(比率见 SeamDiag predM1/predM2)。
     ///
     /// ⚠️ 「自己这一侧」必须与 shader 取的是同一个数:shader 的吸附分支取的是
     /// 自纹理该纹素(吸附覆盖了 morph 混合),所以这里也取 fine 档 × fade,
@@ -65,6 +51,7 @@ struct TerrainEdgeHeightLut {
     static Data build(const TileEdgeSnapRecord& rec, int ownGridSize) {
         Data d;
         if (!rec.tile || ownGridSize <= 0) return d;
+        d.gridSize = ownGridSize;
         const DecodedHeightmap* ownHm =
             rec.tile->content.renderContent.retainedHeightmap();
         if (!ownHm || !ownHm->valid()) return d;

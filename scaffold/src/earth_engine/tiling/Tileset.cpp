@@ -523,7 +523,8 @@ void Tileset::buildRenderCommands(Renderer& renderer,
     renderCommands_.beginFrame(
         commandFrameNumber,
         generation_,
-        currentFrameTimeSeconds_);
+        currentFrameTimeSeconds_,
+        &tilePlan_.edgeLutTables);
     TilesetRenderFrameExecutor::buildRenderCommands(
         TileRenderFrameContext{
             TileRenderFrameCoordinatorInput{

@@ -15,7 +15,7 @@
 #include "TerrainTemplateEligibility.h"
 #include "../debug/PerfTimer.h"
 #include "../debug/PlatformLog.h"
-#include "TerrainEdgeHeightLut.h"
+#include "TerrainEdgeLutTable.h"
 
 #include <algorithm>
 #include <string>
@@ -493,27 +493,31 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
 struct EdgeLutStats {
     int attempts = 0;      // 有吸附边、尝试上传的瓦片数(分母)
     int ok = 0;            // 上传成功 → lutValid 置位
-    int noRecord = 0;      // 邻居记录缺失(resolver 未回填/瓦片非选中)
+    int noRecord = 0;      // 表缺失(resolver 未产出该瓦记录/四边都建不出)
     int noPool = 0;        // 模板池缺失或档位非法
-    int emptyLut = 0;      // 四条边一条也建不出(邻居 heightmap 取不到)
     int uploadFail = 0;    // 层不在驻留 / 尺寸不符
     int notTemplate = 0;  // 命令不在位移路径上(见 uploadTerrainEdgeLut)
+    // A′ 档位对照:表按无迟滞预测档在 resolve 期建成,draw 实际 acquire 档
+    // 不符时跳过上传(shader 退回自纹理吸附 = 改前行为)。真机基线
+    // (2026-08-10,对照计数版):静止全零,变档途中 predM1≈2%、predM2=0。
+    // 比率持续走高(尤其静止不归零)= 迟滞对齐该做了,见 TerrainEdgeLutTable.h。
+    int predM1 = 0;  // 实际 dense、表按 coarse 建:迟滞带保档(稳态嫌疑)
+    int predM2 = 0;  // 表按 dense 建、实际 coarse:dense 池触顶/每帧预算回落(暂态)
     void reset() { *this = EdgeLutStats{}; }
 };
 EdgeLutStats gEdgeLut;
 constexpr uint64_t kEdgeLutLogPeriod = 60;
 
 bool uploadTerrainEdgeLut(Renderer& renderer, const TilesetTile& tile,
-                          const RenderCommand& cmd) {
+                          const RenderCommand& cmd,
+                          const TerrainEdgeLutTableMap* tables) {
     ++gEdgeLut.attempts;
-    // 只认解析器本帧盖过章的记录:记录里的 rec.tile / rec.neighbor[] 是裸指针,
-    // 跨帧后指向的瓦片可能已被 TileSubtreeRemovalCoordinator 擦除
-    // (真机 SIGSEGV 的成因,见 TileSelectionFrameState 注释)。
-    const TileEdgeSnapRecord* rec =
-        tile.selectionFrameState.validEdgeSnapRecord();
+    // A′:draw 侧只查纯数据表(resolve 阶段就地建成,挂在 TilePlan 上),
+    // 不再触碰记录里的瓦片/entry 指针 —— 旧形态在这里现采邻居 heightmap,
+    // 指针有效性靠「每帧撤章」协议,Strict reuse 帧 + draw 末尾缓存淘汰的
+    // 组合击穿过它(真机 SIGSEGV,tombstone_16..20;见 TerrainEdgeLutTable.h)。
     TerrainDisplacementTemplatePool* pool = renderer.terrainDisplacementPool();
     const int gridSize = cmd.terrainHeightGridSize;
-    if (!rec) { ++gEdgeLut.noRecord; return false; }
     if (!pool) { ++gEdgeLut.noPool; return false; }
     // gridSize 只在位移模板 swap 成功时被写进命令。它 <=0 意味着**这条命令
     // 根本不在位移路径上**(fade=0 的粗瓦片走 baked VBO、fill 代理、或 swap
@@ -521,10 +525,23 @@ bool uploadTerrainEdgeLut(Renderer& renderer, const TilesetTile& tile,
     // 单列成 notTemplate 而不是并进 noPool:并着看会让 rate 读起来像「补偿层
     // 有 10~19% 的瓦片失效」,而实际上那些瓦片本来就不该被算进分母。
     if (gridSize <= 0) { ++gEdgeLut.notTemplate; return false; }
-    const TerrainEdgeHeightLut::Data lut =
-        TerrainEdgeHeightLut::build(*rec, gridSize);
-    if (!lut.hasAny()) {
-        ++gEdgeLut.emptyLut;
+    const TerrainEdgeLutTable* lutPtr = nullptr;
+    if (tables) {
+        const auto it = tables->find(terrainEdgeCellKey(tile.key));
+        if (it != tables->end()) lutPtr = &it->second;
+    }
+    // 表缺失 = resolver 没为它产记录,或四边都建不出(邻居 heightmap 取不到)
+    // —— 旧 noRecord/emptyLut 两桶在 A′ 下合并(空表不入 map)。
+    if (!lutPtr) { ++gEdgeLut.noRecord; return false; }
+    const TerrainEdgeLutTable& lut = *lutPtr;
+    // 档位闸:表按预测档建,draw 实际档不符 → 节点位置对不上,宁可跳过
+    // (shader 退回自纹理吸附)也不上错位的表。M1/M2 语义见 EdgeLutStats。
+    if (lut.gridSize != gridSize) {
+        if (lut.gridSize < gridSize) {
+            ++gEdgeLut.predM1;
+        } else {
+            ++gEdgeLut.predM2;
+        }
         return false;
     }
     const int width = gridSize + 1;
@@ -568,8 +585,8 @@ void logEdgeLutStats(uint64_t frameNumber) {
     platformLog(LogLevel::Info, "SeamDiag",
                 "edgeLut frame=%llu win=%llu attempts=%d ok=%d rate=%.3f "
                 "applicable=%d appRate=%.3f "
-                "noRecord=%d noPool=%d notTemplate=%d emptyLut=%d "
-                "uploadFail=%d",
+                "noRecord=%d noPool=%d notTemplate=%d "
+                "uploadFail=%d predM1=%d predM2=%d",
                 static_cast<unsigned long long>(frameNumber),
                 static_cast<unsigned long long>(kEdgeLutLogPeriod),
                 gEdgeLut.attempts, gEdgeLut.ok,
@@ -582,7 +599,8 @@ void logEdgeLutStats(uint64_t frameNumber) {
                           (gEdgeLut.attempts - gEdgeLut.notTemplate)
                     : 1.0,
                 gEdgeLut.noRecord, gEdgeLut.noPool, gEdgeLut.notTemplate,
-                gEdgeLut.emptyLut, gEdgeLut.uploadFail);
+                gEdgeLut.uploadFail,
+                gEdgeLut.predM1, gEdgeLut.predM2);
     gEdgeLut.reset();
 }
 
@@ -617,7 +635,9 @@ void applyPerFrameCommandState(
         // 传上去,shader 加到自纹理吸附值上 → 两侧在共享边上求值同一个函数。
         // 上传失败(层不在驻留/尺寸不符)时不置有效位,shader 退回自吸附 ——
         // 差值形式让这条失效路径恰好等于改前行为,不会更差。
-        if (snapPacked > 0.5f && uploadTerrainEdgeLut(renderer, tile, cmd)) {
+        if (snapPacked > 0.5f &&
+            uploadTerrainEdgeLut(renderer, tile, cmd,
+                                 context.edgeLutTables)) {
             snapPacked += 4096.0f;  // 有效位;组合后 ≤8191,实例流打包仍精确
         }
         u.terrainLayers[2] = snapPacked;

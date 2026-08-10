@@ -20,10 +20,12 @@ TileRenderCommandManager::TileRenderCommandManager(
 void TileRenderCommandManager::beginFrame(
     uint64_t frameNumber,
     uint64_t generation,
-    double currentFrameTimeSeconds) {
+    double currentFrameTimeSeconds,
+    const TerrainEdgeLutTableMap* edgeLutTables) {
     frameNumber_ = frameNumber;
     generation_ = generation;
     currentFrameTimeSeconds_ = currentFrameTimeSeconds;
+    edgeLutTables_ = edgeLutTables;
     frameTimings_ = TileRenderCommandPerformanceTimings{};
 }
 
@@ -48,7 +50,8 @@ void TileRenderCommandManager::buildTileDrawCommand(
             transitionOpacity,
             allowSynchronousMeshPrep,
             surfaceClipUv,
-            surfaceClipDescendant},
+            surfaceClipDescendant,
+            edgeLutTables_},
         [this, &renderer](TilesetTile& meshTile) {
             meshPreparation_.prepareRenderableTile(meshTile, &renderer);
         },

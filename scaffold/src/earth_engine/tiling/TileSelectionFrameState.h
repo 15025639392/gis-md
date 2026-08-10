@@ -27,31 +27,13 @@ struct TileSelectionFrameState {
     // 2^k 间距的自纹理线性插值 → T-junction 在几何上不存在(残余只剩金字塔
     // 层间重采样差 ε,由裙墙覆盖)。逐帧重算天然覆盖"邻居本帧刚换档"暂态。
     float edgeSnapPacked = 0.0f;
-    // ①-1:本帧该瓦片的吸附边记录(邻居来源),供 draw 侧构建边高度差表。
-    //
-    // ⚠️⚠️ **按值存 + 帧号闸,两者缺一不可** —— 这里曾是裸指针指向
-    // TilePlan::edgeSnapRecords 的元素,真机 SIGSEGV(RenderThread 跑约 7 分钟后
-    // 在 TerrainEdgeHeightLut::build 顶部解引用垃圾指针)。两条独立的跨帧悬垂:
-    //   ① 指针本身:向量每帧 clear()+push_back,容量一涨就重分配 → 旧地址失效。
-    //      解析器只遍历**本帧计划内**的瓦片,上帧在计划内、本帧不在的瓦片
-    //      永远等不到那次清空,于是带着野指针进 draw。→ 按值存根治。
-    //   ② 记录**内容**:rec.tile / rec.neighbor[] 是裸指针,指向的瓦片可能已被
-    //      TileSubtreeRemovalCoordinator 擦除。按值存对这条无效。→ 帧号闸根治。
-    // 只修 ① 会留下更隐蔽的版本(记录还在、瓦片已死);只修 ② 则依赖"每帧都
-    // 写 frameId"这个新的全覆盖假设。两条一起才闭合。
-    //
-    // 消费端一律经 edgeSnapRecordForFrame() 取,不要直接读这两个字段。
-    TileEdgeSnapRecord edgeSnapRecord;
-    bool edgeSnapRecordValid = false;
-
-    /// ⚠️ 有意**不用帧号**做闸:draw 侧手边的 frameNumber 是 Tileset 自己的
-    /// 计数,而解析器手边的是 frameState.frameId —— 两个不同的计数器。拿它们
-    /// 比相等会恒假,LUT 就此静默失效(画面无变化、无报错,只有接边 ε 悄悄
-    /// 退回改前)。改用「解析器每帧把上一帧盖过章的瓦片逐个撤章」,不需要两侧
-    /// 对计数器达成一致 —— 少一个可以静默走歪的约定。
-    const TileEdgeSnapRecord* validEdgeSnapRecord() const {
-        return edgeSnapRecordValid ? &edgeSnapRecord : nullptr;
-    }
+    // ①-1 的吸附记录**不再存在瓦片上**。此处曾两度尝试给含裸指针的记录配
+    // 生存期协议(元素指针→按值存;有效位→撤章循环),第二版仍在真机 SIGSEGV
+    // (Strict reuse 帧跳过 resolve,撤章不发生,而邻居瓦片已在上一帧 draw 末尾
+    // 的缓存淘汰中析构;撤章循环本身还解引用可能已死的 stale.tile)。A′ 终态:
+    // 表在 resolve 阶段就地建成纯数据挂在 TilePlan::edgeLutTables,draw 按
+    // key 查表 —— 瓦片上没有任何需要撤销的状态,协议整体废除
+    // (设计叙述见 TerrainEdgeLutTable.h 文件头)。
 
     void updateFrameRenderability(bool complete) {
         completeRenderable = complete;

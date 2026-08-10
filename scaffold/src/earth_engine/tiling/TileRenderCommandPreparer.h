@@ -26,6 +26,7 @@ struct TileRenderCommandPrepareContext {
     bool allowSynchronousMeshPrep = true;
     std::optional<std::array<float, 4>> surfaceClipUv;
     const TilesetTile* surfaceClipDescendant = nullptr;  // 机制 A,见 GltfDrawCommandBuildContext
+    const TerrainEdgeLutTableMap* edgeLutTables = nullptr;  // ①-1 A′,同上
 };
 
 // 破洞诊断:一个已被选中的瓦片走完 build 却一条命令都没产出 = 屏幕上这块
@@ -141,7 +142,8 @@ public:
                     context.generation,
                     context.transitionOpacity,
                     context.surfaceClipUv,
-                    context.surfaceClipDescendant},
+                    context.surfaceClipDescendant,
+                    context.edgeLutTables},
                 timings ? &timings->drawCommand : nullptr);
             if (timings) {
                 timings->drawBuildMs +=
@@ -175,7 +177,8 @@ public:
                     context.generation,
                     context.transitionOpacity,
                     context.surfaceClipUv,
-                    context.surfaceClipDescendant},
+                    context.surfaceClipDescendant,
+                    context.edgeLutTables},
                 timings ? &timings->drawCommand : nullptr);
             if (timings) {
                 timings->drawBuildMs +=

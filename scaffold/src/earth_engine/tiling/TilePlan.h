@@ -1,6 +1,7 @@
 #pragma once
 
 #include "TileKey.h"
+#include "TerrainEdgeLutTable.h"
 #include <array>
 #include <string>
 #include <vector>
@@ -165,6 +166,10 @@ struct TilePlan {
     // TileEdgeHeightLutBuilder 消费)。renderEntries 定稿后才填,故其中的
     // entry 指针在本帧内稳定。
     std::vector<TileEdgeSnapRecord> edgeSnapRecords;
+    // ①-1(A′):吸附瓦片的边高度差表,refresher 在 resolve 后从
+    // edgeSnapRecords 就地建成纯数据(邻居指针同帧消费掉,不跨阶段)。
+    // draw 侧按 terrainEdgeCellKey(tile.key) 查表上传。
+    TerrainEdgeLutTableMap edgeLutTables;
     std::vector<std::string> frameCredits;
     int frameMappedRasterTileCount = 0;
     int frameMappedRasterTileLoadingCount = 0;

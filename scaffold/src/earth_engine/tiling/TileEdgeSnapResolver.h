@@ -39,17 +39,10 @@ struct TileEdgeSnapResolver {
     };
 
     static void resolve(TilePlan& plan) {
-        // **先撤上一帧的章,再清向量**。下面的主循环只遍历本帧计划内的瓦片,
-        // 上帧在计划内、本帧不在的瓦片永远等不到清空 —— 那正是真机 SIGSEGV
-        // 的成因(它带着上帧的记录进 draw,而记录里的 tile/neighbor 裸指针
-        // 指向的瓦片可能已被 TileSubtreeRemovalCoordinator 擦除)。
-        // 上帧盖过章的瓦片恰好就在上帧的 edgeSnapRecords 里,逐个撤即可,
-        // 不必扫注册表。
-        for (const TileEdgeSnapRecord& stale : plan.edgeSnapRecords) {
-            if (stale.tile) {
-                stale.tile->selectionFrameState.edgeSnapRecordValid = false;
-            }
-        }
+        // A′ 后记录只在本帧内消费(探针 + refresher 建表都吃这个向量),瓦片
+        // 身上不再盖任何含指针的章 —— 曾经的「先撤上一帧的章」循环连同它对
+        // stale.tile 的 write-after-free 一起废除(那循环本身就是在解引用可能
+        // 已被 TileSubtreeRemovalCoordinator 析构的瓦片)。
         plan.edgeSnapRecords.clear();
         // 渲染集索引:占屏 cell(selectedKey)→ (八度, entry)。仅本帧选中条目
         // (fading 条目画在过渡层,不参与边界几何契约)。
@@ -69,10 +62,8 @@ struct TileEdgeSnapResolver {
                 e.selectedTile->selectionFrameState;
             if (!e.selectedThisFrame || e.usesAncestorFallback) {
                 state.edgeSnapPacked = 0.0f;
-                state.edgeSnapRecordValid = false;
                 continue;
             }
-            state.edgeSnapRecordValid = false;
             const int own = entryOctave(e);
             const TileKey& k = e.selectedKey;
             // 边序与 shader 解码约定一致:W + 8·E + 64·N + 512·S。
@@ -93,13 +84,8 @@ struct TileEdgeSnapResolver {
                 rec.neighbor[i] = edges[i].entry;
             }
             if (rec.hasAnySnap()) {
-                // 按值写进瓦片 + 盖本帧帧号。此前是「先 push_back、填满后再回填
-                // 元素指针」—— 那条路对本帧内的重分配是安全的,但挡不住跨帧:
-                // 本帧不在计划内的瓦片不会被遍历到,它上帧留下的指针指向的是
-                // 已经重分配掉的旧存储(见 TileSelectionFrameState 注释)。
-                state.edgeSnapRecord = rec;
-                state.edgeSnapRecordValid = true;
-                // 探针仍按计划遍历这个向量(同帧内消费,安全)。
+                // 只进计划向量:探针与 refresher 建表都在同帧内消费,瓦片
+                // 身上不留任何指针(A′,见 TerrainEdgeLutTable.h 文件头)。
                 plan.edgeSnapRecords.push_back(rec);
             }
         }
@@ -116,18 +102,10 @@ struct TileEdgeSnapResolver {
     }
 
 private:
-    // cell 键:schemeId interned 句柄哈希掺 4bit + z/x/y 打包。z≤27 层内
-    // x,y < 2^27,本引擎 z≤18 富余。
+    // cell 键单一事实源 = terrainEdgeCellKey(TerrainEdgeLutTable.h):渲染集
+    // 索引与 draw 侧查表必须同一打包。
     static uint64_t cellKey(const TileKey& k) {
-        const uint64_t scheme =
-            std::hash<SchemeId>{}(k.schemeId) & 0xFull;
-        return (scheme << 60) |
-               (static_cast<uint64_t>(static_cast<uint32_t>(k.z) & 0x3F)
-                << 54) |
-               (static_cast<uint64_t>(static_cast<uint32_t>(k.x) &
-                                      0x7FFFFFF)
-                << 27) |
-               static_cast<uint64_t>(static_cast<uint32_t>(k.y) & 0x7FFFFFF);
+        return terrainEdgeCellKey(k);
     }
 
     /// 邻居 cell 自本级向上探(邻居更细时本级即 miss → 0,不吸附:细侧
