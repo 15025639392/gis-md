@@ -112,13 +112,14 @@ void SceneInputCoordinator::handleGesture(
                 ? context.pick(event.screenX, event.screenY)
                 : PickResult{};
             if (gesture == InputManager::Gesture::DoubleClick) {
+                // 未命中椭球 = 双击在天空/太空上，没有地理语义 ⇒ 不响应。
+                // 旧行为是 setDistance(distance*0.7)，它翻开 orbit 模式，下一帧
+                // 位姿被重建成"看向地心"，用户的 tilt/heading 当场丢光；低空时
+                // 0.7×地心距还会跌破下限被钳到地表 50m 正俯视。orbit 表示已删。
                 if (result.isValid()) {
                     cameraController->viewDistance(
                         result.worldPosition,
                         result.distance * 0.57);
-                } else {
-                    cameraController->setDistance(
-                        cameraController->distance() * 0.7f);
                 }
             } else {
                 selectFromClick(context, event, result);

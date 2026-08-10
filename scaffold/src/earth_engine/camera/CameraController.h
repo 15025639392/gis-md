@@ -125,22 +125,27 @@ public:
     }
 
     // ---- 相机状态 ----
+    //
+    // 位姿的唯一真值是 Camera 自身（eye/direction/up）。历史上还并存过一套
+    // orbit 表示（rotation_ + distance_ + orbitMode_ 每帧 lookAt 地心重建），
+    // 它是「缺 viewpoint API 时代」的位姿设定替代品，已整体删除：双表示不仅
+    // 是冗余，还直接产出过「双击天空 → setDistance → 翻 orbit → 下一帧重建
+    // 强制看向地心 → 丢弃全部 tilt」的视角瞬移。
 
-    /// 设置相机到地球中心的距离（地球半径单位，默认 7.0）
-    void setDistance(float earthRadii);
-    float distance() const { return distance_; }
+    /// 相机地心距（地球半径单位）。**纯派生只读视图**（= |eye|/R），不是状态。
+    /// 过渡接口：阶段 2b 引入 `currentViewpoint()` 后退役。
+    float distance() const;
 
-    /// 获取当前旋转四元数
-    const glm::dquat& rotation() const { return rotation_; }
+    /// 相机朝向的四元数表述：把 (+Z,+Y) 转到 (direction, up) 的旋转。
+    /// **纯派生只读视图**，不是状态——历史上这是 orbit 表示的内部真值之一，
+    /// 且它会与位姿脱节（`viewDistance`/构造函数改位姿却不改它）。派生版本
+    /// 恒与位姿一致。过渡接口：阶段 2b 由 `currentViewpoint()` 取代。
+    glm::dquat rotation() const;
 
-    /// 直接设置旋转
-    void setRotation(const glm::dquat& q);
-
-    /// 把 orbit 状态设为"目标点正上方 heightMeters、正北朝上、看向地心
-    /// (nadir)"。orbit 约定(eye = -(rotation_·+Z)·distance_·R,
-    /// up = rotation_·+Y)是本类的私有实现细节:外部调用方(如
-    /// EarthEngineSdkFacade::resetCamera)一律走本接口,不得在类外复刻
-    /// 四元数推导——约定变更只需要改本类。
+    /// 把相机放到"目标点正上方 heightMeters、正北朝上、看向地心(nadir)"。
+    /// 注意 eye 取自地心沿大地法线 (|target| + h) 处、视线指向**地心**——这是
+    /// 原 orbit 语义的原样保留（大地法线不过地心，故 eye 并不严格在 target
+    /// 正上方；差异在 ~11' 量级）。
     /// @param targetEcef      目标地表点(ECEF)
     /// @param surfaceUpNormal 目标点的大地法线(调用方从椭球取,本类不依赖
     ///                        Ellipsoid;传入无需归一化)
@@ -202,8 +207,6 @@ private:
     glm::dquat turntableDeltaFromPixels(double dx, double dy) const;
     /// 单指转台（相对 dragLast）。
     glm::dquat spinTurntableDelta(float xPixels, float yPixels) const;
-    /// 按当前模式施加旋转增量（orbit 模式转 rotation_，自由模式转相机整体）。
-    void applyRotationDelta(const glm::dquat& delta);
 
     bool intersectGrabSphere(const Ray& ray, Vec3& outPoint) const;
     static bool intersectSphere(const Ray& ray, double radiusMeters,
@@ -231,7 +234,6 @@ private:
     void accrueRecenterBudget(double zoomOutLogStep);
     void consumeRecenterBudget(double deltaSeconds);
     void applyCameraRotation(const glm::dquat& delta);
-    void syncDistanceFromCamera();
 
     /// 相机位姿合法性的唯一出口（choke point）。手势/惯性路径在事件内调用；
     /// update() 帧末哨兵兜底收编所有未显式路由的位姿写入（orbit 重建、
@@ -252,11 +254,8 @@ private:
     };
     /// @return 位姿是否被修改
     bool resolveConstraints(const ConstraintContext& ctx);
-    /// update() 的原函数体（惯性/回中/orbit 重建）；帧末哨兵在 update() 包装层。
+    /// update() 的原函数体（惯性/回中）；帧末哨兵在 update() 包装层。
     void updateInternal(double deltaSeconds);
-    /// orbit 参数 (rotation_/distance_) → 相机位姿。update() 尾部与 orbit
-    /// 模式的约束解算（钳 distance_ 后重跑）共用。
-    void rebuildOrbitPose();
 
     Camera* camera_;
     SurfacePicker surfacePicker_;
@@ -271,9 +270,6 @@ private:
     int viewportWidth_ = 1;
     int viewportHeight_ = 1;
 
-    glm::dquat rotation_{1.0, 0.0, 0.0, 0.0};
-    float distance_ = 7.0f;
-    bool orbitMode_ = true;
     // 测量台冻结：true 时 update() 完全空转（见 setMeasurementFreeze）。
     bool measurementFreeze_ = false;
 

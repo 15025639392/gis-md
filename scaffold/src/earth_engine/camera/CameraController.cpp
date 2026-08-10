@@ -26,9 +26,6 @@ constexpr double kEarthRadiusMeters = 6378137.0;
 constexpr double kMinAltitudeMeters = CameraController::kMinClearanceMeters;
 constexpr double kMaxTerrainHeightMeters =
     CameraConstraintSolver::kMaxTerrainHeightMeters;
-constexpr float kMinDistanceEarthRadii =
-    static_cast<float>((kEarthRadiusMeters + kMinAltitudeMeters) /
-                       kEarthRadiusMeters);
 constexpr float kMaxDistanceEarthRadii = 30.0f;
 constexpr double kTouchJerkLimit = 0.3;
 constexpr double kTouchMinSlope = 0.1;
@@ -80,36 +77,10 @@ constexpr double kRecenterFullAltitudeMeters = 8.0e6;   // 高于此海拔全权
 constexpr double kRecenterGainPerLogStep = 2.5;  // 预算充值速率 / 单位 ln(距离)
 constexpr double kRecenterSettleRatePerSecond = 6.0;  // 松手后 θ 指数收敛速率
 
-glm::dvec3 cartographicNormal(double lngDeg, double latDeg) {
-    const double lng = glm::radians(lngDeg);
-    const double lat = glm::radians(latDeg);
-    const double cosLat = std::cos(lat);
-    return glm::normalize(glm::dvec3(
-        cosLat * std::cos(lng),
-        cosLat * std::sin(lng),
-        std::sin(lat)));
-}
-
-glm::dquat defaultViewRotation() {
-    // Start over East Asia so XYZ Web Mercator imagery can be inspected without
-    // the Web Mercator polar cutoff dominating the first frame.
-    const glm::dvec3 baseViewDir(0.0, 0.0, 1.0);
-    const glm::dvec3 desiredEye = cartographicNormal(105.0, 35.0);
-    const glm::dvec3 desiredViewDir = -desiredEye;
-    const double dot = std::clamp(glm::dot(baseViewDir, desiredViewDir), -1.0, 1.0);
-    if (dot > 0.999999) return glm::dquat(1.0, 0.0, 0.0, 0.0);
-    if (dot < -0.999999) return glm::angleAxis(glm::pi<double>(), glm::dvec3(0.0, 1.0, 0.0));
-
-    const glm::dvec3 axis = glm::normalize(glm::cross(baseViewDir, desiredViewDir));
-    const double angle = std::acos(dot);
-    return glm::angleAxis(angle, axis);
-}
-
 } // namespace
 
 CameraController::CameraController(Camera* camera)
-    : camera_(camera),
-      rotation_(defaultViewRotation()) {
+    : camera_(camera) {
     // Default to Chongqing area for testing
     const auto& e = Ellipsoid::WGS84();
     auto target = e.cartographicToCartesian(
@@ -117,7 +88,6 @@ CameraController::CameraController(Camera* camera)
     auto eye = e.cartographicToCartesian(
         Cartographic::fromDegrees(106.508, 29.617, 1500.0));
     camera_->lookAt(eye, target, e.geodeticSurfaceNormal(target));
-    orbitMode_ = false;
 }
 
 void CameraController::setViewport(int widthPixels, int heightPixels) {
@@ -143,7 +113,6 @@ void CameraController::setTerrainRevisionFunc(std::function<uint64_t()> func) {
 
 void CameraController::onDragStart(float xPixels, float yPixels, double timestamp) {
     update(0.0);
-    orbitMode_ = false;
     // 抓取起始地表点；miss（按在地平线外/空白处）不再放弃整段拖拽，
     // 而是进入 spin 回退。grabSurfacePoint 内部已设置 hasGrabbedPoint_。
     grabSurfacePoint(xPixels, yPixels);
@@ -216,7 +185,6 @@ void CameraController::onPinchGesture(const PinchInput& input) {
     if (isPinchStartFrame) {
         pinching_ = true;
         update(0.0);
-        orbitMode_ = false;
         // 新捏合打断上一段 zoom 惯性滑行，并重置速率累积。
         hasZoomInertia_ = false;
         zoomInertiaLogRate_ = 0.0;
@@ -298,7 +266,6 @@ void CameraController::onPinchGesture(const PinchInput& input) {
             kMaxDistanceEarthRadii) {
             camera_->setView(Vec3(nextEye), camera_->direction(),
                              camera_->up());
-            syncDistanceFromCamera();
         }
         {
             ConstraintContext cctx;
@@ -399,7 +366,6 @@ void CameraController::onPinchGesture(const PinchInput& input) {
         // 无有效 pinch anchor 时，沿视线方向缩放相机（无锚点可钉，只能以
         // 地心距当作被缩放的距离）。位移量与有锚点分支同一公式 d*(1-1/s)，
         // 否则缩进过冲、拉远不足。
-        // 不能仅设置 distance_，因为 orbitMode_ 已关闭，update() 不消费它。
         const double moveMeters =
             camera_->position().length() * (1.0 - 1.0 / stepScale);
         glm::dvec3 nextEye =
@@ -407,7 +373,6 @@ void CameraController::onPinchGesture(const PinchInput& input) {
             camera_->direction().raw() * moveMeters;
         if ((glm::length(nextEye) / kEarthRadiusMeters) <= kMaxDistanceEarthRadii) {
             camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
-            syncDistanceFromCamera();
         }
         {
             ConstraintContext cctx;
@@ -491,10 +456,8 @@ void CameraController::updateInternal(double deltaSeconds) {
         deltaSeconds > 0.0) {
         double angle = inertiaAngularVelocity_ * deltaSeconds;
         glm::dquat delta = glm::angleAxis(angle, inertiaAxis_);
-        if (orbitMode_) {
-            rotation_ = glm::normalize(delta * rotation_);
-        } else {
-            applyCameraRotation(delta);
+        applyCameraRotation(delta);
+        {
             ConstraintContext cctx;
             cctx.source = ConstraintContext::Source::Inertia;
             resolveConstraints(cctx);
@@ -522,8 +485,7 @@ void CameraController::updateInternal(double deltaSeconds) {
                 kMaxDistanceEarthRadii) {
                 camera_->setView(Vec3(nextEye), camera_->direction(),
                                  camera_->up());
-                syncDistanceFromCamera();
-            }
+                }
             {
                 ConstraintContext cctx;
                 cctx.source = ConstraintContext::Source::Inertia;
@@ -549,36 +511,6 @@ void CameraController::updateInternal(double deltaSeconds) {
         consumeRecenterBudget(deltaSeconds);
     }
 
-    if (!orbitMode_) {
-        syncDistanceFromCamera();
-        return;
-    }
-
-    rebuildOrbitPose();
-}
-
-void CameraController::rebuildOrbitPose() {
-    // 计算相机在 ECEF 空间中的位置
-    // 旋转四元数作用于相机方向：相机沿 -Z 看地球，旋转改变朝向
-    const double cameraDist = static_cast<double>(distance_) * kEarthRadiusMeters;
-
-    // 默认视线方向：沿 +Z（从前方看地球）
-    glm::dvec3 viewDir(0.0, 0.0, 1.0);
-    glm::dvec3 upDir(0.0, 1.0, 0.0);
-
-    // 应用轨道旋转
-    glm::dvec3 rotatedDir = rotation_ * viewDir;
-    glm::dvec3 rotatedUp = rotation_ * upDir;
-
-    // 相机位置 = 地球中心 + 视线反方向 × 距离
-    glm::dvec3 eyePos = -rotatedDir * cameraDist;
-
-    // 更新 Camera
-    camera_->lookAt(
-        Vec3(eyePos.x, eyePos.y, eyePos.z),    // position
-        Vec3::zero(),                            // target (earth center)
-        Vec3(rotatedUp.x, rotatedUp.y, rotatedUp.z)  // up
-    );
 }
 
 bool CameraController::resolveConstraints(const ConstraintContext& ctx) {
@@ -598,32 +530,13 @@ bool CameraController::resolveConstraints(const ConstraintContext& ctx) {
         poseChangedExternally;
 
     bool changed = false;
-    if (orbitMode_) {
-        // orbit 位姿由 rotation_/distance_ 每帧重建——约束必须表达在
-        // distance_ 上再重跑重建；直接抬 eye 会被下一帧重建抹掉（振荡）。
-        // 钳位方向（大地法线）与 orbit 径向（地心方向）偏差 ≤ ~11'，重建后
-        // 可能残留米级亏空，再解一次即收敛（第二次几乎恒为 no-op）。
-        for (int i = 0; i < 2; ++i) {
-            const glm::dvec3 eye = camera_->position().raw();
-            const glm::dvec3 clamped = constraintSolver_.constrainEye(
-                eye, userDriven, i == 0 ? ctx.deltaSeconds : 0.0, nullptr);
-            if (glm::length(clamped - eye) <= 1e-6) {
-                break;
-            }
-            distance_ = std::max(
-                distance_,
-                static_cast<float>(glm::length(clamped) / kEarthRadiusMeters));
-            rebuildOrbitPose();
-            changed = true;
-        }
-    } else {
+    {
         const glm::dvec3 eye = camera_->position().raw();
         const glm::dvec3 clamped = constraintSolver_.constrainEye(
             eye, userDriven, ctx.deltaSeconds, ctx.pinnedAnchorWorld);
         if (glm::length(clamped - eye) > 1e-6) {
             camera_->setView(Vec3(clamped), camera_->direction(),
                              camera_->up());
-            syncDistanceFromCamera();
             changed = true;
         }
     }
@@ -665,19 +578,17 @@ void CameraController::setScriptedPan(bool active, int startFrame, int frames,
     }
 }
 
-void CameraController::setDistance(float earthRadii) {
-    orbitMode_ = true;
-    distance_ = std::clamp(
-        earthRadii,
-        kMinDistanceEarthRadii,
-        kMaxDistanceEarthRadii);
-    inertiaAngularVelocity_ = 0.0;
+float CameraController::distance() const {
+    return static_cast<float>(camera_->position().length() / kEarthRadiusMeters);
 }
 
-void CameraController::setRotation(const glm::dquat& q) {
-    orbitMode_ = true;
-    rotation_ = glm::normalize(q);
-    inertiaAngularVelocity_ = 0.0;
+glm::dquat CameraController::rotation() const {
+    // 旧 orbit 真值 rotation_ 满足 rotation_·(+Z)=direction、rotation_·(+Y)=up，
+    // 故列向量 [Rx,Ry,Rz] = [cross(up,dir), up, dir]（cross(up,dir) = -right，
+    // 这样才右手正交：identity 位姿 dir=+Z/up=+Y 下恰得单位阵）。
+    const glm::dvec3 f = camera_->direction().raw();
+    const glm::dvec3 u = camera_->up().raw();
+    return glm::quat_cast(glm::dmat3(glm::cross(u, f), u, f));
 }
 
 void CameraController::setNadirOrbitView(const Vec3& targetEcef,
@@ -691,14 +602,14 @@ void CameraController::setNadirOrbitView(const Vec3& targetEcef,
     }
     eastG = glm::normalize(eastG);
     const glm::dvec3 northG = glm::normalize(glm::cross(upG, eastG));
-    // orbit 约定:eye = -(rotation_·+Z)·distance_·R,up = rotation_·+Y。
-    // 令 rotation_ 把 +Z→-up、+Y→north ⇒ eye 落在 up·(R_t+h),正北朝上。
-    // 列向量 [Rx, Ry, Rz] = [-east, north, -up]。
-    const glm::dmat3 basis(-eastG, northG, -upG);
-    setRotation(glm::quat_cast(basis));
+    // 旧 orbit 约定 eye = -(rotation_·+Z)·distance_·R / up = rotation_·+Y,
+    // 其中 rotation_ 的列 = [-east, north, -up] ⇒ 展开即下式。视线指向**地心**
+    // (不是 targetEcef)——原样保留旧语义,大地法线不过地心故 eye 并不严格在
+    // target 正上方,差异 ~11'。
     const double targetRadius = std::sqrt(targetEcef.dot(targetEcef));
-    setDistance(static_cast<float>(
-        (targetRadius + heightMeters) / kEarthRadiusMeters));
+    const glm::dvec3 eye = upG * (targetRadius + heightMeters);
+    camera_->lookAt(Vec3(eye), Vec3::zero(), Vec3(northG));
+    inertiaAngularVelocity_ = 0.0;
 }
 
 void CameraController::viewDistance(const Vec3& targetWorld, double distanceMeters) {
@@ -718,24 +629,14 @@ void CameraController::viewDistance(const Vec3& targetWorld, double distanceMete
 
     const glm::dvec3 eye = targetWorld.raw() + glm::normalize(away) * clampedDistance;
     camera_->lookAt(Vec3(eye), targetWorld, camera_->up());
-    orbitMode_ = false;
     inertiaAngularVelocity_ = 0.0;
-    syncDistanceFromCamera();
 }
 
 void CameraController::applyRotationAroundAxis(const glm::dvec3& axis, double angle) {
     if (glm::length(axis) < 1e-10 || std::abs(angle) < 1e-12) {
         return;
     }
-    applyRotationDelta(glm::angleAxis(angle, glm::normalize(axis)));
-}
-
-void CameraController::applyRotationDelta(const glm::dquat& delta) {
-    if (orbitMode_) {
-        rotation_ = glm::normalize(delta * rotation_);
-    } else {
-        applyCameraRotation(delta);
-    }
+    applyCameraRotation(glm::angleAxis(angle, glm::normalize(axis)));
 }
 
 void CameraController::applyCameraRotation(const glm::dquat& delta) {
@@ -743,8 +644,6 @@ void CameraController::applyCameraRotation(const glm::dquat& delta) {
     const glm::dvec3 direction = delta * camera_->direction().raw();
     const glm::dvec3 up = delta * camera_->up().raw();
     camera_->setView(Vec3(eye), Vec3(direction), Vec3(up));
-    rotation_ = glm::normalize(delta * rotation_);
-    syncDistanceFromCamera();
 }
 
 void CameraController::rotateCameraAroundPoint(const glm::dvec3& center,
@@ -758,8 +657,6 @@ void CameraController::rotateCameraAroundPoint(const glm::dvec3& center,
     const glm::dvec3 direction = delta * camera_->direction().raw();
     const glm::dvec3 up = delta * camera_->up().raw();
     camera_->setView(Vec3(eye), Vec3(direction), Vec3(up));
-    rotation_ = glm::normalize(delta * rotation_);
-    syncDistanceFromCamera();
 }
 
 bool CameraController::rotateCameraVerticalAroundPoint(const glm::dvec3& center,
@@ -820,8 +717,6 @@ bool CameraController::rotateCameraVerticalAroundPoint(const glm::dvec3& center,
     }
 
     camera_->setView(Vec3(nextEye), Vec3(nextDirection), Vec3(nextUp));
-    rotation_ = glm::normalize(delta * rotation_);
-    syncDistanceFromCamera();
     return true;
 }
 
@@ -886,10 +781,6 @@ void CameraController::consumeRecenterBudget(double deltaSeconds) {
     }
 }
 
-void CameraController::syncDistanceFromCamera() {
-    distance_ = static_cast<float>(camera_->position().length() / kEarthRadiusMeters);
-}
-
 namespace {
 
 // 相机 direction 在 pos 处本地 ENU 平面上的方位角：0=正北，顺时针(向东)为正。
@@ -933,7 +824,6 @@ double CameraController::pitchRadians() const {
 
 void CameraController::resetNorthUp() {
     update(0.0);
-    orbitMode_ = false;
     inertiaAngularVelocity_ = 0.0;
     hasZoomInertia_ = false;
     zoomInertiaLogRate_ = 0.0;

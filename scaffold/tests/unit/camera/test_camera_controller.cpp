@@ -87,6 +87,20 @@ CameraController::TerrainAreaSampleFunc makeAnalyticAreaSampler(
     };
 }
 
+// 旧 orbit 摆位的等价物(orbit 表示已删):eye = -(q·+Z)·d·R,lookAt 地心,
+// up = q·+Y。原来靠 setRotation()+setDistance() 翻开 orbit 模式再由 update()
+// 每帧重建;现在一次性写位姿,语义逐位等价。
+void placeOrbit(Camera& camera, const glm::dquat& q, double earthRadii) {
+    const glm::dvec3 dir = q * glm::dvec3(0.0, 0.0, 1.0);
+    const glm::dvec3 up = q * glm::dvec3(0.0, 1.0, 0.0);
+    camera.lookAt(Vec3(-dir * earthRadii * kEarthRadiusMeters), Vec3::zero(),
+                  Vec3(up));
+}
+
+void placeOrbitIdentity(Camera& camera, double earthRadii) {
+    placeOrbit(camera, glm::dquat(1.0, 0.0, 0.0, 0.0), earthRadii);
+}
+
 double matrixAbsDiff(const Mat4& a, const Mat4& b) {
     double diff = 0.0;
     for (int i = 0; i < 4; ++i) {
@@ -113,33 +127,22 @@ protected:
 };
 
 TEST_F(CameraControllerTest, InitialState) {
-    // 初始距离应为默认值 7.0 地球半径
-    EXPECT_FLOAT_EQ(7.0f, controller_->distance());
+    // 构造即摆到重庆上空 1500m 看向地表。orbit 表示已删,不再有"默认 7 地球
+    // 半径"这回事——distance() 现在是 |eye|/R 的派生视图。
+    const auto& e = Ellipsoid::WGS84();
+    const Cartographic c = e.cartesianToCartographic(camera_->position());
+    EXPECT_NEAR(106.508, glm::degrees(c.longitude()), 1e-6);
+    EXPECT_NEAR(29.617, glm::degrees(c.latitude()), 1e-6);
+    EXPECT_NEAR(1500.0, c.height(), 1e-3);
 
-    // 初始旋转应为归一化四元数；默认首屏面向东亚，便于检查 XYZ 底图。
-    auto q = controller_->rotation();
-    double len = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
-    EXPECT_NEAR(1.0, len, 1e-6);
-}
-
-TEST_F(CameraControllerTest, SetDistance) {
-    controller_->setDistance(5.0f);
-    EXPECT_FLOAT_EQ(5.0f, controller_->distance());
-
-    controller_->setDistance(1.0f);
-    controller_->update(0.0);
-    EXPECT_GE(camera_->position().length() - kEarthRadiusMeters, 49.0);
-    EXPECT_LT(camera_->position().length() - kEarthRadiusMeters, 52.0);
-
-    controller_->setDistance(20.0f);
-    EXPECT_FLOAT_EQ(20.0f, controller_->distance());
-
-    controller_->setDistance(40.0f);
-    EXPECT_LE(controller_->distance(), 30.0f);
+    // 派生朝向四元数恒归一。
+    const glm::dquat q = controller_->rotation();
+    const double len = std::sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+    EXPECT_NEAR(1.0, len, 1e-9);
 }
 
 TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFinger) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 grabbed = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -155,7 +158,7 @@ TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFinger) {
 }
 
 TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFingerInAllDirections) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 grabbed = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -167,7 +170,7 @@ TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFingerInAllDirecti
     EXPECT_NEAR(430.0, projected.x, 2.0);
     EXPECT_NEAR(300.0, projected.y, 2.0);
 
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     grabbed = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -179,7 +182,7 @@ TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFingerInAllDirecti
     EXPECT_NEAR(370.0, projected.x, 2.0);
     EXPECT_NEAR(300.0, projected.y, 2.0);
 
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     grabbed = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -191,7 +194,7 @@ TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFingerInAllDirecti
     EXPECT_NEAR(400.0, projected.x, 2.0);
     EXPECT_NEAR(270.0, projected.y, 2.0);
 
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     grabbed = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -205,7 +208,7 @@ TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFingerInAllDirecti
 }
 
 TEST_F(CameraControllerTest, DraggedSurfacePointFollowsFingerDirection) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 grabbed = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -218,7 +221,7 @@ TEST_F(CameraControllerTest, DraggedSurfacePointFollowsFingerDirection) {
     EXPECT_GT(afterRight.x, 400.0);
     EXPECT_NEAR(300.0, afterRight.y, 2.0);
 
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     grabbed = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -232,15 +235,13 @@ TEST_F(CameraControllerTest, DraggedSurfacePointFollowsFingerDirection) {
 }
 
 TEST_F(CameraControllerTest, DragStepUsesAnchorSphereIntersection) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(3.0f);
+    placeOrbitIdentity(*camera_, 3.0);
     controller_->onDragStart(400.0f, 300.0f);
     controller_->onDragMove(430.0f, 300.0f);
     controller_->onDragEnd();
     double nearAngle = quatAngleFromIdentity(controller_->rotation());
 
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(9.0f);
+    placeOrbitIdentity(*camera_, 9.0);
     controller_->onDragStart(400.0f, 300.0f);
     controller_->onDragMove(430.0f, 300.0f);
     controller_->onDragEnd();
@@ -251,7 +252,7 @@ TEST_F(CameraControllerTest, DragStepUsesAnchorSphereIntersection) {
 }
 
 TEST_F(CameraControllerTest, DragUsesInjectedSurfacePicker) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
     int pickCount = 0;
@@ -295,8 +296,7 @@ TEST_F(CameraControllerTest, DragSpinsWhenPointerMissesGlobeInsteadOfDeadZone) {
     // 回归（A0 消死区）：手指按在地球轮廓外（pick ray 打空）时，旧实现
     // onDragStart 直接放弃整段拖拽（dragging_=false → onDragMove no-op），
     // 地图卡死不动。现在应回退到 spin 转台旋转。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(7.0f);
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
     // 先确认起点确实在球面之外（判别式 < 0 → ray 不命中），否则测不到回退。
@@ -316,8 +316,7 @@ TEST_F(CameraControllerTest, DragSpinsWhenPointerMissesGlobeInsteadOfDeadZone) {
 
 TEST_F(CameraControllerTest, DragSpinFlickOverEmptySpaceSeedsInertia) {
     // spin 与 anchor 共用惯性通道：隔着地平线甩一下，松手后应继续滑行。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(7.0f);
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
     controller_->onDragStart(780.0f, 40.0f, 1.0);
@@ -337,8 +336,7 @@ TEST_F(CameraControllerTest, DragAcrossLimbHasNoScreenSpaceJump) {
     // 过渡必须连续。判据用屏幕空间：每个 20px 步长里，屏幕中心地表参照点
     // 的位移不得超过 3.5×步长（旧 latch 实现重入球面时会把过期锚点猛拉回
     // 指下，单事件位移可达数百 px）。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(7.0f);
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
     controller_->onDragStart(400.0f, 300.0f);
@@ -359,8 +357,7 @@ TEST_F(CameraControllerTest, DragAcrossLimbHasNoScreenSpaceJump) {
 TEST_F(CameraControllerTest, DragReentersGlobeRestoresAnchorFollow) {
     // N10（问题3 回归）：拖出球缘再拖回来，锚定必须恢复——旧实现一旦 miss
     // 即 latch 到转台直到抬手，重入球面后整段退化为非锚定旋转。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(7.0f);
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
     controller_->onDragStart(400.0f, 300.0f);
@@ -382,8 +379,7 @@ TEST_F(CameraControllerTest, DragReentersGlobeRestoresAnchorFollow) {
 }
 
 TEST_F(CameraControllerTest, PinchChangesDistance) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
     Vec3 anchor = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -398,7 +394,7 @@ TEST_F(CameraControllerTest, PinchChangesDistance) {
     EXPECT_NEAR(300.0, projectedAfterZoomIn.y, 2.0);
 
     controller_->onPinchEnd();
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
     anchor = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -414,8 +410,7 @@ TEST_F(CameraControllerTest, PinchChangesDistance) {
 
 TEST_F(CameraControllerTest, PinchCombinedZoomAndRotateKeepsAnchorPinned) {
     // A1 锚点锁：缩放+旋转同时发生时，手指下的地表点必须保持在双指中心。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
 
     constexpr double cx = 450.0;
@@ -437,8 +432,7 @@ TEST_F(CameraControllerTest, PinchZoomMagnitudeMatchesFingerSpread) {
     // 旧实现沿视线移动 d*(s-1)（应为朝锚点移动 d*(1-1/s)），有效缩放变成
     // 1/(2-s)：s=1.25 时实际 1.333，超出手指 6.7%，且质心偏离屏幕中心时还带
     // 一阶横向漂移。质心刻意取在屏幕中心之外以覆盖后者。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
 
     constexpr double cx = 460.0;
@@ -472,8 +466,7 @@ TEST_F(CameraControllerTest, PinchJerkClampCarriesResidualInsteadOfDroppingIt) {
     // 单事件 jerk 限幅只该把突跳摊到相邻事件上，不该丢量：一次 s=2.0 的粗事件
     // 之后跟若干静止事件，累计缩放必须收敛到 2.0。旧实现直接夹到 1.3 并丢弃
     // 余量——快速捏合永久少缩放一截。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
 
     constexpr double cx = 400.0;
@@ -497,8 +490,7 @@ TEST_F(CameraControllerTest, PinchSlowRotateRespondsAndKeepsAnchorPinned) {
     // A1：缓慢拧动（每帧远小于旧 0.003rad 死区）不应被死区吞掉——相机必须
     // 逐帧响应，同时地表锚点保持在双指中心。旧实现下 20×0.001rad 全被丢弃，
     // 相机纹丝不动（steppy），此断言 (a) 会失败。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
 
     constexpr double cx = 430.0;
@@ -524,8 +516,7 @@ TEST_F(CameraControllerTest, PinchZoomOffCenterKeepsAnchorPinnedWithoutSwing) {
     // A1 稳定性：在远离屏幕中心处捏合缩放时，手指下的地表点必须原地不动。
     // 旧实现沿 camera.direction() 前移再靠 keepAnchor 旋转回拉，off-center 时
     // 会先把锚点甩偏再纠正 → 首帧可见"瞬间偏移"。此处用 1px 严紧容差复现。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(3.0f);
+    placeOrbitIdentity(*camera_, 3.0);
     controller_->update(0.0);
 
     constexpr double ax = 520.0;  // 明显偏离中心 (400,300)
@@ -546,8 +537,7 @@ TEST_F(CameraControllerTest, PinchZoomWithTerrainPickerKeepsAnchorPinned) {
     // 复现真机"瞬间偏移"：抓取锚点走 surfacePicker(地形，真实高度),而 keepAnchor
     // 走裸 intersectGrabSphere(球面)。两个面不一致时,首个缩放帧会按地形-球面
     // 夹角把地球猛地旋一下。这里注入一个"抬高"的 picker 模拟地形。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(3.0f);
+    placeOrbitIdentity(*camera_, 3.0);
     controller_->update(0.0);
 
     // 地形 picker：沿 pick ray 命中球面后径向抬高 ~30km(夸张但同量级于夹角效应)。
@@ -714,8 +704,7 @@ TEST_F(CameraControllerTest, SetNadirOrbitViewRebuildsExpectedPose) {
 
 TEST_F(CameraControllerTest, PinchZoomFlickGlidesThenSettles) {
     // A2：捏合缩放松手后应沿视线朝锚点继续滑一小段（惯性），最终停住。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(6.0f);
+    placeOrbitIdentity(*camera_, 6.0);
     controller_->update(0.0);
     constexpr double cx = 400.0;
     constexpr double cy = 300.0;
@@ -745,8 +734,7 @@ TEST_F(CameraControllerTest, PinchZoomFlickGlidesThenSettles) {
 TEST_F(CameraControllerTest, ZoomInertiaBoundedNoFling) {
     // 反发散守卫（对应历史上 touchInertia 的 36× fling）：猛烈 flick 后跑大量帧，
     // 必须收敛、永不穿透高度地板、永不越过锚点飞出。对数距离建模从数学上保证。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(6.0f);
+    placeOrbitIdentity(*camera_, 6.0);
     controller_->update(0.0);
     constexpr double cx = 400.0;
     constexpr double cy = 300.0;
@@ -769,8 +757,7 @@ TEST_F(CameraControllerTest, ZoomInertiaBoundedNoFling) {
 
 TEST_F(CameraControllerTest, ZoomInertiaKeepsAnchorPinnedDuringGlide) {
     // 滑行期沿 eye→anchor 直线 dolly，故 off-center 锚点全程钉在屏幕原位。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(4.0f);
+    placeOrbitIdentity(*camera_, 4.0);
     controller_->update(0.0);
     constexpr double ax = 500.0;
     constexpr double ay = 240.0;
@@ -797,8 +784,7 @@ TEST_F(CameraControllerTest, ZoomInertiaKeepsAnchorPinnedDuringGlide) {
 TEST_F(CameraControllerTest, PinchPanFlickGlidesThenDecays) {
     // 步骤6：双指刚性 pan 甩动松手后沿运动方向继续滑行（与单指拖拽共用
     // 惯性通道），随后指数衰减停住。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(3.0f);
+    placeOrbitIdentity(*camera_, 3.0);
     controller_->update(0.0);
 
     double t = 1.0;
@@ -835,8 +821,7 @@ TEST_F(CameraControllerTest, PinchPanAndZoomDoubleInertiaConvergesToWorldAnchor)
     // 步骤6：pan+zoom 双惯性并行。zoomInertiaAnchor_ 是固定世界点，pan 惯性
     // 转的是相机（世界点不动），滑行期 dolly 持续朝原世界锚点收敛——距离
     // 单调减、旋转持续、全程有界不发散。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(4.0f);
+    placeOrbitIdentity(*camera_, 4.0);
     controller_->update(0.0);
     const Vec3 anchor = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -876,8 +861,7 @@ TEST_F(CameraControllerTest, PinchPanAndZoomDoubleInertiaConvergesToWorldAnchor)
 TEST_F(CameraControllerTest, PinchPitchReleaseDoesNotSeedPanInertia) {
     // Pitch 模式锚点钉 latch 像素，pin 增量恒为 identity → 松手不得产生
     // pan 滑行（旧架构里竖向质心移动会被当 pan 积速度）。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(4.0f);
+    placeOrbitIdentity(*camera_, 4.0);
     controller_->update(0.0);
 
     double t = 1.0;
@@ -904,8 +888,7 @@ TEST_F(CameraControllerTest, PinchPitchReleaseDoesNotSeedPanInertia) {
 }
 
 TEST_F(CameraControllerTest, DragInterruptsZoomInertia) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(6.0f);
+    placeOrbitIdentity(*camera_, 6.0);
     controller_->update(0.0);
     constexpr double cx = 400.0;
     constexpr double cy = 300.0;
@@ -930,7 +913,7 @@ TEST_F(CameraControllerTest, DragInterruptsZoomInertia) {
 }
 
 TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 grabbed = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -946,8 +929,7 @@ TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
 }
 
 TEST_F(CameraControllerTest, PinchZoomKeepsGestureCenterAnchorStable) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
 
     constexpr double anchorX = 470.0;
@@ -965,8 +947,7 @@ TEST_F(CameraControllerTest, PinchZoomKeepsGestureCenterAnchorStable) {
 }
 
 TEST_F(CameraControllerTest, PinchUsesInjectedSurfacePickerForAnchor) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
 
     int pickCount = 0;
@@ -990,8 +971,7 @@ TEST_F(CameraControllerTest, PinchUsesInjectedSurfacePickerForAnchor) {
 TEST_F(CameraControllerTest, PinchAcquiresAnchorMidGestureAfterStartMiss) {
     // 起手 pick 全 miss（如从球外/天空起手）→ 无锚分支照样缩放；后续事件
     // 每次重试获取锚点，质心移回可拾取区后转入有锚分支。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
 
     int pickCount = 0;
@@ -1022,8 +1002,7 @@ TEST_F(CameraControllerTest, PinchAcquiresAnchorMidGestureAfterStartMiss) {
 }
 
 TEST_F(CameraControllerTest, PinchZoomClampsToMinAltitudeInsteadOfStopping) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(1.01f);
+    placeOrbitIdentity(*camera_, 1.01);
     controller_->update(0.0);
     const double beforeAltitude =
         Ellipsoid::WGS84().cartesianToCartographic(camera_->position()).height();
@@ -1049,8 +1028,7 @@ TEST_F(CameraControllerTest, HighAltitudePinchSkipsTerrainHeightQuery) {
         ++terrainCalls;
         return 0.0;
     });
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(1.02f);  // ~127 km altitude — well above terrain
+    placeOrbitIdentity(*camera_, 1.02);  // ~127 km altitude — well above terrain
     controller_->update(0.0);
 
     controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f);
@@ -1070,8 +1048,7 @@ TEST_F(CameraControllerTest, TerrainClampHoldsLastKnownHeightWhenSampleMissing) 
     std::optional<double> sampled = 3000.0;  // valid high terrain
     controller_->setTerrainHeightFunc(
         [&](const Vec3&) -> std::optional<double> { return sampled; });
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(1.001f);  // ~6.4 km, below the 9 km fast-path
+    placeOrbitIdentity(*camera_, 1.001);  // ~6.4 km, below the 9 km fast-path
     controller_->update(0.0);
 
     // Zoom in hard so the eye pins against the terrain floor (~3000 + 50 m) and
@@ -1338,7 +1315,7 @@ TEST_F(CameraControllerTest, MeasurementFreezeSentinelIsObserveOnly) {
 }
 
 TEST_F(CameraControllerTest, PinchRotationSignIsPredictable) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 reference = intersectEarthSphere(
         camera_->getPickRay(400.0, 250.0, 800.0, 600.0));
@@ -1347,7 +1324,7 @@ TEST_F(CameraControllerTest, PinchRotationSignIsPredictable) {
     controller_->update(0.0);
     const glm::dvec2 positiveProjected = projectToScreen(*camera_, reference);
 
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->onPinchEnd();
     controller_->update(0.0);
     reference = intersectEarthSphere(
@@ -1363,7 +1340,7 @@ TEST_F(CameraControllerTest, PinchRotationSignIsPredictable) {
 }
 
 TEST_F(CameraControllerTest, PinchTiltChangesCamera) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     auto before = camera_->viewMatrix();
 
@@ -1386,8 +1363,7 @@ TEST_F(CameraControllerTest, PinchTiltChangesCamera) {
 TEST_F(CameraControllerTest, PinchTiltKeepsAnchorScreenPositionStable) {
     // Pitch 模式：绕锚点 pitch、锚点钉在 latch 像素原地不动（结构性保证，
     // 旧渐近混合实现下漂 ~17px，容差从 3.0 收紧到 0.5）。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(4.0f);
+    placeOrbitIdentity(*camera_, 4.0);
     controller_->update(0.0);
 
     constexpr float cx = 400.0f;
@@ -1414,7 +1390,7 @@ TEST_F(CameraControllerTest, PinchTiltKeepsAnchorScreenPositionStable) {
 }
 
 TEST_F(CameraControllerTest, PinchPushUpIncreasesTiltPullDownDecreasesTilt) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     constexpr float cx = 400.0f;
     constexpr float cy = 300.0f;
@@ -1453,8 +1429,7 @@ TEST_F(CameraControllerTest, PinchPushUpIncreasesTiltPullDownDecreasesTilt) {
 TEST_F(CameraControllerTest, PinchHorizontalPanMovesAnchorWithCentroid) {
     // N1（反转旧 PinchHorizontalPanDoesNotMoveCamera，其期望本身是旧架构的
     // 产物）：双指质心平移 = 刚性 pan，锚点钉在移动质心下（Google Maps 手感）。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
     const auto before = camera_->viewMatrix();
     Vec3 anchor = intersectEarthSphere(
@@ -1475,8 +1450,7 @@ TEST_F(CameraControllerTest, PinchHorizontalPanMovesAnchorWithCentroid) {
 TEST_F(CameraControllerTest, PinchRigidPanAnchorErrStaysZeroOverLongPath) {
     // N2：长路径刚性判定——每一步锚点投影都精确等于当前质心（不是渐近逼近）。
     // 旧 0.12 渐近跟随下每步落后 88%，anchorErr 持续 >10px。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(3.0f);
+    placeOrbitIdentity(*camera_, 3.0);
     controller_->update(0.0);
     Vec3 anchor = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -1498,8 +1472,7 @@ TEST_F(CameraControllerTest, PinchRigidPanAnchorErrStaysZeroOverLongPath) {
 TEST_F(CameraControllerTest, PinchCombinedZoomTwistPanAllPinned) {
     // N3：三通道同帧并行（缩放+拧动+质心移动），锚点始终钉在当前质心。
     // 覆盖旧 PinchScaleDominanceSuppressesTilt 的实质内容。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
     Vec3 anchor = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -1523,8 +1496,7 @@ TEST_F(CameraControllerTest, PinchDiagonalCenterMoveIsPurePan) {
     // 语义升级（原 PinchDiagonalCenterMoveDoesNotTilt）：斜向质心移动 =
     // 纯刚性 pan——锚点钉到新质心，且俯仰严格不变（绕地心刚性旋转精确保持
     // slope，任何变化都说明混入了 tilt/dolly）。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
     const double slopeBefore = cameraSlope(*camera_);
     Vec3 anchor = intersectEarthSphere(
@@ -1545,8 +1517,7 @@ TEST_F(CameraControllerTest, PinchDiagonalCenterMoveIsPurePan) {
 TEST_F(CameraControllerTest, PinchLatchWindowCatchUpLosesNoPan) {
     // N6：Undecided 窗口锚点钉起手质心；latch 成 Manipulate 的一刻，pin 是
     // 状态求解而非增量累加——窗口期积压的质心行程被一次精确补齐，不丢量。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(5.0f);
+    placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
     Vec3 anchor = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -1569,8 +1540,7 @@ TEST_F(CameraControllerTest, PinchLatchWindowCatchUpLosesNoPan) {
 
 TEST_F(CameraControllerTest, PinchPitchModeIgnoresHorizontalCentroidDrift) {
     // N7：Pitch 模式下质心横向漂移不产生 pan——锚点钉在 latch 像素。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(4.0f);
+    placeOrbitIdentity(*camera_, 4.0);
     controller_->update(0.0);
     Vec3 anchor = intersectEarthSphere(
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
@@ -1605,8 +1575,7 @@ TEST_F(CameraControllerTest, PinchTiltGainIsViewportIndependent) {
         camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
         CameraController controller(&camera);
         controller.setViewport(width, height);
-        controller.setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-        controller.setDistance(4.0f);
+        placeOrbitIdentity(camera, 4.0);
         controller.update(0.0);
         const float cx = static_cast<float>(width) * 0.5f;
         const float cy = static_cast<float>(height) * 0.5f;
@@ -1627,8 +1596,7 @@ TEST_F(CameraControllerTest, PinchTiltGainIsViewportIndependent) {
 }
 
 TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(7.0f);
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
     Vec3 target = intersectEarthSphere(
@@ -1642,8 +1610,7 @@ TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {
 }
 
 TEST_F(CameraControllerTest, ViewDistanceRespectsNearGroundSafetyFloor) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(7.0f);
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
     Vec3 target = intersectEarthSphere(
@@ -1657,15 +1624,14 @@ TEST_F(CameraControllerTest, ViewDistanceRespectsNearGroundSafetyFloor) {
 
 TEST_F(CameraControllerTest, NadirViewPitchIsNegativeHalfPi) {
     // identity 轨道 → 相机正俯视地心，pitch 应为 -π/2。
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
+    placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     const double pi = std::acos(-1.0);
     EXPECT_NEAR(-pi / 2.0, controller_->pitchRadians(), 0.02);
 }
 
 TEST_F(CameraControllerTest, ResetNorthUpZerosHeading) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(3.0f);
+    placeOrbitIdentity(*camera_, 3.0);
     controller_->update(0.0);
 
     // 双指旋转(绕地心竖轴 twist)制造明显非零方位角。
@@ -1687,8 +1653,7 @@ TEST_F(CameraControllerTest, ResetNorthUpZerosHeading) {
 }
 
 TEST_F(CameraControllerTest, ResetNorthUpPreservesPitch) {
-    controller_->setRotation(glm::dquat(1.0, 0.0, 0.0, 0.0));
-    controller_->setDistance(3.0f);
+    placeOrbitIdentity(*camera_, 3.0);
     controller_->update(0.0);
 
     // 先倾斜脱离正俯视，再 twist 制造方位角。
@@ -1750,7 +1715,7 @@ TEST_F(CameraControllerTest, CameraLooksAtOrigin) {
 // 北极星测量台冻结相机：冻结后 update() 完全空转，即便存在待处理的甩动惯性，
 // 相机位姿也逐帧字节稳定（far 重载耦合态可复现的机制基础）。
 TEST_F(CameraControllerTest, MeasurementFreezeHoldsPoseDespiteInertia) {
-    controller_->setDistance(1.0002f);  // 近地表，接管地表拾取
+    placeOrbitIdentity(*camera_, 1.0002);  // 近地表，接管地表拾取
     controller_->update(0.0);
 
     // 甩一下产生惯性：drag start→move→end 后 inertiaAngularVelocity_ > 0。
@@ -1773,7 +1738,7 @@ TEST_F(CameraControllerTest, MeasurementFreezeHoldsPoseDespiteInertia) {
     // orbit 重建把相机放回 distance_ 对应的位置）。
     controller_->setMeasurementFreeze(false);
     EXPECT_FALSE(controller_->measurementFrozen());
-    controller_->setDistance(2.0f);
+    placeOrbitIdentity(*camera_, 2.0);
     controller_->update(1.0 / 60.0);
     EXPECT_GT(matrixAbsDiff(camera_->viewMatrix(), frozenView), 1e-6);
 }

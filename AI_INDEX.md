@@ -1979,56 +1979,57 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 ### CameraController.h / .cpp
 
-锚点式地球相机控制器(.h 346 行 / .cpp 1301 行)。单指拖拽抓地表点并让它跟手;
-双指围绕质心下方锚点缩放/拧动/倾斜。两种模式:`orbitMode_`(由 `rotation_`+
-`distance_` 每帧重建的地心轨道)与自由 ECEF 相机(`orbitMode_=false`,构造后默认)。
+锚点式地球相机控制器(.h 342 行 / .cpp 1191 行)。单指拖拽抓地表点并让它跟手;
+双指围绕质心下方锚点缩放/拧动/倾斜。**位姿的唯一真值是 `Camera` 自身**
+(eye/direction/up)。
 
-⚠️ 双模式是**待删结构**(架构阶段 2):`orbit` 只是「缺 viewpoint API 时代」的位姿
-设定替代品,且它导致「双击天空 → `setDistance` → 翻 orbit → 丢弃全部 tilt」的瞬移
-bug。见 `docs/camera-system-architecture.md` §2.4。
+历史上曾并存一套 orbit 表示(`rotation_`+`distance_`+`orbitMode_`,每帧
+`lookAt(地心)` 重建),已整体删除——它是「缺 viewpoint API 时代」的位姿设定
+替代品,且直接产出过「双击天空 → `setDistance` → 翻 orbit → 下一帧重建强制
+看向地心 → 丢弃全部 tilt」的视角瞬移(低空还会跌破下限被钳到地表 50m 正俯视)。
+见 `docs/camera-system-architecture.md` §2.4。
 
 | 项 | 行 | 说明 |
 |---|---|---|
 | `SurfacePicker` typedef | .h:30 | Scene 注入的地形拾取;未注入/未命中时回退内部 WGS84 球面拾取 |
-| 地形类型转发 | .h:35 | `TerrainHeightFunc`/`TerrainSample`/`TerrainAreaSampleFunc` 均为 `CameraConstraintSolver` 的别名转发,调用方无需改动 |
+| 地形类型转发 | .h:35 | `TerrainHeightFunc`/`TerrainSample`/`TerrainAreaSampleFunc` 均为 `CameraConstraintSolver` 的别名转发 |
 | `PinchMode` | .h:56 | `Undecided`/`Manipulate`/`Pitch`。latch 在 InputManager,一段手势最多迁移一次 |
 | `PinchInput` | .h:65 | **绝对量表述**(当前 spread/起手 spread、连线角累计):事件被合并或丢弃时不产生累积漂移 |
-| `CameraGroundState` | .h:161 | solver `GroundState` 的别名转发;`groundState()` 转发给 solver |
-| `AnchorSolveResult` | .h:186 | 锚点求解结果 + `conditioning`(入射余弦,病态区混合权重的输入) |
-| `ConstraintContext` | .h:240 | 约束出口的调用语境:`source`(Gesture/Inertia/FrameEnd)、`pinnedAnchorWorld`、`observeOnly`、`deltaSeconds` |
-| `constraintSolver_` | .h:265 | 地形探针/滤波/钳位/groundState 全归它;本类只在 `resolveConstraints` 这一个出口调用 |
-| orbit 状态 | .h:274 | `rotation_`(dquat)、`distance_`(地球半径单位)、`orbitMode_` |
+| `distance()` / `rotation()` | .h:137 / :143 | **纯派生只读视图**(`|eye|/R`;把 (+Z,+Y) 转到 (dir,up) 的四元数),不是状态。过渡接口,阶段 2b 由 `currentViewpoint()` 取代 |
+| `CameraGroundState` | .h:166 | solver `GroundState` 的别名转发 |
+| `AnchorSolveResult` | .h:191 | 锚点求解结果 + `conditioning`(入射余弦,病态区混合权重的输入) |
+| `ConstraintContext` | .h:242 | 约束出口的调用语境:`source`(Gesture/Inertia/FrameEnd)、`pinnedAnchorWorld`、`observeOnly`、`deltaSeconds` |
+| `constraintSolver_` | .h:264 | 地形探针/滤波/钳位/groundState 全归它;本类只在 `resolveConstraints` 这一个出口调用 |
 
 | 方法 | 行 | 算法 |
 |---|---|---|
-| `anchorExactWeight` (anon) | .cpp:56 | 病态区混合权重:入射余弦 c≥0.35 全精确,≤0.10 全转台,中间 smoothstep。精确解增益 ∝1/c 掠射时爆炸,而硬切换必然跳变或死锁——连续混合 + 退化区整点重取锚点是唯一同时消掉两者的做法 |
-| `defaultViewRotation` (anon) | .cpp:93 | 初始 `rotation_` 让视点落在东亚(lng=105,lat=35) |
-| ctor | .cpp:110 | `lookAt` 重庆上空 1500m,`orbitMode_=false` |
-| `onDragStart` | .cpp:144 | `grabSurfacePoint`;清零 pan/zoom 惯性与回中欠账 |
-| `onPinchGesture`(新契约) | .cpp:208 | jerk 限幅 → ①沿 eye→anchor 直线 dolly(精确保锚) → ②绕锚点法线 twist → ③Pitch 模式绕锚点竖转(反 wind-up:被守卫拒绝时重取基线) → ④`applyPinchPin`(**唯一产生横向世界运动的通道**) |
-| `onPinchEnd` | .cpp:428 | 把 pin 角速度种进与单指共用的惯性通道;够动量则启动 zoom 惯性滑行 |
-| `update` | .cpp:449 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵**(收编所有未显式路由的位姿写入;冻结时 `observeOnly`) |
-| `updateInternal` | .cpp:462 | measurementFreeze/scriptedPan 早退 → pan 惯性(角速度制,指数阻尼,跌破 `kMinInertiaAngularVelocity` 归零) → zoom 惯性(对数距离空间指数逼近,数学上永不越过锚点) → 回中预算消费 → orbit 重建 |
-| `resolveConstraints` | .cpp:584 | **位姿合法性的唯一出口**。位姿指纹比对判 user-driven(帧末不等 ⇒ 有人绕过控制器裸写);orbit 分支把约束表达在 `distance_` 上再重跑重建(直接抬 eye 会被下一帧重建抹掉=振荡),最多两轮收敛;末尾同时更新指纹与 `solver.commitPose` |
-| `setNadirOrbitView` | .cpp:683 | 目标点正上方、正北朝上、看向地心。orbit 四元数约定是本类私有实现细节,外部一律走本接口 |
-| `viewDistance` | .cpp:704 | 保持 target→eye 方位,置于指定距离并 `lookAt`;`orbitMode_=false` |
-| `rotateCameraVerticalAroundPoint` | .cpp:765 | 绕 `camera_->right()` 在竖直面内转。三重守卫:up 翻转、`minSlope`、地形净空预判(用滤波高度,不重采样)。**拒绝而非事后顶起**——顶起要么破坏 Pitch 的锚点不变量,要么(Cesium 式旋转补偿)偷偷改 direction |
-| `accrueRecenterBudget` | .cpp:828 | 高空 zoom-out 回中的**充值**:手势/滑行期只记账不动相机(回中旋转会推开刚钉好的锚点),权重随海拔 1.5e6→8e6 smoothstep 爬升 |
-| `consumeRecenterBudget` | .cpp:853 | 松手后按指数节奏消费,绕相机自身位置转(eye 不动,仅视线向地心收敛) |
-| `headingFromFrame` (anon) | .cpp:896 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
-| `resetNorthUp` | .cpp:934 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
-| `solveAnchorRotation` | .cpp:965 | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
-| `pointOnGrabSphere` | .cpp:1005 | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
-| `turntableDeltaFromPixels` | .cpp:1030 | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
-| `tryAcquirePinchAnchor` | .cpp:1053 | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变) |
-| `applyPinchPin` | .cpp:1083 | 把锚点钉到目标像素;病态区连续混入质心转台并整点重取锚点;末尾走约束出口(pin 是唯一横向通道,山区横移可能把 eye 转进地形) |
-| `grabSurfacePoint` | .cpp:1177 | 抓取锚点。⚠️锚点必须落在拾取射线上——`pickTerrain` 返回点不在射线上,落差会被首个 move 一次性补掉 = 起手跳变(真机实测 227~471px) |
-| `applyAnchorDrag` | .cpp:1216 | 良态区精确锚定;病态区 slerp 混入转台 + 应用后整点重取锚点(**永不渐近混合**——混出的锚点不属于任何真实几何,会积欠账);末尾按事件时间戳喂惯性 EMA |
+| `anchorExactWeight` (anon) | .cpp:53 | 病态区混合权重:入射余弦 c≥0.35 全精确,≤0.10 全转台,中间 smoothstep。精确解增益 ∝1/c 掠射时爆炸,而硬切换必然跳变或死锁——连续混合 + 退化区整点重取锚点是唯一同时消掉两者的做法 |
+| `onDragStart` | .cpp:114 | `grabSurfacePoint`;清零 pan/zoom 惯性与回中欠账 |
+| `onPinchGesture`(新契约) | .cpp:177 | jerk 限幅 → ①沿 eye→anchor 直线 dolly(精确保锚) → ②绕锚点法线 twist → ③Pitch 模式绕锚点竖转(反 wind-up:被守卫拒绝时重取基线) → ④`applyPinchPin`(**唯一产生横向世界运动的通道**) |
+| `onPinchEnd` | .cpp:393 | 把 pin 角速度种进与单指共用的惯性通道;够动量则启动 zoom 惯性滑行 |
+| `update` | .cpp:414 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵**(收编所有未显式路由的位姿写入;冻结时 `observeOnly`) |
+| `updateInternal` | .cpp:427 | measurementFreeze/scriptedPan 早退 → pan 惯性(角速度制,指数阻尼,跌破 `kMinInertiaAngularVelocity` 归零) → zoom 惯性(对数距离空间指数逼近,数学上永不越过锚点) → 回中预算消费 |
+| `resolveConstraints` | .cpp:516 | **位姿合法性的唯一出口**。位姿指纹比对判 user-driven(帧末不等 ⇒ 有人绕过控制器裸写);调 `solver.constrainEye` 钳位;末尾同时更新指纹与 `solver.commitPose` |
+| `distance` / `rotation` | .cpp:581 / :585 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
+| `setNadirOrbitView` | .cpp:594 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
+| `viewDistance` | .cpp:615 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
+| `rotateCameraVerticalAroundPoint` | .cpp:662 | 绕 `camera_->right()` 在竖直面内转。三重守卫:up 翻转、`minSlope`、地形净空预判(用滤波高度,不重采样)。**拒绝而非事后顶起**——顶起要么破坏 Pitch 的锚点不变量,要么(Cesium 式旋转补偿)偷偷改 direction |
+| `accrueRecenterBudget` | .cpp:723 | 高空 zoom-out 回中的**充值**:手势/滑行期只记账不动相机(回中旋转会推开刚钉好的锚点),权重随海拔 1.5e6→8e6 smoothstep 爬升 |
+| `consumeRecenterBudget` | .cpp:748 | 松手后按指数节奏消费,绕相机自身位置转(eye 不动,仅视线向地心收敛) |
+| `headingFromFrame` (anon) | .cpp:787 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
+| `resetNorthUp` | .cpp:825 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
+| `solveAnchorRotation` | .cpp:855 | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
+| `pointOnGrabSphere` | .cpp:895 | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
+| `turntableDeltaFromPixels` | .cpp:920 | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
+| `tryAcquirePinchAnchor` | .cpp:943 | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变) |
+| `applyPinchPin` | .cpp:973 | 把锚点钉到目标像素;病态区连续混入质心转台并整点重取锚点;末尾走约束出口(pin 是唯一横向通道,山区横移可能把 eye 转进地形) |
+| `grabSurfacePoint` | .cpp:1067 | 抓取锚点。⚠️锚点必须落在拾取射线上——`pickTerrain` 返回点不在射线上,落差会被首个 move 一次性补掉 = 起手跳变(真机实测 227~471px) |
+| `applyAnchorDrag` | .cpp:1106 | 良态区精确锚定;病态区 slerp 混入转台 + 应用后整点重取锚点(**永不渐近混合**——混出的锚点不属于任何真实几何,会积欠账);末尾按事件时间戳喂惯性 EMA |
 
-调优常量(.cpp:20-81,匿名 namespace):惯性 `kMaxInertiaAngularVelocityRadPerSec`=5 / `kInertiaDampingPerSecond`=3 / `kVelocitySmoothing`=0.35;`kMaxDistanceEarthRadii`=30;`kTouchJerkLimit`=0.3 / `kMaxPinchScaleResidualLog`=1.0;`kTouchMinSlope`=0.1;`kPinchTiltFullHeightRadians`=0.9(**按视口高度归一,设备无关**——旧的每物理像素定义在 3.5x 手机上比 1.5x 平板快 2.3 倍);`kGrabSphereEyeMarginMeters`=25;病态带 `kAnchorConditioningLo/Hi`=0.10/0.35;zoom 惯性 `kZoomInertiaDampingPerSecond`=6 / `kMaxZoomInertiaLogRate`=6 / `kMinZoomInertiaLogRate`=0.08;回中 `kRecenterStartAltitudeMeters`=1.5e6 / `kRecenterFullAltitudeMeters`=8.0e6 / `kRecenterGainPerLogStep`=2.5 / `kRecenterSettleRatePerSecond`=6。
+调优常量(.cpp:20 起,匿名 namespace):惯性 `kMaxInertiaAngularVelocityRadPerSec`=5 / `kInertiaDampingPerSecond`=3 / `kVelocitySmoothing`=0.35;`kMaxDistanceEarthRadii`=30(dolly 上限,⚠️**无专门测试覆盖**——旧的 `SetDistance` 用例随 API 一起删了);`kTouchJerkLimit`=0.3 / `kMaxPinchScaleResidualLog`=1.0;`kTouchMinSlope`=0.1;`kPinchTiltFullHeightRadians`=0.9(**按视口高度归一,设备无关**——旧的每物理像素定义在 3.5x 手机上比 1.5x 平板快 2.3 倍);`kGrabSphereEyeMarginMeters`=25;病态带 `kAnchorConditioningLo/Hi`=0.10/0.35;zoom 惯性 `kZoomInertiaDampingPerSecond`=6 / `kMaxZoomInertiaLogRate`=6 / `kMinZoomInertiaLogRate`=0.08;回中 `kRecenterStartAltitudeMeters`=1.5e6 / `kRecenterFullAltitudeMeters`=8.0e6 / `kRecenterGainPerLogStep`=2.5 / `kRecenterSettleRatePerSecond`=6。
 
-地形接线:`setSurfacePicker` 喂 `pickSurfacePoint`;`setTerrainHeightFunc`/
-`setTerrainAreaSampleFunc` (.cpp:136)/`setTerrainRevisionFunc` (.cpp:140) 全部转发给
+地形接线:`setSurfacePicker` (.cpp:98) 喂 `pickSurfacePoint`;`setTerrainHeightFunc` (.cpp:102)、
+`setTerrainAreaSampleFunc` (.cpp:106)、`setTerrainRevisionFunc` (.cpp:110) 全部转发给
 `constraintSolver_`。均未注入时退化为裸 WGS84 球面 + 零地形高。
 
 ### Camera.h / .cpp
