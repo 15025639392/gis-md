@@ -1842,20 +1842,20 @@ cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, as
 | Method | Lines | Description |
 |---|---|---|
 | ctor / dtor | .h:51-55 / .cpp:2841-2868 | Takes `ImageryProvider&`, `TileScheme&`, optional uploader (null = headless test); dtor drains async state |
-| `getTile` | .cpp:3358-3389 | Get/create cached tile by key; returns shared placeholder when not ready; stamps `frameNumber_` |
-| `mapRasterTilesToGeometryTile` | .cpp:3390... | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, else composed mapped tile |
+| `getTile` | .cpp:3388-3419 | Get/create cached tile by key; returns shared placeholder when not ready; stamps `frameNumber_` |
+| `mapRasterTilesToGeometryTile` | .cpp:3420... | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, else composed mapped tile |
 | `buildQuadtreeSourcePlan` | .cpp:1497... | Choose source zoom (SSE/texture-size driven) + source-key rectangle |
-| `resolveTile` | .cpp:3495-3520 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
-| `loadTile` / `loadTileThrottled` | .cpp:3593-3661 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
-| `loadMappedRasterTile` / `loadSourceTileList` / `loadSourceImageSet` | .cpp:3662 / :3783 / :3800 | Fetch/compose overlapping source quadtree tiles for a mapped tile |
-| `issueMappedSourceImageSet` | .cpp:4026-4094 | Dispatch source-tile requests through shared depot |
-| `composeQuadtreeSourceImagesWithDetails` | .cpp:2504-2539 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
-| `projectedVForLatitude` | .cpp:2540-2546 | Latitude → projected V within bounds |
-| `processPendingUploads` | .cpp:4276-4608 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
-| `hasPendingWork` | .cpp:4609-4623 | HTTP/source-fanout/upload outstanding |
-| `trimUnusedTiles` | .cpp:4668-4723 | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
-| `refreshSourceAssetDepot` | .cpp:3080-3088 | Rebuild shared source-tile depot on option change |
-| `requestDiagnostics` | .cpp:3521-3547 | Aggregates imagery-provider + raster-source request counters |
+| `resolveTile` | .cpp:3525-3550 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
+| `loadTile` / `loadTileThrottled` | .cpp:3623-3691 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
+| `loadMappedRasterTile` / `loadSourceTileList` / `loadSourceImageSet` | .cpp:3692 / :3813 / :3830 | Fetch/compose overlapping source quadtree tiles for a mapped tile |
+| `issueMappedSourceImageSet` | .cpp:4056-4124 | Dispatch source-tile requests through shared depot |
+| `composeQuadtreeSourceImagesWithDetails` | .cpp:2534-2569 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
+| `projectedVForLatitude` | .cpp:2570-2576 | Latitude → projected V within bounds |
+| `processPendingUploads` | .cpp:4306-4638 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
+| `hasPendingWork` | .cpp:4639-4653 | HTTP/source-fanout/upload outstanding |
+| `trimUnusedTiles` | .cpp:4698-4758 | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
+| `refreshSourceAssetDepot` | .cpp:3110-3118 | Rebuild shared source-tile depot on option change |
+| `requestDiagnostics` | .cpp:3551-3577 | Aggregates imagery-provider + raster-source request counters |
 
 | State/struct | Lines | Description |
 |---|---|---|

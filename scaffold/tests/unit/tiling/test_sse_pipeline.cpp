@@ -3128,6 +3128,50 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
     check(directTile->getTexture() != nullptr,
           "RasterOverlayTileProvider: direct tile receives texture from shared source upload");
 }
+void testRasterOverlaySourceCallbackSurvivesProviderDestruction() {
+    // teardown 竞态回归(真机 tombstone_21):worker 解码回调可能在
+    // provider/scheme 析构后才送达 —— depot 经 shared_from_this 有意续命,
+    // 但它对 provider/scheme 的裸引用不随之续命。修法=requestSource 发起时
+    // 值捕获(bounds/attribution),回调不再触碰宿主。本测试扣住回调、
+    // 析构 provider+scheme、再送达:修前是 UB(真机上空 vptr 虚调用崩,
+    // host 上未必立崩 —— "跑过"只在修后代码上构成证据,ASan 下才是硬判据),
+    // 修后必须安静落地为 abandoned/终败结果。
+    PendingRectangleImageryProvider imagery;
+    auto imageryScheme = TileScheme::createXYZWebMercator();
+    auto provider = std::make_unique<RasterOverlayTileProvider>(
+        imagery,
+        *imageryScheme,
+        nullptr);
+    Rectangle broadBounds =
+        Rectangle::fromDegrees(-170.0, -70.0, 170.0, 70.0);
+    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+        provider->mapRasterTilesToGeometryTile(
+            projectForProvider(*provider, broadBounds),
+            1024.0,
+            1024.0).tile;
+    FrameResourceBudgetConfig config;
+    config.maxRasterNetworkRequestsPerFrame = 1024;
+    config.maxRasterNetworkInflight = 1024;
+    config.maxRasterUploadsPerFrame = 1024;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, config);
+    check(mappedRasterTile &&
+              provider->loadTileThrottled(*mappedRasterTile, &budget) &&
+              !imagery.pendingRequests.empty(),
+          "RasterOverlayTileProvider: teardown-race fixture starts source request");
+    if (imagery.pendingRequests.empty()) return;
+    PendingRectangleImageryProvider::PendingRequest held =
+        imagery.pendingRequests.front();
+    mappedRasterTile.reset();
+    provider.reset();
+    imageryScheme.reset();
+    // 失败送达 → alive==false 分支 → abandoned 结果(修前在此摸死 scheme)。
+    held.callback(held.key, nullptr);
+    // 成功送达 → 同为 alive==false 分支;顺带验证重复送达幂等。
+    held.callback(held.key, makeDecodedRgbaImage(8, 8));
+    check(true,
+          "RasterOverlayTileProvider: source callback delivered after provider+scheme destruction lands safely");
+}
 void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
@@ -26983,6 +27027,7 @@ int main() {
     testRasterOverlaySourceInvalidationRecreatesDirectAssetLikeSharedAssetDepot();
     testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight();
     testRasterOverlayDirectTileJoinsMappedSourceInFlight();
+    testRasterOverlaySourceCallbackSurvivesProviderDestruction();
     testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget();
     testRasterOverlayMappedRasterTilesShareSourceInFlight();
     testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();

@@ -1615,6 +1615,17 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 return;
             }
         }
+        // 值捕获(teardown 竞态根修,tombstone_21):worker 侧回调可能在
+        // provider/scheme 析构后运行 —— depot 经 shared_from_this 有意续命,
+        // 而 `provider`/`scheme` 是指向 overlay 世界的裸引用,不随之续命
+        // (实测:退后台 132ms 后解码回调走 abandon 路径,解引用已释放的
+        // scheme,空 vptr 虚调用)。回调需要的宿主数据在**发起时**(此刻宿主
+        // 必活:本函数只在 provider 帧泵线程被调)全部按值算好带走,回调里
+        // 不得再触碰 scheme/provider。
+        const Rectangle originalBounds = scheme.tileToRectangle(originalKey);
+        const Rectangle requestedBounds =
+            scheme.tileToRectangle(requestedKey);
+        const std::string attributionSnapshot = provider.attribution();
         std::optional<RasterSourceResult> cachedSource;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
@@ -1631,8 +1642,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 source.bounds = it->second.bounds;
                 source.image = it->second.image;
                 source.sourceSubset = ancestorFallback
-                    ? std::optional<Rectangle>(
-                          scheme.tileToRectangle(originalKey))
+                    ? std::optional<Rectangle>(originalBounds)
                     : it->second.sourceSubset;
                 source.moreDetailAvailable = it->second.moreDetailAvailable;
                 source.diagnostics = it->second.diagnostics;
@@ -1659,12 +1669,13 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         if (shareInFlight) {
             const std::string inFlightKey = depotCacheKey(originalKey);
             auto waiter =
-                [self, originalKey, ancestorFallback, onReady](
-                    InFlightSourceTileAsset::Result cached) mutable {
+                [self, originalKey, originalBounds, ancestorFallback,
+                 onReady](InFlightSourceTileAsset::Result cached) mutable {
                     if (onReady) {
                         onReady(self->rasterSourceResultFromAsset(
                             cached,
                             originalKey,
+                            originalBounds,
                             ancestorFallback));
                     }
                 };
@@ -1692,6 +1703,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             auto waiter =
                 [self,
                  originalKey,
+                 originalBounds,
                  ancestorFallback,
                  onReady,
                  fallbackInFlightKeys](
@@ -1700,6 +1712,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         self->rasterSourceResultFromAsset(
                         cached,
                         originalKey,
+                        originalBounds,
                         ancestorFallback);
                     if (cached) {
                         auto originalCompleted =
@@ -1756,6 +1769,12 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             [self,
              requestedKey,
              originalKey,
+             // 值快照:本回调在 worker 线程运行,可能晚于 provider/scheme
+             // 析构 —— 回调体内禁止触碰 self->scheme / self->provider
+             // (见 requestSource 顶部注释)。
+             originalBounds,
+             requestedBounds,
+             attributionSnapshot,
              ancestorFallback,
              waiterOwnerToken,
              onSourceIssued,
@@ -1769,8 +1788,8 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     if (onSourceFinished) {
                         onSourceFinished();
                     }
-                    auto abandoned =
-                        self->makeAbandonedSourceResult(originalKey);
+                    auto abandoned = self->makeAbandonedSourceResult(
+                        originalKey, originalBounds);
                     self->finishInFlightSource(originalKey, abandoned);
                     for (const TileKey& key : fallbackInFlightKeys) {
                         self->finishInFlightSource(key, abandoned);
@@ -1784,21 +1803,21 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     }
                     RasterSourceResult source;
                     source.key = loadedKey;
-                    source.bounds = self->scheme.tileToRectangle(loadedKey);
+                    // provider 回调按契约回带 requestedKey(逐级回退各是独立
+                    // 的 requestSource 实例,各带各的快照)→ 用发起时算好的
+                    // requestedBounds,不回摸 scheme。
+                    source.bounds = requestedBounds;
                     source.image =
                         std::shared_ptr<const DecodedImage>(std::move(image));
                     source.sourceSubset = ancestorFallback
-                        ? std::optional<Rectangle>(
-                              self->scheme.tileToRectangle(originalKey))
+                        ? std::optional<Rectangle>(originalBounds)
                         : std::nullopt;
                     source.moreDetailAvailable =
                         loadedKey.z < self->maximumLevel
                             ? RasterOverlayTile::MoreDetailAvailable::Yes
                             : RasterOverlayTile::MoreDetailAvailable::No;
-                    const std::string attribution =
-                        self->provider.attribution();
-                    if (!attribution.empty()) {
-                        source.credits.push_back(attribution);
+                    if (!attributionSnapshot.empty()) {
+                        source.credits.push_back(attributionSnapshot);
                     }
                     auto completed = std::make_shared<SourceTileAsset>(
                         self->sourceAssetFromResult(source));
@@ -1837,8 +1856,8 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                         onSourceFinished();
                     }
                     if (!self->state->alive.load(std::memory_order_acquire)) {
-                        auto abandoned =
-                            self->makeAbandonedSourceResult(originalKey);
+                        auto abandoned = self->makeAbandonedSourceResult(
+                            originalKey, originalBounds);
                         self->finishInFlightSource(originalKey, abandoned);
                         for (const TileKey& key : fallbackInFlightKeys) {
                             self->finishInFlightSource(key, abandoned);
@@ -1896,7 +1915,8 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 if (onSourceFinished) {
                     onSourceFinished();
                 }
-                auto failed = self->cacheTerminalFailure(originalKey);
+                auto failed = self->cacheTerminalFailure(
+                    originalKey, originalBounds);
                 self->finishInFlightSource(originalKey, failed);
                 for (const TileKey& key : fallbackInFlightKeys) {
                     self->finishInFlightSource(key, failed);
@@ -1916,7 +1936,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             }
             SourceTileAsset failed;
             failed.key = originalKey;
-            failed.bounds = scheme.tileToRectangle(originalKey);
+            failed.bounds = originalBounds;
             failed.moreDetailAvailable =
                 RasterOverlayTile::MoreDetailAvailable::No;
             failed.diagnostics.push_back(
@@ -1943,9 +1963,12 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
     }
 
     void abandonInFlightSource(const TileKey& originalKey) {
+        // 本方法只在 provider 帧泵线程被调(宿主必活),此处取 scheme 安全。
         finishInFlightSource(
             originalKey,
-            makeAbandonedSourceResult(originalKey));
+            makeAbandonedSourceResult(
+                originalKey,
+                scheme.tileToRectangle(originalKey)));
     }
 
     void detachInFlightWaiters(const std::vector<TileKey>& keys,
@@ -1974,10 +1997,14 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
     }
 
 private:
+    // ⚠️ 以下三个 helper 可能在 worker 回调里、provider/scheme 析构后运行:
+    // 只准消费调用方传入的值参,不得触碰 scheme/provider 成员。
     RasterSourceResult rasterSourceResultFromAsset(
         const InFlightSourceTileAsset::Result& cached,
         const TileKey& originalKey,
+        const Rectangle& originalBounds,
         bool ancestorFallback) const {
+        (void)originalKey;
         if (!cached) {
             return RasterSourceResult{};
         }
@@ -1986,7 +2013,7 @@ private:
         source.bounds = cached->bounds;
         source.image = cached->image;
         source.sourceSubset = ancestorFallback
-            ? std::optional<Rectangle>(scheme.tileToRectangle(originalKey))
+            ? std::optional<Rectangle>(originalBounds)
             : cached->sourceSubset;
         source.moreDetailAvailable = cached->moreDetailAvailable;
         source.diagnostics = cached->diagnostics;
@@ -2013,10 +2040,11 @@ private:
     }
 
     InFlightSourceTileAsset::Result makeAbandonedSourceResult(
-        const TileKey& requestedKey) const {
+        const TileKey& requestedKey,
+        const Rectangle& requestedBounds) const {
         SourceTileAsset abandoned;
         abandoned.key = requestedKey;
-        abandoned.bounds = scheme.tileToRectangle(requestedKey);
+        abandoned.bounds = requestedBounds;
         abandoned.moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::No;
         abandoned.diagnostics.push_back(
@@ -2026,10 +2054,11 @@ private:
     }
 
     InFlightSourceTileAsset::Result cacheTerminalFailure(
-        const TileKey& requestedKey) {
+        const TileKey& requestedKey,
+        const Rectangle& requestedBounds) {
         SourceTileAsset failed;
         failed.key = requestedKey;
-        failed.bounds = scheme.tileToRectangle(requestedKey);
+        failed.bounds = requestedBounds;
         failed.moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::No;
         failed.diagnostics.push_back(
