@@ -95,8 +95,11 @@ struct TileEdgeSnapResolver {
         if (e.usesAncestorFallback) {
             return e.renderKey.z;  // remap:数据八度 = 祖先层级(恒 coarse 档)
         }
-        const int grid = terrainGridSizeForSse(
-            e.selectedTile->selectionFrameState.screenSpaceError);
+        // 档位读每帧唯一决策(refresher 已带迟滞盖章),与 draw swap 同一份
+        // —— 此前这里无迟滞重推,迟滞带内八度低估 2 级 → 该吸不吸。
+        const TileSelectionFrameState& st = e.selectedTile->selectionFrameState;
+        const int grid = decidedOrPredictGridSize(
+            st.displacementGridSize, st.screenSpaceError);
         return e.selectedKey.z +
                (grid >= kTerrainDenseGridSize ? 2 : 0);
     }

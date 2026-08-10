@@ -48,7 +48,10 @@ inline HeightSource sourceOf(const TileRenderEntry& e) {
         s.gridSize = kTerrainDisplacementGridSize;
         s.morph = 1.0f;
     } else {
-        s.gridSize = terrainGridSizeForSse(
+        // 档位读每帧唯一决策(refresher 盖章),与 draw 实际渲染档同一份
+        // —— 无迟滞重推会在迟滞带内量到/喂进"没在画的那一档"的高度。
+        s.gridSize = decidedOrPredictGridSize(
+            tile->selectionFrameState.displacementGridSize,
             tile->selectionFrameState.screenSpaceError);
         s.morph = tile->selectionFrameState.terrainMorphFactor;
     }

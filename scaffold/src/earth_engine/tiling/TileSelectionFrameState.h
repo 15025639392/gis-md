@@ -27,6 +27,11 @@ struct TileSelectionFrameState {
     // 2^k 间距的自纹理线性插值 → T-junction 在几何上不存在(残余只剩金字塔
     // 层间重采样差 ε,由裙墙覆盖)。逐帧重算天然覆盖"邻居本帧刚换档"暂态。
     float edgeSnapPacked = 0.0f;
+    // 位移模板档位的**每帧唯一决策**(64=coarse/256=dense,0=尚未决策)。
+    // refresher 每非复用帧带迟滞刷新(上一帧值即迟滞态);draw 与接缝侧全部
+    // 经 decidedOrPredictGridSize() 读它,禁止再从 SSE 自行重推
+    // (语义与反例见 TerrainDisplacementTemplatePool.h 该函数注释)。
+    int displacementGridSize = 0;
     // ①-1 的吸附记录**不再存在瓦片上**。此处曾两度尝试给含裸指针的记录配
     // 生存期协议(元素指针→按值存;有效位→撤章循环),第二版仍在真机 SIGSEGV
     // (Strict reuse 帧跳过 resolve,撤章不发生,而邻居瓦片已在上一帧 draw 末尾

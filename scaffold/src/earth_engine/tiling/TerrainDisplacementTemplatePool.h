@@ -79,6 +79,20 @@ inline int terrainGridSizeForSse(double tileSse, int currentGridSize = 0) {
                                 : kTerrainDisplacementGridSize;
 }
 
+// 档位**单一决策点**读法。档位每帧只在 update 期决策一次(refresher 带迟滞
+// 写进 selectionFrameState.displacementGridSize),draw/接缝 resolver/边高度
+// LUT/错位探针一律经本函数读那份决策 —— 此前四处消费者各自从 SSE 重推一遍
+// (有的带迟滞有的不带),迟滞带内(SSE∈[48,64) 且曾 dense)判断互相打架:
+// 吸附步长按低估 2 级的八度算 → 该吸不吸,探针同源同错。决定只做一次,
+// 分歧在结构上消失。decided<=0(该瓦片本帧未被 refresher 盖章:测试假体/
+// 病理态)回落无迟滞预测 = 旧首建行为。
+// ⚠️ dense 池触顶/每帧预算耗尽的 draw 期回落**不回写决策**(那发生在画的
+// 瞬间,决策预测不了):接受该帧降级,下一帧失效重建自愈,predM2 计数观测。
+inline int decidedOrPredictGridSize(int decidedGridSize, double tileSse) {
+    return decidedGridSize > 0 ? decidedGridSize
+                               : terrainGridSizeForSse(tileSse);
+}
+
 // 北极星 Phase 2c:地形位移随 LOD 连续衰减到平（GE 式「从太空看是光滑椭球，
 // 靠近才长出起伏」）。粗/远瓦片（低 z）真实 relief 被粗网格 faceting 成钻石
 // 尖刺 + skirt 墙外露,本就不可分辨,压平;fade→0 完全跳过位移路径(平椭球),

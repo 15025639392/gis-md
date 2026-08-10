@@ -383,11 +383,12 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
             {
                 const DecodedHeightmap* hm =
                     tile.content.renderContent.retainedHeightmap();
-                // 自适应几何密度(单一事实源 terrainGridSizeForSse):几何 cap 在
-                // DEM native max LOD 的近景瓦片 SSE 远超阈值 → 升 dense 档,拿回
-                // 源数据里那 8 倍高程细节;正常细化的远瓦片留 coarse 档,故总三角
-                // 数由屏幕面积封顶而非随可见瓦片数增长(见头文件推导)。
-                int gridSize = terrainGridSizeForSse(
+                // 自适应几何密度:档位读每帧唯一决策(refresher 带迟滞盖章,
+                // 接缝 resolver/LUT/探针读的同一份,见 decidedOrPredictGridSize
+                // 注释)。近景被 cap 的瓦片升 dense 拿回 8 倍高程细节,远瓦片
+                // 留 coarse,总三角数由屏幕面积封顶(见头文件推导)。
+                int gridSize = decidedOrPredictGridSize(
+                    tile.selectionFrameState.displacementGridSize,
                     tile.selectionFrameState.screenSpaceError);
                 const TerrainDisplacementTemplatePool::HeightTexture* ht =
                     hm ? pool->acquireHeightTexture(tile.key, *hm, tile.bounds,
@@ -889,10 +890,13 @@ void GltfDrawCommandBuilder::build(
                 }
                 // 换档也要失效重建:常驻命令只在资源变化时重建,不查这一条的话
                 // 瓦片会永远停在建命令那一帧的密度档(相机推近也不加密)。
+                // 比对对象 = 每帧唯一决策(迟滞已在决策端做过);池回落导致的
+                // cached=coarse 与决策 dense 不符也走这里 → 下一帧重试 dense,
+                // 与改前 acquire-失败重试行为一致。
                 if (cached.terrainHeightGridSize !=
-                    terrainGridSizeForSse(
-                        tile.selectionFrameState.screenSpaceError,
-                        cached.terrainHeightGridSize)) {
+                    decidedOrPredictGridSize(
+                        tile.selectionFrameState.displacementGridSize,
+                        tile.selectionFrameState.screenSpaceError)) {
                     renderContent.invalidateCachedDrawCommands();
                     break;
                 }

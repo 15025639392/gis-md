@@ -287,18 +287,34 @@ void TileRenderPlanFrameRefresher::refresh(
                            tile,
                            rasterOverlays);
         });
+    // 档位单一决策点:渲染集定稿后、任何档位消费者跑之前,给本帧每个渲染
+    // 瓦片带迟滞刷新 displacementGridSize(上一帧值即迟滞态,与 draw 保档
+    // 语义同构)。resolver 的八度、A′ 建表、探针、draw 模板 swap 全读它,
+    // 不再各自从 SSE 重推(见 decidedOrPredictGridSize 注释)。
+    for (const TileRenderEntry& e : tilePlan.renderEntries) {
+        const auto stamp = [](TilesetTile* t) {
+            if (!t) return;
+            TileSelectionFrameState& st = t->selectionFrameState;
+            st.displacementGridSize = terrainGridSizeForSse(
+                st.screenSpaceError, st.displacementGridSize);
+        };
+        stamp(e.selectedTile);
+        if (e.renderTile != e.selectedTile) stamp(e.renderTile);
+    }
     // 机制 B:渲染集定稿后解析每瓦片 4 边邻居八度差(边吸附输入)。
     TileEdgeSnapResolver::resolve(tilePlan);
     // ①-1(A′):紧跟 resolve 就地把边高度差表建成纯数据 —— 记录里的
     // tile/neighbor 裸指针在本函数返回后不再被任何人触碰(探针 logEdgeMismatch
     // 也在下面同帧吃完)。draw 侧只按 key 查 edgeLutTables,瓦片何时被淘汰
-    // 析构与它无关。档位用无迟滞预测值,与 resolve 的八度判定同源;draw 实际
-    // 档不符时消费端跳过(SeamDiag predM1/predM2 观测,实测静止 0、变档 ~2%)。
+    // 析构与它无关。档位读上面刚盖的唯一决策(与 resolve 八度/draw swap 同一
+    // 份);draw 仅在池回落时与之不符 → 消费端跳过(SeamDiag predM2;predM1
+    // 在单一决策下应恒 0,非零即回归)。
     tilePlan.edgeLutTables.clear();
     for (const TileEdgeSnapRecord& rec : tilePlan.edgeSnapRecords) {
         if (!rec.tile) continue;
-        const int predGrid = terrainGridSizeForSse(
-            rec.tile->selectionFrameState.screenSpaceError);
+        const TileSelectionFrameState& st = rec.tile->selectionFrameState;
+        const int predGrid = decidedOrPredictGridSize(
+            st.displacementGridSize, st.screenSpaceError);
         TerrainEdgeLutTable table = TerrainEdgeHeightLut::build(rec, predGrid);
         if (table.hasAny()) {
             tilePlan.edgeLutTables.emplace(terrainEdgeCellKey(rec.tile->key),

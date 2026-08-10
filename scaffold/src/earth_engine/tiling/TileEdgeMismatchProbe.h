@@ -155,7 +155,10 @@ struct TileEdgeMismatchProbe {
             if (!rec.tile) continue;
             const DecodedHeightmap* ownHm =
                 rec.tile->content.renderContent.retainedHeightmap();
-            const int ownGrid = terrainGridSizeForSse(
+            // 档位读每帧唯一决策 —— 尺子必须量实际在画的那一档,无迟滞重推
+            // 会让迟滞带内的读数不可信(量的和画的不是同一个函数)。
+            const int ownGrid = decidedOrPredictGridSize(
+                rec.tile->selectionFrameState.displacementGridSize,
                 rec.tile->selectionFrameState.screenSpaceError);
             const float ownFade = terrainReliefFade(rec.tile->key.z);
             // 裙墙高度 ∝ 瓦片宽度(见 calcQuadtreeSkirtHeight),故粗瓦片的裙墙
