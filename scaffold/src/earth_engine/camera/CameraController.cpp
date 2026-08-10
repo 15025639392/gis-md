@@ -267,12 +267,7 @@ void CameraController::onPinchGesture(const PinchInput& input) {
             camera_->setView(Vec3(nextEye), camera_->direction(),
                              camera_->up());
         }
-        {
-            ConstraintContext cctx;
-            cctx.source = ConstraintContext::Source::Gesture;
-            cctx.pinnedAnchorWorld = &anchorWorld;
-            resolveConstraints(cctx);
-        }
+        clampNow(&anchorWorld);
 
         // 累积 zoom 惯性速率（对数距离空间，EMA 平滑）。stepScale≈1 的纯
         // 旋转/平移帧会让速率自然衰减向 0，只有真正在缩放才留下滑行动量。
@@ -374,11 +369,7 @@ void CameraController::onPinchGesture(const PinchInput& input) {
         if ((glm::length(nextEye) / kEarthRadiusMeters) <= kMaxDistanceEarthRadii) {
             camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
         }
-        {
-            ConstraintContext cctx;
-            cctx.source = ConstraintContext::Source::Gesture;
-            resolveConstraints(cctx);
-        }
+        clampNow(nullptr);
         if (stepScale < 1.0) {
             accrueRecenterBudget(-std::log(stepScale));
         }
@@ -414,14 +405,9 @@ void CameraController::onPinchEnd() {
 void CameraController::update(double deltaSeconds) {
     constraintSolver_.beginFrame();  // 探针"每帧至多重建一次"的帧时钟
     updateInternal(deltaSeconds);
-    // 帧末哨兵：兜底收编所有未显式路由到 resolveConstraints 的位姿写入
-    // （orbit 重建、viewDistance/setNadirOrbitView、回中、scriptedPan、
-    // Facade/JNI 绕过控制器的 Camera 裸写）。冻结时 observeOnly——冻结契约
-    // 要求位姿逐帧字节稳定，哨兵绝不触碰。
-    ConstraintContext ctx;
-    ctx.observeOnly = measurementFreeze_;
-    ctx.deltaSeconds = deltaSeconds;
-    resolveConstraints(ctx);
+    // 帧末哨兵：兜底收编所有未经 clampNow 路由的位姿写入（viewDistance /
+    // setNadirOrbitView / 回中 / scriptedPan / Facade/JNI 绕过控制器的裸写）。
+    resolveAtFrameEnd(deltaSeconds);
 }
 
 void CameraController::updateInternal(double deltaSeconds) {
@@ -457,11 +443,7 @@ void CameraController::updateInternal(double deltaSeconds) {
         double angle = inertiaAngularVelocity_ * deltaSeconds;
         glm::dquat delta = glm::angleAxis(angle, inertiaAxis_);
         applyCameraRotation(delta);
-        {
-            ConstraintContext cctx;
-            cctx.source = ConstraintContext::Source::Inertia;
-            resolveConstraints(cctx);
-        }
+        clampNow(nullptr);
         inertiaAngularVelocity_ *= std::exp(-kInertiaDampingPerSecond * deltaSeconds);
         // 掉到阈值以下就归零。指数衰减永远够不到 0,留着那个小尾巴的话
         // 「是否还在动」这个问题就永远答"是"(zoom 惯性早就是这么自清的,
@@ -486,12 +468,7 @@ void CameraController::updateInternal(double deltaSeconds) {
                 camera_->setView(Vec3(nextEye), camera_->direction(),
                                  camera_->up());
                 }
-            {
-                ConstraintContext cctx;
-                cctx.source = ConstraintContext::Source::Inertia;
-                cctx.pinnedAnchorWorld = &zoomInertiaAnchor_;
-                resolveConstraints(cctx);
-            }
+            clampNow(&zoomInertiaAnchor_);
             // 拉远方向的惯性滑行（rate<0 = 距离增大）继续充值回中预算。
             if (zoomInertiaLogRate_ < 0.0) {
                 accrueRecenterBudget(-zoomInertiaLogRate_ * deltaSeconds);
@@ -513,42 +490,53 @@ void CameraController::updateInternal(double deltaSeconds) {
 
 }
 
-bool CameraController::resolveConstraints(const ConstraintContext& ctx) {
-    if (ctx.observeOnly) {
+bool CameraController::clampNow(const glm::dvec3* pinnedAnchorWorld) {
+    // 手势/惯性路径：调用方刚刚显式动过相机，所以恒是 user-driven（突变滤波
+    // 立即生效），也没有帧间隔可言（dt=0，数据驱动的指数衰减不参与）。
+    // 与帧末哨兵是两条性质不同的路径，别再合并回一个带 source 枚举的函数。
+    const glm::dvec3 eye = camera_->position().raw();
+    const glm::dvec3 clamped = constraintSolver_.constrainEye(
+        eye, /*userDriven=*/true, /*deltaSeconds=*/0.0, pinnedAnchorWorld);
+    const bool changed = glm::length(clamped - eye) > 1e-6;
+    if (changed) {
+        camera_->setView(Vec3(clamped), camera_->direction(), camera_->up());
+    }
+    commitResolvedPose();
+    return changed;
+}
+
+bool CameraController::resolveAtFrameEnd(double deltaSeconds) {
+    // 冻结契约要求位姿逐帧字节稳定，哨兵绝不触碰。
+    if (measurementFreeze_) {
         return false;
     }
-    // 位姿指纹比对：帧末发现位姿与上次解算结果不同 ⇒ 期间有未路由的写入
-    // （orbit 重建/回中/scriptedPan/外部裸写）——都是用户或调用方主动为之，
-    // 按 user-driven 处理（滤波立即）。数据驱动 = 位姿没动、只有地形样本变。
-    const bool poseChangedExternally =
-        ctx.source == ConstraintContext::Source::FrameEnd &&
+    // 位姿指纹比对：帧末发现位姿与上次解算结果不同 ⇒ 期间有未经 clampNow 的
+    // 写入（viewDistance/setNadirOrbitView/回中/scriptedPan/外部裸写）——都是
+    // 用户或调用方主动为之，按 user-driven 处理（滤波立即）。
+    // 数据驱动 = 位姿没动、只有地形样本变。
+    const bool userDriven =
         hasLastResolvedPose_ &&
         (glm::length(camera_->position().raw() - lastResolvedEye_) > 1e-6 ||
          glm::length(camera_->direction().raw() - lastResolvedDir_) > 1e-9);
-    const bool userDriven =
-        ctx.source != ConstraintContext::Source::FrameEnd ||
-        poseChangedExternally;
 
-    bool changed = false;
-    {
-        const glm::dvec3 eye = camera_->position().raw();
-        const glm::dvec3 clamped = constraintSolver_.constrainEye(
-            eye, userDriven, ctx.deltaSeconds, ctx.pinnedAnchorWorld);
-        if (glm::length(clamped - eye) > 1e-6) {
-            camera_->setView(Vec3(clamped), camera_->direction(),
-                             camera_->up());
-            changed = true;
-        }
+    const glm::dvec3 eye = camera_->position().raw();
+    const glm::dvec3 clamped = constraintSolver_.constrainEye(
+        eye, userDriven, deltaSeconds, nullptr);
+    const bool changed = glm::length(clamped - eye) > 1e-6;
+    if (changed) {
+        camera_->setView(Vec3(clamped), camera_->direction(), camera_->up());
     }
-    // 位姿指纹：下一次帧末解算与之比对，不等 ⇒ 期间有绕过控制器的裸写
-    // （user-driven，突变滤波步骤据此立即钳、不走数据驱动滤波）。
+    commitResolvedPose();
+    return changed;
+}
+
+void CameraController::commitResolvedPose() {
+    // 位姿指纹：下一次帧末解算与之比对，不等 ⇒ 期间有绕过本类的裸写。
     lastResolvedEye_ = camera_->position().raw();
     lastResolvedDir_ = camera_->direction().raw();
     hasLastResolvedPose_ = true;
-    // solver 的扫掠走廊基准与指纹同源同时机：必须在出口末尾恰好提交一次，
-    // orbit 分支的两轮 constrainEye 才会共用同一个（上一帧的）位移基准。
+    // solver 的扫掠走廊基准与指纹同源同时机（都在解算落定后恰好提交一次）。
     constraintSolver_.commitPose(lastResolvedEye_);
-    return changed;
 }
 
 void CameraController::setMeasurementFreeze(bool frozen) {
@@ -1006,10 +994,7 @@ glm::dquat CameraController::applyPinchPin(float targetX, float targetY) {
     {
         const glm::dvec3 anchorWorld =
             pinchAnchorNormal_.raw() * grabbedRadiusMeters_;
-        ConstraintContext cctx;
-        cctx.source = ConstraintContext::Source::Gesture;
-        cctx.pinnedAnchorWorld = &anchorWorld;
-        resolveConstraints(cctx);
+        clampNow(&anchorWorld);
     }
 
     if (regrab) {
@@ -1148,12 +1133,7 @@ void CameraController::applyAnchorDrag(float xPixels, float yPixels,
     applyCameraRotation(delta);
     {
         const glm::dvec3 anchorWorld = grabbedPoint_.raw();
-        ConstraintContext cctx;
-        cctx.source = ConstraintContext::Source::Gesture;
-        if (hasGrabbedPoint_) {
-            cctx.pinnedAnchorWorld = &anchorWorld;
-        }
-        resolveConstraints(cctx);
+        clampNow(hasGrabbedPoint_ ? &anchorWorld : nullptr);
     }
 
     // 退化区不变量：锚点良态区整段不可变；仅退化区（w<1）在应用旋转后被

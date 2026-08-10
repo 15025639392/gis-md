@@ -235,25 +235,25 @@ private:
     void consumeRecenterBudget(double deltaSeconds);
     void applyCameraRotation(const glm::dquat& delta);
 
-    /// 相机位姿合法性的唯一出口（choke point）。手势/惯性路径在事件内调用；
-    /// update() 帧末哨兵兜底收编所有未显式路由的位姿写入（orbit 重建、
-    /// viewDistance/setNadirOrbitView、回中、scriptedPan、外部绕过控制器
-    /// 的 Camera 裸写）。约束实现只允许改这里，禁止在调用点各自补钳位。
-    struct ConstraintContext {
-        enum class Source { Gesture, Inertia, FrameEnd };
-        Source source = Source::FrameEnd;
-        /// 非空 → 碰撞解算沿 eye→anchor 直线退出（严格保锚；径向抬升会
-        /// 泄漏 anchorErr）。指针仅在调用栈内有效。
-        const glm::dvec3* pinnedAnchorWorld = nullptr;
-        /// true = 绝不修改位姿（measurementFreeze 的帧末哨兵：位姿必须
-        /// 逐帧字节稳定，但地面状态仍可刷新供渲染层读取）。
-        bool observeOnly = false;
-        /// 帧间隔（秒）。仅数据驱动的滤波衰减消费；手势/惯性事件传 0 即可
-        /// （它们是 user-driven，滤波恒立即）。
-        double deltaSeconds = 0.0;
-    };
+    /// 手势/惯性路径的位姿钳位：调用方刚显式动过相机，故恒 user-driven、
+    /// 无帧间隔（dt=0）。与帧末哨兵是**两条性质不同的路径**——前者是"我刚动了，
+    /// 钳一下"，后者是"检查有没有人绕过我"——别再合并回一个带 source 枚举的
+    /// 函数：那样每个调用点都要现场装配一个 context，而枚举唯一的作用只是区分
+    /// 是不是帧末。
+    /// @param pinnedAnchorWorld 非空 → 碰撞解算沿 eye→anchor 直线退出（严格
+    ///        保锚；径向抬升会泄漏 anchorErr）。指针仅在调用栈内有效。
     /// @return 位姿是否被修改
-    bool resolveConstraints(const ConstraintContext& ctx);
+    bool clampNow(const glm::dvec3* pinnedAnchorWorld);
+
+    /// 帧末哨兵：兜底收编所有未经 clampNow 路由的位姿写入（viewDistance /
+    /// setNadirOrbitView / 回中 / scriptedPan / Facade/JNI 绕过控制器的裸写）。
+    /// 靠位姿指纹判定 user-driven；冻结时完全不触碰（位姿须逐帧字节稳定）。
+    /// @return 位姿是否被修改
+    bool resolveAtFrameEnd(double deltaSeconds);
+
+    /// 记录解算落定的位姿：指纹（供下次帧末比对）+ solver 扫掠基准，同源同时机。
+    void commitResolvedPose();
+
     /// update() 的原函数体（惯性/回中）；帧末哨兵在 update() 包装层。
     void updateInternal(double deltaSeconds);
 
