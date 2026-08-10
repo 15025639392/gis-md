@@ -95,6 +95,16 @@ void logEdgeMismatch(const TilePlan& plan) {
                 static_cast<unsigned long long>(plan.frameId),
                 static_cast<unsigned long long>(kEdgeMismatchLogPeriod),
                 uniformText, differText, compText, window.skippedEdges);
+    // fadeDiffer 的可接受性:台阶/裙墙。overSkirt=0 → 台阶全被裙墙盖住,
+    // 「设计使然」这个说法成立;>0 → 那些是透天洞,不是设计。
+    if (window.fadeDifferSamples > 0) {
+        platformLog(LogLevel::Info, "SeamDiag",
+                    "  fadeDifferSkirt n=%d overSkirt=%d maxRatio=%.2f "
+                    "skirt=%.1fm",
+                    window.fadeDifferSamples, window.fadeDifferOverSkirt,
+                    static_cast<double>(window.fadeDifferMaxRatio),
+                    window.fadeDifferSkirtMeters);
+    }
     window = TileEdgeMismatchProbe::Result{};
 }
 

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "TerrainEdgeNeighborHeight.h"
+#include "../core/geodesy/QuadtreeGeometricError.h"
+#include "../core/geodesy/Ellipsoid.h"
 
 #include <algorithm>
 #include <cmath>
@@ -115,12 +117,28 @@ struct TileEdgeMismatchProbe {
         /// 地板 ±0.031m;以及 LUT 上传失败时 shader 退回自吸附的那条路径
         /// (由 SeamDiag edgeLut 的 rate 单独盯,不在本读数里)。
         Stats compensated;
+        /// fadeDiffer 台阶的**可接受性判据**:台阶本身多大不重要,重要的是
+        /// 它有没有被裙墙盖住 —— 盖住就只是"两侧高度不同"(设计使然),
+        /// 盖不住就是透天洞(缺陷)。ratio = 台阶 / 本瓦片裙墙高度。
+        /// ⚠️ 取的是**本瓦片**的裙墙,不是两侧较大者:偏保守,ratio>1 未必真漏,
+        /// 但 ratio<=1 一定不漏。先要一个不会漏报的闸,再谈收紧。
+        int fadeDifferSamples = 0;
+        int fadeDifferOverSkirt = 0;   // ratio > 1 的样本数
+        float fadeDifferMaxRatio = 0.0f;
+        double fadeDifferSkirtMeters = 0.0;  // 最近一次的裙墙高度(量级参考)
         int skippedEdges = 0;  // 取不到两侧 heightmap,无法比较
 
         void merge(const Result& o) {
             fadeUniform.merge(o.fadeUniform);
             fadeDiffer.merge(o.fadeDiffer);
             compensated.merge(o.compensated);
+            fadeDifferSamples += o.fadeDifferSamples;
+            fadeDifferOverSkirt += o.fadeDifferOverSkirt;
+            fadeDifferMaxRatio =
+                std::max(fadeDifferMaxRatio, o.fadeDifferMaxRatio);
+            if (o.fadeDifferSkirtMeters > 0.0) {
+                fadeDifferSkirtMeters = o.fadeDifferSkirtMeters;
+            }
             skippedEdges += o.skippedEdges;
         }
     };
@@ -134,6 +152,10 @@ struct TileEdgeMismatchProbe {
             const int ownGrid = terrainGridSizeForSse(
                 rec.tile->selectionFrameState.screenSpaceError);
             const float ownFade = terrainReliefFade(rec.tile->key.z);
+            // 裙墙高度 ∝ 瓦片宽度(见 calcQuadtreeSkirtHeight),故粗瓦片的裙墙
+            // 天然更长 —— 而 fadeDiffer 恰恰只发生在有粗瓦片参与的边上。
+            const double skirt =
+                calcQuadtreeSkirtHeight(Ellipsoid::WGS84(), rec.tile->bounds);
             for (int edge = 0; edge < TileEdgeSnapRecord::kEdgeCount; ++edge) {
                 const int lg = rec.edgeLog2[edge];
                 const TileRenderEntry* nbr = rec.neighbor[edge];
@@ -162,7 +184,17 @@ struct TileEdgeMismatchProbe {
                             *ownHm, rec.tile->bounds, lon, lat, ownGrid) *
                         ownFade;
                     const float other = terrain_edge::renderedHeight(ns, lon, lat);
-                    st.add(std::fabs(own - other));
+                    const float diff = std::fabs(own - other);
+                    st.add(diff);
+                    if (&st == &out.fadeDiffer && skirt > 0.0) {
+                        ++out.fadeDifferSamples;
+                        const float ratio =
+                            diff / static_cast<float>(skirt);
+                        out.fadeDifferMaxRatio =
+                            std::max(out.fadeDifferMaxRatio, ratio);
+                        if (ratio > 1.0f) ++out.fadeDifferOverSkirt;
+                        out.fadeDifferSkirtMeters = skirt;
+                    }
                 }
                 // 补偿后残差:只在 fadeUniform 群体上量(fadeDiffer 的台阶是
                 // 设计使然,①-1 本就不管它)。节点区间内取三个分数位置。
