@@ -192,6 +192,11 @@ public:
     /// Maximum concurrent tile loads.
     int maximumSimultaneousTileLoads = 20;
 
+    /// 根层常驻(见 TileBaseCoveragePin.h):开启后 z ≤ 钉扎线的影像瓦片
+    /// 不被 trimUnusedTiles 驱逐。由 ActivatedRasterOverlay 按 overlay
+    /// options 转发,仅底图 overlay 开启。
+    bool pinBaseCoverage = false;
+
     /// Current number of tiles in Loading state.
     int getThrottledTilesCurrentlyLoading() const;
     int getActiveRasterSourceRequests() const {

@@ -1,4 +1,5 @@
 #include "RasterMappedToTilesetTile.h"
+#include "TileBaseCoveragePin.h"
 #include "TileContentCacheManager.h"
 
 namespace earth_engine {
@@ -69,6 +70,13 @@ int64_t TileContentCacheManager::accountedTileBytes(
 void TileContentCacheManager::markEligibleForUnloading(
     const TilesetTile* tile,
     const std::string& cacheKey) {
+    // 根层常驻:兜底层永不入预算驱逐队列(本函数是唯一入队口)。用
+    // markIneligible 而非静默返回 —— 早先入队的同键残留也要清掉。
+    if (baseCoveragePinned_ && tile &&
+        isBaseCoveragePinnedZoom(tile->key.z)) {
+        markIneligibleForUnloading(cacheKey);
+        return;
+    }
     TileIndexState::markEligibleForUnloading(unloadQueue_, tile, cacheKey);
 }
 

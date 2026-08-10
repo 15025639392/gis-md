@@ -13,6 +13,7 @@
 #include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/GpuUploadQueue.h"
+#include "earth_engine/tiling/TileBaseCoveragePin.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileCacheOwnershipManager.h"
 #include "earth_engine/tiling/TileContentCacheManager.h"
@@ -175,6 +176,39 @@ RasterOverlayDetails makeProviderDetails(const TileScheme& scheme,
     return details;
 }
 } // namespace
+
+TEST(TileContentCacheManagerTest, BaseCoveragePinBlocksBudgetEvictionQueue) {
+    // 根层常驻(漏底根修第 1 步,见 TileBaseCoveragePin.h):flag 开启时
+    // z ≤ 钉扎线的瓦片不进预算驱逐队列(且清掉既有同键排队);钉扎线之上、
+    // 以及 flag 关闭(内容树 tileset 默认)时行为不变。
+    TileContentCacheManager manager;
+
+    const TileKey rootKey{"test", 0, 0, 0};
+    const std::string rootCacheKey = TileCacheKey::forTile(rootKey);
+    TilesetTile root(rootKey, Rectangle{});
+    root.content.contentKind = TileContentKind::Render;
+    root.content.loadState = TileLoadState::Done;
+
+    const TileKey aboveKey{
+        "test", kPinnedBaseCoverageMaxZoom + 1, 0, 0};
+    const std::string aboveCacheKey = TileCacheKey::forTile(aboveKey);
+    TilesetTile above(aboveKey, Rectangle{});
+    above.content.contentKind = TileContentKind::Render;
+    above.content.loadState = TileLoadState::Done;
+
+    // flag 关(默认):z0 照常入队 = 内容树 tileset 的既有行为。
+    manager.markEligibleForUnloading(&root, rootCacheKey);
+    EXPECT_TRUE(manager.unloadQueue().contains(rootCacheKey));
+
+    // flag 开:钉扎瓦片不但不入队,已在队的同键也被清掉。
+    manager.setBaseCoveragePinned(true);
+    manager.markEligibleForUnloading(&root, rootCacheKey);
+    EXPECT_FALSE(manager.unloadQueue().contains(rootCacheKey));
+
+    // 钉扎线之上一格不受影响。
+    manager.markEligibleForUnloading(&above, aboveCacheKey);
+    EXPECT_TRUE(manager.unloadQueue().contains(aboveCacheKey));
+}
 
 TEST(
     TileContentCacheManagerTest,

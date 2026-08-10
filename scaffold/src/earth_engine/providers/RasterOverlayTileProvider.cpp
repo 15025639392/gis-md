@@ -2,6 +2,7 @@
 #include "ImageryProvider.h"
 #include "../layers/RasterOverlay.h"
 #include "../core/resources/FrameResourceBudget.h"
+#include "../tiling/TileBaseCoveragePin.h"
 #include "../tiling/TileScheme.h"
 #include "RasterTextureUploader.h"
 #include "../renderer/RenderDevice.h"
@@ -4711,7 +4712,12 @@ void RasterOverlayTileProvider::trimUnusedTiles(bool cachePressure) {
         }
         const bool inFlight = busyKeys.count(cacheKey) > 0;
         const bool retainedOutsideProvider = it->second.use_count() > 1;
-        if (inFlight || retainedOutsideProvider) {
+        // 根层常驻(与几何侧同一条钉扎线,按 overlay 选择加入):兜底层影像
+        // 一经加载不再被 trim 驱逐 —— 祖先 remap 兜底要求祖先影像纹理还在,
+        // 几何钉住影像被换出的话,兜出来的是白板。见 TileBaseCoveragePin.h。
+        const bool pinnedBaseCoverage =
+            pinBaseCoverage && isBaseCoveragePinnedZoom(tile.getTileID().z);
+        if (inFlight || retainedOutsideProvider || pinnedBaseCoverage) {
             lruIt = nextLruIt;
             continue;
         }

@@ -78,6 +78,11 @@ struct TilesetOptions {
     // 默认 false = 忠实 cesium-native(不改 golden);true 才启用。
     bool cullRequestsWhileMoving = false;
     double cullRequestsWhileMovingMultiplier = 60.0;
+    // 根层常驻(漏底根修):z ≤ kPinnedBaseCoverageMaxZoom 的瓦片一经加载
+    // 豁免预算驱逐,保证"选中瓦片必然有可画祖先"。只应对承担底图覆盖的
+    // 地形 tileset 开启(SDK 场景路径设 true);内容树默认 false。
+    // 语义全文见 TileBaseCoveragePin.h。
+    bool pinBaseCoverage = false;
     // Terrain fill proxy (cesium-js TerrainFillMesh model): give each visible
     // tile still loading real terrain a drape-ready ellipsoid proxy so imagery
     // appears on the smooth globe immediately, then swaps to real terrain (which

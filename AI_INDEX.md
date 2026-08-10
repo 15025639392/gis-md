@@ -561,7 +561,7 @@ cesium-native `Tileset` equivalent. Owns a unified quadtree of terrain + raster-
 | ctor (+ contentProvider) | .h:99-103 | 3D-Tiles content path; wraps provider in `TilesetTerrainProviders` (.cpp:115-126) |
 | `update(FrameState, IPrepareRendererResources*)` | .h:106-107 / .cpp:495-506 | Per-frame entry; delegates to `TilesetUpdateFrameFacade::update`; logs if >5ms |
 | `buildRenderCommands(Renderer&, RenderCommandList&)` | .h:108 / .cpp:507-545 | `++frameNumber_`, `renderCommands_.beginFrame(...)`, then `TilesetRenderFrameExecutor::buildRenderCommands` over `tilePlan_` |
-| `releaseRenderReferences()` | .h:125 / .cpp:645-652 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
+| `releaseRenderReferences()` | .h:125 / .cpp:649-656 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
 | `tilePlan()` / `tileScheme()` | .h:110-111 | Const accessors to the frame selection result |
 | `sampleHeight(lngRad, latRad)` | .h:120 / .cpp:481-493 | Best-loaded terrain height in meters (0 if none); via `LoadedTerrainHeightSampler` |
 | `setOcclusionCallback` / `clearOcclusionCallback` | .h:131-132 / .cpp:247-254 | cesium-native `TileOcclusionRendererProxyPool` input hook |
@@ -1137,8 +1137,8 @@ Byte-budget eviction owner. Holds `totalBytesUsed_`, `TileUnloadQueue unloadQueu
 | accessors | .h:24-28 | `totalBytesUsed`, `unloadQueue`, `cacheBytesDirty`. |
 | `updateTotalBytesUsed` | .cpp:10-14 | `TileCacheMetrics::estimateTotalBytes(tiles, {})` (lifecycle param unused). |
 | `markEligibleForUnloading` / `markIneligibleForUnloading` | .cpp:69-73 | Push/remove from `unloadQueue_` via `TileIndexState`. |
-| `eraseTileIndexState` | .cpp:80-96 | Erases cache-key state across unload queue, empty registry, load queue, lifecycle. |
-| `unloadTileContent` | .cpp:98-118 | Delegates to `TileContentUnloadCoordinator::unloadContent` (no terrain heightmap cache: `nullptr`). |
+| `eraseTileIndexState` | .cpp:88-104 | Erases cache-key state across unload queue, empty registry, load queue, lifecycle. |
+| `unloadTileContent` | .cpp:106-126 | Delegates to `TileContentUnloadCoordinator::unloadContent` (no terrain heightmap cache: `nullptr`). |
 | `unloadCachedBytes<ClearChildrenFn>` | .h:55-129 | Byte-budget eviction. When `resourceSmoothingActive` && over budget: defer non-Unloading tiles to avoid single-frame spike (.h:71-93). Else `TileCacheUnloadCoordinator::run` with active-work guard `TileSubtreeWorkTracker::hasActiveContentWork`; refreshes `totalBytesUsed_` if `shouldRefreshTotalBytes`. |
 
 ### TileContentUnloadCoordinator.h
@@ -2702,13 +2702,13 @@ cesium-native `ActivatedRasterOverlay` equivalent. Wraps a `RasterOverlay&` (mus
 | ctor(overlay) | .h:24 / .cpp:8-20 | builds `placeholderProvider_` with `nullptr` uploader; sets owner, `maximumSimultaneousTileLoads`, `maximumScreenSpaceError` from overlay options |
 | `ensureTileProvider(RenderDevice*)` | .h:33 / .cpp:24-44 | lazily creates real provider; builds `RenderDeviceRasterTextureUploader` only if `device` non-null (.cpp:28-31); sets owner + throttle + SSE; then `syncProviderOptionsFromOverlay()` |
 | `getTileProvider` | .h:36-37 | real provider, null until ensured |
-| `getPlaceholderTile` | .h:40 / .cpp:46-52 | uses `placeholderProvider_` else `tileProvider_`; returns `provider->getPlaceholderTile().get()` |
-| `processPendingUploads(bool, FrameResourceBudget*)` | .h:42 / .cpp:54-62 | syncs then forwards to provider; 0 if no provider |
-| `hasPendingWork` / `revision` | .h:44-45 / .cpp:64-70 | forward provider or false/0 |
-| `setFrameNumber` / `trimUnusedTiles` / `getCachedTileCount` | .h:46-48 / .cpp:72-88 | sync + forward |
-| `setMaximumSimultaneousTileLoads(int)` | .h:52 / .cpp:95-105 | `n>0 ? n : 20`; applies to both providers |
-| `getThrottledTilesCurrentlyLoading` | .h:53 / .cpp:107-110 | forward, 0 if none |
-| `visible` / `opacity` | .h:55-56 / .cpp:112-114 | delegate to `overlay_` |
+| `getPlaceholderTile` | .h:40 / .cpp:51-57 | uses `placeholderProvider_` else `tileProvider_`; returns `provider->getPlaceholderTile().get()` |
+| `processPendingUploads(bool, FrameResourceBudget*)` | .h:42 / .cpp:59-67 | syncs then forwards to provider; 0 if no provider |
+| `hasPendingWork` / `revision` | .h:44-45 / .cpp:69-75 | forward provider or false/0 |
+| `setFrameNumber` / `trimUnusedTiles` / `getCachedTileCount` | .h:46-48 / .cpp:77-97 | sync + forward |
+| `setMaximumSimultaneousTileLoads(int)` | .h:52 / .cpp:99-109 | `n>0 ? n : 20`; applies to both providers |
+| `getThrottledTilesCurrentlyLoading` | .h:53 / .cpp:111-114 | forward, 0 if none |
+| `visible` / `opacity` | .h:55-56 / .cpp:116-122 | delegate to `overlay_` |
 | `getProjection()` | .h:70 / .cpp:122-128 | **生效**采样投影(读 provider,不读 config)。georeference 会被 scheme 闸口拒掉,请求值不可信 |
 | `syncProviderOptionsFromOverlay` (private) | .h:65 / .cpp:129-146 | re-derives throttle from overlay (`>0 ? : 20`), calls `applyOwnerOptions()` on both providers |
 
@@ -3183,7 +3183,7 @@ Thin SDK entry point: `installScene(EarthSceneConfig)` builds providers/overlays
 | `installScene(EarthSceneConfig)` | .h:37, .cpp:285-746 | Move-stores config_, `resetCamera()`, clears overlay vectors, builds raster stack, creates unified Tileset, optional glTF Tileset, sets sim time. See per-kind rows below. |
 | `resetCamera()` | .h:39, .cpp:748-823 | Rebuilds camera from `initialCamera` via `Ellipsoid::WGS84().cartographicToCartesian` + `geodeticSurfaceNormal`; `camera().lookAt(camEcef, targetEcef, up)`. No source rebuild. |
 | `config()` | .h:41 | Const accessor for stored `EarthSceneConfig`. |
-| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:767-783 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
+| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:776-792 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
 
 Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:285-746):
 
@@ -3194,17 +3194,17 @@ Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:285-746):
 | WebMapService | .cpp:281-330 | **Blocking** GetCapabilities fetch (.cpp:299) + `validateWebMapServiceCapabilities`; Geographic-TMS scheme. |
 | WebMapTileService | .cpp:332-372 | Scheme = Geographic-TMS if `wmtsSchemeId=="Geographic-TMS"` else XYZ-WebMercator (.cpp:367-369). No blocking fetch. |
 | BingMaps | .cpp:374-442 | Two paths: explicit `urlTemplate` (no fetch, .cpp:375-400) or **blocking** metadata fetch (.cpp:408) + `parseBingMapsMetadata`. |
-| GoogleMapTiles | .cpp:402-481 | If no session, **blocking POST** `createSession` via `postBlocking` (.cpp:90) + `parseGoogleMapTilesCreateSessionResponse`; else reuse configured session. Default maxLevel 28 (.cpp:90). |
+| GoogleMapTiles | .cpp:402-481 | If no session, **blocking POST** `createSession` via `postBlocking` (.cpp:95) + `parseGoogleMapTilesCreateSessionResponse`; else reuse configured session. Default maxLevel 28 (.cpp:95). |
 | Xyz (default/fallback) | .cpp:535-546 | `XYZImageryProvider` + XYZ-WebMercator. |
 
 | Helper | Lines | Description |
 | --- | --- | --- |
 | `makeSceneTilesetOptions` | .cpp:49-63 | Maps `SceneTilesetConfig` → `TilesetOptions` (main-thread + cache-unload time limits). |
 | `makeRasterOverlayOptions` | .cpp:65-80 | `RasterOverlaySourceConfig` → `RasterOverlay::Options` (loads/SSE/zoom/opacity/role/priority/fallback/blocks). |
-| `postBlocking(...)` | .cpp:90-131 | **Blocking HTTP POST**: `PlatformBridge::post` + mutex/condition_variable, default timeout 20s (.cpp:95); cancels request on timeout. Same blocking pattern as `fetchBlocking` — setup runs synchronously and stalls the caller thread. |
-| `applyConfiguredZoomRange` | .cpp:134-143 | Provider `setZoomRange`; no-op if both zooms ≤0. |
-| `createTileSchemeForId` | .cpp:145-151 | `"XYZ-WebMercator"` → XYZWebMercator else GeographicTMS. |
-| `SceneTerrainRuntimeSources` / `createTerrainRuntimeSources` | .cpp:159-255 | Terrain sources struct. None ⇒ empty (ellipsoid fallback handled by the engine default); Heightmap builds `HeightmapTerrainProvider` wrapped in `HeightmapTerrainContentProvider`, and — if `config.ellipsoidFallback` — further wraps that in `CompositeTerrainProvider` alongside an `EllipsoidTerrainContentProvider` sharing the same tiling scheme (uncovered regions floor to smooth ellipsoid up to `ellipsoidFallbackMaxZoom`). |
+| `postBlocking(...)` | .cpp:95-136 | **Blocking HTTP POST**: `PlatformBridge::post` + mutex/condition_variable, default timeout 20s (.cpp:100); cancels request on timeout. Same blocking pattern as `fetchBlocking` — setup runs synchronously and stalls the caller thread. |
+| `applyConfiguredZoomRange` | .cpp:139-148 | Provider `setZoomRange`; no-op if both zooms ≤0. |
+| `createTileSchemeForId` | .cpp:150-156 | `"XYZ-WebMercator"` → XYZWebMercator else GeographicTMS. |
+| `SceneTerrainRuntimeSources` / `createTerrainRuntimeSources` | .cpp:164-260 | Terrain sources struct. None ⇒ empty (ellipsoid fallback handled by the engine default); Heightmap builds `HeightmapTerrainProvider` wrapped in `HeightmapTerrainContentProvider`, and — if `config.ellipsoidFallback` — further wraps that in `CompositeTerrainProvider` alongside an `EllipsoidTerrainContentProvider` sharing the same tiling scheme (uncovered regions floor to smooth ellipsoid up to `ellipsoidFallbackMaxZoom`). |
 | Unified Tileset build | .cpp:556-567 | `new Tileset(tileScheme, rasterOverlays, &renderDevice_, options, contentProvider)` → `engine_.setTileset`. |
 | glTF Tileset build | .cpp:569-594 | If `config_.gltf.enabled`: `SingleGltfContentProvider` at `TileKey{schemeId,level,x,y}`, `setEastNorthUpPlacementDegrees(lon,lat,height,scale)`; empty overlay list; `engine_.addTileset`. |
 | sim time | .cpp:596 | `engine_.setTime(config_.fixedSimulationJulianDate)`. |

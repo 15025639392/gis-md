@@ -43,6 +43,12 @@ public:
         const std::string& cacheKey);
     void markIneligibleForUnloading(const std::string& cacheKey);
 
+    /// 根层常驻(见 TileBaseCoveragePin.h):开启后 z ≤ 钉扎线的瓦片不进
+    /// 预算驱逐队列。唯一入队口是 markEligibleForUnloading,闸设在那里;
+    /// 强制卸载(loadState=Unloading)不经该口,不受影响。
+    void setBaseCoveragePinned(bool pinned) { baseCoveragePinned_ = pinned; }
+    bool baseCoveragePinned() const { return baseCoveragePinned_; }
+
     void eraseTileIndexState(
         const std::string& cacheKey,
         TileContentLifecycleManager& lifecycle,
@@ -141,6 +147,7 @@ private:
     std::unordered_map<std::string, TileByteAccount> tileBytes_;
     TileUnloadQueue unloadQueue_;
     std::unordered_set<std::string> pendingProtectedUnloads_;
+    bool baseCoveragePinned_ = false;
 };
 
 } // namespace earth_engine

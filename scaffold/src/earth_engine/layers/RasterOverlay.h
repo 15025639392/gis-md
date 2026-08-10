@@ -54,6 +54,10 @@ public:
         int minimumZoom = 0;
         int maximumZoom = 0;
 
+        /// 根层常驻(见 TileBaseCoveragePin.h):开启后 z ≤ 钉扎线的影像瓦片
+        /// 一经加载不被 trim 驱逐。仅底图 overlay 应开启(SDK 场景路径设 true)。
+        bool pinBaseCoverage = false;
+
         /// Rectangle covered by this overlay, in geographic radians.
         Rectangle coverageRectangle = Rectangle::MAXIMUM;
 

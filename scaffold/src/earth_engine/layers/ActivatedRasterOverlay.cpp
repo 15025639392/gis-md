@@ -39,6 +39,8 @@ RasterOverlayTileProvider* ActivatedRasterOverlay::ensureTileProvider(
         tileProvider_->setOwner(&overlay_);
         tileProvider_->maximumSimultaneousTileLoads =
             maximumSimultaneousTileLoads_;
+        tileProvider_->pinBaseCoverage =
+            overlay_.getOptions().pinBaseCoverage;
         tileProvider_->setMaximumScreenSpaceError(
             overlay_.getOptions().maximumScreenSpaceError);
     }

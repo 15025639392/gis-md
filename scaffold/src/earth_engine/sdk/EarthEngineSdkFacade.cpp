@@ -57,6 +57,9 @@ TilesetOptions makeSceneTilesetOptions(const SceneTilesetConfig& config) {
     options.enableTerrainFillProxy = config.enableTerrainFillProxy;
     options.terrainFillProxyGridSize = config.terrainFillProxyGridSize;
     options.decoupleImageryFromGeometry = config.decoupleImageryFromGeometry;
+    // 场景主地形 tileset 承担底图覆盖 → 根层常驻(漏底根修,
+    // 见 TileBaseCoveragePin.h)。内容树 tileset 不走本函数,保持默认关。
+    options.pinBaseCoverage = true;
     return options;
 }
 
@@ -75,6 +78,9 @@ RasterOverlay::Options makeRasterOverlayOptions(
     options.fallbackPolicy = config.fallbackPolicy;
     options.blocksCompleteRenderable = config.blocksCompleteRenderable;
     options.georeference = config.georeference;
+    // 场景底图 overlay 走本函数 → 根层影像常驻(与几何侧钉扎同一条线,
+    // 见 TileBaseCoveragePin.h;祖先 remap 兜底要求祖先影像还在)。
+    options.pinBaseCoverage = true;
     return options;
 }
 

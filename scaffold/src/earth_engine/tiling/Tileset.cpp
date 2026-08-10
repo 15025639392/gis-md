@@ -113,6 +113,9 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
           resourceInvalidator_,
           rasterOverlays_,
           device_) {
+    // 根层常驻(漏底根修,见 TileBaseCoveragePin.h):只在承担底图覆盖的
+    // tileset 上开启(SDK 场景路径设 options.pinBaseCoverage=true)。
+    contentCache_.setBaseCoveragePinned(options_.pinBaseCoverage);
     frameResourceBudget_.beginFrame(
         0,
         makeFrameResourceBudgetConfig(options_, false, false));
