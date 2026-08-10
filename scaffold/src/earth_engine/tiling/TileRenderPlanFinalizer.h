@@ -27,6 +27,37 @@ struct TileRenderPlanFinalizeOptions {
 };
 
 struct TileRenderPlanFinalizer {
+    enum class DirectRenderFallbackPolicy {
+        PreferAncestorForTransientSurface,
+        AllowTransientSurfaceAsLastResort
+    };
+
+    /// 「本瓦片此刻能否直接建出渲染条目」的**单一事实源**。除 finalizer 自用,
+    /// 遍历器的向下回落守卫(continueDeeper:上帧 Refined 且不可画 → 后代留任)
+    /// 也必须用同一份 —— 曾各写一份(遍历只看 mapping 就绪位,这里看绑定级
+    /// 纹理可绑+texcoord),暂态分叉时守卫不触发、瓦片被选中却建不出条目,
+    /// 外拉漏底(真机 HoleQual notex dropz=1-5 实测)。
+    static bool canBuildRenderEntryDirectly(
+        const TilesetTile& tile,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        DirectRenderFallbackPolicy fallbackPolicy) {
+        // Real terrain can replace its parent immediately. Transient
+        // ellipsoid/fill surfaces are drawable, but they should only become
+        // direct entries when no renderable ancestor can keep coverage.
+        if (tile.content.renderContent.hasDrawableResources()) {
+            if (fallbackPolicy ==
+                    DirectRenderFallbackPolicy::
+                        PreferAncestorForTransientSurface &&
+                tile.content.renderContent
+                    .drawsTransientFallbackSurface()) {
+                return false;
+            }
+            return TileRasterOverlayReadinessPolicy::
+                terrainSurfaceImageryDrawableReady(tile, rasterOverlays);
+        }
+        return hasRenderableSurfaceForPlan(tile);
+    }
+
     template <typename EnsureTileFn,
               typename CacheKeyFn,
               typename IsFallbackRenderableFn>
@@ -263,32 +294,6 @@ private:
                     (renderHash << 6) + (renderHash >> 2));
         }
     };
-
-    enum class DirectRenderFallbackPolicy {
-        PreferAncestorForTransientSurface,
-        AllowTransientSurfaceAsLastResort
-    };
-
-    static bool canBuildRenderEntryDirectly(
-        const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        DirectRenderFallbackPolicy fallbackPolicy) {
-        // Real terrain can replace its parent immediately. Transient
-        // ellipsoid/fill surfaces are drawable, but they should only become
-        // direct entries when no renderable ancestor can keep coverage.
-        if (tile.content.renderContent.hasDrawableResources()) {
-            if (fallbackPolicy ==
-                    DirectRenderFallbackPolicy::
-                        PreferAncestorForTransientSurface &&
-                tile.content.renderContent
-                    .drawsTransientFallbackSurface()) {
-                return false;
-            }
-            return TileRasterOverlayReadinessPolicy::
-                terrainSurfaceImageryDrawableReady(tile, rasterOverlays);
-        }
-        return hasRenderableSurfaceForPlan(tile);
-    }
 
     // 记录一次 NotBuildable 丢弃的成因,并记下被丢瓦片的 zoom 跨度(判断是粗
     // 层还是叶子层在漏)。

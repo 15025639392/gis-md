@@ -9,6 +9,7 @@
 #include "TileSelectionPostTraversalCommitter.h"
 #include "TileSelectionPostTraversalPolicy.h"
 #include "TileSelectionPreTraversalPolicy.h"
+#include "TileRenderPlanFinalizer.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionRefineFlowPolicy.h"
 #include "TileSelectionRootPolicy.h"
@@ -156,6 +157,22 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
             tile,
             context.rasterOverlays);
     tile.updateTraversalRenderability(renderable);
+    // 呈现级可画:向下回落守卫(continueDeeper:上帧 Refined 且不可画 →
+    // 后代留任)的输入必须与 finalizer 的建条判据同源 —— 遍历级 renderable
+    // 只看 mapping 就绪位,与绑定级判据在暂态分叉时守卫不触发,瓦片被选中却
+    // 建不出条目 = 外拉漏底(cesium-js QuadtreePrimitive 的对应分支:"keep
+    // rendering level 15…rendering level zero would be pretty jarring")。
+    // Empty/External 内容本就不产几何条目,维持遍历级判定;Failed 无内容者
+    // 走严判 → 后代留任优于空洞。
+    const bool presentable =
+        renderable &&
+        (tile.content.contentKind == TileContentKind::Empty ||
+         tile.content.contentKind == TileContentKind::External ||
+         TileRenderPlanFinalizer::canBuildRenderEntryDirectly(
+             tile,
+             context.rasterOverlays,
+             TileRenderPlanFinalizer::DirectRenderFallbackPolicy::
+                 AllowTransientSurfaceAsLastResort));
     if (collectDetailedTimings) {
         context.performanceTimings->refineOverlayMs +=
             perf::nowMs() - refineOverlayStartMs;
@@ -174,7 +191,8 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
             tile.unconditionallyRefine,
             meetsSse,
             ancestorMeetsSse,
-            renderable,
+            // 守卫用呈现级判定(见上):与 finalizer 建条同源,分叉即漏底。
+            presentable,
             selection.previousSelectionState,
             TileSelectionHistory::childWasRefinedLastFrame(tile),
             std::nullopt};

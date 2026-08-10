@@ -620,7 +620,7 @@ Thin inline forwarders (.h:66-109) call the pointers. `TileSelectionTraversalCon
 
 Core recursive selection (cesium-native `Tileset::_visitTileIfNeeded` / `_visitTile`).
 
-**`visitTileIfNeeded`** (.cpp:36-110): computes camera cartographic, prepares visibility via `TileSelectionVisitPreparation::prepare` (frustum/fog/SSE using options), sets `selection.inFrustum`/`cameraInside`/`priority`, updates cull/fog/culledVisited counters. On `visitOutcome.shouldExit` marks Culled / resets SSE / queues load and returns culled-or-empty details. Otherwise `++visited` and recurses into `visitTile`.
+**`visitTileIfNeeded`** (.cpp:40-127): computes camera cartographic, prepares visibility via `TileSelectionVisitPreparation::prepare` (frustum/fog/SSE using options), sets `selection.inFrustum`/`cameraInside`/`priority`, updates cull/fog/culledVisited counters. On `visitOutcome.shouldExit` marks Culled / resets SSE / queues load and returns culled-or-empty details. Otherwise `++visited` and recurses into `visitTile`.
 
 **`visitTile`** (.cpp:144-404): the fan-out body.
 1. Prepare raster overlay (`TileSelectionRasterOverlayPreparer::prepare`) and compute `renderable` (not virtual root && overlay-renderable) → `tile.updateTraversalRenderability` (.cpp:122-134).
@@ -628,7 +628,7 @@ Core recursive selection (cesium-native `Tileset::_visitTileIfNeeded` / `_visitT
 3. Pre-traversal (`TileSelectionPreTraversalPolicy::plan`): may queue urgent load; **`finishAsSingleTile`** → `addTileToCurrentPlan` + return (leaf/SSE-met case) (.cpp:171-193).
 4. `ensureTileChildren`; on `retryLater` queue urgent load. Additive parent added to plan if requested (.cpp:195-211).
 5. **Fan-out** (.cpp:213-228): records `firstRenderedDescendant = visibleTiles.size()` and `loadQueueBeforeChildren`, then `TileSelectionChildTraversal::visitChildren(tile.children, …)` recursing `visitTileIfNeeded(depth+1)`.
-6. Post-traversal (`TileSelectionPostTraversalPolicy::evaluate` + `commitPlan`) then `TileSelectionPostTraversalCommitter::commit` — applies kick (`kickVisitedDescendants`, .cpp:24-32 recursively demotes child selection states), load-queue restore, renderable-replacement, ancestor preload (.cpp:27-35).
+6. Post-traversal (`TileSelectionPostTraversalPolicy::evaluate` + `commitPlan`) then `TileSelectionPostTraversalCommitter::commit` — applies kick (`kickVisitedDescendants`, .cpp:28-39 recursively demotes child selection states), load-queue restore, renderable-replacement, ancestor preload (.cpp:31-39).
 
 **Traversal fan-out order:** roots visited in `chooseRoots` order (see RootPolicy); within a tile, children visited in stored `tile.children` vector order (`TileSelectionChildTraversal::visitChildren` .h:14-27, skips null children, merges child `TileTraversalDetails` via `TileTraversalDetailsPolicy::mergeChild`). Depth-first, pre-order plan append for additive parents, post-order for refined replacements.
 
