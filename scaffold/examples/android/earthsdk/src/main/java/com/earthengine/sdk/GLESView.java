@@ -307,6 +307,10 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     public native void nativeDebugFlyTo();
     public native void nativeDebugTether();
     public native void nativeDebugToggleOrtho(int width, int height);
+    // 阶段 4/5 的状态回读(同样"真值在引擎,UI 不存镜像"):
+    // nativeGetTetherState 返回 0=Free / 1=跟车 / 2=座舱。
+    public native boolean nativeGetOrtho();
+    public native int nativeGetTetherState();
     // 低 AGL 贴地掠视（缙云山方向，动态 near 验收位姿）。
     public native void nativeTerrainGrazingView();
     public native void nativeSetGpuTerrain(boolean enabled);

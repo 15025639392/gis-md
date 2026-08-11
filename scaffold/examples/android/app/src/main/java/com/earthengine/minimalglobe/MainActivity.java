@@ -29,6 +29,8 @@ public class MainActivity extends Activity {
     // Activity 旋转重建后按钮文案会与引擎实际档位静默分叉。
     private Button mBtnGpuTerrain;
     private Button mBtnEdit;
+    private Button mBtnTether;
+    private Button mBtnOrtho;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -142,6 +144,45 @@ public class MainActivity extends Activity {
 
         panel.addView(editActions);
 
+        // 相机阶段 3/4/5 的验收钩子(此前只在数字键 0/7/8/9 上,要 adb 才按得到)。
+        LinearLayout cameraActions = new LinearLayout(this);
+        cameraActions.setOrientation(LinearLayout.HORIZONTAL);
+        cameraActions.setGravity(Gravity.START);
+
+        // 阶段 2:可复现正俯视位姿(pitch 恰好 −π/2 = 万向节奇点),正交的用武之地。
+        Button btnNadir = new Button(this);
+        btnNadir.setText("Nadir");
+        btnNadir.setTextSize(10);
+        btnNadir.setOnClickListener(v -> mGLView.nativeDebugNadirView());
+        cameraActions.addView(btnNadir);
+
+        // 阶段 3:飞到北京(拱高规划 + cameraFlightActive 契约)。
+        Button btnFly = new Button(this);
+        btnFly.setText("Fly");
+        btnFly.setTextSize(10);
+        btnFly.setOnClickListener(v -> mGLView.nativeDebugFlyTo());
+        cameraActions.addView(btnFly);
+
+        // 阶段 4:系留三态循环 Free → 跟车 → 座舱 → Free。
+        mBtnTether = new Button(this);
+        mBtnTether.setTextSize(10);
+        mBtnTether.setOnClickListener(v -> {
+            mGLView.nativeDebugTether();
+            syncToggleLabels();
+        });
+        cameraActions.addView(mBtnTether);
+
+        // 阶段 5:正交/透视切换。宽高传给 native 换算正交足迹,和按键路径同参。
+        mBtnOrtho = new Button(this);
+        mBtnOrtho.setTextSize(10);
+        mBtnOrtho.setOnClickListener(v -> {
+            mGLView.nativeDebugToggleOrtho(mGLView.getWidth(), mGLView.getHeight());
+            syncToggleLabels();
+        });
+        cameraActions.addView(mBtnOrtho);
+
+        panel.addView(cameraActions);
+
         // Close button
         Button closeBtn = new Button(this);
         closeBtn.setText("Close");
@@ -252,6 +293,11 @@ public class MainActivity extends Activity {
         mBtnGpuTerrain.setText(
                 mGLView.nativeGetGpuTerrain() ? "GPU Terr: ON" : "GPU Terr: OFF");
         mBtnEdit.setText(mGLView.nativeGetEditMode() ? "Edit: ON" : "Edit: OFF");
+        final int tether = mGLView.nativeGetTetherState();
+        mBtnTether.setText(tether == 2 ? "Tether: 座舱"
+                         : tether == 1 ? "Tether: 跟车"
+                                       : "Tether: OFF");
+        mBtnOrtho.setText(mGLView.nativeGetOrtho() ? "Ortho: ON" : "Ortho: OFF");
     }
 
     // --- Actions (call through to GLESView native) ---

@@ -2342,6 +2342,41 @@ Java_com_earthengine_sdk_GLESView_nativeDebugToggleOrtho(
     });
 }
 
+// 面板按钮文案的回读口。与 GPU 位移开关同一取向:真值只在引擎里,UI 不存镜像。
+// ⚠️ 读 camera.isOrthographic() 而不是 gOrthographic —— surface 重建后相机是新
+// 造的(回透视),而 gOrthographic 这个 demo 侧变量会留在 true,两者会分叉。
+JNIEXPORT jboolean JNICALL
+Java_com_earthengine_sdk_GLESView_nativeGetOrtho(
+    JNIEnv* /* env */, jobject /* this */) {
+    auto on = std::make_shared<bool>(false);
+    gRenderThread.runSync(
+        [on]() {
+            if (gEngine) *on = gEngine->camera().isOrthographic();
+        },
+        std::chrono::milliseconds(100));
+    return *on ? JNI_TRUE : JNI_FALSE;
+}
+
+// 系留三态:0=Free,1=跟车(仅 originProvider),2=座舱(加 orientationProvider)。
+// ⚠️ 先看当前驱动者是不是 Tethered:引擎重建后选择器回到 Free,而 gCarrier
+// 这个 demo 侧结构还留着 active=true —— 只读 gCarrier 会报出不存在的系留态。
+JNIEXPORT jint JNICALL
+Java_com_earthengine_sdk_GLESView_nativeGetTetherState(
+    JNIEnv* /* env */, jobject /* this */) {
+    auto state = std::make_shared<int>(0);
+    gRenderThread.runSync(
+        [state]() {
+            if (!gEngine) return;
+            if (gEngine->cameraSystem().activeControllerName() !=
+                CameraSystem::kTetheredController) {
+                return;  // 不是系留在驱动 ⇒ 0,无论 gCarrier 记着什么
+            }
+            *state = gCarrier.useOrientation ? 2 : 1;
+        },
+        std::chrono::milliseconds(100));
+    return static_cast<jint>(*state);
+}
+
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeGrazingView(
     JNIEnv* /* env */, jobject /* this */) {
