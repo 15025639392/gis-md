@@ -14,7 +14,7 @@ namespace earth_engine {
 ///
 /// 纯策略执行者——不知道手势、惯性、飞行，只回答一个问题：「给定 eye，
 /// 合法的 eye 是什么」。**唯一调用者是编排层的约束出口**（当前
-/// CameraController::resolveConstraints）；任何其他调用点都是在绕过单一
+/// CameraSystem::resolveConstraints）；任何其他调用点都是在绕过单一
 /// 出口，那正是这次拆分要根治的形态。
 class CameraConstraintSolver {
 public:

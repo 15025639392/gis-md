@@ -5,7 +5,7 @@
 #include "SceneFrameStateBuilder.h"
 #include "SceneTilesetCoordinator.h"
 #include "Camera.h"
-#include "../camera/CameraController.h"
+#include "../camera/CameraSystem.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../debug/PerfTimer.h"
 #include "../debug/PlatformLog.h"
@@ -27,9 +27,9 @@ void SceneFrameUpdateCoordinator::update(
     const double t_reset = perf::nowMs();
 
     double cameraUpdateMs = 0.0;
-    if (input.cameraController) {
+    if (input.cameraSystem) {
         const double startMs = perf::nowMs();
-        input.cameraController->update(input.deltaSeconds);
+        input.cameraSystem->update(input.deltaSeconds);
         cameraUpdateMs = perf::nowMs() - startMs;
     }
     const double t_cam = perf::nowMs();
@@ -42,21 +42,21 @@ void SceneFrameUpdateCoordinator::update(
     // help; only tightening the near plane (moving z_ndc into a well-conditioned
     // range ~0.5) does. Far stays as configured (1e12).
     //
-    // 距离源 = CameraController::groundState().nearestGeometryMeters(近场探针
+    // 距离源 = CameraSystem::groundState().nearestGeometryMeters(近场探针
     // 采样最小距离 ∧ 盘外墙下界):高空构造性退化为 椭球高−9000(与旧椭球
     // nadir 公式相对差 <1%,z-fighting 零回归);低空/掠视按真实最近坡体收紧
     // ——旧公式按椭球 nadir 不扣地形高,高原上空 500m 时 near=2750m,前方坡体
     // 全被近平面切掉("看到山内部"的根因)。下限/比例常量与碰撞净空的耦合
-    // 契约见 CameraController 头(static_assert 锁定)。groundState 未解算过
+    // 契约见 CameraSystem 头(static_assert 锁定)。groundState 未解算过
     // (headless/无控制器)退回旧公式与旧下限。
     if (input.camera) {
         double nearPlane;
-        if (input.cameraController &&
-            input.cameraController->groundState().valid) {
+        if (input.cameraSystem &&
+            input.cameraSystem->groundState().valid) {
             nearPlane = std::max(
-                CameraController::kNearFloorMeters,
-                CameraController::kNearSafetyRatio *
-                    input.cameraController->groundState()
+                CameraSystem::kNearFloorMeters,
+                CameraSystem::kNearSafetyRatio *
+                    input.cameraSystem->groundState()
                         .nearestGeometryMeters);
         } else {
             const double nadirDistance =

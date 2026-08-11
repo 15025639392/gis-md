@@ -19,10 +19,10 @@ class Camera;
 /// **位姿 → 合法位姿**归 `CameraConstraintSolver`（地形探针/突变滤波/碰撞
 /// 钳位），本类是把二者接在一起的那一层。后续阶段这里会长出控制器
 /// selector（Tethered/桌面输入各是一个并列的操控器），届时改名 CameraSystem。
-class CameraController {
+class CameraSystem {
 public:
     /// @param camera 受控相机（非空，生命周期由调用者管理）
-    explicit CameraController(Camera* camera);
+    explicit CameraSystem(Camera* camera);
 
     /// 设置视口尺寸（用于 pick ray 和屏幕坐标归一化）
     void setViewport(int widthPixels, int heightPixels);
@@ -45,7 +45,7 @@ public:
     // ---- 手势输入（转发给操控器；起手帧先跑一个同步帧，见 .cpp）----
     //
     // 手势数学与惯性归 GlobeGestureManipulator，别名让调用方
-    // （SceneInputCoordinator、测试）继续按 CameraController::PinchMode 书写。
+    // （SceneInputCoordinator、测试）继续按 CameraSystem::PinchMode 书写。
     using PinchMode = GlobeGestureManipulator::PinchMode;
     using PinchInput = GlobeGestureManipulator::PinchInput;
 

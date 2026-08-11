@@ -104,7 +104,7 @@ constexpr double kDemoCameraHeightMeters = 30000.0;
 //     地形 clamp,settled 位姿随地形加载态漂移。**别用 0 测量。**
 //   • elev=90 退化(up∥viewDir 基座塌陷,朝向乱)。用 45,别用 90。
 //   • 重载耦合态(高空 + 深影像 churn)偶尔仍会漂(见 far-5000 stop);彻底稳需
-//     后续加"测量冻结相机"开关(冻 CameraController::update),Phase 2 前值得做。
+//     后续加"测量冻结相机"开关(冻 CameraSystem::update),Phase 2 前值得做。
 //   • CamPose logcat 行(GLESView 每帧采样打)= 相机位姿真值,采集时读它校验钉死。
 //
 // kMeasureImageryMaxZoom:高德影像 maxZoom。=18 耦合态(影像逼地形假细分到 z13-18);
@@ -117,7 +117,7 @@ constexpr double kMeasureObliqueElevationDegrees = 45.0;
 constexpr int kMeasureImageryMaxZoom = 18;
 
 // kMeasureFreezeCamera:测量台冻结相机。true = 初始位姿设定后
-// CameraController::update() 完全空转,相机逐帧字节稳定 → 即便高空重载耦合态
+// CameraSystem::update() 完全空转,相机逐帧字节稳定 → 即便高空重载耦合态
 // (深影像 churn)的 far 位姿也精确可复现,让去耦前/后同位姿对拍成立(free-look
 // 静止本已稳,但 far-5000 类重载 stop 偶尔仍漂,此开关彻底钉死)。测量一律开;
 // 生产/交互路径保持 false(默认零影响)。
@@ -131,7 +131,7 @@ constexpr bool kMeasureDisablePerTileRange = false;
 
 // kMeasureScriptedPan:测量台脚本化确定性平移(净测 §14.1② live 换页 ghost)。
 // true = 相机从初始位姿起,每帧原地偏航固定增量、扫掠 kMeasureScriptedPanFrames
-// 帧后 hold(见 CameraController::setScriptedPan)。方位角持续扫掠把新影像子瓦片
+// 帧后 hold(见 CameraSystem::setScriptedPan)。方位角持续扫掠把新影像子瓦片
 // 带进视野 → 逼 live page-in;帧计数确定性(内部计数,非 wall-clock)、无惯性 →
 // 可复现受控运动,替 free swipe 惯性漂(漂到不可控 low-grazing 位姿)。配 PageDet/
 // 逐帧截图量 ghost/stall。与 kMeasureFreezeCamera 互斥(freeze 优先)。

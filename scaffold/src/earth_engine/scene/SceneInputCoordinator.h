@@ -9,7 +9,7 @@
 
 namespace earth_engine {
 
-class CameraController;
+class CameraSystem;
 class SelectionManager;
 
 struct SceneInteractionFocusState {
@@ -19,7 +19,7 @@ struct SceneInteractionFocusState {
 };
 
 struct SceneInputCoordinatorContext {
-    CameraController* cameraController = nullptr;
+    CameraSystem* cameraSystem = nullptr;
     SelectionManager* selectionManager = nullptr;
     std::function<PickResult(float, float)> pick;
     std::function<bool(float, float, Vec3&)> pickInteractionFocus;

@@ -13,7 +13,7 @@
 namespace earth_engine {
 
 class Camera;
-class CameraController;
+class CameraSystem;
 class OffscreenPostProcess;
 class RenderDevice;
 class Scene;
@@ -164,7 +164,7 @@ public:
     // ---- 访问器 ----
 
     Camera& camera();
-    CameraController& cameraController();
+    CameraSystem& cameraSystem();
     bool isReady() const;
 
     /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。

@@ -20,7 +20,7 @@
 8. [tiling — glTF geometry to GPU render prep (+ content loaders)](#8-tiling-gltf-geometry-to-gpu-render-prep-content-loaders)
 9. [providers — imagery + terrain + raster overlay tile providers](#9-providers-imagery-terrain-raster-overlay-tile-providers)
 10. [terrain — DecodedHeightmap 及历史归档](#10-terrain--decodedheightmap-及历史归档)
-11. [camera — Camera, CameraController](#11-camera-camera-cameracontroller)
+11. [camera — Camera, CameraSystem](#11-camera-camera-cameracontroller)
 12. [scene — Scene, coordinators, FrameState, Frustum, render pipeline](#12-scene-scene-coordinators-framestate-frustum-render-pipeline)
 13. [renderer — Renderer, RenderDevice, RenderCommand, streaming, texture](#13-renderer-renderer-renderdevice-rendercommand-streaming-texture)
 14. [platform — GLES, Metal, platform + curl bridges](#14-platform-gles-metal-platform-curl-bridges)
@@ -43,7 +43,7 @@ The `earth_engine` module (`/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_en
 ```
 Engine  (Engine.h/.cpp — thin lifecycle + surface + input facade)
   owns RenderDevice*  (injected; platform GLES or Metal)
-  └── Scene  (scene/Scene.h/.cpp — owns Camera, CameraController, Renderer, SceneRenderPipeline)
+  └── Scene  (scene/Scene.h/.cpp — owns Camera, CameraSystem, Renderer, SceneRenderPipeline)
         ├── SceneTilesetCoordinator      → primary terrain Tileset + N content Tilesets
         ├── SceneLayerCoordinator        → VectorLayer stack (points/lines/polygons, feature state)
         ├── SceneInteractionCoordinator  → input / picking / hover / selection
@@ -1953,7 +1953,7 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 相机位姿的地形约束求解器(.h 153 行 / .cpp 296 行)。**纯策略执行者**——不知道
 手势、惯性、飞行,只回答「给定 eye,合法的 eye 是什么」。调用者有两处——手势侧
-`GlobeGestureManipulator::clampNow` 与编排侧 `CameraController::resolveAtFrameEnd`
+`GlobeGestureManipulator::clampNow` 与编排侧 `CameraSystem::resolveAtFrameEnd`
 ——但**钳位实现只有这一处**。「只有编排层能调 solver」曾被写进架构文档,已否决
 (见 `docs/camera-system-architecture.md` §2.3 的修订记录)。
 
@@ -1978,7 +1978,7 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 调优常量(.cpp:24 起,匿名 namespace):`kTerrainFilterAbsStepMeters`=10 / `kTerrainFilterRelStep`=0.1(绝对项防海面 h≈0 时相对判据退化)、`kTerrainFilterDecayTauSeconds`=0.5、探针 `kProbeRingFractions`={0.15,0.40,1.0} × `kProbeRingAzimuths`=8、半径 `clamp(max(2·AGL, 0.6·单帧水平位移), 200m, 20km)`、`kProbeCollisionFraction`=0.15(碰撞口径=内环+走廊)、`kProbeDriftRebuildFraction`=0.0375、`kAnchorExitMinVerticalGain`=0.2。
 
-### CameraController.h / .cpp
+### camera/CameraSystem.h / .cpp
 
 相机**编排层**(.h 207 行 / .cpp 327 行)。拥有约束求解器与操控器,负责帧循环、
 帧末哨兵、视点设定与只读派生量。**位姿的唯一真值是 `Camera` 自身**
@@ -1998,7 +1998,7 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 | 项 | 行 | 说明 |
 |---|---|---|
-| 手势类型转发 | .h:31 / :49 | `SurfacePicker`/`PinchMode`/`PinchInput` 均为 `GlobeGestureManipulator` 的别名转发,调用方(SceneInputCoordinator、测试)继续按 `CameraController::PinchMode` 书写 |
+| 手势类型转发 | .h:31 / :49 | `SurfacePicker`/`PinchMode`/`PinchInput` 均为 `GlobeGestureManipulator` 的别名转发,调用方(SceneInputCoordinator、测试)继续按 `CameraSystem::PinchMode` 书写 |
 | 地形类型转发 | .h:36 | `TerrainHeightFunc`/`TerrainSample`/`TerrainAreaSampleFunc` 均为 `CameraConstraintSolver` 的别名转发 |
 | `isSelfAnimating` | .h:101 | `scriptedPanActive_ ∨ manipulator_.isAnimating()`。⚠️只报**自主演进**,不报「手指正按着」——后者由输入事件置事件型脏位,两条路径分开才不会出现「手指不动但按着 → 两边都不认领 → 判定空闲」的缝 |
 | `distance()` / `rotation()` | .h:115 / :121 | **纯派生只读视图**(`\|eye\|/R`;把 (+Z,+Y) 转到 (dir,up) 的四元数),不是状态。过渡接口,阶段 2b 由 `currentViewpoint()` 取代 |
@@ -2045,7 +2045,7 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 | `pinching()` | .h:86 | 编排层据此判「手势起手帧」(起手前要先跑一个同步帧) |
 | `tick` | .h:90 | 惯性/滑行/回中的时间步进。编排层在冻结与脚本平移的早退**之后**调用 |
 | `kMinInertiaAngularVelocity` | .h:96 | 1e-4 rad/s。**三处必须同用这一个常量**:运动闸、自清零、`isAnimating` 判据——判据比消费者宽一点点,表现就是「拖一下之后永远不再空闲」,而画面上完全看不出区别 |
-| `clearPanInertia` / `clearGlideInertia` / `clearAllInertia` | .h:110 / :112 / :114 | 三个**不同**的子集,逐字保留拆分前的现状(见 CameraController 节末尾的 ⚠️) |
+| `clearPanInertia` / `clearGlideInertia` / `clearAllInertia` | .h:110 / :112 / :114 | 三个**不同**的子集,逐字保留拆分前的现状(见 CameraSystem 节末尾的 ⚠️) |
 | `AnchorSolveResult` | .h:124 | 锚点求解结果 + `conditioning`(入射余弦,病态区混合权重的输入) |
 | `clampNow` | .h:174 | 手势/惯性钳位。⚠️**不要为了「单一出口」把它改成经由编排层的回调**——手势期是事件内多步闭环(dolly→twist→pitch→pin 各需解一次),那样只会逼出回调或提议列表两种绕法。钳位实现本就只有 solver 一处,绕过写 camera 由帧末哨兵兜底,「只有编排层能调 solver」是多余约束 |
 
@@ -2113,7 +2113,7 @@ Reverse-Z projection (.cpp:67-98): maps `z_eye=near(1)→z_ndc=1`, `z_eye=far(1e
 
 ### Scene.h / .cpp
 
-`Scene` is the top-level 3D scene facade. Owns Camera/CameraController/Renderer/render pipeline and delegates all domain work to 5 coordinators + a render pipeline. cesium-native has no direct `Scene` equivalent; this is the engine's own composition root.
+`Scene` is the top-level 3D scene facade. Owns Camera/CameraSystem/Renderer/render pipeline and delegates all domain work to 5 coordinators + a render pipeline. cesium-native has no direct `Scene` equivalent; this is the engine's own composition root.
 
 | Item | Lines | Description |
 |---|---|---|
@@ -3183,7 +3183,7 @@ Gesture recognizer. Consumes normalized `InputEvent` stream; recognizes drag, pi
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| `Gesture` enum | .h:22-31 | `DragStart/Move/End`, `PinchStart/Move/End`, `Click`, `DoubleClick`; comments map each to `CameraController::onDrag*`/`onPinch`/pick+onSelect |
+| `Gesture` enum | .h:22-31 | `DragStart/Move/End`, `PinchStart/Move/End`, `Click`, `DoubleClick`; comments map each to `CameraSystem::onDrag*`/`onPinch`/pick+onSelect |
 | `Callback` type | .h:36 | `std::function<void(Gesture, const InputEvent&)>`; set via `setCallback()` (.h:41) |
 | `process()` | .cpp:94-205 | Main event dispatch; early-out if no callback (.cpp:95) |
 | `reset()` | .cpp:207-213 | Clears state on interrupt/scene destroy |

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../camera/CameraController.h"
+#include "../camera/CameraSystem.h"
 #include "../core/math/Vec3.h"
 
 #include <functional>
@@ -28,7 +28,7 @@ public:
         const Vec3& groundEcef,
         double radiusMeters,
         const std::vector<glm::dvec2>& localOffsetsMeters,
-        std::vector<CameraController::TerrainSample>& out);
+        std::vector<CameraSystem::TerrainSample>& out);
 };
 
 } // namespace earth_engine

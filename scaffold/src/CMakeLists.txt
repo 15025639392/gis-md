@@ -132,11 +132,11 @@ target_sources(earth_engine_core PRIVATE
 # camera
 # ============================================================
 target_sources(earth_engine_core PRIVATE
-    earth_engine/camera/CameraController.h
+    earth_engine/camera/CameraSystem.h
     earth_engine/camera/CameraConstraintSolver.cpp
     earth_engine/camera/CameraPoseOps.cpp
     earth_engine/camera/GlobeGestureManipulator.cpp
-    earth_engine/camera/CameraController.cpp
+    earth_engine/camera/CameraSystem.cpp
 )
 
 # ============================================================

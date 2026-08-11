@@ -1,4 +1,4 @@
-#include "CameraController.h"
+#include "CameraSystem.h"
 #include "CameraPoseOps.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -18,13 +18,13 @@ namespace {
 constexpr double kEarthRadiusMeters = 6378137.0;
 // 相机包络常量（净空下限 / 地心距上限）归 CameraConstraintSolver 单点持有；
 // viewDistance 的钳位与手势侧的 dolly 封顶必须读同一份。
-constexpr double kMinAltitudeMeters = CameraController::kMinClearanceMeters;
+constexpr double kMinAltitudeMeters = CameraSystem::kMinClearanceMeters;
 constexpr double kMaxDistanceEarthRadii =
     CameraConstraintSolver::kMaxDistanceEarthRadii;
 
 } // namespace
 
-CameraController::CameraController(Camera* camera)
+CameraSystem::CameraSystem(Camera* camera)
     : camera_(camera), manipulator_(camera, &constraintSolver_) {
     // Default to Chongqing area for testing
     const auto& e = Ellipsoid::WGS84();
@@ -35,23 +35,23 @@ CameraController::CameraController(Camera* camera)
     camera_->lookAt(eye, target, e.geodeticSurfaceNormal(target));
 }
 
-void CameraController::setViewport(int widthPixels, int heightPixels) {
+void CameraSystem::setViewport(int widthPixels, int heightPixels) {
     manipulator_.setViewport(widthPixels, heightPixels);
 }
 
-void CameraController::setSurfacePicker(SurfacePicker picker) {
+void CameraSystem::setSurfacePicker(SurfacePicker picker) {
     manipulator_.setSurfacePicker(std::move(picker));
 }
 
-void CameraController::setTerrainHeightFunc(TerrainHeightFunc func) {
+void CameraSystem::setTerrainHeightFunc(TerrainHeightFunc func) {
     constraintSolver_.setTerrainHeightFunc(std::move(func));
 }
 
-void CameraController::setTerrainAreaSampleFunc(TerrainAreaSampleFunc func) {
+void CameraSystem::setTerrainAreaSampleFunc(TerrainAreaSampleFunc func) {
     constraintSolver_.setTerrainAreaSampleFunc(std::move(func));
 }
 
-void CameraController::setTerrainRevisionFunc(std::function<uint64_t()> func) {
+void CameraSystem::setTerrainRevisionFunc(std::function<uint64_t()> func) {
     constraintSolver_.setTerrainRevisionFunc(std::move(func));
 }
 
@@ -59,33 +59,33 @@ void CameraController::setTerrainRevisionFunc(std::function<uint64_t()> func) {
 // 手势转发
 // ============================================================
 
-void CameraController::syncFrameBeforeGesture() {
+void CameraSystem::syncFrameBeforeGesture() {
     update(0.0);
 }
 
-void CameraController::onDragStart(float xPixels, float yPixels,
+void CameraSystem::onDragStart(float xPixels, float yPixels,
                                    double timestamp) {
     syncFrameBeforeGesture();
     manipulator_.onDragStart(xPixels, yPixels, timestamp);
 }
 
-void CameraController::onDragMove(float xPixels, float yPixels,
+void CameraSystem::onDragMove(float xPixels, float yPixels,
                                   double timestamp) {
     manipulator_.onDragMove(xPixels, yPixels, timestamp);
 }
 
-void CameraController::onDragEnd() {
+void CameraSystem::onDragEnd() {
     manipulator_.onDragEnd();
 }
 
-void CameraController::onPinchGesture(const PinchInput& input) {
+void CameraSystem::onPinchGesture(const PinchInput& input) {
     if (!manipulator_.pinching()) {
         syncFrameBeforeGesture();
     }
     manipulator_.onPinchGesture(input);
 }
 
-void CameraController::onPinchGesture(float scale,
+void CameraSystem::onPinchGesture(float scale,
                                       float centerX,
                                       float centerY,
                                       float rotationRadians,
@@ -102,11 +102,11 @@ void CameraController::onPinchGesture(float scale,
                                 centerDeltaX, centerDeltaY, timestamp);
 }
 
-void CameraController::onPinchEnd() {
+void CameraSystem::onPinchEnd() {
     manipulator_.onPinchEnd();
 }
 
-bool CameraController::debugAnchorWorld(Vec3& outWorld) const {
+bool CameraSystem::debugAnchorWorld(Vec3& outWorld) const {
     return manipulator_.debugAnchorWorld(outWorld);
 }
 
@@ -114,7 +114,7 @@ bool CameraController::debugAnchorWorld(Vec3& outWorld) const {
 // 帧循环
 // ============================================================
 
-void CameraController::update(double deltaSeconds) {
+void CameraSystem::update(double deltaSeconds) {
     constraintSolver_.beginFrame();  // 探针"每帧至多重建一次"的帧时钟
     updateInternal(deltaSeconds);
     // 帧末哨兵：兜底收编所有未经操控器 clampNow 路由的位姿写入（viewDistance /
@@ -122,7 +122,7 @@ void CameraController::update(double deltaSeconds) {
     resolveAtFrameEnd(deltaSeconds);
 }
 
-void CameraController::updateInternal(double deltaSeconds) {
+void CameraSystem::updateInternal(double deltaSeconds) {
     // 测量台冻结：完全空转，让相机停在最近一次显式位姿上，逐帧字节稳定。
     // 惯性/zoom 惯性全部跳过 → far 位姿在重载耦合态下也可复现。
     if (measurementFreeze_) {
@@ -147,7 +147,7 @@ void CameraController::updateInternal(double deltaSeconds) {
     manipulator_.tick(deltaSeconds);
 }
 
-bool CameraController::resolveAtFrameEnd(double deltaSeconds) {
+bool CameraSystem::resolveAtFrameEnd(double deltaSeconds) {
     // 冻结契约要求位姿逐帧字节稳定，哨兵绝不触碰。
     if (measurementFreeze_) {
         return false;
@@ -170,7 +170,7 @@ bool CameraController::resolveAtFrameEnd(double deltaSeconds) {
     return changed;
 }
 
-void CameraController::commitResolvedPose() {
+void CameraSystem::commitResolvedPose() {
     constraintSolver_.commitPose(camera_->position().raw(),
                                  camera_->direction().raw());
 }
@@ -179,7 +179,7 @@ void CameraController::commitResolvedPose() {
 // 测量台
 // ============================================================
 
-void CameraController::setMeasurementFreeze(bool frozen) {
+void CameraSystem::setMeasurementFreeze(bool frozen) {
     measurementFreeze_ = frozen;
     if (frozen) {
         // 冻结瞬间清零所有惯性，避免残留速度在解冻前被"锁"进状态。
@@ -187,7 +187,7 @@ void CameraController::setMeasurementFreeze(bool frozen) {
     }
 }
 
-void CameraController::setScriptedPan(bool active, int startFrame, int frames,
+void CameraSystem::setScriptedPan(bool active, int startFrame, int frames,
                                      double yawPerFrameRad) {
     scriptedPanActive_ = active;
     scriptedPanStartFrame_ = startFrame;
@@ -204,11 +204,11 @@ void CameraController::setScriptedPan(bool active, int startFrame, int frames,
 // 位姿设定与只读派生量
 // ============================================================
 
-float CameraController::distance() const {
+float CameraSystem::distance() const {
     return static_cast<float>(camera_->position().length() / kEarthRadiusMeters);
 }
 
-glm::dquat CameraController::rotation() const {
+glm::dquat CameraSystem::rotation() const {
     // 旧 orbit 真值 rotation_ 满足 rotation_·(+Z)=direction、rotation_·(+Y)=up，
     // 故列向量 [Rx,Ry,Rz] = [cross(up,dir), up, dir]（cross(up,dir) = -right，
     // 这样才右手正交：identity 位姿 dir=+Z/up=+Y 下恰得单位阵）。
@@ -217,7 +217,7 @@ glm::dquat CameraController::rotation() const {
     return glm::quat_cast(glm::dmat3(glm::cross(u, f), u, f));
 }
 
-void CameraController::setNadirOrbitView(const Vec3& targetEcef,
+void CameraSystem::setNadirOrbitView(const Vec3& targetEcef,
                                          const Vec3& surfaceUpNormal,
                                          double heightMeters) {
     // 目标点局部 ENU:east = z × up(极点退化时回退 ECEF X 轴),north = up × east。
@@ -238,7 +238,7 @@ void CameraController::setNadirOrbitView(const Vec3& targetEcef,
     manipulator_.clearPanInertia();
 }
 
-void CameraController::viewDistance(const Vec3& targetWorld, double distanceMeters) {
+void CameraSystem::viewDistance(const Vec3& targetWorld, double distanceMeters) {
     const double maxDistanceMeters = kMaxDistanceEarthRadii * kEarthRadiusMeters;
     const double clampedDistance = std::clamp(
         distanceMeters,
@@ -258,7 +258,7 @@ void CameraController::viewDistance(const Vec3& targetWorld, double distanceMete
     manipulator_.clearPanInertia();
 }
 
-void CameraController::applyRotationAroundAxis(const glm::dvec3& axis, double angle) {
+void CameraSystem::applyRotationAroundAxis(const glm::dvec3& axis, double angle) {
     if (glm::length(axis) < 1e-10 || std::abs(angle) < 1e-12) {
         return;
     }
@@ -293,13 +293,13 @@ double headingFromFrame(const glm::dvec3& localUp,
 
 }  // namespace
 
-double CameraController::headingRadians() const {
+double CameraSystem::headingRadians() const {
     const glm::dvec3 up =
         Ellipsoid::WGS84().geodeticSurfaceNormal(camera_->position()).raw();
     return headingFromFrame(up, camera_->direction().raw(), camera_->up().raw());
 }
 
-double CameraController::pitchRadians() const {
+double CameraSystem::pitchRadians() const {
     const glm::dvec3 up =
         Ellipsoid::WGS84().geodeticSurfaceNormal(camera_->position()).raw();
     const double s = std::clamp(glm::dot(camera_->direction().raw(), up),
@@ -307,7 +307,7 @@ double CameraController::pitchRadians() const {
     return std::asin(s);  // + 向上，- 向下；正俯视 = -π/2
 }
 
-void CameraController::resetNorthUp() {
+void CameraSystem::resetNorthUp() {
     update(0.0);
     manipulator_.clearGlideInertia();
 

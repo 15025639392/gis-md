@@ -800,11 +800,11 @@ add_executable(test_scene_frame_state
 target_link_libraries(test_scene_frame_state PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_scene_frame_state COMMAND test_scene_frame_state)
 
-add_executable(test_camera_controller
-    unit/camera/test_camera_controller.cpp
+add_executable(test_camera_system
+    unit/camera/test_camera_system.cpp
 )
-target_link_libraries(test_camera_controller PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_camera_controller COMMAND test_camera_controller)
+target_link_libraries(test_camera_system PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_camera_system COMMAND test_camera_system)
 
 add_executable(test_camera_pose_trace
     unit/camera/test_camera_pose_trace.cpp

@@ -13,7 +13,7 @@
 #include "SceneTelemetryCoordinator.h"
 #include "SceneTilesetCoordinator.h"
 #include "PresentationTrace.h"
-#include "../camera/CameraController.h"
+#include "../camera/CameraSystem.h"
 #include "../environment/SkyGradient.h"
 #include "../interaction/InputEvent.h"
 #include "../layers/FeatureRenderLayer.h"
@@ -91,7 +91,7 @@ bool shouldHoldTerrainCoverageTakeover(
 
 Scene::Scene()
     : camera_(std::make_unique<Camera>()),
-      cameraController_(std::make_unique<CameraController>(camera_.get())),
+      cameraSystem_(std::make_unique<CameraSystem>(camera_.get())),
       layers_(std::make_unique<SceneLayerCoordinator>()),
       tilesets_(std::make_unique<SceneTilesetCoordinator>()),
       interaction_(std::make_unique<SceneInteractionCoordinator>()),
@@ -154,8 +154,8 @@ bool Scene::setRenderDevice(RenderDevice* device) {
 void Scene::setViewport(int widthPixels, int heightPixels, float dpr) {
     frameRuntime_.setViewport(widthPixels, heightPixels, dpr);
 
-    if (cameraController_) {
-        cameraController_->setViewport(widthPixels, heightPixels);
+    if (cameraSystem_) {
+        cameraSystem_->setViewport(widthPixels, heightPixels);
     }
 }
 
@@ -164,7 +164,7 @@ void Scene::update(double deltaSeconds) {
         frameRuntime_.makeFrameUpdateInput(
             telemetry_->diagnostics(),
             camera_.get(),
-            cameraController_.get(),
+            cameraSystem_.get(),
             renderer_.get(),
             *tilesets_,
             deltaSeconds,
@@ -244,7 +244,7 @@ bool Scene::hasConvergingWork(const char** outReason) const {
 
     // ① 相机自主演进(惯性滑行/脚本平移)。手指按着不动不算 —— 那条走事件型
     //    脏位,两条路径分开才不会出现两边都不认领的缝。
-    if (cameraController_ && cameraController_->isSelfAnimating()) {
+    if (cameraSystem_ && cameraSystem_->isSelfAnimating()) {
         return hit("cameraAnimating");
     }
 
@@ -508,17 +508,17 @@ void Scene::clearSelection() {
 // ---- 输入回调 ----
 
 void Scene::configureCameraSurfacePicker() {
-    if (!cameraController_) return;
+    if (!cameraSystem_) return;
 
     interaction_->configureCameraSurfacePicker(
-        *cameraController_,
+        *cameraSystem_,
         [this]() { return interactionContext(); });
 }
 
 SceneInteractionContext Scene::interactionContext() const {
     return frameRuntime_.makeInteractionContext(
         camera_.get(),
-        cameraController_.get(),
+        cameraSystem_.get(),
         tilesets_->primary(),
         &layers_->vectorLayers());
 }

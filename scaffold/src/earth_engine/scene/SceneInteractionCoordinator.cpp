@@ -1,7 +1,7 @@
 #include "SceneInteractionCoordinator.h"
 
 #include "SceneTerrainQuery.h"
-#include "../camera/CameraController.h"
+#include "../camera/CameraSystem.h"
 #include "../tiling/Tileset.h"
 
 namespace earth_engine {
@@ -19,9 +19,9 @@ void SceneInteractionCoordinator::setFeatureStateChangeCallback(
 }
 
 void SceneInteractionCoordinator::configureCameraSurfacePicker(
-    CameraController& cameraController,
+    CameraSystem& cameraSystem,
     std::function<SceneInteractionContext()> contextProvider) {
-    cameraController.setSurfacePicker(
+    cameraSystem.setSurfacePicker(
         [this, contextProvider](float screenX, float screenY, Vec3& outPoint) {
             return pickInteractionFocus(
                 contextProvider(),
@@ -30,7 +30,7 @@ void SceneInteractionCoordinator::configureCameraSurfacePicker(
                 outPoint);
         });
 
-    cameraController.setTerrainHeightFunc(
+    cameraSystem.setTerrainHeightFunc(
         [contextProvider](const Vec3& ecefPosition)
             -> std::optional<double> {
             return SceneTerrainQuery::sampleHeight(
@@ -41,11 +41,11 @@ void SceneInteractionCoordinator::configureCameraSurfacePicker(
     // 近场探针:区域批量采样(碰撞钳位主路径,单点 TerrainHeightFunc 退为
     // 无探针回退)+ 数据代次(heightmap 强代次,与矢量贴地
     // SceneRenderPipeline 同一信号源;替代 contentBytesUsed 弱代理)。
-    cameraController.setTerrainAreaSampleFunc(
+    cameraSystem.setTerrainAreaSampleFunc(
         [contextProvider](const Vec3& groundEcef,
                           double radiusMeters,
                           const std::vector<glm::dvec2>& offsets,
-                          std::vector<CameraController::TerrainSample>& out) {
+                          std::vector<CameraSystem::TerrainSample>& out) {
             SceneTerrainQuery::sampleAreaHeights(
                 contextProvider().terrainTileset,
                 groundEcef,
@@ -53,7 +53,7 @@ void SceneInteractionCoordinator::configureCameraSurfacePicker(
                 offsets,
                 out);
         });
-    cameraController.setTerrainRevisionFunc(
+    cameraSystem.setTerrainRevisionFunc(
         [contextProvider]() -> uint64_t {
             return contextProvider().terrainTileset
                 ? TerrainHeightService::heightmapGeneration()
@@ -128,7 +128,7 @@ ScenePickingContext SceneInteractionCoordinator::pickingContext(
 SceneInputCoordinatorContext SceneInteractionCoordinator::inputContext(
     const SceneInteractionContext& context) const {
     return SceneInputCoordinatorContext{
-        context.cameraController,
+        context.cameraSystem,
         selectionManager_.get(),
         [this, &context](float screenX, float screenY) {
             return pick(context, screenX, screenY);

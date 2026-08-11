@@ -12,7 +12,7 @@
 #include "../core/geodesy/Ellipsoid.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../layers/RasterOverlay.h"
-#include "../camera/CameraController.h"
+#include "../camera/CameraSystem.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../providers/BingMapsImageryProvider.h"
 #include "../providers/BlockingHttpFetcher.h"
@@ -714,11 +714,11 @@ void EarthEngineSdkFacade::resetCamera() {
         const Vec3 eye = targetEcef +
             (upN * std::sin(elevRad) - northN * std::cos(elevRad)) * dist;
         engine_.camera().lookAt(eye, targetEcef, upN);
-        engine_.cameraController().viewDistance(targetEcef, dist);
+        engine_.cameraSystem().viewDistance(targetEcef, dist);
         // 位姿设定后再冻结，让 update() 停止一切扰动（测量台专用）。
-        engine_.cameraController().setMeasurementFreeze(
+        engine_.cameraSystem().setMeasurementFreeze(
             config_.initialCamera.freezeCamera);
-        engine_.cameraController().setScriptedPan(
+        engine_.cameraSystem().setScriptedPan(
             config_.initialCamera.scriptedPan,
             config_.initialCamera.scriptedPanStartFrame,
             config_.initialCamera.scriptedPanFrames,
@@ -748,17 +748,17 @@ void EarthEngineSdkFacade::resetCamera() {
     }
     engine_.camera().lookAt(camEcef, targetEcef, up);
 
-    // CameraController 以 orbit 模式每帧从自身 rotation_/distance_ 重建相机
+    // CameraSystem 以 orbit 模式每帧从自身 rotation_/distance_ 重建相机
     // （看向地心=nadir），否则上面的 lookAt 会在第 1 帧被覆盖、初始相机 config
-    // 不生效。orbit 约定是 CameraController 的私有实现细节,这里只声明意图
+    // 不生效。orbit 约定是 CameraSystem 的私有实现细节,这里只声明意图
     // "目标点正上方 heightMeters 高、正北朝上",推导收在控制器内。
-    engine_.cameraController().setNadirOrbitView(
+    engine_.cameraSystem().setNadirOrbitView(
         targetEcef, normal, config_.initialCamera.heightMeters);
     // 位姿设定后再冻结（测量台专用）；nadir 冻结时 update() 跳过 orbit 重建，
     // 相机停在上面显式 lookAt 的正上方位姿。
-    engine_.cameraController().setMeasurementFreeze(
+    engine_.cameraSystem().setMeasurementFreeze(
         config_.initialCamera.freezeCamera);
-    engine_.cameraController().setScriptedPan(
+    engine_.cameraSystem().setScriptedPan(
         config_.initialCamera.scriptedPan,
         config_.initialCamera.scriptedPanStartFrame,
         config_.initialCamera.scriptedPanFrames,

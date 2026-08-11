@@ -40,7 +40,7 @@ void SceneTerrainQuery::sampleAreaHeights(
     const Vec3& groundEcef,
     double radiusMeters,
     const std::vector<glm::dvec2>& localOffsetsMeters,
-    std::vector<CameraController::TerrainSample>& out) {
+    std::vector<CameraSystem::TerrainSample>& out) {
     out.assign(localOffsetsMeters.size(), {});
     if (!terrainTileset || localOffsetsMeters.empty()) {
         return;

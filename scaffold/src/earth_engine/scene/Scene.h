@@ -11,7 +11,7 @@
 namespace earth_engine {
 
 class Camera;
-class CameraController;
+class CameraSystem;
 struct Diagnostics;
 struct InputEvent;
 struct PickResult;
@@ -57,7 +57,7 @@ public:
     void setTerrainDisplacementPool(TerrainDisplacementTemplatePool* pool);
 
     Camera& camera() { return *camera_; }
-    CameraController& cameraController() { return *cameraController_; }
+    CameraSystem& cameraSystem() { return *cameraSystem_; }
 
     void setViewport(int widthPixels, int heightPixels, float dpr = 1.0f);
     void update(double deltaSeconds);
@@ -156,7 +156,7 @@ private:
     void updatePresentationTrace();
 
     std::unique_ptr<Camera> camera_;
-    std::unique_ptr<CameraController> cameraController_;
+    std::unique_ptr<CameraSystem> cameraSystem_;
     std::unique_ptr<Renderer> renderer_;
     std::unique_ptr<SceneRenderPipeline> renderPipeline_;
     SceneFrameRuntime frameRuntime_;

@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 #include <algorithm>
 #include <cmath>
-#include "earth_engine/camera/CameraController.h"
+#include "earth_engine/camera/CameraSystem.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/scene/Camera.h"
 
@@ -46,10 +46,10 @@ double cameraSlope(const Camera& camera) {
     return camera.direction().dot(-camera.position().normalized());
 }
 
-CameraController::PinchInput pinchIn(
+CameraSystem::PinchInput pinchIn(
     float scaleFromStart, float twistRadians, float cx, float cy,
-    CameraController::PinchMode mode, double timestamp = 0.0) {
-    CameraController::PinchInput input;
+    CameraSystem::PinchMode mode, double timestamp = 0.0) {
+    CameraSystem::PinchInput input;
     input.scaleFromStart = scaleFromStart;
     input.twistFromStartRadians = twistRadians;
     input.centroidX = cx;
@@ -61,13 +61,13 @@ CameraController::PinchInput pinchIn(
 
 // 解析式地形假体:把探针的 ENU 偏移换算回经纬(与生产 sampleAreaHeights 同法),
 // 高度由 heightFn(lonRad, latRad) 给出,全点有效。
-CameraController::TerrainAreaSampleFunc makeAnalyticAreaSampler(
+CameraSystem::TerrainAreaSampleFunc makeAnalyticAreaSampler(
     std::function<double(double, double)> heightFn,
     int* callCounter = nullptr) {
     return [heightFn, callCounter](
                const Vec3& groundEcef, double /*radiusMeters*/,
                const std::vector<glm::dvec2>& offsets,
-               std::vector<CameraController::TerrainSample>& out) {
+               std::vector<CameraSystem::TerrainSample>& out) {
         if (callCounter) ++(*callCounter);
         const auto& e = Ellipsoid::WGS84();
         const Cartographic c = e.cartesianToCartographic(groundEcef);
@@ -113,20 +113,20 @@ double matrixAbsDiff(const Mat4& a, const Mat4& b) {
 
 } // namespace
 
-class CameraControllerTest : public ::testing::Test {
+class CameraSystemTest : public ::testing::Test {
 protected:
     void SetUp() override {
         camera_ = std::make_unique<Camera>();
         camera_->setPerspective(glm::radians(60.0), 1.0, 50000000.0);
-        controller_ = std::make_unique<CameraController>(camera_.get());
+        controller_ = std::make_unique<CameraSystem>(camera_.get());
         controller_->setViewport(800, 600);
     }
 
     std::unique_ptr<Camera> camera_;
-    std::unique_ptr<CameraController> controller_;
+    std::unique_ptr<CameraSystem> controller_;
 };
 
-TEST_F(CameraControllerTest, InitialState) {
+TEST_F(CameraSystemTest, InitialState) {
     // 构造即摆到重庆上空 1500m 看向地表。orbit 表示已删,不再有"默认 7 地球
     // 半径"这回事——distance() 现在是 |eye|/R 的派生视图。
     const auto& e = Ellipsoid::WGS84();
@@ -141,7 +141,7 @@ TEST_F(CameraControllerTest, InitialState) {
     EXPECT_NEAR(1.0, len, 1e-9);
 }
 
-TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFinger) {
+TEST_F(CameraSystemTest, DragKeepsGrabbedSurfacePointUnderFinger) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 grabbed = intersectEarthSphere(
@@ -157,7 +157,7 @@ TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFinger) {
     EXPECT_NEAR(300.0, projected.y, 2.0);
 }
 
-TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFingerInAllDirections) {
+TEST_F(CameraSystemTest, DragKeepsGrabbedSurfacePointUnderFingerInAllDirections) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 grabbed = intersectEarthSphere(
@@ -207,7 +207,7 @@ TEST_F(CameraControllerTest, DragKeepsGrabbedSurfacePointUnderFingerInAllDirecti
     EXPECT_NEAR(330.0, projected.y, 2.0);
 }
 
-TEST_F(CameraControllerTest, DraggedSurfacePointFollowsFingerDirection) {
+TEST_F(CameraSystemTest, DraggedSurfacePointFollowsFingerDirection) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 grabbed = intersectEarthSphere(
@@ -234,7 +234,7 @@ TEST_F(CameraControllerTest, DraggedSurfacePointFollowsFingerDirection) {
     EXPECT_LT(afterUp.y, 300.0);
 }
 
-TEST_F(CameraControllerTest, DragStepUsesAnchorSphereIntersection) {
+TEST_F(CameraSystemTest, DragStepUsesAnchorSphereIntersection) {
     placeOrbitIdentity(*camera_, 3.0);
     controller_->onDragStart(400.0f, 300.0f);
     controller_->onDragMove(430.0f, 300.0f);
@@ -251,7 +251,7 @@ TEST_F(CameraControllerTest, DragStepUsesAnchorSphereIntersection) {
     EXPECT_GT(farAngle, nearAngle);
 }
 
-TEST_F(CameraControllerTest, DragUsesInjectedSurfacePicker) {
+TEST_F(CameraSystemTest, DragUsesInjectedSurfacePicker) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
@@ -272,7 +272,7 @@ TEST_F(CameraControllerTest, DragUsesInjectedSurfacePicker) {
     EXPECT_GT(quatAngleFromIdentity(controller_->rotation()), 0.0);
 }
 
-TEST_F(CameraControllerTest, DragThenInertiaDecays) {
+TEST_F(CameraSystemTest, DragThenInertiaDecays) {
     controller_->onDragStart(400.0f, 300.0f, 1.0);
     controller_->onDragMove(430.0f, 300.0f, 1.016);
     controller_->onDragEnd();
@@ -292,7 +292,7 @@ TEST_F(CameraControllerTest, DragThenInertiaDecays) {
     EXPECT_LT(rotDiff, 0.01);
 }
 
-TEST_F(CameraControllerTest, DragSpinsWhenPointerMissesGlobeInsteadOfDeadZone) {
+TEST_F(CameraSystemTest, DragSpinsWhenPointerMissesGlobeInsteadOfDeadZone) {
     // 回归（A0 消死区）：手指按在地球轮廓外（pick ray 打空）时，旧实现
     // onDragStart 直接放弃整段拖拽（dragging_=false → onDragMove no-op），
     // 地图卡死不动。现在应回退到 spin 转台旋转。
@@ -314,7 +314,7 @@ TEST_F(CameraControllerTest, DragSpinsWhenPointerMissesGlobeInsteadOfDeadZone) {
     EXPECT_GT(quatAngleFromIdentity(controller_->rotation()), 1e-6);
 }
 
-TEST_F(CameraControllerTest, DragSpinFlickOverEmptySpaceSeedsInertia) {
+TEST_F(CameraSystemTest, DragSpinFlickOverEmptySpaceSeedsInertia) {
     // spin 与 anchor 共用惯性通道：隔着地平线甩一下，松手后应继续滑行。
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
@@ -331,7 +331,7 @@ TEST_F(CameraControllerTest, DragSpinFlickOverEmptySpaceSeedsInertia) {
     EXPECT_GT(diff, 1e-9);
 }
 
-TEST_F(CameraControllerTest, DragAcrossLimbHasNoScreenSpaceJump) {
+TEST_F(CameraSystemTest, DragAcrossLimbHasNoScreenSpaceJump) {
     // N9（问题3 根治的连续性判据）：手指从球心划到球缘外，锚定→转台的
     // 过渡必须连续。判据用屏幕空间：每个 20px 步长里，屏幕中心地表参照点
     // 的位移不得超过 3.5×步长（旧 latch 实现重入球面时会把过期锚点猛拉回
@@ -354,7 +354,7 @@ TEST_F(CameraControllerTest, DragAcrossLimbHasNoScreenSpaceJump) {
     controller_->onDragEnd();
 }
 
-TEST_F(CameraControllerTest, DragReentersGlobeRestoresAnchorFollow) {
+TEST_F(CameraSystemTest, DragReentersGlobeRestoresAnchorFollow) {
     // N10（问题3 回归）：拖出球缘再拖回来，锚定必须恢复——旧实现一旦 miss
     // 即 latch 到转台直到抬手，重入球面后整段退化为非锚定旋转。
     placeOrbitIdentity(*camera_, 7.0);
@@ -378,7 +378,7 @@ TEST_F(CameraControllerTest, DragReentersGlobeRestoresAnchorFollow) {
     controller_->onDragEnd();
 }
 
-TEST_F(CameraControllerTest, PinchChangesDistance) {
+TEST_F(CameraSystemTest, PinchChangesDistance) {
     placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
     Vec3 anchor = intersectEarthSphere(
@@ -408,7 +408,7 @@ TEST_F(CameraControllerTest, PinchChangesDistance) {
     EXPECT_NEAR(300.0, projectedAfterZoomOut.y, 2.0);
 }
 
-TEST_F(CameraControllerTest, PinchCombinedZoomAndRotateKeepsAnchorPinned) {
+TEST_F(CameraSystemTest, PinchCombinedZoomAndRotateKeepsAnchorPinned) {
     // A1 锚点锁：缩放+旋转同时发生时，手指下的地表点必须保持在双指中心。
     placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
@@ -427,7 +427,7 @@ TEST_F(CameraControllerTest, PinchCombinedZoomAndRotateKeepsAnchorPinned) {
     EXPECT_NEAR(cy, projected.y, 2.0);
 }
 
-TEST_F(CameraControllerTest, PinchZoomMagnitudeMatchesFingerSpread) {
+TEST_F(CameraSystemTest, PinchZoomMagnitudeMatchesFingerSpread) {
     // 跟手判据：双指分开 s 倍，画面就该放大 s 倍——地表两点的屏幕间距比值 = s。
     // 旧实现沿视线移动 d*(s-1)（应为朝锚点移动 d*(1-1/s)），有效缩放变成
     // 1/(2-s)：s=1.25 时实际 1.333，超出手指 6.7%，且质心偏离屏幕中心时还带
@@ -462,7 +462,7 @@ TEST_F(CameraControllerTest, PinchZoomMagnitudeMatchesFingerSpread) {
     EXPECT_NEAR(cy, projected.y, 2.0);
 }
 
-TEST_F(CameraControllerTest, PinchJerkClampCarriesResidualInsteadOfDroppingIt) {
+TEST_F(CameraSystemTest, PinchJerkClampCarriesResidualInsteadOfDroppingIt) {
     // 单事件 jerk 限幅只该把突跳摊到相邻事件上，不该丢量：一次 s=2.0 的粗事件
     // 之后跟若干静止事件，累计缩放必须收敛到 2.0。旧实现直接夹到 1.3 并丢弃
     // 余量——快速捏合永久少缩放一截。
@@ -486,7 +486,7 @@ TEST_F(CameraControllerTest, PinchJerkClampCarriesResidualInsteadOfDroppingIt) {
     EXPECT_NEAR(2.0, distBefore / distAfter, 0.04);
 }
 
-TEST_F(CameraControllerTest, PinchSlowRotateRespondsAndKeepsAnchorPinned) {
+TEST_F(CameraSystemTest, PinchSlowRotateRespondsAndKeepsAnchorPinned) {
     // A1：缓慢拧动（每帧远小于旧 0.003rad 死区）不应被死区吞掉——相机必须
     // 逐帧响应，同时地表锚点保持在双指中心。旧实现下 20×0.001rad 全被丢弃，
     // 相机纹丝不动（steppy），此断言 (a) 会失败。
@@ -512,7 +512,7 @@ TEST_F(CameraControllerTest, PinchSlowRotateRespondsAndKeepsAnchorPinned) {
     EXPECT_NEAR(cy, projected.y, 2.0);
 }
 
-TEST_F(CameraControllerTest, PinchZoomOffCenterKeepsAnchorPinnedWithoutSwing) {
+TEST_F(CameraSystemTest, PinchZoomOffCenterKeepsAnchorPinnedWithoutSwing) {
     // A1 稳定性：在远离屏幕中心处捏合缩放时，手指下的地表点必须原地不动。
     // 旧实现沿 camera.direction() 前移再靠 keepAnchor 旋转回拉，off-center 时
     // 会先把锚点甩偏再纠正 → 首帧可见"瞬间偏移"。此处用 1px 严紧容差复现。
@@ -533,7 +533,7 @@ TEST_F(CameraControllerTest, PinchZoomOffCenterKeepsAnchorPinnedWithoutSwing) {
     EXPECT_NEAR(ay, projected.y, 1.0);
 }
 
-TEST_F(CameraControllerTest, PinchZoomWithTerrainPickerKeepsAnchorPinned) {
+TEST_F(CameraSystemTest, PinchZoomWithTerrainPickerKeepsAnchorPinned) {
     // 复现真机"瞬间偏移"：抓取锚点走 surfacePicker(地形，真实高度),而 keepAnchor
     // 走裸 intersectGrabSphere(球面)。两个面不一致时,首个缩放帧会按地形-球面
     // 夹角把地球猛地旋一下。这里注入一个"抬高"的 picker 模拟地形。
@@ -593,7 +593,7 @@ void setTiltedPose(Camera& camera, double altitudeMeters, double tiltDeg) {
 
 }  // namespace
 
-TEST_F(CameraControllerTest, HighAltitudeZoomOutRecentersGlobeToScreenCenter) {
+TEST_F(CameraSystemTest, HighAltitudeZoomOutRecentersGlobeToScreenCenter) {
     // 高空拉远时球心应随缩放进度逐步回到屏幕中心（视线收敛向地心）。
     setTiltedPose(*camera_, 3.0e6, 15.0);
     const double theta0 = offCenterAngle(*camera_);
@@ -628,7 +628,7 @@ TEST_F(CameraControllerTest, HighAltitudeZoomOutRecentersGlobeToScreenCenter) {
     EXPECT_NEAR(300.0, centerPx.y, 30.0);
 }
 
-TEST_F(CameraControllerTest, PinchRecenterDoesNotFightAnchorDuringGesture) {
+TEST_F(CameraSystemTest, PinchRecenterDoesNotFightAnchorDuringGesture) {
     // N8：手势期回中与钉锚严格正交——zoom-out 手势事件内 viewLineMissDistance
     // 是精确不变量（dolly 沿视线/绕地心 pin 都保持它，旧实现回中每事件转视线
     // 与 pin 互相拉扯）。松手后 update() 沉降 θ；低空同序列松手后 θ 不动。
@@ -666,7 +666,7 @@ TEST_F(CameraControllerTest, PinchRecenterDoesNotFightAnchorDuringGesture) {
     EXPECT_NEAR(1.0, viewLineMissDistance(*camera_) / missLow0, 1e-9);
 }
 
-TEST_F(CameraControllerTest, LowAltitudeZoomOutDoesNotRecenter) {
+TEST_F(CameraSystemTest, LowAltitudeZoomOutDoesNotRecenter) {
     // 低空(低于回中介入海拔)拉远：回中不得介入——视线到地心的垂距是 dolly 与
     // 锚点跟手的严格不变量，任何变化都只能来自回中，故用它做精确判据。
     setTiltedPose(*camera_, 3.0e5, 15.0);
@@ -682,8 +682,8 @@ TEST_F(CameraControllerTest, LowAltitudeZoomOutDoesNotRecenter) {
     EXPECT_NEAR(1.0, viewLineMissDistance(*camera_) / miss0, 1e-6);
 }
 
-TEST_F(CameraControllerTest, SetNadirOrbitViewRebuildsExpectedPose) {
-    // orbit 约定收归 CameraController:设"赤道 0°E 正上方 1000km、正北朝上"
+TEST_F(CameraSystemTest, SetNadirOrbitViewRebuildsExpectedPose) {
+    // orbit 约定收归 CameraSystem:设"赤道 0°E 正上方 1000km、正北朝上"
     // 后,update() 的 orbit 重建应给出 eye 在 +X 轴上、看向地心、屏幕上北。
     const Vec3 target(kEarthRadiusMeters, 0.0, 0.0);
     const Vec3 up(1.0, 0.0, 0.0);
@@ -702,7 +702,7 @@ TEST_F(CameraControllerTest, SetNadirOrbitViewRebuildsExpectedPose) {
     EXPECT_NEAR(1.0, camUp.z, 1e-9);
 }
 
-TEST_F(CameraControllerTest, PinchZoomFlickGlidesThenSettles) {
+TEST_F(CameraSystemTest, PinchZoomFlickGlidesThenSettles) {
     // A2：捏合缩放松手后应沿视线朝锚点继续滑一小段（惯性），最终停住。
     placeOrbitIdentity(*camera_, 6.0);
     controller_->update(0.0);
@@ -731,7 +731,7 @@ TEST_F(CameraControllerTest, PinchZoomFlickGlidesThenSettles) {
     EXPECT_NEAR(distSettled, camera_->position().distanceTo(anchor), 1.0);
 }
 
-TEST_F(CameraControllerTest, ZoomInertiaBoundedNoFling) {
+TEST_F(CameraSystemTest, ZoomInertiaBoundedNoFling) {
     // 反发散守卫（对应历史上 touchInertia 的 36× fling）：猛烈 flick 后跑大量帧，
     // 必须收敛、永不穿透高度地板、永不越过锚点飞出。对数距离建模从数学上保证。
     placeOrbitIdentity(*camera_, 6.0);
@@ -755,7 +755,7 @@ TEST_F(CameraControllerTest, ZoomInertiaBoundedNoFling) {
     EXPECT_LT(alt, 6.5 * kEarthRadiusMeters);        // 未发散
 }
 
-TEST_F(CameraControllerTest, ZoomInertiaKeepsAnchorPinnedDuringGlide) {
+TEST_F(CameraSystemTest, ZoomInertiaKeepsAnchorPinnedDuringGlide) {
     // 滑行期沿 eye→anchor 直线 dolly，故 off-center 锚点全程钉在屏幕原位。
     placeOrbitIdentity(*camera_, 4.0);
     controller_->update(0.0);
@@ -781,7 +781,7 @@ TEST_F(CameraControllerTest, ZoomInertiaKeepsAnchorPinnedDuringGlide) {
     }
 }
 
-TEST_F(CameraControllerTest, PinchPanFlickGlidesThenDecays) {
+TEST_F(CameraSystemTest, PinchPanFlickGlidesThenDecays) {
     // 步骤6：双指刚性 pan 甩动松手后沿运动方向继续滑行（与单指拖拽共用
     // 惯性通道），随后指数衰减停住。
     placeOrbitIdentity(*camera_, 3.0);
@@ -789,13 +789,13 @@ TEST_F(CameraControllerTest, PinchPanFlickGlidesThenDecays) {
 
     double t = 1.0;
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate, t));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Manipulate, t));
     float x = 400.0f;
     for (int i = 0; i < 6; ++i) {
         t += 0.016;
         x += 12.0f;
         controller_->onPinchGesture(pinchIn(
-            1.0f, 0.0f, x, 300.0f, CameraController::PinchMode::Manipulate, t));
+            1.0f, 0.0f, x, 300.0f, CameraSystem::PinchMode::Manipulate, t));
     }
     controller_->onPinchEnd();
 
@@ -817,7 +817,7 @@ TEST_F(CameraControllerTest, PinchPanFlickGlidesThenDecays) {
     EXPECT_LT(settledDiff, 1e-6);  // 已衰减停住
 }
 
-TEST_F(CameraControllerTest, PinchPanAndZoomDoubleInertiaConvergesToWorldAnchor) {
+TEST_F(CameraSystemTest, PinchPanAndZoomDoubleInertiaConvergesToWorldAnchor) {
     // 步骤6：pan+zoom 双惯性并行。zoomInertiaAnchor_ 是固定世界点，pan 惯性
     // 转的是相机（世界点不动），滑行期 dolly 持续朝原世界锚点收敛——距离
     // 单调减、旋转持续、全程有界不发散。
@@ -828,13 +828,13 @@ TEST_F(CameraControllerTest, PinchPanAndZoomDoubleInertiaConvergesToWorldAnchor)
 
     double t = 1.0;
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate, t));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Manipulate, t));
     for (int i = 1; i <= 6; ++i) {
         t += 0.016;
         controller_->onPinchGesture(pinchIn(
             1.0f + 0.04f * static_cast<float>(i), 0.0f,
             400.0f + 12.0f * static_cast<float>(i), 300.0f,
-            CameraController::PinchMode::Manipulate, t));
+            CameraSystem::PinchMode::Manipulate, t));
     }
     controller_->onPinchEnd();
 
@@ -858,7 +858,7 @@ TEST_F(CameraControllerTest, PinchPanAndZoomDoubleInertiaConvergesToWorldAnchor)
     EXPECT_LT(alt, 6.5 * kEarthRadiusMeters);  // 不发散
 }
 
-TEST_F(CameraControllerTest, PinchPitchReleaseDoesNotSeedPanInertia) {
+TEST_F(CameraSystemTest, PinchPitchReleaseDoesNotSeedPanInertia) {
     // Pitch 模式锚点钉 latch 像素，pin 增量恒为 identity → 松手不得产生
     // pan 滑行（旧架构里竖向质心移动会被当 pan 积速度）。
     placeOrbitIdentity(*camera_, 4.0);
@@ -866,15 +866,15 @@ TEST_F(CameraControllerTest, PinchPitchReleaseDoesNotSeedPanInertia) {
 
     double t = 1.0;
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Undecided, t));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Undecided, t));
     t += 0.016;
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Pitch, t));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Pitch, t));
     for (int i = 1; i <= 6; ++i) {
         t += 0.016;
         controller_->onPinchGesture(pinchIn(
             1.0f, 0.0f, 400.0f, 300.0f - 25.0f * static_cast<float>(i),
-            CameraController::PinchMode::Pitch, t));
+            CameraSystem::PinchMode::Pitch, t));
     }
     controller_->onPinchEnd();
 
@@ -887,7 +887,7 @@ TEST_F(CameraControllerTest, PinchPitchReleaseDoesNotSeedPanInertia) {
     EXPECT_LT(diff, 1e-9);
 }
 
-TEST_F(CameraControllerTest, DragInterruptsZoomInertia) {
+TEST_F(CameraSystemTest, DragInterruptsZoomInertia) {
     placeOrbitIdentity(*camera_, 6.0);
     controller_->update(0.0);
     constexpr double cx = 400.0;
@@ -912,7 +912,7 @@ TEST_F(CameraControllerTest, DragInterruptsZoomInertia) {
     EXPECT_NEAR(d0, camera_->position().distanceTo(anchor), 0.5);  // 滑行已停
 }
 
-TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
+TEST_F(CameraSystemTest, PinchRotationChangesCameraAroundAnchor) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 grabbed = intersectEarthSphere(
@@ -928,7 +928,7 @@ TEST_F(CameraControllerTest, PinchRotationChangesCameraAroundAnchor) {
     EXPECT_GT(quatAngleFromIdentity(controller_->rotation()), 0.01);
 }
 
-TEST_F(CameraControllerTest, PinchZoomKeepsGestureCenterAnchorStable) {
+TEST_F(CameraSystemTest, PinchZoomKeepsGestureCenterAnchorStable) {
     placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
 
@@ -946,7 +946,7 @@ TEST_F(CameraControllerTest, PinchZoomKeepsGestureCenterAnchorStable) {
     EXPECT_LT(afterDistance, beforeDistance);
 }
 
-TEST_F(CameraControllerTest, PinchUsesInjectedSurfacePickerForAnchor) {
+TEST_F(CameraSystemTest, PinchUsesInjectedSurfacePickerForAnchor) {
     placeOrbitIdentity(*camera_, 5.0);
     controller_->update(0.0);
 
@@ -968,7 +968,7 @@ TEST_F(CameraControllerTest, PinchUsesInjectedSurfacePickerForAnchor) {
     EXPECT_LT(controller_->distance(), 5.0f);
 }
 
-TEST_F(CameraControllerTest, PinchAcquiresAnchorMidGestureAfterStartMiss) {
+TEST_F(CameraSystemTest, PinchAcquiresAnchorMidGestureAfterStartMiss) {
     // 起手 pick 全 miss（如从球外/天空起手）→ 无锚分支照样缩放；后续事件
     // 每次重试获取锚点，质心移回可拾取区后转入有锚分支。
     placeOrbitIdentity(*camera_, 5.0);
@@ -987,21 +987,21 @@ TEST_F(CameraControllerTest, PinchAcquiresAnchorMidGestureAfterStartMiss) {
 
     const float before = controller_->distance();
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 700.0f, 100.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 700.0f, 100.0f, CameraSystem::PinchMode::Manipulate));
     controller_->onPinchGesture(pinchIn(
-        1.2f, 0.0f, 700.0f, 100.0f, CameraController::PinchMode::Manipulate));
+        1.2f, 0.0f, 700.0f, 100.0f, CameraSystem::PinchMode::Manipulate));
     Vec3 anchorWorld;
     EXPECT_FALSE(controller_->debugAnchorWorld(anchorWorld));
     EXPECT_LT(controller_->distance(), before);  // 无锚也在缩放
 
     controller_->onPinchGesture(pinchIn(
-        1.3f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate));
+        1.3f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Manipulate));
     EXPECT_TRUE(controller_->debugAnchorWorld(anchorWorld));  // 重试已获取
     EXPECT_GE(pickCount, 2);
     controller_->onPinchEnd();
 }
 
-TEST_F(CameraControllerTest, PinchZoomClampsToMinAltitudeInsteadOfStopping) {
+TEST_F(CameraSystemTest, PinchZoomClampsToMinAltitudeInsteadOfStopping) {
     placeOrbitIdentity(*camera_, 1.01);
     controller_->update(0.0);
     const double beforeAltitude =
@@ -1019,7 +1019,7 @@ TEST_F(CameraControllerTest, PinchZoomClampsToMinAltitudeInsteadOfStopping) {
     EXPECT_LT(altitude, beforeAltitude);
 }
 
-TEST_F(CameraControllerTest, HighAltitudePinchSkipsTerrainHeightQuery) {
+TEST_F(CameraSystemTest, HighAltitudePinchSkipsTerrainHeightQuery) {
     // Perf regression: the terrain-height clamp scans every loaded tile's mesh
     // triangles, so it must NOT run when the eye is far above any terrain
     // (Everest ~8.8 km). Otherwise panning/zooming at altitude costs >150 ms/fr.
@@ -1040,7 +1040,7 @@ TEST_F(CameraControllerTest, HighAltitudePinchSkipsTerrainHeightQuery) {
     EXPECT_EQ(0, terrainCalls);
 }
 
-TEST_F(CameraControllerTest, TerrainClampHoldsLastKnownHeightWhenSampleMissing) {
+TEST_F(CameraSystemTest, TerrainClampHoldsLastKnownHeightWhenSampleMissing) {
     // No-data regression: when the terrain sampler returns nullopt (tile not yet
     // loaded / no coverage), the altitude clamp must hold the last known terrain
     // height rather than treat the point as sea level (which would let the eye
@@ -1075,7 +1075,7 @@ TEST_F(CameraControllerTest, TerrainClampHoldsLastKnownHeightWhenSampleMissing) 
     EXPECT_GE(altitudeNoData, 3000.0);
 }
 
-TEST_F(CameraControllerTest, DataDrivenTerrainRiseClampsImmediately) {
+TEST_F(CameraSystemTest, DataDrivenTerrainRiseClampsImmediately) {
     // 刚体优先：新瓦片加载证明脚下是山（数据驱动的地形上升）必须单帧生效，
     // 不许像 Cesium 对称 10% 滤波那样延迟 ~0.5s（那 0.5s 里相机在山体内）。
     std::optional<double> sampled = 0.0;
@@ -1094,7 +1094,7 @@ TEST_F(CameraControllerTest, DataDrivenTerrainRiseClampsImmediately) {
     EXPECT_NEAR(3000.0, controller_->groundState().terrainHeightMeters, 1e-9);
 }
 
-TEST_F(CameraControllerTest, DataDrivenTerrainDropDecaysExponentially) {
+TEST_F(CameraSystemTest, DataDrivenTerrainDropDecaysExponentially) {
     // 数据驱动的大幅下降走 τ=0.5s 指数逼近：钳位只抬不压，相机不受影响，
     // 平滑的是下游（动态 near）消费的地面高度——防 LOD 粗细瓦片交替时
     // near 逐帧跳。
@@ -1120,7 +1120,7 @@ TEST_F(CameraControllerTest, DataDrivenTerrainDropDecaysExponentially) {
     EXPECT_LT(controller_->groundState().terrainHeightMeters, 100.0);
 }
 
-TEST_F(CameraControllerTest, UserDrivenTerrainChangeBypassesFilter) {
+TEST_F(CameraSystemTest, UserDrivenTerrainChangeBypassesFilter) {
     // 用户驱动（手势事件）一律立即取用原始样本——滤波只作用于相机静止时
     // 的数据变化。
     std::optional<double> sampled = 3000.0;
@@ -1141,7 +1141,7 @@ TEST_F(CameraControllerTest, UserDrivenTerrainChangeBypassesFilter) {
     EXPECT_NEAR(0.0, controller_->groundState().terrainHeightMeters, 1e-9);
 }
 
-TEST_F(CameraControllerTest, SweptClampCatchesRidgeCrossedInOneFrame) {
+TEST_F(CameraSystemTest, SweptClampCatchesRidgeCrossedInOneFrame) {
     // 扫掠碰撞:单帧大位移跨过山脊时,静态单点钳位两端都在低地、直接隧穿;
     // 探针的扫掠走廊沿位移线段补采样,必须把山脊计入碰撞口径,把相机抬到
     // 脊高之上。
@@ -1180,7 +1180,7 @@ TEST_F(CameraControllerTest, SweptClampCatchesRidgeCrossedInOneFrame) {
               3049.0);
 }
 
-TEST_F(CameraControllerTest, AreaProbeRebuildsAtMostOncePerFrame) {
+TEST_F(CameraSystemTest, AreaProbeRebuildsAtMostOncePerFrame) {
     // 成本约束:手势期高频事件(120/s)共享同帧探针,区域采样每帧至多 1 次。
     int callCount = 0;
     controller_->setTerrainAreaSampleFunc(makeAnalyticAreaSampler(
@@ -1193,18 +1193,18 @@ TEST_F(CameraControllerTest, AreaProbeRebuildsAtMostOncePerFrame) {
 
     callCount = 0;
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Manipulate));
     for (int i = 1; i <= 60; ++i) {
         controller_->onPinchGesture(pinchIn(
             1.0f + 0.001f * i, 0.0f, 400.0f + i, 300.0f,
-            CameraController::PinchMode::Manipulate,
+            CameraSystem::PinchMode::Manipulate,
             0.008 * i));
     }
     controller_->onPinchEnd();
     EXPECT_LE(callCount, 1);
 }
 
-TEST_F(CameraControllerTest, PinchPanIntoMountainKeepsAnchorPinned) {
+TEST_F(CameraSystemTest, PinchPanIntoMountainKeepsAnchorPinned) {
     // §保锚论证的机器化判据:双指刚性平移把相机推进高地形区,碰撞解算沿
     // eye→anchor 直线退出——锚点像素必须每一步严格钉在质心下,同时 AGL
     // 不低于地形+50m。径向抬升(旧实现)在这里会泄漏 anchorErr。
@@ -1225,7 +1225,7 @@ TEST_F(CameraControllerTest, PinchPanIntoMountainKeepsAnchorPinned) {
     controller_->update(0.016);
 
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Manipulate));
     Vec3 anchorWorld;
     ASSERT_TRUE(controller_->debugAnchorWorld(anchorWorld));
 
@@ -1234,7 +1234,7 @@ TEST_F(CameraControllerTest, PinchPanIntoMountainKeepsAnchorPinned) {
         const float cx = 400.0f + 3.0f * i;  // 长路径横向平移
         controller_->onPinchGesture(pinchIn(
             1.0f, 0.0f, cx, 300.0f,
-            CameraController::PinchMode::Manipulate, 0.008 * i));
+            CameraSystem::PinchMode::Manipulate, 0.008 * i));
         ASSERT_TRUE(controller_->debugAnchorWorld(anchorWorld));
         const glm::dvec2 px = projectToScreen(*camera_, anchorWorld);
         maxAnchorErr = std::max(maxAnchorErr,
@@ -1253,7 +1253,7 @@ TEST_F(CameraControllerTest, PinchPanIntoMountainKeepsAnchorPinned) {
     EXPECT_NEAR(4000.0, controller_->groundState().terrainHeightMeters, 1e-9);
 }
 
-TEST_F(CameraControllerTest, FrameEndSentinelClampsExternalBareLookAt) {
+TEST_F(CameraSystemTest, FrameEndSentinelClampsExternalBareLookAt) {
     // Facade/JNI 可绕过控制器直接写 Camera（resetCamera/nativeGrazingView）。
     // 帧末哨兵必须在下一次 update() 把非法位姿收编钳出地面——调用方无需
     // 自带钳位。
@@ -1271,7 +1271,7 @@ TEST_F(CameraControllerTest, FrameEndSentinelClampsExternalBareLookAt) {
     EXPECT_GE(e.cartesianToCartographic(camera_->position()).height(), 49.0);
 }
 
-TEST_F(CameraControllerTest, OrbitRebuildDoesNotOscillateAgainstClamp) {
+TEST_F(CameraSystemTest, OrbitRebuildDoesNotOscillateAgainstClamp) {
     // orbit 位姿每帧由 rotation_/distance_ 重建：约束必须表达在 distance_ 上，
     // 直接抬 eye 会被下一帧重建抹掉 → 逐帧 dip→pop 振荡。高地形上连续跑
     // 60 帧，位姿必须收敛后逐帧稳定。
@@ -1296,7 +1296,7 @@ TEST_F(CameraControllerTest, OrbitRebuildDoesNotOscillateAgainstClamp) {
     EXPECT_GE(e.cartesianToCartographic(camera_->position()).height(), 5049.0);
 }
 
-TEST_F(CameraControllerTest, MeasurementFreezeSentinelIsObserveOnly) {
+TEST_F(CameraSystemTest, MeasurementFreezeSentinelIsObserveOnly) {
     // 冻结契约：update() 不碰相机、位姿逐帧字节稳定——帧末哨兵在冻结期
     // 必须 observeOnly，即使位姿非法（地下）也不修。
     const auto& e = Ellipsoid::WGS84();
@@ -1314,7 +1314,7 @@ TEST_F(CameraControllerTest, MeasurementFreezeSentinelIsObserveOnly) {
     EXPECT_EQ(dirBefore, camera_->direction());
 }
 
-TEST_F(CameraControllerTest, PinchRotationSignIsPredictable) {
+TEST_F(CameraSystemTest, PinchRotationSignIsPredictable) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     Vec3 reference = intersectEarthSphere(
@@ -1339,7 +1339,7 @@ TEST_F(CameraControllerTest, PinchRotationSignIsPredictable) {
     EXPECT_NEAR(positiveProjected.y, negativeProjected.y, 1e-6);
 }
 
-TEST_F(CameraControllerTest, PinchTiltChangesCamera) {
+TEST_F(CameraSystemTest, PinchTiltChangesCamera) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     auto before = camera_->viewMatrix();
@@ -1360,7 +1360,7 @@ TEST_F(CameraControllerTest, PinchTiltChangesCamera) {
     EXPECT_TRUE(changed);
 }
 
-TEST_F(CameraControllerTest, PinchTiltKeepsAnchorScreenPositionStable) {
+TEST_F(CameraSystemTest, PinchTiltKeepsAnchorScreenPositionStable) {
     // Pitch 模式：绕锚点 pitch、锚点钉在 latch 像素原地不动（结构性保证，
     // 旧渐近混合实现下漂 ~17px，容差从 3.0 收紧到 0.5）。
     placeOrbitIdentity(*camera_, 4.0);
@@ -1372,15 +1372,15 @@ TEST_F(CameraControllerTest, PinchTiltKeepsAnchorScreenPositionStable) {
         camera_->getPickRay(cx, cy, 800.0, 600.0));
 
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, cx, cy, CameraController::PinchMode::Undecided));
+        1.0f, 0.0f, cx, cy, CameraSystem::PinchMode::Undecided));
     // latch 迁移事件（锚点钉合像素与 pitch 基线取此刻质心）。
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, cx, cy, CameraController::PinchMode::Pitch));
+        1.0f, 0.0f, cx, cy, CameraSystem::PinchMode::Pitch));
     // 纯倾斜：质心竖向移动（绝对量），无缩放/旋转。多帧累积放大漂移。
     for (int i = 1; i <= 6; ++i) {
         controller_->onPinchGesture(pinchIn(
             1.0f, 0.0f, cx, cy - 20.0f * static_cast<float>(i),
-            CameraController::PinchMode::Pitch));
+            CameraSystem::PinchMode::Pitch));
     }
     controller_->update(0.0);
 
@@ -1389,30 +1389,30 @@ TEST_F(CameraControllerTest, PinchTiltKeepsAnchorScreenPositionStable) {
     EXPECT_NEAR(cy, projected.y, 0.5);
 }
 
-TEST_F(CameraControllerTest, PinchPushUpIncreasesTiltPullDownDecreasesTilt) {
+TEST_F(CameraSystemTest, PinchPushUpIncreasesTiltPullDownDecreasesTilt) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
     constexpr float cx = 400.0f;
     constexpr float cy = 300.0f;
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, cx, cy, CameraController::PinchMode::Undecided));
+        1.0f, 0.0f, cx, cy, CameraSystem::PinchMode::Undecided));
     // latch 迁移事件（基线取此刻质心）。
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, cx, cy, CameraController::PinchMode::Pitch));
+        1.0f, 0.0f, cx, cy, CameraSystem::PinchMode::Pitch));
 
     // 先建立一个明显的斜视倾角，脱离 nadir 退化区（nadir 处已无更多下倾空间，
     // pitch 轴/up 方向病态，倾斜方向断言无意义）。质心 Y 绝对映射：向上推。
     for (int i = 1; i <= 8; ++i) {
         controller_->onPinchGesture(pinchIn(
             1.0f, 0.0f, cx, cy - 40.0f * static_cast<float>(i),
-            CameraController::PinchMode::Pitch));
+            CameraSystem::PinchMode::Pitch));
     }
     controller_->update(0.0);
     const double beforePushUpSlope = cameraSlope(*camera_);
 
     controller_->onPinchGesture(pinchIn(
         1.0f, 0.0f, cx, cy - 40.0f * 9.0f,
-        CameraController::PinchMode::Pitch));
+        CameraSystem::PinchMode::Pitch));
     controller_->update(0.0);
     const double afterPushUpSlope = cameraSlope(*camera_);
     EXPECT_LT(afterPushUpSlope, beforePushUpSlope);
@@ -1420,13 +1420,13 @@ TEST_F(CameraControllerTest, PinchPushUpIncreasesTiltPullDownDecreasesTilt) {
     const double beforePullDownSlope = afterPushUpSlope;
     controller_->onPinchGesture(pinchIn(
         1.0f, 0.0f, cx, cy - 40.0f * 8.0f,
-        CameraController::PinchMode::Pitch));
+        CameraSystem::PinchMode::Pitch));
     controller_->update(0.0);
     const double afterPullDownSlope = cameraSlope(*camera_);
     EXPECT_GT(afterPullDownSlope, beforePullDownSlope);
 }
 
-TEST_F(CameraControllerTest, PinchHorizontalPanMovesAnchorWithCentroid) {
+TEST_F(CameraSystemTest, PinchHorizontalPanMovesAnchorWithCentroid) {
     // N1（反转旧 PinchHorizontalPanDoesNotMoveCamera，其期望本身是旧架构的
     // 产物）：双指质心平移 = 刚性 pan，锚点钉在移动质心下（Google Maps 手感）。
     placeOrbitIdentity(*camera_, 5.0);
@@ -1436,9 +1436,9 @@ TEST_F(CameraControllerTest, PinchHorizontalPanMovesAnchorWithCentroid) {
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
 
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Manipulate));
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 430.0f, 300.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 430.0f, 300.0f, CameraSystem::PinchMode::Manipulate));
     controller_->update(0.0);
 
     EXPECT_GT(matrixAbsDiff(before, camera_->viewMatrix()), 1e-6);  // 相机动了
@@ -1447,7 +1447,7 @@ TEST_F(CameraControllerTest, PinchHorizontalPanMovesAnchorWithCentroid) {
     EXPECT_NEAR(300.0, projected.y, 0.5);
 }
 
-TEST_F(CameraControllerTest, PinchRigidPanAnchorErrStaysZeroOverLongPath) {
+TEST_F(CameraSystemTest, PinchRigidPanAnchorErrStaysZeroOverLongPath) {
     // N2：长路径刚性判定——每一步锚点投影都精确等于当前质心（不是渐近逼近）。
     // 旧 0.12 渐近跟随下每步落后 88%，anchorErr 持续 >10px。
     placeOrbitIdentity(*camera_, 3.0);
@@ -1456,12 +1456,12 @@ TEST_F(CameraControllerTest, PinchRigidPanAnchorErrStaysZeroOverLongPath) {
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
 
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Manipulate));
     float x = 400.0f;
     for (int i = 0; i < 14; ++i) {
         x += 10.0f;
         controller_->onPinchGesture(pinchIn(
-            1.0f, 0.0f, x, 300.0f, CameraController::PinchMode::Manipulate));
+            1.0f, 0.0f, x, 300.0f, CameraSystem::PinchMode::Manipulate));
         const glm::dvec2 p = projectToScreen(*camera_, anchor);
         EXPECT_NEAR(x, p.x, 0.5) << "step " << i;
         EXPECT_NEAR(300.0, p.y, 0.5) << "step " << i;
@@ -1469,7 +1469,7 @@ TEST_F(CameraControllerTest, PinchRigidPanAnchorErrStaysZeroOverLongPath) {
     controller_->onPinchEnd();
 }
 
-TEST_F(CameraControllerTest, PinchCombinedZoomTwistPanAllPinned) {
+TEST_F(CameraSystemTest, PinchCombinedZoomTwistPanAllPinned) {
     // N3：三通道同帧并行（缩放+拧动+质心移动），锚点始终钉在当前质心。
     // 覆盖旧 PinchScaleDominanceSuppressesTilt 的实质内容。
     placeOrbitIdentity(*camera_, 5.0);
@@ -1478,13 +1478,13 @@ TEST_F(CameraControllerTest, PinchCombinedZoomTwistPanAllPinned) {
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
 
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Manipulate));
     for (int i = 1; i <= 4; ++i) {
         const float f = static_cast<float>(i);
         controller_->onPinchGesture(pinchIn(
             1.0f + 0.03f * f, 0.01f * f,
             400.0f + 10.0f * f, 300.0f - 6.0f * f,
-            CameraController::PinchMode::Manipulate));
+            CameraSystem::PinchMode::Manipulate));
         const glm::dvec2 p = projectToScreen(*camera_, anchor);
         EXPECT_NEAR(400.0 + 10.0 * i, p.x, 0.5) << "step " << i;
         EXPECT_NEAR(300.0 - 6.0 * i, p.y, 0.5) << "step " << i;
@@ -1492,7 +1492,7 @@ TEST_F(CameraControllerTest, PinchCombinedZoomTwistPanAllPinned) {
     controller_->onPinchEnd();
 }
 
-TEST_F(CameraControllerTest, PinchDiagonalCenterMoveIsPurePan) {
+TEST_F(CameraSystemTest, PinchDiagonalCenterMoveIsPurePan) {
     // 语义升级（原 PinchDiagonalCenterMoveDoesNotTilt）：斜向质心移动 =
     // 纯刚性 pan——锚点钉到新质心，且俯仰严格不变（绕地心刚性旋转精确保持
     // slope，任何变化都说明混入了 tilt/dolly）。
@@ -1503,9 +1503,9 @@ TEST_F(CameraControllerTest, PinchDiagonalCenterMoveIsPurePan) {
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
 
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Manipulate));
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 430.0f, 275.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 430.0f, 275.0f, CameraSystem::PinchMode::Manipulate));
     controller_->update(0.0);
 
     const glm::dvec2 p = projectToScreen(*camera_, anchor);
@@ -1514,7 +1514,7 @@ TEST_F(CameraControllerTest, PinchDiagonalCenterMoveIsPurePan) {
     EXPECT_NEAR(slopeBefore, cameraSlope(*camera_), 1e-9);
 }
 
-TEST_F(CameraControllerTest, PinchLatchWindowCatchUpLosesNoPan) {
+TEST_F(CameraSystemTest, PinchLatchWindowCatchUpLosesNoPan) {
     // N6：Undecided 窗口锚点钉起手质心；latch 成 Manipulate 的一刻，pin 是
     // 状态求解而非增量累加——窗口期积压的质心行程被一次精确补齐，不丢量。
     placeOrbitIdentity(*camera_, 5.0);
@@ -1523,22 +1523,22 @@ TEST_F(CameraControllerTest, PinchLatchWindowCatchUpLosesNoPan) {
         camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
 
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Undecided));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Undecided));
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 405.0f, 300.0f, CameraController::PinchMode::Undecided));
+        1.0f, 0.0f, 405.0f, 300.0f, CameraSystem::PinchMode::Undecided));
     // 窗口期锚点仍钉在起手质心。
     glm::dvec2 p = projectToScreen(*camera_, anchor);
     EXPECT_NEAR(400.0, p.x, 0.5);
 
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 408.0f, 300.0f, CameraController::PinchMode::Manipulate));
+        1.0f, 0.0f, 408.0f, 300.0f, CameraSystem::PinchMode::Manipulate));
     p = projectToScreen(*camera_, anchor);
     EXPECT_NEAR(408.0, p.x, 0.5);  // 一次精确追平
     EXPECT_NEAR(300.0, p.y, 0.5);
     controller_->onPinchEnd();
 }
 
-TEST_F(CameraControllerTest, PinchPitchModeIgnoresHorizontalCentroidDrift) {
+TEST_F(CameraSystemTest, PinchPitchModeIgnoresHorizontalCentroidDrift) {
     // N7：Pitch 模式下质心横向漂移不产生 pan——锚点钉在 latch 像素。
     placeOrbitIdentity(*camera_, 4.0);
     controller_->update(0.0);
@@ -1547,15 +1547,15 @@ TEST_F(CameraControllerTest, PinchPitchModeIgnoresHorizontalCentroidDrift) {
     const double slopeBefore = cameraSlope(*camera_);
 
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Undecided));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Undecided));
     controller_->onPinchGesture(pinchIn(
-        1.0f, 0.0f, 400.0f, 300.0f, CameraController::PinchMode::Pitch));
+        1.0f, 0.0f, 400.0f, 300.0f, CameraSystem::PinchMode::Pitch));
     for (int i = 1; i <= 5; ++i) {
         controller_->onPinchGesture(pinchIn(
             1.0f, 0.0f,
             400.0f + 15.0f * static_cast<float>(i),   // 横向漂移
             300.0f - 25.0f * static_cast<float>(i),   // 竖向驱动 pitch
-            CameraController::PinchMode::Pitch));
+            CameraSystem::PinchMode::Pitch));
     }
     controller_->update(0.0);
 
@@ -1567,35 +1567,35 @@ TEST_F(CameraControllerTest, PinchPitchModeIgnoresHorizontalCentroidDrift) {
     EXPECT_LT(cameraSlope(*camera_), slopeBefore - 5e-4);
 }
 
-TEST_F(CameraControllerTest, PinchTiltGainIsViewportIndependent) {
+TEST_F(CameraSystemTest, PinchTiltGainIsViewportIndependent) {
     // N11：pitch 增益按视口高度归一——同一"占屏比例"的竖移在不同分辨率下
     // 产生相同俯仰变化（旧的每物理像素定义在 3.5x 屏上比 1.5x 快 2.3 倍）。
     auto runTilt = [](int width, int height) {
         Camera camera;
         camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
-        CameraController controller(&camera);
+        CameraSystem controller(&camera);
         controller.setViewport(width, height);
         placeOrbitIdentity(camera, 4.0);
         controller.update(0.0);
         const float cx = static_cast<float>(width) * 0.5f;
         const float cy = static_cast<float>(height) * 0.5f;
         controller.onPinchGesture(pinchIn(
-            1.0f, 0.0f, cx, cy, CameraController::PinchMode::Undecided));
+            1.0f, 0.0f, cx, cy, CameraSystem::PinchMode::Undecided));
         controller.onPinchGesture(pinchIn(
-            1.0f, 0.0f, cx, cy, CameraController::PinchMode::Pitch));
+            1.0f, 0.0f, cx, cy, CameraSystem::PinchMode::Pitch));
         const float dy = static_cast<float>(height) * 0.25f;
         for (int i = 1; i <= 5; ++i) {
             controller.onPinchGesture(pinchIn(
                 1.0f, 0.0f, cx,
                 cy - dy * static_cast<float>(i) / 5.0f,
-                CameraController::PinchMode::Pitch));
+                CameraSystem::PinchMode::Pitch));
         }
         return camera.direction().dot(-camera.position().normalized());
     };
     EXPECT_NEAR(runTilt(800, 600), runTilt(1600, 1200), 1e-6);
 }
 
-TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {
+TEST_F(CameraSystemTest, ViewDistanceMovesCameraTowardPickedTarget) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
@@ -1609,7 +1609,7 @@ TEST_F(CameraControllerTest, ViewDistanceMovesCameraTowardPickedTarget) {
     EXPECT_GT(camera_->direction().dot((target - camera_->position()).normalized()), 0.999);
 }
 
-TEST_F(CameraControllerTest, ViewDistanceRespectsNearGroundSafetyFloor) {
+TEST_F(CameraSystemTest, ViewDistanceRespectsNearGroundSafetyFloor) {
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
 
@@ -1622,7 +1622,7 @@ TEST_F(CameraControllerTest, ViewDistanceRespectsNearGroundSafetyFloor) {
     EXPECT_GT(camera_->direction().dot((target - camera_->position()).normalized()), 0.999);
 }
 
-TEST_F(CameraControllerTest, NadirViewPitchIsNegativeHalfPi) {
+TEST_F(CameraSystemTest, NadirViewPitchIsNegativeHalfPi) {
     // identity 轨道 → 相机正俯视地心，pitch 应为 -π/2。
     placeOrbitIdentity(*camera_, 7.0);
     controller_->update(0.0);
@@ -1630,7 +1630,7 @@ TEST_F(CameraControllerTest, NadirViewPitchIsNegativeHalfPi) {
     EXPECT_NEAR(-pi / 2.0, controller_->pitchRadians(), 0.02);
 }
 
-TEST_F(CameraControllerTest, ResetNorthUpZerosHeading) {
+TEST_F(CameraSystemTest, ResetNorthUpZerosHeading) {
     placeOrbitIdentity(*camera_, 3.0);
     controller_->update(0.0);
 
@@ -1652,7 +1652,7 @@ TEST_F(CameraControllerTest, ResetNorthUpZerosHeading) {
     EXPECT_NEAR(0.0, after, pi / 180.0);  // 复位到 ±1° 内
 }
 
-TEST_F(CameraControllerTest, ResetNorthUpPreservesPitch) {
+TEST_F(CameraSystemTest, ResetNorthUpPreservesPitch) {
     placeOrbitIdentity(*camera_, 3.0);
     controller_->update(0.0);
 
@@ -1673,7 +1673,7 @@ TEST_F(CameraControllerTest, ResetNorthUpPreservesPitch) {
     EXPECT_NEAR(pitchBefore, pitchAfter, std::acos(-1.0) / 180.0);  // 俯仰保持
 }
 
-TEST_F(CameraControllerTest, UpdateUpdatesCameraPosition) {
+TEST_F(CameraSystemTest, UpdateUpdatesCameraPosition) {
     // 初始相机 view matrix
     auto initialView = camera_->viewMatrix();
 
@@ -1697,7 +1697,7 @@ TEST_F(CameraControllerTest, UpdateUpdatesCameraPosition) {
     EXPECT_TRUE(changed);
 }
 
-TEST_F(CameraControllerTest, CameraLooksAtOrigin) {
+TEST_F(CameraSystemTest, CameraLooksAtOrigin) {
     // 经过 update 后，相机应始终看向原点
     controller_->update(1.0 / 60.0);
 
@@ -1714,7 +1714,7 @@ TEST_F(CameraControllerTest, CameraLooksAtOrigin) {
 
 // 北极星测量台冻结相机：冻结后 update() 完全空转，即便存在待处理的甩动惯性，
 // 相机位姿也逐帧字节稳定（far 重载耦合态可复现的机制基础）。
-TEST_F(CameraControllerTest, MeasurementFreezeHoldsPoseDespiteInertia) {
+TEST_F(CameraSystemTest, MeasurementFreezeHoldsPoseDespiteInertia) {
     placeOrbitIdentity(*camera_, 1.0002);  // 近地表，接管地表拾取
     controller_->update(0.0);
 
@@ -1745,7 +1745,7 @@ TEST_F(CameraControllerTest, MeasurementFreezeHoldsPoseDespiteInertia) {
 
 // 模拟 PickingService::pickTerrain 的返回形态：与球面求交后，把交点沿局部垂直
 // 抬起地形高——返回点因此不在拾取射线上。真机上这段落差在斜视低空可达数百像素。
-CameraController::SurfacePicker makeOffRayTerrainPicker(const Camera& camera,
+CameraSystem::SurfacePicker makeOffRayTerrainPicker(const Camera& camera,
                                                         double liftMeters) {
     return [&camera, liftMeters](float x, float y, Vec3& out) {
         const Ray ray = camera.getPickRay(x, y, 800.0, 600.0);
@@ -1765,7 +1765,7 @@ CameraController::SurfacePicker makeOffRayTerrainPicker(const Camera& camera,
     };
 }
 
-TEST_F(CameraControllerTest, DragStartDoesNotJumpWhenPickIsOffRay) {
+TEST_F(CameraSystemTest, DragStartDoesNotJumpWhenPickIsOffRay) {
     // 起手不跳：抓取之后手指原地不动的 move 必须不产生任何相机运动。
     // 锚点跟手的数学假定抓取点在起始射线上，而 pickTerrain 返回的点是沿局部
     // 垂直抬起的、不在射线上；旧实现把这段落差当作手指位移，在第一个 move
@@ -1780,7 +1780,7 @@ TEST_F(CameraControllerTest, DragStartDoesNotJumpWhenPickIsOffRay) {
     EXPECT_LT(glm::length(camera_->position().raw() - eyeBefore), 1.0);
 }
 
-TEST_F(CameraControllerTest, PinchKeepsVisibleSurfacePointUnderFingerWhenPickIsOffRay) {
+TEST_F(CameraSystemTest, PinchKeepsVisibleSurfacePointUnderFingerWhenPickIsOffRay) {
     // 捏合路径的同一根因。判据取"用户真正看到的那个点"：双指质心像素射线上的
     // 地表点。旧实现把偏离射线的拾取点当锚点钉住，于是钉的是别的东西——手指
     // 下的地物反而被推开。scale 必须 ≠1，否则 zoomIntent 为假，

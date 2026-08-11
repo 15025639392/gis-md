@@ -44,12 +44,12 @@ struct SceneCameraConfig {
     // 初始视角仰角(度): 0 = 正俯视(nadir orbit, 默认/向后兼容); >0 = 自由斜视,
     // 相机从目标点正南、以该仰角俯瞰(适合看竖直 foliage 等地表小物, nadir 下隐形)。
     double obliqueElevationDegrees = 0.0;
-    // 北极星测量台冻结相机: true 时初始位姿设定后 CameraController::update() 完全
+    // 北极星测量台冻结相机: true 时初始位姿设定后 CameraSystem::update() 完全
     // 空转，相机逐帧字节稳定，让重载耦合态下的 far 位姿也精确可复现（去耦对拍需
     // 同位姿）。默认 false = 生产交互路径零影响。
     bool freezeCamera = false;
     // 北极星测量台脚本化确定性平移(§14.1② live 换页净测):true 时初始位姿设定后
-    // 相机每帧原地偏航一步、共 scriptedPanFrames 帧后 hold(见 CameraController::
+    // 相机每帧原地偏航一步、共 scriptedPanFrames 帧后 hold(见 CameraSystem::
     // setScriptedPan)。给可复现受控运动量 ghost/stall,替 free swipe 惯性漂。
     // 与 freezeCamera 互斥(freeze 优先)。默认 false = 生产交互路径零影响。
     bool scriptedPan = false;

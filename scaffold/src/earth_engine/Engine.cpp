@@ -2,7 +2,7 @@
 #include "scene/Scene.h"
 #include "tiling/Tileset.h"
 #include "scene/Camera.h"
-#include "camera/CameraController.h"
+#include "camera/CameraSystem.h"
 #include "renderer/OffscreenPostProcess.h"
 #include "renderer/VirtualTexturePoc.h"
 #include "renderer/TerrainPageStore.h"
@@ -976,8 +976,8 @@ Camera& Engine::camera() {
     return scene_->camera();
 }
 
-CameraController& Engine::cameraController() {
-    return scene_->cameraController();
+CameraSystem& Engine::cameraSystem() {
+    return scene_->cameraSystem();
 }
 
 // ---- 矢量图层 ----
@@ -1084,11 +1084,11 @@ Vec3 Engine::sunDirection() const {
 }
 
 double Engine::cameraHeadingRadians() const {
-    return scene_ ? scene_->cameraController().headingRadians() : 0.0;
+    return scene_ ? scene_->cameraSystem().headingRadians() : 0.0;
 }
 
 void Engine::resetNorthUp() {
-    if (scene_) scene_->cameraController().resetNorthUp();
+    if (scene_) scene_->cameraSystem().resetNorthUp();
 }
 
 void Engine::getClearColor(float& r, float& g, float& b, float& a) const {

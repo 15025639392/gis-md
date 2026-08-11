@@ -23,7 +23,7 @@
 #include <memory>
 #include <vector>
 
-#include "earth_engine/camera/CameraController.h"
+#include "earth_engine/camera/CameraSystem.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/scene/Camera.h"
@@ -39,7 +39,7 @@ constexpr double kDt = 1.0 / 60.0;
 class PoseTrace {
 public:
     void record(const Camera& camera,
-                const CameraController::CameraGroundState& ground) {
+                const CameraSystem::CameraGroundState& ground) {
         Frame f;
         f.v = {camera.position().x(), camera.position().y(),
                camera.position().z(), camera.direction().x(),
@@ -92,11 +92,11 @@ private:
     std::vector<Frame> frames_;
 };
 
-CameraController::PinchInput pinchIn(float scaleFromStart, float twistRadians,
+CameraSystem::PinchInput pinchIn(float scaleFromStart, float twistRadians,
                                      float cx, float cy,
-                                     CameraController::PinchMode mode,
+                                     CameraSystem::PinchMode mode,
                                      double timestamp) {
-    CameraController::PinchInput input;
+    CameraSystem::PinchInput input;
     input.scaleFromStart = scaleFromStart;
     input.twistFromStartRadians = twistRadians;
     input.centroidX = cx;
@@ -106,14 +106,14 @@ CameraController::PinchInput pinchIn(float scaleFromStart, float twistRadians,
     return input;
 }
 
-// 解析式地形假体(与 test_camera_controller 同法):把探针的 ENU 偏移换算回
+// 解析式地形假体(与 test_camera_system 同法):把探针的 ENU 偏移换算回
 // 经纬,高度由 heightFn 给出,全点有效。
-CameraController::TerrainAreaSampleFunc makeAnalyticAreaSampler(
+CameraSystem::TerrainAreaSampleFunc makeAnalyticAreaSampler(
     std::function<double(double, double)> heightFn, int* callCounter) {
     return [heightFn, callCounter](
                const Vec3& groundEcef, double /*radiusMeters*/,
                const std::vector<glm::dvec2>& offsets,
-               std::vector<CameraController::TerrainSample>& out) {
+               std::vector<CameraSystem::TerrainSample>& out) {
         if (callCounter) ++(*callCounter);
         const auto& e = Ellipsoid::WGS84();
         const Cartographic c = e.cartesianToCartographic(groundEcef);
@@ -137,7 +137,7 @@ protected:
     void SetUp() override {
         camera_ = std::make_unique<Camera>();
         camera_->setPerspective(glm::radians(60.0), 1.0, 50000000.0);
-        controller_ = std::make_unique<CameraController>(camera_.get());
+        controller_ = std::make_unique<CameraSystem>(camera_.get());
         controller_->setViewport(800, 600);
     }
 
@@ -155,7 +155,7 @@ protected:
     }
 
     std::unique_ptr<Camera> camera_;
-    std::unique_ptr<CameraController> controller_;
+    std::unique_ptr<CameraSystem> controller_;
     PoseTrace trace_;
 };
 
@@ -245,7 +245,7 @@ TEST_F(PoseTraceTest, TraceB_PinchDollyTwistPanPitch) {
 
     double t = 0.0;
     controller_->onPinchGesture(pinchIn(1.0f, 0.0f, 400.0f, 300.0f,
-                                        CameraController::PinchMode::Undecided,
+                                        CameraSystem::PinchMode::Undecided,
                                         t));
     trace_.record(*camera_, controller_->groundState());
 
@@ -254,7 +254,7 @@ TEST_F(PoseTraceTest, TraceB_PinchDollyTwistPanPitch) {
         t += 0.016;
         controller_->onPinchGesture(
             pinchIn(1.0f + 0.02f * i, 0.01f * i, 400.0f + i, 300.0f,
-                    CameraController::PinchMode::Undecided, t));
+                    CameraSystem::PinchMode::Undecided, t));
         trace_.record(*camera_, controller_->groundState());
     }
     // latch 到 Manipulate:刚性 pan 内建,质心移动 = 世界横移。
@@ -262,7 +262,7 @@ TEST_F(PoseTraceTest, TraceB_PinchDollyTwistPanPitch) {
         t += 0.016;
         controller_->onPinchGesture(
             pinchIn(1.06f + 0.03f * i, 0.03f + 0.012f * i, 400.0f + 5.0f * i,
-                    300.0f - 3.0f * i, CameraController::PinchMode::Manipulate,
+                    300.0f - 3.0f * i, CameraSystem::PinchMode::Manipulate,
                     t));
         trace_.record(*camera_, controller_->groundState());
     }
@@ -273,14 +273,14 @@ TEST_F(PoseTraceTest, TraceB_PinchDollyTwistPanPitch) {
     // 独立一段 Pitch:质心竖移驱动俯仰,锚点钉 latch 质心。
     t += 0.5;
     controller_->onPinchGesture(pinchIn(1.0f, 0.0f, 400.0f, 300.0f,
-                                        CameraController::PinchMode::Undecided,
+                                        CameraSystem::PinchMode::Undecided,
                                         t));
     trace_.record(*camera_, controller_->groundState());
     for (int i = 1; i <= 10; ++i) {
         t += 0.016;
         controller_->onPinchGesture(
             pinchIn(1.0f, 0.0f, 400.0f, 300.0f - 12.0f * i,
-                    CameraController::PinchMode::Pitch, t));
+                    CameraSystem::PinchMode::Pitch, t));
         trace_.record(*camera_, controller_->groundState());
     }
     controller_->onPinchEnd();
@@ -325,14 +325,14 @@ TEST_F(PoseTraceTest, TraceC_TerrainClampAndFilter) {
     // ② 双指压低:走 dolly + 钳位 + 保锚退出。
     double t = 0.0;
     controller_->onPinchGesture(pinchIn(1.0f, 0.0f, 400.0f, 300.0f,
-                                        CameraController::PinchMode::Undecided,
+                                        CameraSystem::PinchMode::Undecided,
                                         t));
     trace_.record(*camera_, controller_->groundState());
     for (int i = 1; i <= 10; ++i) {
         t += 0.016;
         controller_->onPinchGesture(
             pinchIn(1.0f + 0.25f * i, 0.0f, 400.0f + 2.0f * i, 300.0f,
-                    CameraController::PinchMode::Manipulate, t));
+                    CameraSystem::PinchMode::Manipulate, t));
         trace_.record(*camera_, controller_->groundState());
     }
     controller_->onPinchEnd();
@@ -341,7 +341,7 @@ TEST_F(PoseTraceTest, TraceC_TerrainClampAndFilter) {
 
     EXPECT_GE(altitudeMeters(),
               controller_->groundState().terrainHeightMeters +
-                  CameraController::kMinClearanceMeters - 1.0)
+                  CameraSystem::kMinClearanceMeters - 1.0)
         << "场景失效:压不到净空面上,钳位分支没走到";
 
     // 必须先让惯性彻底停下:③ 要验的是**数据驱动**的下降滤波,而位姿只要还在
@@ -392,14 +392,14 @@ TEST_F(PoseTraceTest, TraceD_HighAltitudeRecenterAndSentinel) {
     // 偏心 zoom-out:充值回中预算(手势期不动相机,与锚点钉合正交)。
     double t = 0.0;
     controller_->onPinchGesture(pinchIn(1.0f, 0.0f, 560.0f, 200.0f,
-                                        CameraController::PinchMode::Undecided,
+                                        CameraSystem::PinchMode::Undecided,
                                         t));
     trace_.record(*camera_, controller_->groundState());
     for (int i = 1; i <= 8; ++i) {
         t += 0.016;
         controller_->onPinchGesture(
             pinchIn(1.0f - 0.06f * i, 0.0f, 560.0f, 200.0f,
-                    CameraController::PinchMode::Manipulate, t));
+                    CameraSystem::PinchMode::Manipulate, t));
         trace_.record(*camera_, controller_->groundState());
     }
     controller_->onPinchEnd();

@@ -15,13 +15,13 @@
 namespace earth_engine {
 
 class Camera;
-class CameraController;
+class CameraSystem;
 class Tileset;
 class VectorLayer;
 
 struct SceneInteractionContext {
     Camera* camera = nullptr;
-    CameraController* cameraController = nullptr;
+    CameraSystem* cameraSystem = nullptr;
     double viewportWidthPixels = 0.0;
     double viewportHeightPixels = 0.0;
     const Tileset* terrainTileset = nullptr;
@@ -40,7 +40,7 @@ public:
 
     void setFeatureStateChangeCallback(FeatureStateChangeCallback callback);
     void configureCameraSurfacePicker(
-        CameraController& cameraController,
+        CameraSystem& cameraSystem,
         std::function<SceneInteractionContext()> contextProvider);
 
     PickResult pick(const SceneInteractionContext& context,

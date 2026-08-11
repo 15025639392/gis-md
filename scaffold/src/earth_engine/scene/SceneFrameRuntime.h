@@ -11,7 +11,7 @@
 namespace earth_engine {
 
 class Camera;
-class CameraController;
+class CameraSystem;
 struct Diagnostics;
 class IPrepareRendererResources;
 class SceneTilesetCoordinator;
@@ -43,7 +43,7 @@ public:
     SceneFrameUpdateInput makeFrameUpdateInput(
         Diagnostics& diagnostics,
         Camera* camera,
-        CameraController* cameraController,
+        CameraSystem* cameraSystem,
         IPrepareRendererResources* pPrepRenderer,
         SceneTilesetCoordinator& tilesets,
         double deltaSeconds,
@@ -54,7 +54,7 @@ public:
         SkyGradient* skyGradient);
     SceneInteractionContext makeInteractionContext(
         Camera* camera,
-        CameraController* cameraController,
+        CameraSystem* cameraSystem,
         const Tileset* terrainTileset,
         const std::vector<std::unique_ptr<VectorLayer>>* vectorLayers) const;
     bool hasSelectorViewOverride() const {

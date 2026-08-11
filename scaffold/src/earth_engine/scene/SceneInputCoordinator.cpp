@@ -1,6 +1,6 @@
 #include "SceneInputCoordinator.h"
 
-#include "../camera/CameraController.h"
+#include "../camera/CameraSystem.h"
 #include "../interaction/SelectionManager.h"
 
 namespace earth_engine {
@@ -26,16 +26,16 @@ void selectFromClick(const SceneInputCoordinatorContext& context,
     }
 }
 
-CameraController::PinchMode toCameraPinchMode(InputEvent::PinchMode mode) {
+CameraSystem::PinchMode toCameraPinchMode(InputEvent::PinchMode mode) {
     switch (mode) {
         case InputEvent::PinchMode::Undecided:
-            return CameraController::PinchMode::Undecided;
+            return CameraSystem::PinchMode::Undecided;
         case InputEvent::PinchMode::Pitch:
-            return CameraController::PinchMode::Pitch;
+            return CameraSystem::PinchMode::Pitch;
         case InputEvent::PinchMode::Manipulate:
             break;
     }
-    return CameraController::PinchMode::Manipulate;
+    return CameraSystem::PinchMode::Manipulate;
 }
 
 bool shouldUpdateInteractionFocus(InputEvent::Type type) {
@@ -58,42 +58,42 @@ void SceneInputCoordinator::handleGesture(
     const SceneInputCoordinatorContext& context,
     InputManager::Gesture gesture,
     const InputEvent& event) {
-    CameraController* cameraController = context.cameraController;
-    if (!cameraController) {
+    CameraSystem* cameraSystem = context.cameraSystem;
+    if (!cameraSystem) {
         return;
     }
 
     switch (gesture) {
         case InputManager::Gesture::DragStart:
-            cameraController->onDragStart(
+            cameraSystem->onDragStart(
                 event.screenX,
                 event.screenY,
                 event.timestamp);
             break;
         case InputManager::Gesture::DragMove:
-            cameraController->onDragMove(
+            cameraSystem->onDragMove(
                 event.screenX,
                 event.screenY,
                 event.timestamp);
             break;
         case InputManager::Gesture::DragEnd:
-            cameraController->onDragEnd();
+            cameraSystem->onDragEnd();
             break;
         case InputManager::Gesture::PinchStart:
         case InputManager::Gesture::PinchMove:
             if (event.hasPointerPair) {
                 // 新契约：InputManager 已算好绝对派生量与 latch 模式。
-                CameraController::PinchInput input;
+                CameraSystem::PinchInput input;
                 input.scaleFromStart = event.pinchScaleFromStart;
                 input.twistFromStartRadians = event.twistFromStartRadians;
                 input.centroidX = (event.pointer0X + event.pointer1X) * 0.5f;
                 input.centroidY = (event.pointer0Y + event.pointer1Y) * 0.5f;
                 input.mode = toCameraPinchMode(event.pinchMode);
                 input.timestamp = event.timestamp;
-                cameraController->onPinchGesture(input);
+                cameraSystem->onPinchGesture(input);
             } else {
                 // 旧契约（无 pointer pair 的平台/合成路径）：走适配器。
-                cameraController->onPinchGesture(
+                cameraSystem->onPinchGesture(
                     event.pinchScale,
                     event.screenX,
                     event.screenY,
@@ -104,7 +104,7 @@ void SceneInputCoordinator::handleGesture(
             }
             break;
         case InputManager::Gesture::PinchEnd:
-            cameraController->onPinchEnd();
+            cameraSystem->onPinchEnd();
             break;
         case InputManager::Gesture::Click:
         case InputManager::Gesture::DoubleClick: {
@@ -117,7 +117,7 @@ void SceneInputCoordinator::handleGesture(
                 // 位姿被重建成"看向地心"，用户的 tilt/heading 当场丢光；低空时
                 // 0.7×地心距还会跌破下限被钳到地表 50m 正俯视。orbit 表示已删。
                 if (result.isValid()) {
-                    cameraController->viewDistance(
+                    cameraSystem->viewDistance(
                         result.worldPosition,
                         result.distance * 0.57);
                 }

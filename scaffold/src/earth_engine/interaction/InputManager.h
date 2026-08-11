@@ -20,11 +20,11 @@ class InputManager {
 public:
     /// 手势回调类型
     enum class Gesture {
-        DragStart,    // → CameraController::onDragStart
-        DragMove,     // → CameraController::onDragMove
-        DragEnd,      // → CameraController::onDragEnd（可能启动惯性）
-        PinchStart,   // → CameraController::onPinch
-        PinchMove,    // → CameraController::onPinch
+        DragStart,    // → CameraSystem::onDragStart
+        DragMove,     // → CameraSystem::onDragMove
+        DragEnd,      // → CameraSystem::onDragEnd（可能启动惯性）
+        PinchStart,   // → CameraSystem::onPinch
+        PinchMove,    // → CameraSystem::onPinch
         PinchEnd,     // → 重置 pinch 状态
         Click,        // → pick + onSelect
         DoubleClick,  // → zoom-to 或 pick + onSelect
