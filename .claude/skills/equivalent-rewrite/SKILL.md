@@ -198,6 +198,49 @@ The two lanes come from how the user wants to consume each row:
   or lifetime-touching rows — surface those in the report lane with the risk
   named, even if you believe they're safe.
 
+### 5b — Passing notices (byproduct, NOT a hunt)
+
+Reading every function for equivalence candidates means you *also* walk past
+real bugs and design smells. It would be wasteful to see one and stay silent —
+but it would be worse to let this quietly turn into a half-baked bug hunt that
+competes with the real tools. So this is a strict **notice**, not a search:
+
+- **Only flag what you actually walked past** while doing §2–§4. Do **not**
+  spend a single extra pass hunting — no tracing call graphs, no "let me check
+  if this is exploitable". The moment you're *looking for* bugs instead of
+  *noticing* them, stop: that's `/code-review`'s job, and it verifies
+  adversarially in ways this skill deliberately does not.
+- **One line each, and label confidence honestly.** These are *unverified
+  observations* — you have not written a red test, not reproduced anything.
+  Say "looks like" / "suspD" not "is". A wrong high-confidence bug claim in this
+  codebase burns real trust (its whole memory is scar tissue from confident
+  wrong claims).
+- **Notice, don't touch.** Never edit code to "fix" a noticed bug inside this
+  skill — that's outside the equivalence contract and, in a shared workspace,
+  risks colliding with whatever session owns that file. Report the line; let the
+  user route it.
+- **Screen out the false positives this codebase is famous for.** Before flagging
+  an "inconsistency" or "asymmetry" as a bug, check it against
+  `references/patterns.md` Part C — winding-per-backend, the `selector` raw
+  paths, shared sampler slots, the `T arr[]` assertions are all *deliberate*.
+  Flagging those as bugs is noise that trains the user to ignore this section.
+- **Route, don't resolve.** Every notice ends by pointing at the right tool:
+  correctness → `/code-review`, security-shaped → `/security-review`,
+  architecture/design → a design discussion. This section's value is *early
+  awareness while the code is already open*, not adjudication.
+
+Put these under a clearly separated heading so they never dilute the worth-doing
+list. If you walked past nothing worth mentioning, **omit the section entirely** —
+an empty "notices" block is just noise.
+
+```
+### 路过发现(未验证,顺带一提 → 真查走 /code-review)
+- [correctness?] Finalizer.h:182 `renderedFullGeometry.count()` 后无 else 分支落到
+  insert,某路径下可能重复 entry —— 看着像,没构造反例,请 /code-review 核。
+- [design] GltfDrawCommandBuilder::build 已 ~100 行、5 层嵌套,位移/remap/overlay
+  三段职责揉在一个函数,新增分支易顾此失彼(设计味道,非 bug)。
+```
+
 ## 6 — Apply lane: change → verify → keep-or-revert
 
 For each green-lit row, one row at a time (never batch unrelated rewrites into
