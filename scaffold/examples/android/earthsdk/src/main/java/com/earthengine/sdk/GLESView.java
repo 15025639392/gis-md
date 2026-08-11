@@ -102,6 +102,22 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
             nativeGrazingView();
             return true;
         }
+        // 数字键 7/8/9：相机架构阶段 3/4/5 的真机验证钩子。这三个阶段在 demo 里
+        // 没有产品入口，不接出来就只能靠 host 判据。每个都配机制信号日志
+        // （StageFlight / StageTether / StageOrtho）——画面"看着像对的"分不清
+        // "真跑了"和"根本没走到那条路"。
+        if (keyCode == KeyEvent.KEYCODE_7) {
+            nativeDebugFlyTo();                              // 阶段 3：飞到北京
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_8) {
+            nativeDebugTether();                             // 阶段 4：系留三态循环
+            return true;
+        }
+        if (keyCode == KeyEvent.KEYCODE_9) {
+            nativeDebugToggleOrtho(getWidth(), getHeight());  // 阶段 5：正交切换
+            return true;
+        }
         return super.onKeyDown(keyCode, event);
     }
 
@@ -278,6 +294,9 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     public native void nativeAddDemoVectorLayer();
     public native void nativeResetCamera();
     public native void nativeGrazingView();
+    public native void nativeDebugFlyTo();
+    public native void nativeDebugTether();
+    public native void nativeDebugToggleOrtho(int width, int height);
     // 低 AGL 贴地掠视（缙云山方向，动态 near 验收位姿）。
     public native void nativeTerrainGrazingView();
     public native void nativeSetGpuTerrain(boolean enabled);

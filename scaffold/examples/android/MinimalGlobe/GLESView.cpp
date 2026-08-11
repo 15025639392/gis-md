@@ -23,6 +23,10 @@
 #include <unordered_map>
 
 #include "earth_engine/Engine.h"
+#include "earth_engine/camera/CameraSystem.h"
+#include "earth_engine/camera/CameraPose.h"
+#include "earth_engine/camera/Viewpoint.h"
+#include "earth_engine/camera/controllers/TetheredController.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/data/FeatureClusterIndex.h"
@@ -50,6 +54,62 @@
 #define LOG_TAG "MinimalGlobe"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+
+// ============================================================
+// 阶段 3/4/5 真机验证钩子(数字键 7/8/9)
+// ============================================================
+//
+// 这三个阶段(飞行/系留/正交)在 demo 里**没有任何产品入口**,不接出来就只能
+// 靠 host 判据。每个钩子都配一条机制信号日志 —— 画面"看着像对的"分不清
+// "真跑了"和"根本没走到那条路"。
+
+// 阶段 3:飞行目标(重庆 → 北京)。
+constexpr double kFlightDestLng = 116.397;
+constexpr double kFlightDestLat = 39.908;
+constexpr double kFlightDestAlt = 3000.0;
+struct FlightProbe {
+    bool armed = false;
+    uint64_t clampsAtStart = 0;
+    double maxProgress = 0.0;
+    int frames = 0;
+};
+FlightProbe gFlightProbe;
+
+// 阶段 4:假载体 —— 绕重庆做匀速圆周运动并自转,驱动 tether 的两个 provider。
+struct FakeCarrier {
+    bool active = false;
+    double angleRad = 0.0;          // 圆周相位
+    double radiusDeg = 0.02;        // ~2km 半径
+    double centerLng = 106.508;
+    double centerLat = 29.617;
+    double altMeters = 1200.0;
+    bool useOrientation = false;    // true = 接 orientationProvider(座舱/roll 跟随)
+    glm::dvec3 position{0.0};
+    glm::dmat3 orientation{1.0};
+
+    void step(double dt) {
+        if (!active) return;
+        angleRad += dt * 0.5;       // ~12s 一圈
+        const double lng = centerLng + radiusDeg * std::cos(angleRad);
+        const double lat = centerLat + radiusDeg * std::sin(angleRad);
+        position = earth_engine::Ellipsoid::WGS84()
+                       .cartographicToCartesian(
+                           earth_engine::Cartographic::fromDegrees(lng, lat, altMeters))
+                       .raw();
+        // 机体系:绕本地垂直轴按航向转,并随相位横滚(验 roll 跟随)。
+        const glm::dmat3 enu = earth_engine::CameraPose::enuFrameAt(position);
+        const double heading = angleRad + 1.5707963;   // 切向
+        const double roll = 0.5 * std::sin(angleRad * 2.0);
+        const glm::dquat q = glm::angleAxis(-heading, enu[2]) *
+                             glm::angleAxis(roll, enu[1]);
+        orientation = glm::dmat3(q * enu[0], q * enu[1], q * enu[2]);
+    }
+};
+FakeCarrier gCarrier;
+
+// 阶段 5:正交开关。宽度取切换瞬间"透视在地面处的足迹",两者画面才可比。
+bool gOrthographic = false;
+
 
 using namespace earth_engine;
 
@@ -931,6 +991,11 @@ static void renderFrame() {
                  gMvtSource->tree().failedCount());
         }
     }
+    // 阶段 4:假载体在**引擎 update 之前**推进,这样本帧 tether 读到的就是新
+    // 位置 —— 放到 render 之后会让相机永远跟着上一帧的载体,表现为恒定滞后,
+    // 而画面上看着只是"跟得有点松"。
+    gCarrier.step(1.0 / 60.0);
+
     const auto engineStart = std::chrono::steady_clock::now();
     const bool presented =
         gEngine->render(0.0);  // auto-delta（内部 update；必要时 beginFrame→render→endFrame）
@@ -1006,6 +1071,63 @@ static void renderFrame() {
              camTrace.targetHeightMeters,
              camTrace.pitchRadians * 180.0 / M_PI,
              camTrace.headingRadians * 180.0 / M_PI);
+    }
+
+    // ---- 阶段 3/4/5 机制信号 ----
+    // 与 CamPose 分开、且**不受 frameId%120 采样限制**:飞行只有 2~3 秒,
+    // 按 120 帧采样会整段漏掉。
+    if (gEngine) {
+        CameraSystem& cam = gEngine->cameraSystem();
+        if (gFlightProbe.armed) {
+            ++gFlightProbe.frames;
+            gFlightProbe.maxProgress =
+                std::max(gFlightProbe.maxProgress, cam.cameraFlightProgress());
+            const double agl = gEngine->camera().getHeight() -
+                               cam.groundState().terrainHeightMeters;
+            if (gFlightProbe.frames % 5 == 0 || !cam.cameraFlightActive()) {
+                LOGI("StageFlight n=%d t=%.3f agl=%.0f clamps=%llu "
+                     "active=%d selfAnim=%d",
+                     gFlightProbe.frames, cam.cameraFlightProgress(), agl,
+                     static_cast<unsigned long long>(
+                         cam.constraintClampCount() -
+                         gFlightProbe.clampsAtStart),
+                     cam.cameraFlightActive() ? 1 : 0,
+                     cam.isSelfAnimating() ? 1 : 0);
+            }
+            if (!cam.cameraFlightActive()) {
+                const auto geo = Ellipsoid::WGS84().cartesianToCartographic(
+                    gEngine->camera().position());
+                LOGI("StageFlight DONE frames=%d maxT=%.3f clamps=%llu "
+                     "landed=%.5f,%.5f,%.0f ctrl=%s",
+                     gFlightProbe.frames, gFlightProbe.maxProgress,
+                     static_cast<unsigned long long>(
+                         cam.constraintClampCount() -
+                         gFlightProbe.clampsAtStart),
+                     geo.longitudeDegrees(), geo.latitudeDegrees(),
+                     geo.height(), cam.activeControllerName().c_str());
+                gFlightProbe.armed = false;
+            }
+        }
+        if (gCarrier.active && frameId % 30 == 0) {
+            const auto& t = cam.tetheredController();
+            // ⚠️ 必须用 glm::length():`glm::dvec3::length()` 返回的是**分量
+            // 个数(恒 3)**,不是模长。第一版就写成了成员版,读数恒 3.0 —— 而
+            // range=1500,看着像"相机贴在载体上"的引擎 bug,实际引擎完全正确。
+            const double distToCarrier = glm::length(
+                gEngine->camera().position().raw() - gCarrier.position);
+            LOGI("StageTether h=%.4f p=%.4f r=%.4f range=%.1f dist=%.1f "
+                 "resolved=%d selfAnim=%d ctrl=%s",
+                 t.localHeading(), t.localPitch(), t.localRoll(), t.range(),
+                 distToCarrier, t.frameResolved() ? 1 : 0,
+                 cam.isSelfAnimating() ? 1 : 0,
+                 cam.activeControllerName().c_str());
+        }
+        if (gOrthographic && frameId % 120 == 0) {
+            LOGI("StageOrtho isOrtho=%d widthM=%.0f near=%.1f",
+                 gEngine->camera().isOrthographic() ? 1 : 0,
+                 gEngine->camera().orthographicWidthMeters(),
+                 gEngine->camera().nearPlaneMeters());
+        }
     }
 
     // 加载体验记分卡:把"糊/露底/台阶"这些观感症状翻成可 A/B 的计数,免去
@@ -2068,6 +2190,125 @@ Java_com_earthengine_sdk_GLESView_nativeResetCamera(
         if (!gSdkFacade) return;
         gSdkFacade->resetCamera();
         LOGI("Camera reset to Chongqing demo viewpoint");
+    });
+}
+
+// 阶段 3:飞到北京。机制信号 = 飞行期逐帧 progress + 碰撞钳位次数增量,
+// 落地打终点位姿误差。⚠️钳位次数**必须为 0** —— 那是"拱高让钳位结构性不
+// 触发"的判据;非 0 说明是钳位在兜底(画面上两者完全看不出区别)。
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeDebugFlyTo(
+    JNIEnv* /* env */, jobject /* this */) {
+    gRenderThread.post([]() {
+        if (!gEngine) return;
+        CameraSystem& cam = gEngine->cameraSystem();
+        Viewpoint dest;
+        dest.eyeGeo = Cartographic::fromDegrees(kFlightDestLng, kFlightDestLat,
+                                                kFlightDestAlt);
+        dest.headingRadians = 0.0;
+        dest.pitchRadians = -0.6;
+        dest.rollRadians = 0.0;
+
+        // 先算"直接设过去"的落点作参照:飞过去必须落在同一处
+        // (setViewpoint 与 flyTo 共用 resolveViewpoint,分岔就会在这里露出来)。
+        const Vec3 before = gEngine->camera().position();
+        cam.setViewpoint(dest);
+        const Vec3 expected = gEngine->camera().position();
+        Viewpoint back;
+        back.eyeGeo = Ellipsoid::WGS84().cartesianToCartographic(before);
+        cam.setViewpoint(back);
+
+        gFlightProbe = FlightProbe{};
+        gFlightProbe.clampsAtStart = cam.constraintClampCount();
+        const bool started = cam.flyTo(dest);
+        gFlightProbe.armed = started;
+        LOGI("StageFlight start=%d expectEye=%.1f,%.1f,%.1f dist=%.0fm",
+             started ? 1 : 0, expected.x(), expected.y(), expected.z(),
+             (expected - before).length());
+    });
+}
+
+// 阶段 4:切系留。第一次按 = 只接 originProvider(跟车但保持北上),
+// 第二次 = 加上 orientationProvider(座舱,roll 跟随载体),第三次 = 回 Free。
+// 机制信号 = localHPR/range 逐帧不变 + 相机到载体距离恒等于 range。
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeDebugTether(
+    JNIEnv* /* env */, jobject /* this */) {
+    gRenderThread.post([]() {
+        if (!gEngine) return;
+        CameraSystem& cam = gEngine->cameraSystem();
+        if (!gCarrier.active) {
+            gCarrier.active = true;
+            gCarrier.useOrientation = false;
+        } else if (!gCarrier.useOrientation) {
+            gCarrier.useOrientation = true;
+        } else {
+            gCarrier.active = false;
+            cam.selectController(CameraSystem::kFreeGlobeController);
+            LOGI("StageTether off (back to free)");
+            return;
+        }
+        gCarrier.step(0.0);          // 先落一次位置,避免首帧 provider 拿到零
+
+        ViewpointFrame frame;
+        frame.originProvider = [](glm::dvec3& out) {
+            if (!gCarrier.active) return false;
+            out = gCarrier.position;
+            return true;
+        };
+        if (gCarrier.useOrientation) {
+            frame.orientationProvider = [](glm::dmat3& out) {
+                if (!gCarrier.active) return false;
+                out = gCarrier.orientation;
+                return true;
+            };
+        }
+        cam.tetheredController().setFrame(frame);
+        cam.selectController(CameraSystem::kTetheredController);
+        cam.tetheredController().setRange(1500.0);
+        LOGI("StageTether on orientationProvider=%d",
+             gCarrier.useOrientation ? 1 : 0);
+    });
+}
+
+// 阶段 5:正交/透视切换。切换瞬间把正交宽度设成"透视在当前地面距离处的
+// 足迹",两种投影的画面才可比 —— 否则一切过去尺度全变,看不出别的问题。
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeDebugToggleOrtho(
+    JNIEnv* /* env */, jobject /* this */, jint width, jint height) {
+    const double w = static_cast<double>(width);
+    const double h = static_cast<double>(height);
+    gRenderThread.post([w, h]() {
+        if (!gEngine) return;
+        Camera& camera = gEngine->camera();
+        if (gOrthographic) {
+            camera.setPerspective(camera.verticalFovRadians(),
+                                  camera.nearPlaneMeters(),
+                                  camera.farPlaneMeters());
+            gOrthographic = false;
+            LOGI("StageOrtho off isOrtho=%d", camera.isOrthographic() ? 1 : 0);
+            return;
+        }
+        // 视线与椭球求交拿地面距离;不交(看天)则退回相机椭球高。
+        const Ray ray(camera.position(), camera.direction());
+        const std::optional<Vec3> hit =
+            Ellipsoid::WGS84().rayIntersection(ray.origin(), ray.direction());
+        // 同上:glm 成员 length() 是分量个数。这里写错会让正交宽度变成
+        // 2·3·tan(fov/2)·aspect ≈ 几米,画面直接糊死。
+        const double distance =
+            hit ? glm::length(hit->raw() - camera.position().raw())
+                : camera.getHeight();
+        const double aspect = h > 0.0 ? w / h : 1.0;
+        const double widthMeters =
+            2.0 * distance * std::tan(camera.verticalFovRadians() * 0.5) *
+            aspect;
+        // ⚠️ near 显式给定:正交下动态 near 已在 SceneFrameUpdateCoordinator
+        // 断掉(那套公式治的是透视的 z_ndc 病态区),这里不给就沿用上一次透视
+        // 收紧后的值,可能把相机前方整片切掉。
+        camera.setOrthographic(widthMeters, 1.0, camera.farPlaneMeters());
+        gOrthographic = true;
+        LOGI("StageOrtho on isOrtho=%d widthM=%.0f groundDist=%.0f",
+             camera.isOrthographic() ? 1 : 0, widthMeters, distance);
     });
 }
 
