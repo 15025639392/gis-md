@@ -3404,7 +3404,10 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     std::string ck = tileCacheKey(key);
     auto it = tiles_.find(ck);
     if (it != tiles_.end()) {
-        touchCachedTile(ck);
+        // 已持有命中迭代器,直接调对象重载,省去 touchCachedTile(string)
+        // 内部第二次 tiles_.find(ck)。留 null 守卫:it->second 会作返回值,
+        // 可能为空,须与 string 重载的 !tileIt->second no-op 语义一致。
+        if (it->second) touchCachedTile(*it->second);
         return it->second;
     }
 
@@ -3483,7 +3486,10 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
         mappedRasterTileEpoch_);
     auto existing = tiles_.find(ck);
     if (existing != tiles_.end()) {
-        touchCachedTile(ck);
+        // 已持有命中迭代器,直接调对象重载省去内部第二次 find。免 null 守卫:
+        // 紧接着的 setMappedSourceList 无条件解引用 existing->second,调用点
+        // 本已假定非空,string 重载的 null no-op 分支在此不可达。
+        touchCachedTile(*existing->second);
         existing->second->setMappedSourceList(
             sourcePlan.sourceZoom,
             *sourceBounds,
