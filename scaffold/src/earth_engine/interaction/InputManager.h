@@ -3,6 +3,7 @@
 #include "InputEvent.h"
 #include <functional>
 #include <cstdint>
+#include <vector>
 
 namespace earth_engine {
 
@@ -35,7 +36,66 @@ public:
     /// @param event    触发手势的事件（包含 screenX/Y、timestamp、modifiers）
     using Callback = std::function<void(Gesture gesture, const InputEvent& event)>;
 
-    InputManager() = default;
+    // ---- 桌面输入绑定表(Cesium 式 EventType × Modifiers)----
+    //
+    // ⚠️⚠️ **桌面绑定是翻译层,不是第二套相机数学**。滚轮/中键/右键全部被合成成
+    // 与双指完全相同的 `PinchStart/Move/End` 事件(`hasPointerPair=true`,两个虚拟
+    // 指针对称落在光标两侧 ⇒ 质心即光标),于是"滚轮 zoom 与双指 zoom 走同一锚点
+    // 通道""中键 tilt 与双指 Pitch 同语义"这两条判据是**构造上成立**的,而不是靠
+    // 两份实现碰巧一致。相机层完全不知道有鼠标这回事。
+
+    enum class DesktopTrigger : uint8_t {
+        LeftDrag,
+        MiddleDrag,
+        RightDrag,
+        Wheel
+    };
+
+    enum class DesktopAction : uint8_t {
+        /// 走单指锚点拖拽通道(抓住地表点跟手)。
+        AnchorDrag,
+        /// 合成 `PinchMode::Manipulate`,只 dolly 不 pan(质心钉在起手处)。
+        Zoom,
+        /// 合成 `PinchMode::Pitch`,质心 Y 驱动俯仰 —— 与双指 Pitch 逐字同语义。
+        Tilt,
+        /// 不响应。
+        None
+    };
+
+    struct DesktopBinding {
+        DesktopTrigger trigger = DesktopTrigger::LeftDrag;
+        /// **精确匹配**(与 Cesium 一致:一个 binding 要么不带修饰键,要么带一个)。
+        /// 不做"包含"匹配 —— 那样 ctrl+shift+左键会同时命中 ctrl 和无修饰两条。
+        InputEvent::Modifiers modifiers;
+        DesktopAction action = DesktopAction::AnchorDrag;
+    };
+
+    /// 默认表(对齐 Cesium `ScreenSpaceCameraController` 的桌面习惯):
+    ///   左键拖 → 锚点拖拽 / 滚轮 → zoom / 中键拖 → tilt
+    ///   右键拖 → zoom / Ctrl+左键拖 → tilt
+    /// ⚠️ Cesium 还有 Shift+左键 = look(原地转视线)。**本表刻意不含它**:那需要
+    /// 一个"绕相机自身转"的原语,`setViewpoint({heading,pitch})` 已经能表达,但把它
+    /// 接到拖拽手势上是独立的一件事,不该顺手塞进绑定表凑数。
+    static std::vector<DesktopBinding> defaultDesktopBindings();
+
+    void setDesktopBindings(std::vector<DesktopBinding> bindings) {
+        desktopBindings_ = std::move(bindings);
+    }
+    const std::vector<DesktopBinding>& desktopBindings() const {
+        return desktopBindings_;
+    }
+    /// 查表。无匹配 ⇒ `None`。
+    DesktopAction resolveDesktopAction(
+        DesktopTrigger trigger, const InputEvent::Modifiers& modifiers) const;
+
+    /// 滚轮一格对应的对数缩放步长。正 delta = 拉近。
+    void setWheelZoomLogStep(double step) { wheelZoomLogStep_ = step; }
+    /// 右键竖拖每像素的对数缩放步长。
+    void setDragZoomLogStepPerPixel(double step) {
+        dragZoomLogStepPerPixel_ = step;
+    }
+
+    InputManager() : desktopBindings_(defaultDesktopBindings()) {}
 
     /// 设置手势回调
     void setCallback(Callback cb) { callback_ = std::move(cb); }
@@ -63,6 +123,16 @@ private:
     };
 
     void finishPointerGesture(const InputEvent& event);
+    /// 桌面合成手势:返回 true 表示本事件已被桌面通道消费,不再走触摸路径。
+    bool processDesktopEvent(const InputEvent& event);
+    void handleWheel(const InputEvent& event);
+    /// 发一条合成 pinch 事件(两个虚拟指针对称落在 centroid 两侧)。
+    void emitSyntheticPinch(const InputEvent& source,
+                            Gesture gesture,
+                            float centroidX,
+                            float centroidY,
+                            float scaleFromStart,
+                            InputEvent::PinchMode mode);
     void cancelActiveGesture();
     /// 双指会话：从 pointer0/1 计算派生量（spread 比、twist unwrap 累计），
     /// 并在起手窗口内做一次 mode latch。event 为可写副本，填充后回调转发。
@@ -100,6 +170,16 @@ private:
     double lastClickTime_ = -1.0;
     float lastClickX_ = 0.0f;
     float lastClickY_ = 0.0f;
+
+    // 桌面合成会话(中键/右键/Ctrl+左键拖)
+    bool desktopSessionActive_ = false;
+    DesktopAction desktopAction_ = DesktopAction::None;
+    float desktopStartX_ = 0.0f;
+    float desktopStartY_ = 0.0f;
+
+    std::vector<DesktopBinding> desktopBindings_;
+    double wheelZoomLogStep_ = 0.20;
+    double dragZoomLogStepPerPixel_ = 0.005;
 
     // 配置
     float dragThreshold_ = 8.0f;            // 像素

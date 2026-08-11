@@ -23,7 +23,9 @@ struct InputEvent {
         PinchMove,
         PinchEnd,
         Cancel,
-        Key
+        Key,
+        /// 鼠标滚轮/触控板捏合滚动。`wheelDelta` 带步数。
+        Wheel
     };
 
     enum class PointerType : uint8_t {
@@ -52,7 +54,9 @@ struct InputEvent {
 
     PointerType pointerType = PointerType::Touch;
 
-    /// 按钮位掩码（0=none, 1=primary, 2=secondary, …）
+    /// 按钮位掩码。与 DOM `MouseEvent.buttons` 同构:
+    ///   1 = 主键(左) / 2 = 次键(右) / 4 = 中键
+    /// 桌面绑定表按它区分 Left/Middle/RightDrag。
     int buttons = 0;
 
     /// 当前有效指针数量。鼠标为 1；双指手势为 2。
@@ -63,6 +67,11 @@ struct InputEvent {
     /// 单调递增时间戳（秒）。来源应为平台单调时钟（如 CACurrentMediaTime、
     /// SystemClock.uptimeMillis），不是挂钟时间。
     double timestamp = 0.0;
+
+    /// 滚轮步数(正 = 向前滚 = 拉近)。一"格"约 1.0;触控板惯性滚动可以是小数。
+    /// 平台层负责把各自的原始单位(WheelEvent.deltaY / NSEvent.scrollingDeltaY)
+    /// 归一到这个尺度 —— 核心层不认识平台单位。
+    float wheelDelta = 0.0f;
 
     /// PinchMove 时相对上一帧的缩放因子（当前双指距离 / 上一帧双指距离，
     /// 1.0 = 无缩放）
@@ -107,6 +116,8 @@ struct InputEvent {
                type == Type::PointerMove ||
                type == Type::PointerUp;
     }
+
+    bool isWheelEvent() const { return type == Type::Wheel; }
 
     bool isPinchEvent() const {
         return type == Type::PinchStart ||

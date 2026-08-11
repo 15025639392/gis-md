@@ -3351,23 +3351,53 @@ Normalized cross-platform input event. All platform input (iOS `UITouch`/`UIEven
 
 ### InputManager.h / .cpp
 
-Gesture recognizer. Consumes normalized `InputEvent` stream; recognizes drag, pinch, click, double-click. **Fully callback-decoupled** — never touches Camera/Selection/GPU directly; notifies owner (Scene) via `Callback`.
+手势识别器 + **桌面输入绑定表**。消费归一化 `InputEvent` 流,识别 drag / pinch /
+click / double-click。**完全回调解耦** —— 不碰 Camera/Selection/GPU,只通知 Scene。
 
-| Item | Lines | Description |
-| --- | --- | --- |
-| `Gesture` enum | .h:22-31 | `DragStart/Move/End`, `PinchStart/Move/End`, `Click`, `DoubleClick`; comments map each to `CameraSystem::onDrag*`/`onPinch`/pick+onSelect |
-| `Callback` type | .h:36 | `std::function<void(Gesture, const InputEvent&)>`; set via `setCallback()` (.h:41) |
-| `process()` | .cpp:94-205 | Main event dispatch; early-out if no callback (.cpp:95) |
-| `reset()` | .cpp:207-213 | Clears state on interrupt/scene destroy |
-| `State` enum | .h:58-63 | `Idle`, `OneFingerPending`, `OneFingerDrag`, `TwoFinger` |
-| Pinch passthrough | .cpp:15-51 | Pinch events routed directly; synthesizes `PinchStart` if `PinchMove` arrives without start (.cpp:25-36) |
-| Pointer handling | .cpp:54-99 | `PointerDown`→pending, `PointerMove`→drag-threshold check, `PointerUp`→finish |
-| Drag detection | .cpp:71-89 | Promotes pending→drag when displacement ≥ `dragThreshold_`; `DragStart` uses start position (.cpp:77-81) |
-| `finishPointerGesture()` | .cpp:215-253 | Emits `DragEnd`, or click/double-click; suppresses click after drag/pinch |
-| Double-click test | .cpp:128-136 | Within `doubleClickInterval_` AND displacement ≤ `dragThreshold_`; resets timer on double to block triple (.cpp:139) |
-| `cancelActiveGesture()` | .cpp:255-272 | Synthesizes `DragEnd`/`PinchEnd` for in-flight gestures |
-| **`dragThreshold_`** | .h:86 | = 8.0f px (also reused as double-click position tolerance) |
-| **`doubleClickInterval_`** | .h:87 | = 0.35 s |
+| 项 | 行 | 说明 |
+|---|---|---|
+| `Gesture` 枚举 | .h:22 | `DragStart/Move/End`、`PinchStart/Move/End`、`Click`、`DoubleClick` |
+| `Callback` | .h:36 | `std::function<void(Gesture, const InputEvent&)>` |
+| `process()` | .cpp:258 | 事件分发。**桌面绑定优先**:命中即整条消费,不漏到触摸路径(否则中键拖会同时 tilt 和拖地球) |
+| `reset()` | .cpp:379 | 中断/销毁时清状态(含桌面会话) |
+| `finishPointerGesture()` | .cpp:389 | 发 `DragEnd` 或 click/double-click;drag/pinch 后抑制 click |
+| `cancelActiveGesture()` | .cpp:429 | 为在途手势补发 `DragEnd`/`PinchEnd` |
+| `dragThreshold_` / `doubleClickInterval_` | .h | 8.0px(兼作双击位移容差)/ 0.35s |
+
+**双指 latch**(`processPinchWithPointerPair`):起手窗口内一次判定后整段 latch,
+消除"每事件重分类 → 阈值附近模式翻转"。双指平移与双指俯仰在输入端严格同形
+(同向平移、间距/连线角不变),分类不可消除,只能一次定死。
+
+#### 桌面输入绑定表
+
+⚠️⚠️ **桌面绑定是翻译层,不是第二套相机数学。** 滚轮/中键/右键全部被合成成与双指
+**完全相同**的 `PinchStart/Move/End` 事件(`hasPointerPair=true`,两个虚拟指针对称
+落在光标两侧 ⇒ 质心即光标),于是「滚轮 zoom 与双指 zoom 走同一锚点通道」「中键
+tilt 与双指 Pitch 同语义」这两条验收判据是**构造上成立**的,不是两份实现碰巧一致。
+相机层完全不知道有鼠标这回事。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `DesktopTrigger` / `DesktopAction` | .h | `LeftDrag/MiddleDrag/RightDrag/Wheel` × `AnchorDrag/Zoom/Tilt/None` |
+| `defaultDesktopBindings` | .cpp:41 | 左键拖=锚点拖拽 / 滚轮=zoom / 中键拖=tilt / 右键拖=zoom / Ctrl+左键拖=tilt(对齐 Cesium `ScreenSpaceCameraController`) |
+| `resolveDesktopAction` | .cpp:54 | ⚠️**精确匹配修饰键,不做包含匹配**——包含式会让 Ctrl+Shift+左键同时命中 "Ctrl+左键" 与 "无修饰",谁先命中取决于表的顺序,那种"能用、换个顺序就变"最难查 |
+| `emitSyntheticPinch` | .cpp:64 | 造合成事件。**直接填绝对派生量,不走 latch 判定**:鼠标的意图由按键/滚轮显式给出,没有双指那个不可消除的同形歧义 |
+| `handleWheel` | .cpp:94 | **每格滚轮 = 一次完整微会话**(Start→Move→End)。每格在光标处重取锚点(朝光标缩放);Start 与 Move 时间戳相同 ⇒ dt=0 ⇒ **不种 zoom 惯性**,离散步进而非甩飞。不收尾的话 `pinching_` 一直挂着挡住后续拖拽 |
+| `processDesktopEvent` | .cpp:117 | 会话管理。⚠️右键拖 zoom 的质心**钉在起手处不跟光标**——跟了会触发 pin 的横向世界运动(拖着地球跑),而右键拖只该缩放 |
+| `wheelZoomLogStep_` / `dragZoomLogStepPerPixel_` | .h | 0.20 / 0.005,可调 |
+
+⚠️ Cesium 还有 Shift+左键 = look(原地转视线)。**本表刻意不含**:那需要"绕相机自身
+转"的原语,`setViewpoint({heading,pitch})` 已能表达,但接到拖拽手势上是独立一件事,
+不该顺手塞进绑定表凑数。
+
+⚠️ **触摸不走桌面通道**(按 `pointerType != Mouse` 早退):触摸事件的 `buttons`
+常为 0/1,不早退就会被桌面表误判。
+
+验收(`tests/unit/interaction/test_desktop_input_binding.cpp` 13 例)四处破坏都验过
+会红:`hasPointerPair` 置假(掉进旧契约适配器)4 红、Pitch 改 Manipulate 2 红、
+桌面通道不消费事件 2 红、右键质心改为跟光标 2 红。
+⚠️ 测试教训:`ofType(g).back()` 在空集合上是 UB,断言会报"值不对"而不是"根本没
+发出这个手势",归因方向完全错 —— 已换成带断言的 `Recorder::last()`。
 
 ### PickingService.h / .cpp
 

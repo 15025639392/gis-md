@@ -806,6 +806,12 @@ add_executable(test_camera_system
 target_link_libraries(test_camera_system PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_camera_system COMMAND test_camera_system)
 
+add_executable(test_desktop_input_binding
+    unit/interaction/test_desktop_input_binding.cpp
+)
+target_link_libraries(test_desktop_input_binding PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_desktop_input_binding COMMAND test_desktop_input_binding)
+
 add_executable(test_camera_orthographic
     unit/camera/test_camera_orthographic.cpp
 )

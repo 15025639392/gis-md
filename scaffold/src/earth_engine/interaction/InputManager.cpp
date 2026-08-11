@@ -23,7 +23,171 @@ float unwrapAngle(float angle, float reference) {
     return angle;
 }
 
+// 合成 pinch 的两个虚拟指针相对光标的半间距(物理像素)。任意正值都可以——
+// 下游只用质心与我们**直接填好的** pinchScaleFromStart/twist,不再从两指反解;
+// 取个不为零的值只是为了让 spread 有定义、且事件形状与真触摸一致。
+constexpr float kSyntheticPinchHalfSpreadPixels = 50.0f;
+
+// 鼠标按钮位掩码(与 DOM MouseEvent.buttons 同构)。
+constexpr int kButtonPrimary = 1;
+constexpr int kButtonSecondary = 2;
+constexpr int kButtonMiddle = 4;
+
+bool sameModifiers(const InputEvent::Modifiers& a,
+                   const InputEvent::Modifiers& b) {
+    return a.shift == b.shift && a.ctrl == b.ctrl && a.alt == b.alt &&
+           a.meta == b.meta;
+}
+
 } // namespace
+
+std::vector<InputManager::DesktopBinding>
+InputManager::defaultDesktopBindings() {
+    InputEvent::Modifiers none;
+    InputEvent::Modifiers ctrl;
+    ctrl.ctrl = true;
+    return {
+        {DesktopTrigger::LeftDrag, none, DesktopAction::AnchorDrag},
+        {DesktopTrigger::Wheel, none, DesktopAction::Zoom},
+        {DesktopTrigger::MiddleDrag, none, DesktopAction::Tilt},
+        {DesktopTrigger::RightDrag, none, DesktopAction::Zoom},
+        {DesktopTrigger::LeftDrag, ctrl, DesktopAction::Tilt},
+    };
+}
+
+InputManager::DesktopAction InputManager::resolveDesktopAction(
+    DesktopTrigger trigger, const InputEvent::Modifiers& modifiers) const {
+    for (const DesktopBinding& b : desktopBindings_) {
+        if (b.trigger == trigger && sameModifiers(b.modifiers, modifiers)) {
+            return b.action;
+        }
+    }
+    return DesktopAction::None;
+}
+
+void InputManager::emitSyntheticPinch(const InputEvent& source,
+                                      Gesture gesture,
+                                      float centroidX,
+                                      float centroidY,
+                                      float scaleFromStart,
+                                      InputEvent::PinchMode mode) {
+    InputEvent e = source;
+    e.type = gesture == Gesture::PinchStart   ? InputEvent::Type::PinchStart
+             : gesture == Gesture::PinchMove  ? InputEvent::Type::PinchMove
+                                              : InputEvent::Type::PinchEnd;
+    e.pointerCount = 2;
+    // 两指对称落在质心两侧 ⇒ 质心恰为目标像素,且 twist 恒为 0。
+    e.hasPointerPair = true;
+    e.pointer0X = centroidX - kSyntheticPinchHalfSpreadPixels;
+    e.pointer0Y = centroidY;
+    e.pointer1X = centroidX + kSyntheticPinchHalfSpreadPixels;
+    e.pointer1Y = centroidY;
+    e.screenX = centroidX;
+    e.screenY = centroidY;
+    // 直接填绝对派生量:桌面通道**不走 latch 判定**(鼠标的意图由按键/滚轮显式
+    // 给出,没有"双指平移与双指俯仰在输入端同形"那个不可消除的歧义)。
+    e.pinchScaleFromStart = scaleFromStart;
+    e.twistFromStartRadians = 0.0f;
+    e.pinchMode = mode;
+    callback_(gesture, e);
+}
+
+void InputManager::handleWheel(const InputEvent& event) {
+    const DesktopAction action =
+        resolveDesktopAction(DesktopTrigger::Wheel, event.modifiers);
+    if (action != DesktopAction::Zoom) {
+        return;
+    }
+    // **每一格滚轮 = 一次完整的微会话**(Start→Move→End)。这样每格都在光标处
+    // 重新取锚点(= 朝光标缩放),且 Start 与 Move 时间戳相同 ⇒ dt=0 ⇒ 不种 zoom
+    // 惯性,滚轮给出干脆的离散步进而不是甩飞。
+    const float scale =
+        static_cast<float>(std::exp(event.wheelDelta * wheelZoomLogStep_));
+    emitSyntheticPinch(event, Gesture::PinchStart, event.screenX,
+                       event.screenY, 1.0f,
+                       InputEvent::PinchMode::Manipulate);
+    emitSyntheticPinch(event, Gesture::PinchMove, event.screenX,
+                       event.screenY, scale,
+                       InputEvent::PinchMode::Manipulate);
+    emitSyntheticPinch(event, Gesture::PinchEnd, event.screenX,
+                       event.screenY, scale,
+                       InputEvent::PinchMode::Manipulate);
+}
+
+bool InputManager::processDesktopEvent(const InputEvent& event) {
+    if (event.type == InputEvent::Type::Wheel) {
+        handleWheel(event);
+        return true;
+    }
+    if (event.pointerType != InputEvent::PointerType::Mouse) {
+        return false;
+    }
+
+    if (event.type == InputEvent::Type::PointerDown) {
+        DesktopTrigger trigger = DesktopTrigger::LeftDrag;
+        if (event.buttons & kButtonMiddle) {
+            trigger = DesktopTrigger::MiddleDrag;
+        } else if (event.buttons & kButtonSecondary) {
+            trigger = DesktopTrigger::RightDrag;
+        } else if (!(event.buttons & kButtonPrimary)) {
+            return false;  // 没有已知按键:交给原路径
+        }
+        const DesktopAction action =
+            resolveDesktopAction(trigger, event.modifiers);
+        if (action == DesktopAction::AnchorDrag) {
+            return false;  // 走既有的单指锚点拖拽通道
+        }
+        if (action == DesktopAction::None) {
+            return true;   // 显式不响应:消费掉,不要漏到拖拽去
+        }
+        desktopSessionActive_ = true;
+        desktopAction_ = action;
+        desktopStartX_ = event.screenX;
+        desktopStartY_ = event.screenY;
+        suppressClick_ = true;
+        emitSyntheticPinch(
+            event, Gesture::PinchStart, event.screenX, event.screenY, 1.0f,
+            action == DesktopAction::Tilt ? InputEvent::PinchMode::Pitch
+                                          : InputEvent::PinchMode::Manipulate);
+        return true;
+    }
+
+    if (!desktopSessionActive_) {
+        return false;
+    }
+
+    if (event.type == InputEvent::Type::PointerMove) {
+        if (desktopAction_ == DesktopAction::Tilt) {
+            // 质心跟随光标 ⇒ 质心 Y 相对基线绝对映射 pitch,与双指 Pitch **逐字
+            // 同一段代码**。scale 恒 1(不缩放)。
+            emitSyntheticPinch(event, Gesture::PinchMove, event.screenX,
+                               event.screenY, 1.0f,
+                               InputEvent::PinchMode::Pitch);
+        } else {
+            // 右键竖拖 zoom:质心**钉在起手处**不跟光标——跟了就会触发 pin 的
+            // 横向世界运动(= 拖着地球跑),而右键拖的语义只有缩放。
+            const float dy = event.screenY - desktopStartY_;
+            const float scale = static_cast<float>(
+                std::exp(-dy * dragZoomLogStepPerPixel_));
+            emitSyntheticPinch(event, Gesture::PinchMove, desktopStartX_,
+                               desktopStartY_, scale,
+                               InputEvent::PinchMode::Manipulate);
+        }
+        return true;
+    }
+
+    if (event.type == InputEvent::Type::PointerUp) {
+        emitSyntheticPinch(event, Gesture::PinchEnd, desktopStartX_,
+                           desktopStartY_, 1.0f,
+                           desktopAction_ == DesktopAction::Tilt
+                               ? InputEvent::PinchMode::Pitch
+                               : InputEvent::PinchMode::Manipulate);
+        desktopSessionActive_ = false;
+        desktopAction_ = DesktopAction::None;
+        return true;
+    }
+    return false;
+}
 
 void InputManager::processPinchWithPointerPair(InputEvent& event) {
     PinchSession& s = pinchSession_;
@@ -95,7 +259,15 @@ void InputManager::process(const InputEvent& event) {
     if (!callback_) return;
 
     if (event.type == InputEvent::Type::Cancel) {
+        desktopSessionActive_ = false;
+        desktopAction_ = DesktopAction::None;
         cancelActiveGesture();
+        return;
+    }
+
+    // 桌面绑定优先:命中就整条消费,不再漏到触摸路径(否则中键拖会同时产出
+    // tilt 和 anchor drag)。
+    if (processDesktopEvent(event)) {
         return;
     }
 
@@ -210,6 +382,8 @@ void InputManager::reset() {
     suppressClick_ = false;
     lastClickTime_ = -1.0;
     pinchSession_ = PinchSession{};
+    desktopSessionActive_ = false;
+    desktopAction_ = DesktopAction::None;
 }
 
 void InputManager::finishPointerGesture(const InputEvent& event) {
