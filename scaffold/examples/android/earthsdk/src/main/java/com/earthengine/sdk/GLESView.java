@@ -297,6 +297,8 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     public static native void nativeResetNorthUp();
 
     // --- Debug panel native methods ---
+    // 逐帧诊断串:面板已不再显示它(30 行文本在手机上读不完,数字走 logcat),
+    // 保留接口供宿主按需取用。
     public native String nativeGetDiagnosticsString();
     public native void nativeAddDemoVectorLayer();
     public native void nativeResetCamera();
@@ -308,6 +310,10 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     // 低 AGL 贴地掠视（缙云山方向，动态 near 验收位姿）。
     public native void nativeTerrainGrazingView();
     public native void nativeSetGpuTerrain(boolean enabled);
+    // ⚠️ 两个开关的真值都在 native(引擎标志 / atomic),UI 不许自己存一份镜像:
+    // surface 重建会把引擎档位重置,Activity 重建会把 Java 字段重置,存两份必分叉。
+    public native boolean nativeGetGpuTerrain();
+    public native boolean nativeGetEditMode();
 
     // 矢量 P2 demo 编辑流(应用层最小实现:引擎只出 pick/snap/预览接口)。
     // EDIT 开启期间触摸走顶点拖拽编辑,相机手势被抑制。

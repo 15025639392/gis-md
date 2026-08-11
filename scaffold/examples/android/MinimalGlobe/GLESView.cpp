@@ -2410,6 +2410,30 @@ Java_com_earthengine_sdk_GLESView_nativeSetGpuTerrain(
     });
 }
 
+// ⚠️ 开关的**真值在引擎里**,不在 Java 字段里。surface 重建 = 引擎全重建,
+// 这个标志会回到默认 true;Activity 旋转重建则会把 Java 侧字段清回默认。
+// 两边各存一份必然静默分叉 ⇒ UI 每次显示前回读这里,不自己记。
+JNIEXPORT jboolean JNICALL
+Java_com_earthengine_sdk_GLESView_nativeGetGpuTerrain(
+    JNIEnv* /* env */, jobject /* this */) {
+    // 引擎未就绪时报默认值(Engine.h terrainGpuDisplacementEnabled_ = true),
+    // 与"重建后引擎实际处于什么档"一致。
+    auto on = std::make_shared<bool>(true);
+    gRenderThread.runSync(
+        [on]() {
+            if (gEngine) *on = gEngine->terrainGpuDisplacementEnabled();
+        },
+        std::chrono::milliseconds(100));
+    return *on ? JNI_TRUE : JNI_FALSE;
+}
+
+// 编辑模式的真值是这个 atomic(UI 线程写、两线程读),无需绕渲染线程。
+JNIEXPORT jboolean JNICALL
+Java_com_earthengine_sdk_GLESView_nativeGetEditMode(
+    JNIEnv* /* env */, jobject /* this */) {
+    return gEditMode.load(std::memory_order_relaxed) ? JNI_TRUE : JNI_FALSE;
+}
+
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeSetEditMode(
     JNIEnv* /* env */, jobject /* this */, jboolean enabled) {

@@ -7,8 +7,6 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
@@ -16,7 +14,6 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
-import android.widget.TextView;
 
 import com.earthengine.sdk.GLESView;
 
@@ -25,18 +22,18 @@ public class MainActivity extends Activity {
     private GLESView mGLView;
     private View mDebugPanel;
     private Button mDebugButton;
-    private TextView mDiagnosticsText;
     private Button mBtnAddVectorLayer;
     private Button mBtnResetCamera;
-    private boolean mGpuTerrainOn = true;
-    private boolean mEditModeOn = false;
-    private Handler mHandler;
+    // ⚠️ 开关不在 Java 侧存状态:真值在引擎/native,这里只留按钮引用用于回读刷文案。
+    // 曾经的 mGpuTerrainOn/mEditModeOn 是"同一事实两处各存一份",surface 重建或
+    // Activity 旋转重建后按钮文案会与引擎实际档位静默分叉。
+    private Button mBtnGpuTerrain;
+    private Button mBtnEdit;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         enterImmersiveMode();
-        mHandler = new Handler(Looper.getMainLooper());
 
         FrameLayout root = new FrameLayout(this);
 
@@ -70,21 +67,13 @@ public class MainActivity extends Activity {
         mDebugPanel.setVisibility(View.GONE);
         FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(220),
+                // 诊断文本没了 ⇒ 高度跟随内容,别再留一块空的黑框挡地球。
+                ViewGroup.LayoutParams.WRAP_CONTENT,
                 Gravity.BOTTOM);
         panelParams.setMargins(dp(8), 0, dp(8), dp(8));
         root.addView(mDebugPanel, panelParams);
 
         setContentView(root);
-
-        // Periodic diagnostics refresh
-        mHandler.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                refreshDiagnostics();
-                mHandler.postDelayed(this, 500);
-            }
-        }, 500);
     }
 
     private View createDebugPanel() {
@@ -93,18 +82,8 @@ public class MainActivity extends Activity {
         panel.setBackgroundColor(0xCC000000);
         panel.setPadding(dp(12), dp(10), dp(12), dp(10));
 
-        TextView title = new TextView(this);
-        title.setText("Debug");
-        title.setTextColor(Color.WHITE);
-        title.setTextSize(12);
-        panel.addView(title);
-
-        // Diagnostics（放到 action 按钮之后 addView，避免长诊断文本把按钮挤出屏幕）
-        mDiagnosticsText = new TextView(this);
-        mDiagnosticsText.setTextColor(0xFFE0E0E0);
-        mDiagnosticsText.setTextSize(9);
-        mDiagnosticsText.setIncludeFontPadding(false);
-        mDiagnosticsText.setPadding(0, dp(6), 0, dp(6));
+        // 逐帧诊断文本已移除:同样的数字每帧都进 logcat,而 30 行 9sp 塞进 220dp
+        // 高的框在手机上没人读得完,还挡着被诊断的画面本身。要看数字读 logcat。
 
         // Action buttons
         LinearLayout actions = new LinearLayout(this);
@@ -131,15 +110,14 @@ public class MainActivity extends Activity {
         actions.addView(btnHorizon);
 
         // 北极星 Phase 2c 地形 GPU 位移 A/B 开关(设备侧前后对比)。
-        Button btnGpuTerrain = new Button(this);
-        btnGpuTerrain.setText("GPU Terr: ON");
-        btnGpuTerrain.setTextSize(10);
-        btnGpuTerrain.setOnClickListener(v -> {
-            mGpuTerrainOn = !mGpuTerrainOn;
-            mGLView.nativeSetGpuTerrain(mGpuTerrainOn);
-            btnGpuTerrain.setText(mGpuTerrainOn ? "GPU Terr: ON" : "GPU Terr: OFF");
+        mBtnGpuTerrain = new Button(this);
+        mBtnGpuTerrain.setTextSize(10);
+        mBtnGpuTerrain.setOnClickListener(v -> {
+            // 先回读再取反:以引擎当前档位为准,而不是以上一次点击为准。
+            mGLView.nativeSetGpuTerrain(!mGLView.nativeGetGpuTerrain());
+            syncToggleLabels();
         });
-        actions.addView(btnGpuTerrain);
+        actions.addView(mBtnGpuTerrain);
 
         panel.addView(actions);
 
@@ -148,15 +126,13 @@ public class MainActivity extends Activity {
         editActions.setOrientation(LinearLayout.HORIZONTAL);
         editActions.setGravity(Gravity.START);
 
-        Button btnEdit = new Button(this);
-        btnEdit.setText("Edit: OFF");
-        btnEdit.setTextSize(10);
-        btnEdit.setOnClickListener(v -> {
-            mEditModeOn = !mEditModeOn;
-            mGLView.nativeSetEditMode(mEditModeOn);
-            btnEdit.setText(mEditModeOn ? "Edit: ON" : "Edit: OFF");
+        mBtnEdit = new Button(this);
+        mBtnEdit.setTextSize(10);
+        mBtnEdit.setOnClickListener(v -> {
+            mGLView.nativeSetEditMode(!mGLView.nativeGetEditMode());
+            syncToggleLabels();
         });
-        editActions.addView(btnEdit);
+        editActions.addView(mBtnEdit);
 
         Button btnUndo = new Button(this);
         btnUndo.setText("Undo");
@@ -165,7 +141,6 @@ public class MainActivity extends Activity {
         editActions.addView(btnUndo);
 
         panel.addView(editActions);
-        panel.addView(mDiagnosticsText);
 
         // Close button
         Button closeBtn = new Button(this);
@@ -267,16 +242,16 @@ public class MainActivity extends Activity {
             mDebugPanel.setVisibility(View.GONE);
         } else {
             mDebugPanel.setVisibility(View.VISIBLE);
-            refreshDiagnostics();
+            // 每次打开都回读:面板关着的这段时间里引擎可能已被重建(surface 重建)。
+            syncToggleLabels();
         }
     }
 
-    private void refreshDiagnostics() {
-        if (mDebugPanel.getVisibility() != View.VISIBLE) return;
-        String diag = mGLView.nativeGetDiagnosticsString();
-        if (diag != null && !diag.isEmpty()) {
-            mDiagnosticsText.setText(diag);
-        }
+    /** 把 toggle 按钮文案对齐 native 真值。唯一的写文案入口。 */
+    private void syncToggleLabels() {
+        mBtnGpuTerrain.setText(
+                mGLView.nativeGetGpuTerrain() ? "GPU Terr: ON" : "GPU Terr: OFF");
+        mBtnEdit.setText(mGLView.nativeGetEditMode() ? "Edit: ON" : "Edit: OFF");
     }
 
     // --- Actions (call through to GLESView native) ---
@@ -287,7 +262,10 @@ public class MainActivity extends Activity {
     protected void onPause() {
         super.onPause();
         mGLView.onPause();
-        mHandler.removeCallbacksAndMessages(null);
+        // 面板收起:回读只发生在"打开的那一刻",而离开前台期间 surface 可能被销毁
+        // 重建(引擎全重建,开关档位跟着回默认)。强制重新打开 ⇒ 必然重新回读,
+        // 不留"面板开着时状态在背后变了"的窗口。
+        mDebugPanel.setVisibility(View.GONE);
     }
 
     @Override
