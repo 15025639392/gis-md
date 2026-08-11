@@ -2228,6 +2228,36 @@ Java_com_earthengine_sdk_GLESView_nativeDebugFlyTo(
     });
 }
 
+// 阶段 5 的真实用途:可复现的**正俯视**位姿。掠视下的正交是退化用例
+// (正交盒半高远大于相机高度 ⇒ 下半部整个在地下 ⇒ 天空色),俯视才是正交要干的活。
+//
+// 走 setViewpoint 的「部分 viewpoint」语义,顺带在设备上验阶段 2 的**万向节约定**:
+// pitch 恰好 −π/2 是奇点(direction 沿天底,绕它转不改视线 ⇒ heading 只能由 up 定,
+// 约定 roll=0)。回读 currentViewpoint() 打出来,位姿往返在真机上也必须闭合。
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeDebugNadirView(
+    JNIEnv* /* env */, jobject /* this */) {
+    gRenderThread.post([]() {
+        if (!gEngine) return;
+        CameraSystem& cam = gEngine->cameraSystem();
+        Viewpoint vp;
+        vp.targetGeo = Cartographic::fromDegrees(106.508, 29.617, 0.0);
+        vp.rangeMeters = 20000.0;
+        vp.headingRadians = 0.0;
+        vp.pitchRadians = -M_PI / 2.0;   // 正俯视 = 万向节奇点
+        vp.rollRadians = 0.0;
+        cam.setViewpoint(vp);
+
+        const Viewpoint got = cam.currentViewpoint();
+        LOGI("StageNadir set h=%.4f p=%.4f r=%.4f camH=%.1f hasTarget=%d",
+             got.headingRadians ? *got.headingRadians : -99.0,
+             got.pitchRadians ? *got.pitchRadians : -99.0,
+             got.rollRadians ? *got.rollRadians : -99.0,
+             got.eyeGeo ? got.eyeGeo->height() : -1.0,
+             got.targetGeo ? 1 : 0);
+    });
+}
+
 // 阶段 4:切系留。第一次按 = 只接 originProvider(跟车但保持北上),
 // 第二次 = 加上 orientationProvider(座舱,roll 跟随载体),第三次 = 回 Free。
 // 机制信号 = localHPR/range 逐帧不变 + 相机到载体距离恒等于 range。

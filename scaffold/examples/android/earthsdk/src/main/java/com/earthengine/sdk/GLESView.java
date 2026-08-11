@@ -106,6 +106,13 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
         // 没有产品入口，不接出来就只能靠 host 判据。每个都配机制信号日志
         // （StageFlight / StageTether / StageOrtho）——画面"看着像对的"分不清
         // "真跑了"和"根本没走到那条路"。
+        // 数字键 0：可复现正俯视位姿。正交的真实用途是俯视——掠视下正交盒
+        // 下半部整个在地下，属退化用例。顺带验阶段 2 的万向节约定（pitch
+        // 恰好 −π/2 是奇点）。
+        if (keyCode == KeyEvent.KEYCODE_0) {
+            nativeDebugNadirView();
+            return true;
+        }
         if (keyCode == KeyEvent.KEYCODE_7) {
             nativeDebugFlyTo();                              // 阶段 3：飞到北京
             return true;
@@ -294,6 +301,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     public native void nativeAddDemoVectorLayer();
     public native void nativeResetCamera();
     public native void nativeGrazingView();
+    public native void nativeDebugNadirView();
     public native void nativeDebugFlyTo();
     public native void nativeDebugTether();
     public native void nativeDebugToggleOrtho(int width, int height);
