@@ -134,6 +134,7 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/camera/CameraSystem.h
     earth_engine/camera/CameraConstraintSolver.cpp
+    earth_engine/camera/CameraPose.cpp
     earth_engine/camera/CameraPoseOps.cpp
     earth_engine/camera/controllers/FreeGlobeController.cpp
     earth_engine/camera/CameraControllerSelector.cpp

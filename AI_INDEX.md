@@ -2008,15 +2008,17 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 |---|---|---|
 | `syncFrameBeforeGesture` | .cpp:70 | 手势起手帧的同步帧(= `update(0.0)`)。dt=0 ⇒ 操控器 `tick` 全程空转,故它等价于 `beginFrame + resolveAtFrameEnd`,**与手势自身的状态重置无先后依赖**——这正是它能从操控器内部提到转发层的原因 |
 | `onPinchGesture`(适配器) | .cpp:95 | ⚠️`scale<=0` 的早退在两侧各判一次:这里判是为了不给非法事件跑同步帧(旧实现里那一帧发生在适配器早退之后) |
-| `update` | .cpp:145 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
-| `updateInternal` | .cpp:153 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
-| `resolveAtFrameEnd` | .cpp:180 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
-| `commitResolvedPose` | .cpp:203 | 指纹 + solver 扫掠基准,同源同时机 |
-| `distance` / `rotation` | .cpp:237 / :241 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
-| `setNadirOrbitView` | .cpp:250 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
-| `viewDistance` | .cpp:271 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
-| `headingFromFrame` (anon) | .cpp:302 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
-| `resetNorthUp` | .cpp:340 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
+| `update` | .cpp:258 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
+| `updateInternal` | .cpp:266 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
+| `resolveAtFrameEnd` | .cpp:293 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
+| `commitResolvedPose` | .cpp:316 | 指纹 + solver 扫掠基准,同源同时机 |
+| `setViewpoint` | .cpp:176 | 「部分 viewpoint」写入。参考系原点**四级回退**:tether → `eyeGeo` → `targetGeo` → 当前 eye;最后一档不是兜底而是语义(纯朝向写入 ⇒ range=0 ⇒ 绕相机自身原地转 = `resetNorthUp`)。⚠️不立刻钳位,交帧末哨兵——往返恒等判据成立的前提 |
+| `currentViewpoint` | .cpp:243 | 反解(世界系)。`eyeGeo`/hpr **恒可解**(hpr 取相机自身位置的 ENU,与 `headingRadians()` 同源);`targetGeo`/`rangeMeters` 需视线∩**椭球**,不交时留 `nullopt`——不伪造地平线外的假焦点 |
+| `distance` / `rotation` | .cpp:350 / :354 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
+| `setNadirOrbitView` | .cpp:363 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
+| `viewDistance` | .cpp:384 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
+| `headingFromFrame` (anon) | .cpp:415 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
+| `resetNorthUp` | .cpp:453 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
 
 ⚠️ **三档惯性清零是现状不是设计**:`viewDistance`/`setNadirOrbitView` 调
 `clearPanInertia`、`resetNorthUp` 调 `clearGlideInertia`、冻结/脚本平移调
@@ -2041,6 +2043,37 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 不同(Free 吃触摸、桌面吃滚轮/中键、Flight 根本不吃)。⇒ **输入路由到具体类型**,靠
 `CameraControllerSelector::activeAs<T>()`(Skybolt 自己也是这么逃生的
 `getControllerOfType<T>()`)。别再往接口里加 `onGesture`。
+
+### camera/CameraPose.h / .cpp
+
+位姿值类型 + 与 (heading, pitch, roll, range) 的互转(.h 57 行 / .cpp 101 行)。纯数学,
+不认识相机对象/地形/手势。`CameraSystem` 的 viewpoint 接口用它,阶段 4 的
+`TetheredController` 也用它把载体系下的 localHPR 换成世界位姿。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `enuFrameAt` | .cpp:24 | 某 ECEF 点的局部 ENU 基(三列 = east/north/up)。⚠️**极点退化时 east 回退 (1,0,0),故意与 `Transforms::eastNorthUpToFixedFrame` 不同**(那份取 (0,1,0))——`headingFromFrame` 从上线起就用 (1,0,0),换约定会让已上线的指北针读数在极点静默改变含义。极点外两者完全等价(`cross(z,up) ≡ normalize(-y,x,0)`) |
+| `fromFrame` | .cpp:35 | 参考系内的内旋 yaw→pitch→roll。yaw 绕 up 转 **−heading**(顺时针为正的代价),pitch 绕 east 转 +p。`eye = origin − direction·range` |
+| `toFrame` | .cpp:61 | 反解。⚠️**万向节**:\|pitch\|→π/2 时 direction 不再携带 heading(绕天顶转不改视线),改用 `up` 的水平分量定 heading 并令 roll=0——与 `headingFromFrame` 近正俯视的兜底同源。那里 (heading, roll) 本就只有**和**可观测,任何分解都得挑一个;挑 roll=0 让「正俯视 + 转指北针」这条主路径往返恒等 |
+
+判据(`tests/unit/camera/test_camera_viewpoint.cpp`):万向节区**位姿**往返恒等(不是字段
+恒等——分解不唯一但位姿必须唯一);ENU 基右手正交(east×north=up,反了则 heading 旋向
+整体镜像而静止画面看不出来);heading=0 指北、+90° 指东。
+
+### camera/Viewpoint.h
+
+接口层视角表述(66 行,抄 osgEarth `Viewpoint` 的 optional 语义)。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `ViewpointFrame` | .h:21 | 参考系。两个 provider 都空 = 世界系。**用 provider 回调不用 4×4 矩阵**:表达力等价,但矩阵会诱使 `Camera` 持有它(Cesium `camera.transform` 那条路)→ 全局 local/WC 二义(cesium-native `adjustHeightForTerrain` 里就有丑陋的 save/restore)。provider 把参考系关在控制器内部,solver/渲染/拾取全部无感 |
+| `originProvider` 返回 false | .h:23 | 目标暂不可用(载体没生成/已销毁)⇒ **保持当前位姿,不回落世界系**(那会是一次瞬移) |
+| 各字段 `optional` | .h:51 | 「部分 viewpoint」语义:只写想改的,其余保持当前。全设计性价比最高的一处 |
+| `eyeGeo` vs `targetGeo` | .h:49 | **二选一**;真同时给出时 **eyeGeo 胜**——它是 `currentViewpoint()` 的规范输出形式,这条 tie-break 正是往返恒等的前提(反过来会把按 eye 的 ENU 报出的 hpr 按焦点的 ENU 重新解释 = 静默朝向偏移) |
+| `rangeMeters` | .h:54 | ⚠️**无焦点时被忽略**(纯朝向写入 / `eyeGeo` 已直接给位置):它描述的是到焦点的距离。照用 `currentViewpoint()` 顺带报出的"到射线命中点距离"就成了"沿视线后退这么多",往返即失恒等 |
+
+⚠️ hpr 定义在**参考系原点**的局部系里,同一组 hpr 配不同原点是不同位姿(ENU 基底在球面上
+逐点转动)。这是本设计最容易踩的一条。
 
 ### camera/CameraControllerSelector.h / .cpp
 

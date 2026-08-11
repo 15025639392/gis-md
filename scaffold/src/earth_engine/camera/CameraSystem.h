@@ -3,6 +3,8 @@
 #include "../core/math/Vec3.h"
 #include "CameraConstraintSolver.h"
 #include "CameraControllerSelector.h"
+#include "CameraPose.h"
+#include "Viewpoint.h"
 #include "controllers/FreeGlobeController.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -112,6 +114,33 @@ public:
     // 它是「缺 viewpoint API 时代」的位姿设定替代品，已整体删除：双表示不仅
     // 是冗余，还直接产出过「双击天空 → setDistance → 翻 orbit → 下一帧重建
     // 强制看向地心 → 丢弃全部 tilt」的视角瞬移。
+
+    // ---- Viewpoint 接口（阶段 2）----
+
+    /// 按「部分 viewpoint」语义设定视角:只写 `vp` 里给出的字段,其余保持当前。
+    ///
+    /// 参考系原点三级回退:tether 原点 → `targetGeo` → `eyeGeo` → **当前 eye**。
+    /// 最后那一档让 `{.headingRadians=0}` 这类纯朝向写入自然退化成「绕相机自身
+    /// 竖轴原地转」(range=0 ⇒ eye 不动),与 `resetNorthUp` 同语义。
+    ///
+    /// ⚠️ 本函数**不立刻钳位**,与 `viewDistance`/`setNadirOrbitView` 一致:碰撞
+    /// 解算由下一次 `update()` 的帧末哨兵收编(它正是为「绕过控制器的裸写」而设)。
+    /// 因而紧跟其后的 `currentViewpoint()` 读到的是未钳位位姿——往返恒等判据成立
+    /// 的前提就是这个。
+    void setViewpoint(const Viewpoint& vp);
+
+    /// 反解当前视角(世界系)。
+    ///
+    /// - `eyeGeo` / `headingRadians` / `pitchRadians` / `rollRadians` **恒可解**,
+    ///   hpr 取**相机自身位置**的 ENU 为参考系(与 `headingRadians()` 同源);
+    /// - `targetGeo` / `rangeMeters` 需视线与**椭球**求交,不交(看天/掠过地平线)
+    ///   时返回 `nullopt` —— 诚实表达"当前没有焦点",不伪造一个地平线外的假焦点。
+    ///   ⚠️ 是椭球不是地形:地形求交要走拾取链路,那是控制器侧的能力。
+    ///
+    /// **往返判据是位姿恒等而非字段恒等**:`setViewpoint(currentViewpoint())` 后
+    /// 位姿逐位不变。字段级恒等只对 `eyeGeo` 形式成立——`targetGeo` 形式下 hpr
+    /// 定义在焦点的 ENU 里,而本函数按 eye 的 ENU 报,两者在球面上本就不同。
+    Viewpoint currentViewpoint() const;
 
     /// 相机地心距（地球半径单位）。**纯派生只读视图**（= |eye|/R），不是状态。
     /// 过渡接口：阶段 2b 引入 `currentViewpoint()` 后退役。

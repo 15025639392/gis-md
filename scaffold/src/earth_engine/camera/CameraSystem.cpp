@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <memory>
+#include <optional>
 #include <utility>
 
 namespace earth_engine {
@@ -136,6 +137,118 @@ bool CameraSystem::selectController(const std::string& name) {
 
 const std::string& CameraSystem::activeControllerName() const {
     return selector_.activeName();
+}
+
+// ============================================================
+// Viewpoint 接口
+// ============================================================
+
+void CameraSystem::setViewpoint(const Viewpoint& vp) {
+    const auto& ellipsoid = Ellipsoid::WGS84();
+
+    // ① 参考系原点:tether → targetGeo → eyeGeo → 当前 eye。
+    //    最后一档不是兜底而是语义:纯朝向写入 ⇒ range=0 ⇒ 绕相机自身原地转。
+    // ⚠️ `eyeGeo` 与 `targetGeo` 是**二选一**(文档 §4.2)。同时给出时 **eyeGeo 胜**:
+    //    它是 `currentViewpoint()` 的规范输出形式,让往返成为恒等;而反过来(让
+    //    targetGeo 胜)会把按 eye 的 ENU 报出的 hpr 按焦点的 ENU 重新解释——ENU 基底
+    //    在球面上逐点转动,那是一次静默的朝向偏移。
+    glm::dvec3 origin = camera_->position().raw();
+    // 原点是否就是"相机自己所在处"。是 ⇒ range 缺省为 0 ⇒ 纯朝向写入绕自身原地转。
+    bool originIsEye = true;
+    if (vp.frame.originProvider) {
+        glm::dvec3 tetherOrigin{0.0};
+        // 返回 false = 目标暂不可用(载体还没生成/已销毁):保持当前位姿,
+        // **不回落世界系**——那会是一次瞬移。
+        if (!vp.frame.originProvider(tetherOrigin)) {
+            return;
+        }
+        origin = tetherOrigin;
+        originIsEye = false;
+    } else if (vp.eyeGeo) {
+        origin = ellipsoid.cartographicToCartesian(*vp.eyeGeo).raw();
+    } else if (vp.targetGeo) {
+        origin = ellipsoid.cartographicToCartesian(*vp.targetGeo).raw();
+        originIsEye = false;
+    }
+
+    // ② 参考系姿态:orientationProvider 给了就用载体机体系,否则原点处 ENU。
+    glm::dmat3 frame = CameraPose::enuFrameAt(origin);
+    if (vp.frame.orientationProvider) {
+        glm::dmat3 provided{1.0};
+        if (vp.frame.orientationProvider(provided)) {
+            frame = provided;
+        }
+    }
+
+    // ③ 当前位姿在该参考系里的读数 —— 这就是所有 optional 字段的缺省值来源。
+    CameraPose pose;
+    pose.eye = camera_->position().raw();
+    pose.direction = camera_->direction().raw();
+    pose.up = camera_->up().raw();
+
+    double heading = 0.0;
+    double pitch = 0.0;
+    double roll = 0.0;
+    double range = 0.0;
+    pose.toFrame(origin, frame, heading, pitch, roll, range);
+
+    // ④ 覆盖给出的字段。
+    //    range:给了就用;没给且原点就是相机自己(纯朝向写入)则恒为 0;
+    //    否则保持当前距离(= viewDistance 缺省 range 的语义)。
+    if (vp.headingRadians) heading = *vp.headingRadians;
+    if (vp.pitchRadians) pitch = *vp.pitchRadians;
+    if (vp.rollRadians) roll = *vp.rollRadians;
+    if (originIsEye) {
+        // `rangeMeters` 描述的是**到焦点的距离**。没有焦点(纯朝向写入 / eyeGeo
+        // 直接给了相机位置)时它没有意义,**必须忽略而不是照用** —— 否则
+        // `currentViewpoint()` 顺带报出的那个"到射线命中点的距离"会被当成
+        // "沿视线后退这么多",往返就不再是恒等。
+        range = 0.0;
+    } else if (vp.rangeMeters) {
+        range = *vp.rangeMeters;
+    }
+    // 否则(有焦点/tether 原点而未给 range):保持当前距离,= viewDistance 缺省语义。
+
+    const CameraPose next =
+        CameraPose::fromFrame(origin, frame, heading, pitch, roll, range);
+    camera_->setView(Vec3(next.eye), Vec3(next.direction), Vec3(next.up));
+    // 钳位交给帧末哨兵(见头文件说明)。惯性清零与 viewDistance 同档:调用方显式
+    // 重置了视角,残留角速度再滑行会像无因漂移。
+    freeGlobe_->clearPanInertia();
+}
+
+Viewpoint CameraSystem::currentViewpoint() const {
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const glm::dvec3 eye = camera_->position().raw();
+
+    CameraPose pose;
+    pose.eye = eye;
+    pose.direction = camera_->direction().raw();
+    pose.up = camera_->up().raw();
+
+    Viewpoint vp;
+    vp.eyeGeo = ellipsoid.cartesianToCartographic(Vec3(eye));
+
+    // hpr 以相机自身位置的 ENU 为参考系(与 headingRadians()/pitchRadians() 同源)。
+    // 原点取 eye ⇒ range 恒为 0,这里不用它。
+    double heading = 0.0;
+    double pitch = 0.0;
+    double roll = 0.0;
+    double unusedRange = 0.0;
+    pose.toFrame(eye, CameraPose::enuFrameAt(eye), heading, pitch, roll,
+                 unusedRange);
+    vp.headingRadians = heading;
+    vp.pitchRadians = pitch;
+    vp.rollRadians = roll;
+
+    // 焦点:视线 ∩ 椭球。不交时留 nullopt —— 不伪造地平线外的假焦点。
+    const std::optional<Vec3> hit =
+        ellipsoid.rayIntersection(Vec3(eye), camera_->direction());
+    if (hit) {
+        vp.targetGeo = ellipsoid.cartesianToCartographic(*hit);
+        vp.rangeMeters = glm::length(hit->raw() - eye);
+    }
+    return vp;
 }
 
 // ============================================================
