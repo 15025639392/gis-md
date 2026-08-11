@@ -9,6 +9,7 @@
 #include <glm/gtc/constants.hpp>
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <utility>
 
 namespace earth_engine {
@@ -25,7 +26,13 @@ constexpr double kMaxDistanceEarthRadii =
 } // namespace
 
 CameraSystem::CameraSystem(Camera* camera)
-    : camera_(camera), manipulator_(camera, &constraintSolver_) {
+    : camera_(camera) {
+    // 注册控制器族。首个注册者自动成为活动控制器,不留半初始化窗口。
+    auto freeGlobe =
+        std::make_unique<FreeGlobeController>(camera, &constraintSolver_);
+    freeGlobe_ = freeGlobe.get();
+    selector_.add(kFreeGlobeController, std::move(freeGlobe));
+
     // Default to Chongqing area for testing
     const auto& e = Ellipsoid::WGS84();
     auto target = e.cartographicToCartesian(
@@ -36,11 +43,12 @@ CameraSystem::CameraSystem(Camera* camera)
 }
 
 void CameraSystem::setViewport(int widthPixels, int heightPixels) {
-    manipulator_.setViewport(widthPixels, heightPixels);
+    // 广播:未激活的控制器也要保持正确,否则接管瞬间用错像素→角度增益。
+    selector_.setViewport(widthPixels, heightPixels);
 }
 
 void CameraSystem::setSurfacePicker(SurfacePicker picker) {
-    manipulator_.setSurfacePicker(std::move(picker));
+    freeGlobe_->setSurfacePicker(std::move(picker));
 }
 
 void CameraSystem::setTerrainHeightFunc(TerrainHeightFunc func) {
@@ -65,24 +73,32 @@ void CameraSystem::syncFrameBeforeGesture() {
 
 void CameraSystem::onDragStart(float xPixels, float yPixels,
                                    double timestamp) {
+    auto* c = selector_.activeAs<FreeGlobeController>();
+    if (!c) return;  // 非 Free 控制器在驱动(如飞行中):触摸事件丢弃
     syncFrameBeforeGesture();
-    manipulator_.onDragStart(xPixels, yPixels, timestamp);
+    c->onDragStart(xPixels, yPixels, timestamp);
 }
 
 void CameraSystem::onDragMove(float xPixels, float yPixels,
                                   double timestamp) {
-    manipulator_.onDragMove(xPixels, yPixels, timestamp);
+    if (auto* c = selector_.activeAs<FreeGlobeController>()) {
+        c->onDragMove(xPixels, yPixels, timestamp);
+    }
 }
 
 void CameraSystem::onDragEnd() {
-    manipulator_.onDragEnd();
+    if (auto* c = selector_.activeAs<FreeGlobeController>()) {
+        c->onDragEnd();
+    }
 }
 
 void CameraSystem::onPinchGesture(const PinchInput& input) {
-    if (!manipulator_.pinching()) {
+    auto* c = selector_.activeAs<FreeGlobeController>();
+    if (!c) return;
+    if (!c->pinching()) {
         syncFrameBeforeGesture();
     }
-    manipulator_.onPinchGesture(input);
+    c->onPinchGesture(input);
 }
 
 void CameraSystem::onPinchGesture(float scale,
@@ -95,19 +111,31 @@ void CameraSystem::onPinchGesture(float scale,
     // 非法 spread 在操控器侧同样早退；这里先判一次是为了不给它跑同步帧
     // （旧实现里那一帧发生在适配器的早退之后）。
     if (scale <= 0.0f) return;
-    if (!manipulator_.pinching()) {
+    auto* c = selector_.activeAs<FreeGlobeController>();
+    if (!c) return;
+    if (!c->pinching()) {
         syncFrameBeforeGesture();
     }
-    manipulator_.onPinchGesture(scale, centerX, centerY, rotationRadians,
-                                centerDeltaX, centerDeltaY, timestamp);
+    c->onPinchGesture(scale, centerX, centerY, rotationRadians,
+                      centerDeltaX, centerDeltaY, timestamp);
 }
 
 void CameraSystem::onPinchEnd() {
-    manipulator_.onPinchEnd();
+    if (auto* c = selector_.activeAs<FreeGlobeController>()) {
+        c->onPinchEnd();
+    }
 }
 
 bool CameraSystem::debugAnchorWorld(Vec3& outWorld) const {
-    return manipulator_.debugAnchorWorld(outWorld);
+    return freeGlobe_->debugAnchorWorld(outWorld);
+}
+
+bool CameraSystem::selectController(const std::string& name) {
+    return selector_.select(name);
+}
+
+const std::string& CameraSystem::activeControllerName() const {
+    return selector_.activeName();
 }
 
 // ============================================================
@@ -144,7 +172,9 @@ void CameraSystem::updateInternal(double deltaSeconds) {
         return;
     }
 
-    manipulator_.tick(deltaSeconds);
+    if (ICameraController* active = selector_.active()) {
+        active->tick(deltaSeconds);
+    }
 }
 
 bool CameraSystem::resolveAtFrameEnd(double deltaSeconds) {
@@ -183,7 +213,7 @@ void CameraSystem::setMeasurementFreeze(bool frozen) {
     measurementFreeze_ = frozen;
     if (frozen) {
         // 冻结瞬间清零所有惯性，避免残留速度在解冻前被"锁"进状态。
-        manipulator_.clearAllInertia();
+        freeGlobe_->clearAllInertia();
     }
 }
 
@@ -196,7 +226,7 @@ void CameraSystem::setScriptedPan(bool active, int startFrame, int frames,
     scriptedPanFrame_ = 0;
     if (active) {
         // 启动瞬间清零惯性,避免残留速度叠加进脚本轨迹(破坏确定性)。
-        manipulator_.clearAllInertia();
+        freeGlobe_->clearAllInertia();
     }
 }
 
@@ -235,7 +265,7 @@ void CameraSystem::setNadirOrbitView(const Vec3& targetEcef,
     const double targetRadius = std::sqrt(targetEcef.dot(targetEcef));
     const glm::dvec3 eye = upG * (targetRadius + heightMeters);
     camera_->lookAt(Vec3(eye), Vec3::zero(), Vec3(northG));
-    manipulator_.clearPanInertia();
+    freeGlobe_->clearPanInertia();
 }
 
 void CameraSystem::viewDistance(const Vec3& targetWorld, double distanceMeters) {
@@ -255,7 +285,7 @@ void CameraSystem::viewDistance(const Vec3& targetWorld, double distanceMeters) 
 
     const glm::dvec3 eye = targetWorld.raw() + glm::normalize(away) * clampedDistance;
     camera_->lookAt(Vec3(eye), targetWorld, camera_->up());
-    manipulator_.clearPanInertia();
+    freeGlobe_->clearPanInertia();
 }
 
 void CameraSystem::applyRotationAroundAxis(const glm::dvec3& axis, double angle) {
@@ -309,7 +339,7 @@ double CameraSystem::pitchRadians() const {
 
 void CameraSystem::resetNorthUp() {
     update(0.0);
-    manipulator_.clearGlideInertia();
+    freeGlobe_->clearGlideInertia();
 
     double heading = headingRadians();
     if (heading > glm::pi<double>()) heading -= 2.0 * glm::pi<double>();  // 走最短

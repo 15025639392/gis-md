@@ -806,6 +806,12 @@ add_executable(test_camera_system
 target_link_libraries(test_camera_system PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_camera_system COMMAND test_camera_system)
 
+add_executable(test_camera_controller_selector
+    unit/camera/test_camera_controller_selector.cpp
+)
+target_link_libraries(test_camera_controller_selector PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_camera_controller_selector COMMAND test_camera_controller_selector)
+
 add_executable(test_camera_pose_trace
     unit/camera/test_camera_pose_trace.cpp
 )

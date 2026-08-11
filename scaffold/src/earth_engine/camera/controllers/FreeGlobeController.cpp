@@ -1,12 +1,12 @@
-#include "GlobeGestureManipulator.h"
+#include "FreeGlobeController.h"
 
-#include "CameraConstraintSolver.h"
-#include "CameraPoseOps.h"
-#include "../core/geodesy/Cartographic.h"
-#include "../core/geodesy/Ellipsoid.h"
-#include "../core/math/Ray.h"
-#include "../debug/PlatformLog.h"
-#include "../scene/Camera.h"
+#include "../CameraConstraintSolver.h"
+#include "../CameraPoseOps.h"
+#include "../../core/geodesy/Cartographic.h"
+#include "../../core/geodesy/Ellipsoid.h"
+#include "../../core/math/Ray.h"
+#include "../../debug/PlatformLog.h"
+#include "../../scene/Camera.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -81,20 +81,20 @@ constexpr double kRecenterSettleRatePerSecond = 6.0;  // 松手后 θ 指数收�
 
 } // namespace
 
-GlobeGestureManipulator::GlobeGestureManipulator(Camera* camera,
+FreeGlobeController::FreeGlobeController(Camera* camera,
                                                  CameraConstraintSolver* solver)
     : camera_(camera), solver_(solver) {}
 
-void GlobeGestureManipulator::setViewport(int widthPixels, int heightPixels) {
+void FreeGlobeController::setViewport(int widthPixels, int heightPixels) {
     viewportWidth_ = std::max(1, widthPixels);
     viewportHeight_ = std::max(1, heightPixels);
 }
 
-void GlobeGestureManipulator::setSurfacePicker(SurfacePicker picker) {
+void FreeGlobeController::setSurfacePicker(SurfacePicker picker) {
     surfacePicker_ = std::move(picker);
 }
 
-void GlobeGestureManipulator::onDragStart(float xPixels, float yPixels,
+void FreeGlobeController::onDragStart(float xPixels, float yPixels,
                                           double timestamp) {
     // 抓取起始地表点；miss（按在地平线外/空白处）不再放弃整段拖拽，
     // 而是进入 spin 回退。grabSurfacePoint 内部已设置 hasGrabbedPoint_。
@@ -112,7 +112,7 @@ void GlobeGestureManipulator::onDragStart(float xPixels, float yPixels,
     lastDragTimestamp_ = timestamp;
 }
 
-void GlobeGestureManipulator::onDragMove(float xPixels, float yPixels,
+void FreeGlobeController::onDragMove(float xPixels, float yPixels,
                                          double timestamp) {
     if (!dragging_) return;
 
@@ -122,14 +122,14 @@ void GlobeGestureManipulator::onDragMove(float xPixels, float yPixels,
     dragLastY_ = yPixels;
 }
 
-void GlobeGestureManipulator::onDragEnd() {
+void FreeGlobeController::onDragEnd() {
     if (!dragging_) return;
     dragging_ = false;
     hasGrabbedPoint_ = false;
     // 惯性参数由最后一次 applyAnchorDrag 设置
 }
 
-void GlobeGestureManipulator::onPinchGesture(float scale,
+void FreeGlobeController::onPinchGesture(float scale,
                                              float centerX,
                                              float centerY,
                                              float rotationRadians,
@@ -158,7 +158,7 @@ void GlobeGestureManipulator::onPinchGesture(float scale,
     onPinchGesture(input);
 }
 
-void GlobeGestureManipulator::onPinchGesture(const PinchInput& input) {
+void FreeGlobeController::onPinchGesture(const PinchInput& input) {
     // Pinch starts/updates interrupt drag inertia; mixed inertias feel unstable.
     inertiaAngularVelocity_ = 0.0;
     dragging_ = false;
@@ -362,7 +362,7 @@ void GlobeGestureManipulator::onPinchGesture(const PinchInput& input) {
     lastPinchTimestamp_ = input.timestamp;
 }
 
-void GlobeGestureManipulator::onPinchEnd() {
+void FreeGlobeController::onPinchEnd() {
     pinching_ = false;
     adapterScaleLog_ = 0.0;
     adapterTwistRadians_ = 0.0;
@@ -383,7 +383,23 @@ void GlobeGestureManipulator::onPinchEnd() {
     hasPinchAnchor_ = false;
 }
 
-void GlobeGestureManipulator::tick(double deltaSeconds) {
+void FreeGlobeController::onActivate() {
+    // 本控制器无需从位姿反解任何东西(位姿是唯一真值),对齐 = 清空手势期瞬时量。
+    dragging_ = false;
+    hasGrabbedPoint_ = false;
+    pinching_ = false;
+    hasPinchAnchor_ = false;
+    adapterScaleLog_ = 0.0;
+    adapterTwistRadians_ = 0.0;
+    pinchPanAngularVelocity_ = 0.0;
+    clearAllInertia();
+}
+
+void FreeGlobeController::onDeactivate() {
+    onActivate();  // 同一套清理:瞬时量不跨控制器存活
+}
+
+void FreeGlobeController::tick(double deltaSeconds) {
     // Flick inertia is velocity-based only: the released angular velocity
     // (rad/s, dt-scaled and exponentially damped below) continues the pan.
     // The previous quaternion "touch inertia" re-applied ~s^3 of the LAST
@@ -442,22 +458,22 @@ void GlobeGestureManipulator::tick(double deltaSeconds) {
     }
 }
 
-void GlobeGestureManipulator::clearPanInertia() {
+void FreeGlobeController::clearPanInertia() {
     inertiaAngularVelocity_ = 0.0;
 }
 
-void GlobeGestureManipulator::clearGlideInertia() {
+void FreeGlobeController::clearGlideInertia() {
     clearPanInertia();
     hasZoomInertia_ = false;
     zoomInertiaLogRate_ = 0.0;
 }
 
-void GlobeGestureManipulator::clearAllInertia() {
+void FreeGlobeController::clearAllInertia() {
     clearGlideInertia();
     recenterBudgetRadians_ = 0.0;
 }
 
-bool GlobeGestureManipulator::clampNow(const glm::dvec3* pinnedAnchorWorld) {
+bool FreeGlobeController::clampNow(const glm::dvec3* pinnedAnchorWorld) {
     // 手势/惯性路径：调用方刚刚显式动过相机，所以恒是 user-driven（突变滤波
     // 立即生效），也没有帧间隔可言（dt=0，数据驱动的指数衰减不参与）。
     // 与帧末哨兵是两条性质不同的路径，别再合并回一个带 source 枚举的函数。
@@ -472,7 +488,7 @@ bool GlobeGestureManipulator::clampNow(const glm::dvec3* pinnedAnchorWorld) {
     return changed;
 }
 
-bool GlobeGestureManipulator::rotateCameraVerticalAroundPoint(
+bool FreeGlobeController::rotateCameraVerticalAroundPoint(
     const glm::dvec3& center, double angle, double minSlope) {
     const glm::dvec3 axis = camera_->right().raw();
     if (glm::length(axis) < 1e-10 || std::abs(angle) < 1e-12) {
@@ -532,7 +548,7 @@ bool GlobeGestureManipulator::rotateCameraVerticalAroundPoint(
     return true;
 }
 
-void GlobeGestureManipulator::accrueRecenterBudget(double zoomOutLogStep) {
+void FreeGlobeController::accrueRecenterBudget(double zoomOutLogStep) {
     if (zoomOutLogStep <= 0.0) return;
 
     const glm::dvec3 eye = camera_->position().raw();
@@ -557,7 +573,7 @@ void GlobeGestureManipulator::accrueRecenterBudget(double zoomOutLogStep) {
     recenterBudgetRadians_ = std::min(recenterBudgetRadians_, theta);
 }
 
-void GlobeGestureManipulator::consumeRecenterBudget(double deltaSeconds) {
+void FreeGlobeController::consumeRecenterBudget(double deltaSeconds) {
     if (recenterBudgetRadians_ <= 1e-9 || deltaSeconds <= 0.0) {
         return;
     }
@@ -593,7 +609,7 @@ void GlobeGestureManipulator::consumeRecenterBudget(double deltaSeconds) {
     }
 }
 
-bool GlobeGestureManipulator::debugAnchorWorld(Vec3& outWorld) const {
+bool FreeGlobeController::debugAnchorWorld(Vec3& outWorld) const {
     if (pinching_ && hasPinchAnchor_) {
         outWorld = Vec3(pinchAnchorNormal_.raw() * grabbedRadiusMeters_);
         return true;
@@ -605,8 +621,8 @@ bool GlobeGestureManipulator::debugAnchorWorld(Vec3& outWorld) const {
     return false;
 }
 
-GlobeGestureManipulator::AnchorSolveResult
-GlobeGestureManipulator::solveAnchorRotation(const Vec3& anchorNormal,
+FreeGlobeController::AnchorSolveResult
+FreeGlobeController::solveAnchorRotation(const Vec3& anchorNormal,
                                              float xPixels,
                                              float yPixels) const {
     AnchorSolveResult result;
@@ -639,12 +655,12 @@ GlobeGestureManipulator::solveAnchorRotation(const Vec3& anchorNormal,
     return result;
 }
 
-bool GlobeGestureManipulator::intersectGrabSphere(const Ray& ray,
+bool FreeGlobeController::intersectGrabSphere(const Ray& ray,
                                                   Vec3& outPoint) const {
     return intersectSphere(ray, grabbedRadiusMeters_, outPoint);
 }
 
-bool GlobeGestureManipulator::pointOnGrabSphere(const Ray& ray,
+bool FreeGlobeController::pointOnGrabSphere(const Ray& ray,
                                                 Vec3& outPoint,
                                                 bool& outTrueHit) const {
     if (intersectGrabSphere(ray, outPoint)) {
@@ -669,7 +685,7 @@ bool GlobeGestureManipulator::pointOnGrabSphere(const Ray& ray,
     return true;
 }
 
-glm::dquat GlobeGestureManipulator::turntableDeltaFromPixels(double dx,
+glm::dquat FreeGlobeController::turntableDeltaFromPixels(double dx,
                                                              double dy) const {
     // 屏幕中心处每像素约对应的角度，给出接近 1:1 的转台手感。
     // 水平/垂直每像素角度相同（aspect 抵消），故统一用 fov/height。
@@ -685,14 +701,14 @@ glm::dquat GlobeGestureManipulator::turntableDeltaFromPixels(double dx,
     return glm::normalize(yaw * pitch);
 }
 
-glm::dquat GlobeGestureManipulator::spinTurntableDelta(float xPixels,
+glm::dquat FreeGlobeController::spinTurntableDelta(float xPixels,
                                                        float yPixels) const {
     return turntableDeltaFromPixels(
         static_cast<double>(xPixels) - dragLastX_,
         static_cast<double>(yPixels) - dragLastY_);
 }
 
-bool GlobeGestureManipulator::tryAcquirePinchAnchor(float xPixels,
+bool FreeGlobeController::tryAcquirePinchAnchor(float xPixels,
                                                     float yPixels) {
     grabbedRadiusMeters_ = kEarthRadiusMeters;
     Vec3 picked;
@@ -723,7 +739,7 @@ bool GlobeGestureManipulator::tryAcquirePinchAnchor(float xPixels,
     return true;
 }
 
-glm::dquat GlobeGestureManipulator::applyPinchPin(float targetX,
+glm::dquat FreeGlobeController::applyPinchPin(float targetX,
                                                   float targetY) {
     const glm::dquat kIdentity{1.0, 0.0, 0.0, 0.0};
     const AnchorSolveResult solve =
@@ -778,7 +794,7 @@ glm::dquat GlobeGestureManipulator::applyPinchPin(float targetX,
     return delta;
 }
 
-bool GlobeGestureManipulator::intersectSphere(const Ray& ray,
+bool FreeGlobeController::intersectSphere(const Ray& ray,
                                               double radiusMeters,
                                               Vec3& outPoint) {
     const glm::dvec3 o = ray.origin().raw();
@@ -802,7 +818,7 @@ bool GlobeGestureManipulator::intersectSphere(const Ray& ray,
     return true;
 }
 
-bool GlobeGestureManipulator::pickSurfacePoint(float xPixels, float yPixels,
+bool FreeGlobeController::pickSurfacePoint(float xPixels, float yPixels,
                                                Vec3& outPoint) const {
     if (surfacePicker_ && surfacePicker_(xPixels, yPixels, outPoint)) {
         return true;
@@ -816,7 +832,7 @@ bool GlobeGestureManipulator::pickSurfacePoint(float xPixels, float yPixels,
     return intersectGrabSphere(ray, outPoint);
 }
 
-bool GlobeGestureManipulator::grabSurfacePoint(float xPixels, float yPixels) {
+bool FreeGlobeController::grabSurfacePoint(float xPixels, float yPixels) {
     grabbedRadiusMeters_ = kEarthRadiusMeters;
 
     const Ray ray = camera_->getPickRay(
@@ -855,7 +871,7 @@ bool GlobeGestureManipulator::grabSurfacePoint(float xPixels, float yPixels) {
     return true;
 }
 
-void GlobeGestureManipulator::applyAnchorDrag(float xPixels, float yPixels,
+void FreeGlobeController::applyAnchorDrag(float xPixels, float yPixels,
                                               double timestamp) {
     glm::dquat delta{1.0, 0.0, 0.0, 0.0};
     bool haveDelta = false;

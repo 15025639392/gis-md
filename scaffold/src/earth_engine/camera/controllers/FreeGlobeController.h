@@ -1,6 +1,7 @@
 #pragma once
 
-#include "../core/math/Vec3.h"
+#include "../../core/math/Vec3.h"
+#include "ICameraController.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cstdint>
@@ -27,14 +28,14 @@ class CameraConstraintSolver;
 /// - 单指拖拽先抓取地表点，移动时让该点尽量跟随手指；
 /// - 双指手势中**只有锚点钉合(pin)产生横向世界运动**，dolly/twist/pitch 在
 ///   数学上全部严格保锚，与 pan 正交——没有意图分类。
-class GlobeGestureManipulator {
+class FreeGlobeController final : public ICameraController {
 public:
     /// @param camera 受控相机（非空，生命周期由调用者管理）
     /// @param solver 约束求解器（非空，由编排层拥有）
-    GlobeGestureManipulator(Camera* camera, CameraConstraintSolver* solver);
+    FreeGlobeController(Camera* camera, CameraConstraintSolver* solver);
 
     /// 设置视口尺寸（用于 pick ray 和屏幕坐标归一化）
-    void setViewport(int widthPixels, int heightPixels);
+    void setViewport(int widthPixels, int heightPixels) override;
 
     /// Scene 可注入地形拾取链路；未注入或未命中时回退到内部的 WGS84 球面拾取。
     using SurfacePicker = std::function<bool(float xPixels, float yPixels, Vec3& outPoint)>;
@@ -87,7 +88,14 @@ public:
 
     /// 惯性/滑行/回中的时间步进。编排层在冻结与脚本平移的早退**之后**调用，
     /// 故本函数不认识这两种测量台状态。
-    void tick(double deltaSeconds);
+    void tick(double deltaSeconds) override;
+
+    /// 接管：本控制器的全部状态都是**手势期瞬时量**（抓取点/锚点/惯性/回中
+    /// 欠账），没有一样需要从位姿反解 —— 位姿本身就是唯一真值，读它即可。
+    /// 故对齐 = 把这些瞬时量清空，避免上一段手势的残留在接管后继续自走。
+    void onActivate() override;
+    /// 交出：同上，瞬时量不跨控制器存活。
+    void onDeactivate() override;
 
     /// pan 惯性的"已经停了"阈值(rad/s)。低于它不再产生任何位移,故等价于零。
     /// **三处必须同用这一个常量**:运动闸、自清零、isAnimating 判据。
@@ -96,7 +104,7 @@ public:
     static constexpr double kMinInertiaAngularVelocity = 0.0001;
 
     /// 是否仍在自行滑行（惯性/zoom 滑行）。**不含**编排层的脚本平移。
-    bool isAnimating() const {
+    bool isAnimating() const override {
         return hasZoomInertia_ ||
                inertiaAngularVelocity_ > kMinInertiaAngularVelocity;
     }

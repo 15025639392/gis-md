@@ -113,7 +113,7 @@ earth_engine/camera/
   Viewpoint.h                   接口层表述，字段全 optional + 参考系
   CameraConstraintSolver.*      地形探针 + 突变滤波 + 碰撞钳位 + groundState   ← 抽 ~450 行
   controllers/
-    ICameraController.h         接口：evaluate / onGesture / onActivate
+    ICameraController.h         接口：onActivate / onDeactivate / tick / isAnimating / setViewport
     FreeGlobeController.*       锚点钉合 + 双指 + 惯性                        ← 抽 ~750 行
     TetheredController.*        frame 相对 HPR + range                        ← 新 ~200 行
     FlightController.*          路径 + 缓动 + tick，飞完交还目标控制器          ← 新 ~280 行
@@ -122,8 +122,25 @@ earth_engine/camera/
 ```
 
 **`CameraController` 更名 `CameraSystem`**：语义已从"控制器"变成"编排器"，
-且 `CameraController` 这个名字要留给控制器族的基类概念。保留一版转发头给外部调用方过渡。
+且 `CameraController` 这个名字要留给控制器族的基类概念。
 （"手术式修改原则"的例外条款适用——本任务就是整体改造。）
+
+> ⚠️ 修订记录（0fe21163b / 本节两处）：
+>
+> 1. **转发头不做。** 本节初版写"保留一版转发头给外部调用方过渡"。grep 全仓确认
+>    `CameraController` 没出现在任何公开 SDK 头（`EarthSceneConfig.h` 里只是注释），
+>    调用方全在本仓库内 ⇒ 转发头是凭空的债，直接改名即可。
+> 2. **接口里没有 `onGesture`（原文写的是 `evaluate / onGesture / onActivate`）。**
+>    Skybolt 的 `CameraController::setInput` 收归一化速率（`forwardSpeed`/`yawRate`/
+>    `zoomRate`），对飞行模拟式速率控制成立，对我们的**直接操纵**是错的——"把抓住的
+>    地表点放回手指那个像素"所需的全部信息就是那个像素坐标，归一化成速率恰好把它
+>    丢掉，而那正是我们相对基准领先的部分。而且各控制器输入形状本就不同（Free 吃
+>    触摸、桌面吃滚轮/中键、Flight 根本不吃），硬凑公共输入接口只会得到一个谁都要
+>    现场解释的联合体。
+>    ⇒ **输入路由到具体类型**，`CameraControllerSelector::activeAs<T>()`
+>    （Skybolt 自己也是这么逃生的：`getControllerOfType<T>()`）。**别再加回去。**
+> 3. `onActivate` **不带参**（原文 `onActivate(currentWorldPose)`）：控制器本就持
+>    `Camera*`，位姿从那里读，再传一份是纯冗余。契约不变。
 
 职责边界，每个类问一句：
 

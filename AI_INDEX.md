@@ -1953,7 +1953,7 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 相机位姿的地形约束求解器(.h 153 行 / .cpp 296 行)。**纯策略执行者**——不知道
 手势、惯性、飞行,只回答「给定 eye,合法的 eye 是什么」。调用者有两处——手势侧
-`GlobeGestureManipulator::clampNow` 与编排侧 `CameraSystem::resolveAtFrameEnd`
+`FreeGlobeController::clampNow` 与编排侧 `CameraSystem::resolveAtFrameEnd`
 ——但**钳位实现只有这一处**。「只有编排层能调 solver」曾被写进架构文档,已否决
 (见 `docs/camera-system-architecture.md` §2.3 的修订记录)。
 
@@ -1984,10 +1984,9 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 帧末哨兵、视点设定与只读派生量。**位姿的唯一真值是 `Camera` 自身**
 (eye/direction/up)。
 
-分层:**输入→位姿**归 `GlobeGestureManipulator`(锚点数学/惯性/回中),
+分层:**输入→位姿**归控制器族(`controllers/`,目前只有 `FreeGlobeController`),
 **位姿→合法位姿**归 `CameraConstraintSolver`(探针/滤波/碰撞钳位),本类只是把
-二者接在一起的那一层。后续阶段这里会长出控制器 selector(Tethered/桌面输入
-各是一个并列的操控器),届时改名 `CameraSystem`。见
+三者接在一起的那一层。见
 `docs/camera-system-architecture.md`。
 
 历史上曾并存一套 orbit 表示(`rotation_`+`distance_`+`orbitMode_`,每帧
@@ -1998,7 +1997,7 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 | 项 | 行 | 说明 |
 |---|---|---|
-| 手势类型转发 | .h:31 / :49 | `SurfacePicker`/`PinchMode`/`PinchInput` 均为 `GlobeGestureManipulator` 的别名转发,调用方(SceneInputCoordinator、测试)继续按 `CameraSystem::PinchMode` 书写 |
+| 手势类型转发 | .h:31 / :49 | `SurfacePicker`/`PinchMode`/`PinchInput` 均为 `FreeGlobeController` 的别名转发,调用方(SceneInputCoordinator、测试)继续按 `CameraSystem::PinchMode` 书写 |
 | 地形类型转发 | .h:36 | `TerrainHeightFunc`/`TerrainSample`/`TerrainAreaSampleFunc` 均为 `CameraConstraintSolver` 的别名转发 |
 | `isSelfAnimating` | .h:101 | `scriptedPanActive_ ∨ manipulator_.isAnimating()`。⚠️只报**自主演进**,不报「手指正按着」——后者由输入事件置事件型脏位,两条路径分开才不会出现「手指不动但按着 → 两边都不认领 → 判定空闲」的缝 |
 | `distance()` / `rotation()` | .h:115 / :121 | **纯派生只读视图**(`\|eye\|/R`;把 (+Z,+Y) 转到 (dir,up) 的四元数),不是状态。过渡接口,阶段 2b 由 `currentViewpoint()` 取代 |
@@ -2007,25 +2006,65 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 | 方法 | 行 | 算法 |
 |---|---|---|
-| `syncFrameBeforeGesture` | .cpp:62 | 手势起手帧的同步帧(= `update(0.0)`)。dt=0 ⇒ 操控器 `tick` 全程空转,故它等价于 `beginFrame + resolveAtFrameEnd`,**与手势自身的状态重置无先后依赖**——这正是它能从操控器内部提到转发层的原因 |
-| `onPinchGesture`(适配器) | .cpp:88 | ⚠️`scale<=0` 的早退在两侧各判一次:这里判是为了不给非法事件跑同步帧(旧实现里那一帧发生在适配器早退之后) |
-| `update` | .cpp:117 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
-| `updateInternal` | .cpp:125 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
-| `resolveAtFrameEnd` | .cpp:150 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
-| `commitResolvedPose` | .cpp:173 | 指纹 + solver 扫掠基准,同源同时机 |
-| `distance` / `rotation` | .cpp:204 / :208 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
-| `setNadirOrbitView` | .cpp:217 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
-| `viewDistance` | .cpp:239 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
-| `headingFromFrame` (anon) | .cpp:272 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
-| `resetNorthUp` | .cpp:310 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
+| `syncFrameBeforeGesture` | .cpp:70 | 手势起手帧的同步帧(= `update(0.0)`)。dt=0 ⇒ 操控器 `tick` 全程空转,故它等价于 `beginFrame + resolveAtFrameEnd`,**与手势自身的状态重置无先后依赖**——这正是它能从操控器内部提到转发层的原因 |
+| `onPinchGesture`(适配器) | .cpp:95 | ⚠️`scale<=0` 的早退在两侧各判一次:这里判是为了不给非法事件跑同步帧(旧实现里那一帧发生在适配器早退之后) |
+| `update` | .cpp:145 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
+| `updateInternal` | .cpp:153 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
+| `resolveAtFrameEnd` | .cpp:180 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
+| `commitResolvedPose` | .cpp:203 | 指纹 + solver 扫掠基准,同源同时机 |
+| `distance` / `rotation` | .cpp:237 / :241 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
+| `setNadirOrbitView` | .cpp:250 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
+| `viewDistance` | .cpp:271 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
+| `headingFromFrame` (anon) | .cpp:302 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
+| `resetNorthUp` | .cpp:340 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
 
 ⚠️ **三档惯性清零是现状不是设计**:`viewDistance`/`setNadirOrbitView` 调
 `clearPanInertia`、`resetNorthUp` 调 `clearGlideInertia`、冻结/脚本平移调
 `clearAllInertia`。差异是否有意暂无定论,统一它属于行为变更,不该混进搬运里。
 
-### camera/GlobeGestureManipulator.h / .cpp
+### camera/controllers/ICameraController.h
 
-球面(Free 模式)手势操控器(.h 239 行 / .cpp 938 行)。**输入 → 位姿**这一层:
+控制器族的基类契约(53 行):**一个每帧驱动相机的东西**。
+
+| 成员 | 行 | 说明 |
+|---|---|---|
+| `onActivate` | .h:35 | 接管:从当前相机位姿对齐自身状态 ⇒ 切换零跳变。⚠️**不带参**(架构文档原写 `onActivate(currentWorldPose)`):控制器本就持 `Camera*`,位姿从那里读,再传一份是纯冗余 |
+| `onDeactivate` | .h:38 | 交出:清掉不该跨控制器存活的瞬时状态(惯性、手势中间量) |
+| `tick` | .h:41 | 每帧步进。**只有被选中的控制器收到** |
+| `isAnimating` | .h:45 | 是否仍在自行演进(按需渲染据此判"停手后还得画几帧") |
+| `setViewport` | .h:49 | **广播给所有控制器**(不只活动的):视口是渲染表面属性,与"谁在驱动"无关;只发活动者的话切换瞬间接管者揣着旧视口 ⇒ 增益用错 |
+
+⚠️⚠️ **接口里没有输入,这是刻意的。** Skybolt 的 `CameraController::setInput` 收
+归一化速率(`forwardSpeed`/`yawRate`/`zoomRate`),对飞行模拟式速率控制成立,对我们的
+**直接操纵**是错的——「把抓住的地表点放回手指那个像素」所需的全部信息就是那个像素
+坐标,归一化成速率恰好把它丢掉,而那正是我们领先基准的部分。且各控制器输入形状本就
+不同(Free 吃触摸、桌面吃滚轮/中键、Flight 根本不吃)。⇒ **输入路由到具体类型**,靠
+`CameraControllerSelector::activeAs<T>()`(Skybolt 自己也是这么逃生的
+`getControllerOfType<T>()`)。别再往接口里加 `onGesture`。
+
+### camera/CameraControllerSelector.h / .cpp
+
+控制器族的持有者与切换器(.h 63 行 / .cpp 43 行,Skybolt `CameraControllerSelector`
+同构)。只回答**「谁在驱动相机」**,不回答"怎么驱动"。
+
+| 方法 | 行 | 说明 |
+|---|---|---|
+| `add` | .cpp:6 | 注册。**首个注册者自动激活并收 `onActivate`**——否则存在"构造完还没选就 tick"的半初始化窗口。后续注册不抢活动权、不产生任何生命周期回调 |
+| `select` | .cpp:21 | 切换。顺序是契约:**先 `onDeactivate` 旧的,再 `onActivate` 新的**。重选当前活动者返回 false 且**不产生回调**(否则惯性被无声清掉)。⚠️未知名字保持现状返回 false,**绝不留下"没人在驱动"的空档**(那会让 tick 静默丢失) |
+| `activeAs<T>` | .h:41 | 输入路由的逃生口:按具体类型取活动控制器。返回 nullptr = 当前驱动者不吃这种输入,事件丢弃 |
+| `findOfType<T>` | .h:48 | 按类型查**任意**注册者(不限活动)。装配期接线用(如注入 surface picker) |
+| `setViewport` | .cpp:39 | 广播,见 `ICameraController::setViewport` |
+
+容器用 `vector<pair<name,ptr>>` 不用 `map`:控制器数量个位数,顺序即注册顺序(可复现),
+且广播要遍历全部——map 的查找优势在这里不存在,顺序不确定性反而是负担。
+
+测试 `tests/unit/camera/test_camera_controller_selector.cpp`(10 例)用两个假控制器
+(`FakeController`/`OtherController`)作**接口的第二、第三个实现**——只有一个实现的
+接口是猜测,第二个实现才能证明契约没夹带 FreeGlobeController 的私有假设。
+
+### camera/controllers/FreeGlobeController.h / .cpp
+
+球面(Free 模式)手势控制器(.h 250 行 / .cpp 953 行),`ICameraController` 的实现之一。**输入 → 位姿**这一层:
 触摸事件进去,位姿出来。不拥有相机也不拥有求解器,只持二者指针;每次改完位姿
 立刻走 `clampNow` 过一遍约束出口。
 
@@ -2055,18 +2094,18 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 | `onDragStart` | .cpp:97 | `grabSurfacePoint`;清零 pan/zoom 惯性与回中欠账 |
 | `onPinchGesture`(新契约) | .cpp:161 | jerk 限幅 → ①沿 eye→anchor 直线 dolly(精确保锚) → ②绕锚点法线 twist → ③Pitch 模式绕锚点竖转(反 wind-up:被守卫拒绝时重取基线) → ④`applyPinchPin`(**唯一产生横向世界运动的通道**) |
 | `onPinchEnd` | .cpp:365 | 把 pin 角速度种进与单指共用的惯性通道;够动量则启动 zoom 惯性滑行 |
-| `tick` | .cpp:386 | pan 惯性(角速度制,指数阻尼,跌破 `kMinInertiaAngularVelocity` 归零) → zoom 惯性(对数距离空间指数逼近,数学上永不越过锚点) → 回中预算消费。⚠️三段全部要求 `deltaSeconds > 0` ⇒ `tick(0.0)` 是完全空转 |
-| `clampNow` | .cpp:458 | `solver->constrainEye(userDriven=true, dt=0, anchor)` → 写回 → `commitPose`。恒 user-driven 是因为调用方刚刚显式动过相机 |
-| `rotateCameraVerticalAroundPoint` | .cpp:475 | 绕 `camera_->right()` 在竖直面内转。三重守卫:up 翻转、`minSlope`、地形净空预判(用滤波高度,不重采样)。**拒绝而非事后顶起**——顶起要么破坏 Pitch 的锚点不变量,要么(Cesium 式旋转补偿)偷偷改 direction |
-| `accrueRecenterBudget` | .cpp:535 | 高空 zoom-out 回中的**充值**:手势/滑行期只记账不动相机(回中旋转会推开刚钉好的锚点),权重随海拔 1.5e6→8e6 smoothstep 爬升 |
-| `consumeRecenterBudget` | .cpp:560 | 松手后按指数节奏消费,绕相机自身位置转(eye 不动,仅视线向地心收敛) |
-| `solveAnchorRotation` | .cpp:608 | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
-| `pointOnGrabSphere` | .cpp:647 | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
-| `turntableDeltaFromPixels` | .cpp:672 | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
-| `tryAcquirePinchAnchor` | .cpp:695 | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变) |
-| `applyPinchPin` | .cpp:726 | 把锚点钉到目标像素;病态区连续混入质心转台并整点重取锚点;末尾走 `clampNow`(pin 是唯一横向通道,山区横移可能把 eye 转进地形) |
-| `grabSurfacePoint` | .cpp:819 | 抓取锚点。⚠️锚点必须落在拾取射线上——`pickTerrain` 返回点不在射线上,落差会被首个 move 一次性补掉 = 起手跳变(真机实测 227~471px) |
-| `applyAnchorDrag` | .cpp:858 | 良态区精确锚定;病态区 slerp 混入转台 + 应用后整点重取锚点(**永不渐近混合**——混出的锚点不属于任何真实几何,会积欠账);末尾按事件时间戳喂惯性 EMA |
+| `tick` | .cpp:402 | pan 惯性(角速度制,指数阻尼,跌破 `kMinInertiaAngularVelocity` 归零) → zoom 惯性(对数距离空间指数逼近,数学上永不越过锚点) → 回中预算消费。⚠️三段全部要求 `deltaSeconds > 0` ⇒ `tick(0.0)` 是完全空转 |
+| `clampNow` | .cpp:476 | `solver->constrainEye(userDriven=true, dt=0, anchor)` → 写回 → `commitPose`。恒 user-driven 是因为调用方刚刚显式动过相机 |
+| `rotateCameraVerticalAroundPoint` | .cpp:491 | 绕 `camera_->right()` 在竖直面内转。三重守卫:up 翻转、`minSlope`、地形净空预判(用滤波高度,不重采样)。**拒绝而非事后顶起**——顶起要么破坏 Pitch 的锚点不变量,要么(Cesium 式旋转补偿)偷偷改 direction |
+| `accrueRecenterBudget` | .cpp:551 | 高空 zoom-out 回中的**充值**:手势/滑行期只记账不动相机(回中旋转会推开刚钉好的锚点),权重随海拔 1.5e6→8e6 smoothstep 爬升 |
+| `consumeRecenterBudget` | .cpp:576 | 松手后按指数节奏消费,绕相机自身位置转(eye 不动,仅视线向地心收敛) |
+| `solveAnchorRotation` | .cpp:625 | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
+| `pointOnGrabSphere` | .cpp:663 | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
+| `turntableDeltaFromPixels` | .cpp:688 | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
+| `tryAcquirePinchAnchor` | .cpp:711 | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变) |
+| `applyPinchPin` | .cpp:742 | 把锚点钉到目标像素;病态区连续混入质心转台并整点重取锚点;末尾走 `clampNow`(pin 是唯一横向通道,山区横移可能把 eye 转进地形) |
+| `grabSurfacePoint` | .cpp:835 | 抓取锚点。⚠️锚点必须落在拾取射线上——`pickTerrain` 返回点不在射线上,落差会被首个 move 一次性补掉 = 起手跳变(真机实测 227~471px) |
+| `applyAnchorDrag` | .cpp:874 | 良态区精确锚定;病态区 slerp 混入转台 + 应用后整点重取锚点(**永不渐近混合**——混出的锚点不属于任何真实几何,会积欠账);末尾按事件时间戳喂惯性 EMA |
 
 调优常量(.cpp:22 起,匿名 namespace):惯性 `kMaxInertiaAngularVelocityRadPerSec`=5 / `kInertiaDampingPerSecond`=3 / `kVelocitySmoothing`=0.35;`kTouchJerkLimit`=0.3 / `kMaxPinchScaleResidualLog`=1.0;`kTouchMinSlope`=0.1;`kPinchTiltFullHeightRadians`=0.9(**按视口高度归一,设备无关**——旧的每物理像素定义在 3.5x 手机上比 1.5x 平板快 2.3 倍);`kGrabSphereEyeMarginMeters`=25;病态带 `kAnchorConditioningLo/Hi`=0.10/0.35;zoom 惯性 `kZoomInertiaDampingPerSecond`=6 / `kMaxZoomInertiaLogRate`=6 / `kMinZoomInertiaLogRate`=0.08;回中 `kRecenterStartAltitudeMeters`=1.5e6 / `kRecenterFullAltitudeMeters`=8.0e6 / `kRecenterGainPerLogStep`=2.5 / `kRecenterSettleRatePerSecond`=6。相机包络三常量(净空/最大地形高/地心距上限)不在这里,读 `CameraConstraintSolver`。
 
@@ -2079,7 +2118,7 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 | `rotateAboutOrigin` | .cpp:11 | 绕地心转整个位姿(eye/dir/up 同转)。锚点拖拽与 pin 的主通道 |
 | `rotateAboutPoint` | .cpp:18 | 绕任意世界点定轴转(center 不动);轴/角退化时静默跳过 |
 
-**为什么是自由函数**:手势侧(`GlobeGestureManipulator`)与编排侧
+**为什么是自由函数**:手势侧(`FreeGlobeController`)与编排侧
 (`resetNorthUp`/scriptedPan)都要用,放进任一方都会给另一方造依赖。
 
 

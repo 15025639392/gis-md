@@ -2,11 +2,13 @@
 
 #include "../core/math/Vec3.h"
 #include "CameraConstraintSolver.h"
-#include "GlobeGestureManipulator.h"
+#include "CameraControllerSelector.h"
+#include "controllers/FreeGlobeController.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cstdint>
 #include <functional>
+#include <string>
 
 namespace earth_engine {
 
@@ -15,7 +17,7 @@ class Camera;
 /// 相机编排层：拥有约束求解器与操控器，负责帧循环、帧末哨兵、视点设定
 /// 与只读派生量。
 ///
-/// 分层：**输入 → 位姿**归 `GlobeGestureManipulator`（锚点数学/惯性/回中），
+/// 分层：**输入 → 位姿**归 `FreeGlobeController`（锚点数学/惯性/回中），
 /// **位姿 → 合法位姿**归 `CameraConstraintSolver`（地形探针/突变滤波/碰撞
 /// 钳位），本类是把二者接在一起的那一层。后续阶段这里会长出控制器
 /// selector（Tethered/桌面输入各是一个并列的操控器），届时改名 CameraSystem。
@@ -28,7 +30,7 @@ public:
     void setViewport(int widthPixels, int heightPixels);
 
     /// Scene 可注入地形拾取链路；未注入或未命中时回退到 WGS84 球面拾取。
-    using SurfacePicker = GlobeGestureManipulator::SurfacePicker;
+    using SurfacePicker = FreeGlobeController::SurfacePicker;
     void setSurfacePicker(SurfacePicker picker);
 
     // 地形约束相关的类型与注入口全部归 CameraConstraintSolver；这里保留
@@ -44,10 +46,10 @@ public:
 
     // ---- 手势输入（转发给操控器；起手帧先跑一个同步帧，见 .cpp）----
     //
-    // 手势数学与惯性归 GlobeGestureManipulator，别名让调用方
+    // 手势数学与惯性归 FreeGlobeController，别名让调用方
     // （SceneInputCoordinator、测试）继续按 CameraSystem::PinchMode 书写。
-    using PinchMode = GlobeGestureManipulator::PinchMode;
-    using PinchInput = GlobeGestureManipulator::PinchInput;
+    using PinchMode = FreeGlobeController::PinchMode;
+    using PinchInput = FreeGlobeController::PinchInput;
 
     /// drag 开始（手指按下）
     /// @param timestamp 单调时钟时间戳（秒），用于惯性角速度计算
@@ -99,7 +101,8 @@ public:
     /// 两条路径分开才不会出现「手指不动但按着 → 既无事件又无自主演进 → 判定
     /// 空闲」这种两边都不认领的缝。
     bool isSelfAnimating() const {
-        return scriptedPanActive_ || manipulator_.isAnimating();
+        const ICameraController* active = selector_.active();
+        return scriptedPanActive_ || (active && active->isAnimating());
     }
 
     // ---- 相机状态 ----
@@ -155,6 +158,14 @@ public:
     static constexpr double kNearSafetyRatio =
         CameraConstraintSolver::kNearSafetyRatio;
 
+    /// 内置控制器名。`selectController` / `activeControllerName` 用。
+    static constexpr const char* kFreeGlobeController = "freeGlobe";
+
+    /// 切换驱动相机的控制器。切换时旧的收 `onDeactivate`、新的收 `onActivate`
+    /// （从当前位姿对齐自身状态 ⇒ 零跳变）。名字未知或已是当前活动者 ⇒ false。
+    bool selectController(const std::string& name);
+    const std::string& activeControllerName() const;
+
     /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。
     double headingRadians() const;
     /// 相机俯仰角（弧度，0 = 水平，-π/2 = 正俯视）。
@@ -189,8 +200,15 @@ private:
     Camera* camera_;
     // 地形探针/突变滤波/碰撞钳位/groundState/位姿指纹全部归它。
     CameraConstraintSolver constraintSolver_;
-    // 输入 → 位姿。持 camera_ 与 constraintSolver_ 的指针，不回指本类。
-    GlobeGestureManipulator manipulator_;
+    // 控制器族 + 「谁在驱动」。控制器持 camera_ 与 &constraintSolver_ 的指针，
+    // 不回指本类。
+    CameraControllerSelector selector_;
+    // selector_ 拥有它；这里缓存是为了免去每个手势事件一次 dynamic_cast。
+    // vector<unique_ptr> 扩容不移动 pointee，指针稳定。
+    // ⚠️ 三档惯性清零(clearPan/Glide/All)走这个具体指针而**不是**活动控制器：
+    // 那三档是拆分前的现状不是设计(见下方 TODO)，统一之后它们该变成
+    // `selector_.active()->onActivate()`，届时这个缓存指针只服务手势路由。
+    FreeGlobeController* freeGlobe_ = nullptr;
 
     // 测量台冻结：true 时 update() 完全空转（见 setMeasurementFreeze）。
     bool measurementFreeze_ = false;
