@@ -1,4 +1,5 @@
 #include "CameraSystem.h"
+#include "controllers/FlightController.h"
 #include "CameraPoseOps.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -33,6 +34,9 @@ CameraSystem::CameraSystem(Camera* camera)
         std::make_unique<FreeGlobeController>(camera, &constraintSolver_);
     freeGlobe_ = freeGlobe.get();
     selector_.add(kFreeGlobeController, std::move(freeGlobe));
+    auto flight = std::make_unique<FlightController>(camera, &constraintSolver_);
+    flight_ = flight.get();
+    selector_.add(kFlightController, std::move(flight));
 
     // Default to Chongqing area for testing
     const auto& e = Ellipsoid::WGS84();
@@ -74,8 +78,9 @@ void CameraSystem::syncFrameBeforeGesture() {
 
 void CameraSystem::onDragStart(float xPixels, float yPixels,
                                    double timestamp) {
+    cancelFlightForTakeover();
     auto* c = selector_.activeAs<FreeGlobeController>();
-    if (!c) return;  // 非 Free 控制器在驱动(如飞行中):触摸事件丢弃
+    if (!c) return;
     syncFrameBeforeGesture();
     c->onDragStart(xPixels, yPixels, timestamp);
 }
@@ -94,6 +99,7 @@ void CameraSystem::onDragEnd() {
 }
 
 void CameraSystem::onPinchGesture(const PinchInput& input) {
+    cancelFlightForTakeover();
     auto* c = selector_.activeAs<FreeGlobeController>();
     if (!c) return;
     if (!c->pinching()) {
@@ -112,6 +118,7 @@ void CameraSystem::onPinchGesture(float scale,
     // 非法 spread 在操控器侧同样早退；这里先判一次是为了不给它跑同步帧
     // （旧实现里那一帧发生在适配器的早退之后）。
     if (scale <= 0.0f) return;
+    cancelFlightForTakeover();
     auto* c = selector_.activeAs<FreeGlobeController>();
     if (!c) return;
     if (!c->pinching()) {
@@ -143,7 +150,8 @@ const std::string& CameraSystem::activeControllerName() const {
 // Viewpoint 接口
 // ============================================================
 
-void CameraSystem::setViewpoint(const Viewpoint& vp) {
+bool CameraSystem::resolveViewpoint(const Viewpoint& vp,
+                                   CameraPose& outPose) const {
     const auto& ellipsoid = Ellipsoid::WGS84();
 
     // ① 参考系原点:tether → targetGeo → eyeGeo → 当前 eye。
@@ -160,7 +168,7 @@ void CameraSystem::setViewpoint(const Viewpoint& vp) {
         // 返回 false = 目标暂不可用(载体还没生成/已销毁):保持当前位姿,
         // **不回落世界系**——那会是一次瞬移。
         if (!vp.frame.originProvider(tetherOrigin)) {
-            return;
+            return false;
         }
         origin = tetherOrigin;
         originIsEye = false;
@@ -209,8 +217,16 @@ void CameraSystem::setViewpoint(const Viewpoint& vp) {
     }
     // 否则(有焦点/tether 原点而未给 range):保持当前距离,= viewDistance 缺省语义。
 
-    const CameraPose next =
-        CameraPose::fromFrame(origin, frame, heading, pitch, roll, range);
+    outPose = CameraPose::fromFrame(origin, frame, heading, pitch, roll, range);
+    return true;
+}
+
+void CameraSystem::setViewpoint(const Viewpoint& vp) {
+    CameraPose next;
+    if (!resolveViewpoint(vp, next)) {
+        return;  // tether 目标暂不可用:保持当前位姿
+    }
+    cancelFlightForTakeover();
     camera_->setView(Vec3(next.eye), Vec3(next.direction), Vec3(next.up));
     // 钳位交给帧末哨兵(见头文件说明)。惯性清零与 viewDistance 同档:调用方显式
     // 重置了视角,残留角速度再滑行会像无因漂移。
@@ -252,6 +268,53 @@ Viewpoint CameraSystem::currentViewpoint() const {
 }
 
 // ============================================================
+// 飞行
+// ============================================================
+
+bool CameraSystem::flyTo(const Viewpoint& destination,
+                         double durationSecondsOverride) {
+    CameraPose to;
+    if (!resolveViewpoint(destination, to)) {
+        return false;  // tether 目标暂不可用
+    }
+
+    CameraPose from;
+    from.eye = camera_->position().raw();
+    from.direction = camera_->direction().raw();
+    from.up = camera_->up().raw();
+
+    if (!flight_->start(from, to, durationSecondsOverride)) {
+        // 起终点重合/曲线退化:直接落位,不进入一个原地不动却要等 duration 的
+        // "飞行"——那样 isSelfAnimating() 会白撑住好几秒的重绘。
+        camera_->setView(Vec3(to.eye), Vec3(to.direction), Vec3(to.up));
+        freeGlobe_->clearPanInertia();
+        return false;
+    }
+    selector_.select(kFlightController);
+    return true;
+}
+
+void CameraSystem::cancelFlight() {
+    if (flight_->active()) {
+        selector_.select(kFreeGlobeController);
+    }
+}
+
+bool CameraSystem::cameraFlightActive() const { return flight_->active(); }
+
+double CameraSystem::cameraFlightProgress() const {
+    return flight_->progress();
+}
+
+void CameraSystem::cancelFlightForTakeover() {
+    // 手势/显式视角写入永远优先于程序化飞行(架构 §5)。切回 Free 会走
+    // onDeactivate(取消飞行) + onActivate(清 Free 的手势瞬时量),两边都干净。
+    if (flight_->active()) {
+        selector_.select(kFreeGlobeController);
+    }
+}
+
+// ============================================================
 // 帧循环
 // ============================================================
 
@@ -288,6 +351,11 @@ void CameraSystem::updateInternal(double deltaSeconds) {
     if (ICameraController* active = selector_.active()) {
         active->tick(deltaSeconds);
     }
+    // 飞完把驱动权交还 Free。放在 tick 之后而不是让 FlightController 自己切:
+    // 控制器不该知道 selector 的存在(那就成了回指宿主)。
+    if (flight_->consumeCompleted()) {
+        selector_.select(kFreeGlobeController);
+    }
 }
 
 bool CameraSystem::resolveAtFrameEnd(double deltaSeconds) {
@@ -308,6 +376,7 @@ bool CameraSystem::resolveAtFrameEnd(double deltaSeconds) {
     const bool changed = glm::length(clamped - eye) > 1e-6;
     if (changed) {
         camera_->setView(Vec3(clamped), camera_->direction(), camera_->up());
+        ++constraintClampCount_;
     }
     commitResolvedPose();
     return changed;

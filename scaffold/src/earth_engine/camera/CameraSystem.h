@@ -5,6 +5,7 @@
 #include "CameraControllerSelector.h"
 #include "CameraPose.h"
 #include "Viewpoint.h"
+#include "controllers/FlightController.h"
 #include "controllers/FreeGlobeController.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -189,11 +190,46 @@ public:
 
     /// 内置控制器名。`selectController` / `activeControllerName` 用。
     static constexpr const char* kFreeGlobeController = "freeGlobe";
+    static constexpr const char* kFlightController = "flight";
+
+    // ---- 飞行（阶段 3）----
+
+    /// 沿椭球平面曲线飞到目标视角。切到 `FlightController` 驱动,飞完自动交还
+    /// Free 并**精确落到终点位姿**。
+    /// @param durationSecondsOverride >0 覆盖时长启发式;<=0 用启发式(2~3 秒)
+    /// @return 是否真的进入了飞行态。起终点重合/曲线退化 ⇒ **直接落位并返回
+    ///         false** —— 不制造一个原地不动却要等 duration 才结束的"飞行",
+    ///         那会让 `isSelfAnimating()` 白撑住几秒重绘。tether 目标暂不可用
+    ///         时也返回 false 且**不动相机**。
+    bool flyTo(const Viewpoint& destination,
+               double durationSecondsOverride = 0.0);
+
+    /// 取消飞行,驱动权交还 Free(相机停在当前位置,不回弹)。
+    void cancelFlight();
+
+    /// 飞行期契约,喂给 `FrameState` 供瓦片系统消费。
+    ///
+    /// ⚠️ **这两个读数存在的唯一理由**:`TileFrameInteractionTracker` 判
+    /// `cameraMoving` 纯按位移、不区分驱动源 ⇒ 飞行期恒真 ⇒
+    /// `cullRequestsWhileMoving` 全程延迟请求 ⇒ **飞到目的地画面是空的**。
+    /// 减速段据 progress 关掉它,让目的地瓦片提前进队(Cesium 的
+    /// `Camera.canPreloadFlight()` 解同一件事)。
+    bool cameraFlightActive() const;
+    /// 归一化时间进度 [0,1](未过缓动)。
+    double cameraFlightProgress() const;
 
     /// 切换驱动相机的控制器。切换时旧的收 `onDeactivate`、新的收 `onActivate`
     /// （从当前位姿对齐自身状态 ⇒ 零跳变）。名字未知或已是当前活动者 ⇒ false。
     bool selectController(const std::string& name);
     const std::string& activeControllerName() const;
+
+    /// 帧末哨兵**实际改动过位姿**的累计次数(机制信号,不是策略)。
+    ///
+    /// 存在理由:「AGL ≥ 净空」这个结果判据**分不清**是路径本来就合法、还是钳位
+    /// 把相机顶上去了——两者读数完全相同。飞行的设计意图是规划期抬拱高使钳位
+    /// **结构性不触发**,那就必须能直接观测"钳没钳过"。
+    /// (踩过三次的「没出问题」与「没走到那条路」长得一样。)
+    uint64_t constraintClampCount() const { return constraintClampCount_; }
 
     /// 相机方位角（弧度，0 = 正北，顺时针为正）。用于指北针。
     double headingRadians() const;
@@ -203,6 +239,15 @@ public:
     void resetNorthUp();
 
 private:
+    /// 把 `Viewpoint` 解成具体世界位姿(**纯解算,不写相机**)。`setViewpoint` 与
+    /// `flyTo` 共用同一份解析——两份实现迟早会分岔,而分岔的表现是"飞过去的落点
+    /// 和直接设过去的位置不一样",画面上极难归因。
+    /// @return false = tether 原点暂不可用(调用方应保持当前位姿)
+    bool resolveViewpoint(const Viewpoint& vp, CameraPose& outPose) const;
+
+    /// 手势/显式视角写入抢占飞行(架构 §5:手势永远优先)。
+    void cancelFlightForTakeover();
+
     /// 绕过地心的定轴旋转（脚本平移专用；轴/角退化时静默跳过）。
     void applyRotationAroundAxis(const glm::dvec3& axis, double angle);
 
@@ -238,9 +283,11 @@ private:
     // 那三档是拆分前的现状不是设计(见下方 TODO)，统一之后它们该变成
     // `selector_.active()->onActivate()`，届时这个缓存指针只服务手势路由。
     FreeGlobeController* freeGlobe_ = nullptr;
+    FlightController* flight_ = nullptr;
 
     // 测量台冻结：true 时 update() 完全空转（见 setMeasurementFreeze）。
     bool measurementFreeze_ = false;
+    uint64_t constraintClampCount_ = 0;
 
     // 测量台脚本化平移(见 setScriptedPan):active 时 update() 每帧原地偏航一步,
     // 内部帧计数确定性驱动,frames 帧后 hold。

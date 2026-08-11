@@ -41,6 +41,17 @@ struct FrameState {
 
     bool hasInteractionFocus = false;
     Vec3 interactionFocusDirection = Vec3::zero();
+
+    /// 程序化飞行契约(CameraSystem 填)。
+    ///
+    /// ⚠️ **这两个字段存在的唯一理由**:`TileFrameInteractionTracker` 判
+    /// `cameraMoving` 纯按逐帧位移、不区分驱动源,飞行期每帧位移上千米 ⇒ 恒真
+    /// ⇒ `cullRequestsWhileMoving` 全程延迟请求 ⇒ **飞到目的地画面是空的**。
+    /// 减速段据 `cameraFlightProgress` 关掉 cull,让目的地瓦片提前进队。
+    /// Cesium 用 `Camera.canPreloadFlight()` 解同一件事。
+    bool cameraFlightActive = false;
+    /// 归一化时间进度 [0,1](未过缓动)。
+    double cameraFlightProgress = 0.0;
 };
 
 } // namespace earth_engine

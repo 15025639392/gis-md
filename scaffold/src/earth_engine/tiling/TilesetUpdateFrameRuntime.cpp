@@ -20,6 +20,30 @@ namespace {
 
 constexpr double kPostInteractionResourceSmoothingSeconds = 1.25;
 
+// 飞行减速段的 cull 豁免。
+//
+// `TileFrameInteractionTracker` 判 cameraMoving 纯按逐帧位移、不区分驱动源,
+// 飞行期每帧位移上千米 ⇒ 恒真 ⇒ cullRequestsWhileMoving 全程延迟请求 ⇒
+// **飞到目的地画面是空的**。减速段(进度 > 0.7)关掉它,让目的地瓦片提前进队。
+// Cesium 用 `Camera.canPreloadFlight()` 解同一件事。
+//
+// ⚠️ 为什么改这里而不是把 cameraMoving 翻掉:cameraMoving 还喂
+// interactionActive → resourceSmoothingActive,翻它会连带关掉资源平滑
+// (一个字段三个消费者)。这里是 cull 这一路的唯一收口。
+constexpr double kFlightCullReleaseProgress = 0.7;
+
+bool effectiveCullRequestsWhileMoving(bool configured,
+                                      const FrameState& frameState) {
+    if (!configured) {
+        return false;
+    }
+    if (frameState.cameraFlightActive &&
+        frameState.cameraFlightProgress > kFlightCullReleaseProgress) {
+        return false;
+    }
+    return true;
+}
+
 // 根层预载(漏底/黑块根修最后一块,cesium levelZero 语义):钉扎只保证
 // "加载过不淘汰",从未加载过的区域(冷会话捏到新经度)整条祖先链无数据,
 // finalizer 无祖先可回落 → 选中瓦片被丢 → 高空背景即太空黑(真机 BlackProbe
@@ -124,7 +148,9 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.options_.mainThreadLoadingTimeLimit,
             kPostInteractionResourceSmoothingSeconds,
             tileset.options_.maximumScreenSpaceError,
-            tileset.options_.cullRequestsWhileMoving,
+            effectiveCullRequestsWhileMoving(tileset.options_
+                                                 .cullRequestsWhileMoving,
+                                             frameState),
             tileset.options_.cullRequestsWhileMovingMultiplier,
             tileset.options_.enableTerrainFillProxy,
             tileset.options_.terrainFillProxyGridSize,

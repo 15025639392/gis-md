@@ -48,6 +48,16 @@ public:
     /// 地形数据代次（瓦片集变更计数的代理）。变化 ⇒ 探针缓存失效。
     void setTerrainRevisionFunc(std::function<uint64_t()> func);
 
+    /// 只读取出注入的采样口。给**规划期**用(飞行路径沿线采地形抬拱高),不是给
+    /// 逐帧解算用——逐帧路径一律走 `constrainEye`,别绕过它自己采样。
+    /// 未注入时返回空 function,调用方须判空。
+    const TerrainAreaSampleFunc& terrainAreaSampleFunc() const {
+        return terrainAreaSampleFunc_;
+    }
+    const TerrainHeightFunc& terrainHeightFunc() const {
+        return terrainHeightFunc_;
+    }
+
     /// 相机相对地形的一次解算快照，每次 constrainEye 刷新。纯读，
     /// 供渲染层（动态 near）、测试与诊断消费，不含策略。
     struct GroundState {

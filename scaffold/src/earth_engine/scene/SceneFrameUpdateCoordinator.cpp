@@ -70,6 +70,19 @@ void SceneFrameUpdateCoordinator::update(
             input.camera->farPlaneMeters());
     }
 
+    // 飞行契约必须在 FrameState 构建**之前**取,且在 cameraSystem->update() 之后
+    // ——瓦片系统本帧就要据它决定关不关 cullRequestsWhileMoving(见 FrameState
+    // 里那两个字段的说明:漏了就是"飞到目的地画面是空的")。
+    if (input.cameraSystem) {
+        input.frameState.cameraFlightActive =
+            input.cameraSystem->cameraFlightActive();
+        input.frameState.cameraFlightProgress =
+            input.cameraSystem->cameraFlightProgress();
+    } else {
+        input.frameState.cameraFlightActive = false;
+        input.frameState.cameraFlightProgress = 0.0;
+    }
+
     input.elapsedTime += input.deltaSeconds;
     SceneFrameStateBuildResult frameStateResult =
         SceneFrameStateBuilder::build(SceneFrameStateBuildInput{

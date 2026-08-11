@@ -575,7 +575,7 @@ Members of interest (.h:170-208): `tilePlan_`, `tileRegistry_`, `contentLifecycl
 
 ### TilesetUpdateFrameRuntime.h / .cpp
 
-Drives one `update()` frame; runs as friend of `Tileset`. `run(tileset, frameState, pPrepRenderer)` (.h:17-21 / .cpp:98-334).
+Drives one `update()` frame; runs as friend of `Tileset`. `run(tileset, frameState, pPrepRenderer)` (.h:17-21 / .cpp:122-360).
 
 | Step | Lines | Action |
 | --- | --- | --- |
@@ -2006,19 +2006,23 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 | 方法 | 行 | 算法 |
 |---|---|---|
-| `syncFrameBeforeGesture` | .cpp:70 | 手势起手帧的同步帧(= `update(0.0)`)。dt=0 ⇒ 操控器 `tick` 全程空转,故它等价于 `beginFrame + resolveAtFrameEnd`,**与手势自身的状态重置无先后依赖**——这正是它能从操控器内部提到转发层的原因 |
-| `onPinchGesture`(适配器) | .cpp:95 | ⚠️`scale<=0` 的早退在两侧各判一次:这里判是为了不给非法事件跑同步帧(旧实现里那一帧发生在适配器早退之后) |
-| `update` | .cpp:258 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
-| `updateInternal` | .cpp:266 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
-| `resolveAtFrameEnd` | .cpp:293 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
-| `commitResolvedPose` | .cpp:316 | 指纹 + solver 扫掠基准,同源同时机 |
-| `setViewpoint` | .cpp:176 | 「部分 viewpoint」写入。参考系原点**四级回退**:tether → `eyeGeo` → `targetGeo` → 当前 eye;最后一档不是兜底而是语义(纯朝向写入 ⇒ range=0 ⇒ 绕相机自身原地转 = `resetNorthUp`)。⚠️不立刻钳位,交帧末哨兵——往返恒等判据成立的前提 |
-| `currentViewpoint` | .cpp:243 | 反解(世界系)。`eyeGeo`/hpr **恒可解**(hpr 取相机自身位置的 ENU,与 `headingRadians()` 同源);`targetGeo`/`rangeMeters` 需视线∩**椭球**,不交时留 `nullopt`——不伪造地平线外的假焦点 |
-| `distance` / `rotation` | .cpp:350 / :354 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
-| `setNadirOrbitView` | .cpp:363 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
-| `viewDistance` | .cpp:384 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
-| `headingFromFrame` (anon) | .cpp:415 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
-| `resetNorthUp` | .cpp:453 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
+| `syncFrameBeforeGesture` | .cpp:75 | 手势起手帧的同步帧(= `update(0.0)`)。dt=0 ⇒ 操控器 `tick` 全程空转,故它等价于 `beginFrame + resolveAtFrameEnd`,**与手势自身的状态重置无先后依赖**——这正是它能从操控器内部提到转发层的原因 |
+| `onPinchGesture`(适配器) | .cpp:101 | ⚠️`scale<=0` 的早退在两侧各判一次:这里判是为了不给非法事件跑同步帧(旧实现里那一帧发生在适配器早退之后) |
+| `update` | .cpp:321 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
+| `updateInternal` | .cpp:329 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
+| `resolveAtFrameEnd` | .cpp:361 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
+| `commitResolvedPose` | .cpp:385 | 指纹 + solver 扫掠基准,同源同时机 |
+| `resolveViewpoint` | .cpp:153 | `Viewpoint` → 世界位姿的**纯解算**(不写相机)。`setViewpoint` 与 `flyTo` **必须共用这一份**——两份实现分岔的表现是"飞过去的落点和直接设过去的位置不一样",画面上极难归因 |
+| `flyTo` | .cpp:274 | 解目标 → `FlightController::start` → 切飞行。起终点重合/曲线退化 ⇒ **直接落位并返回 false**,不制造一个原地不动却撑住 `isSelfAnimating()` 几秒的"飞行" |
+| `cancelFlightForTakeover` | .cpp:309 | 手势/显式视角写入抢占飞行(架构 §5:手势永远优先)。三个手势入口 + `setViewpoint` 都调它 |
+| `constraintClampCount` | .h | **机制信号**:帧末哨兵实际改动位姿的累计次数。「AGL ≥ 净空」分不清是路径本来合法还是钳位顶上去了(读数相同),飞行验收靠它判"钳位结构性没触发" |
+| `setViewpoint` | .cpp:224 | 「部分 viewpoint」写入。参考系原点**四级回退**:tether → `eyeGeo` → `targetGeo` → 当前 eye;最后一档不是兜底而是语义(纯朝向写入 ⇒ range=0 ⇒ 绕相机自身原地转 = `resetNorthUp`)。⚠️不立刻钳位,交帧末哨兵——往返恒等判据成立的前提 |
+| `currentViewpoint` | .cpp:236 | 反解(世界系)。`eyeGeo`/hpr **恒可解**(hpr 取相机自身位置的 ENU,与 `headingRadians()` 同源);`targetGeo`/`rangeMeters` 需视线∩**椭球**,不交时留 `nullopt`——不伪造地平线外的假焦点 |
+| `distance` / `rotation` | .cpp:419 / :423 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
+| `setNadirOrbitView` | .cpp:432 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
+| `viewDistance` | .cpp:453 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
+| `headingFromFrame` (anon) | .cpp:484 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
+| `resetNorthUp` | .cpp:522 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
 
 ⚠️ **三档惯性清零是现状不是设计**:`viewDistance`/`setNadirOrbitView` 调
 `clearPanInertia`、`resetNorthUp` 调 `clearGlideInertia`、冻结/脚本平移调
@@ -2074,6 +2078,35 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 ⚠️ hpr 定义在**参考系原点**的局部系里,同一组 hpr 配不同原点是不同位姿(ENU 基底在球面上
 逐点转动)。这是本设计最容易踩的一条。
+
+### camera/controllers/FlightController.h / .cpp
+
+程序化飞行控制器(.h 100 行 / .cpp 261 行),`ICameraController` 的第二个实现。
+沿 `SimplePlanarEllipsoidCurve` 从当前位姿飞到目标位姿。**不吃输入**——这正是接口里
+没有输入的理由之一。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `start` | .cpp:66 | 规划 + 启动。起终点重合(<1m)或曲线退化 ⇒ **返回 false 不进飞行态** |
+| `onActivate` | .h | ⚠️**空实现,不清飞行计划**:计划由 `start()` 在 `select()` 之前建立,接管时清掉就等于刚起飞就自己取消。与 `FreeGlobeController`(状态全是手势期瞬时量,接管即清)语义相反 |
+| `consumeCompleted` | .cpp:115 | 取走即清。落点交接由 `CameraSystem` 做——控制器不该知道 selector 存在(那就成了回指宿主) |
+| `tick` | .cpp:121 | 缓动 QUINTIC_IN_OUT;heading/roll 走**最短弧**(不 unwrap 的话"350°→10°"会绕 340° 远路);朝向按**当前位置**的 ENU 解释(用起点基底会让"保持正北"在长途里逐渐歪掉);t=1 时**精确落到终点位姿**而非插值收敛值 |
+| `planArchHeight` | .cpp:161 | 拱高 = max(看见两端所需, 逐点地形所需)。见下方三条 ⚠️ |
+
+拱高形状是 `A·sin(πt)`(两端为 0 故严格过起终点)。三条踩过的坑:
+
+1. ⚠️ **必须逐点反解 A**(`A ≥ (地形+净空−路径基高)/sin(πt)`),只在中点算一次是错的
+   ——山脊落在 t=0.25 时那里的拱只有 0.71A。
+2. ⚠️ **规划目标要高于执行阈值**(`kArchClearanceSafetyFactor`=2):碰撞钳位在 1× 净空
+   触发,规划瞄准 1× 就是零余量;路径采样与碰撞探针的采样几何本就不同(后者是相机周围
+   的扫掠走廊),读数差一点就把钳位逼出来。
+3. ⚠️ **未注入地形时整个地形项跳过**,不凭空抬高——否则短途飞行会莫名先窜上天。
+
+验收判据的教训(`tests/unit/camera/test_camera_flight.cpp`)——同一条测试连踩三层"没走到
+那条路":①只断言 AGL ≥ 净空是空转的(**钳位会兜住,读数与路径本来合法完全相同**),必须
+加机制判据「飞行期 `constraintClampCount` 不变」;②航程太长时"看见两端"项(1500km 下约
+50km)淹没地形项,地形代码一行没走到,须用短航程;③山脊放在参数中点时 `sin(πt)=1`,
+除以形状那步除不除都一样。三处都验过破坏会红。
 
 ### camera/CameraControllerSelector.h / .cpp
 
