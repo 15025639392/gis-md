@@ -48,8 +48,16 @@ bool effectiveCullRequestsWhileMoving(bool configured,
 // "加载过不淘汰",从未加载过的区域(冷会话捏到新经度)整条祖先链无数据,
 // finalizer 无祖先可回落 → 选中瓦片被丢 → 高空背景即太空黑(真机 BlackProbe
 // darkFrac 51% × HoleQual notex dropz=1-5 逐帧对齐实证)。启动后把全球 z≤2
-// 种入加载队列(Preload 组,不与视野竞争),配合钉扎 → "任何区域任何时刻
-// 都有可画祖先"从此恒成立,最坏是糊到 z2(1/16 分辨率),不再是黑。
+// 种入加载队列,配合钉扎 → "任何区域任何时刻都有可画祖先"从此恒成立,
+// 最坏是糊到 z2(1/16 分辨率),不再是黑。
+//
+// 优先级 = Normal 队首(priority 0.0),**不是** Preload。原本钉在 Preload
+// 组("不与视野竞争")会被视野内 Normal 请求恒久饿死:预算是扁平的每帧网络
+// 上限、按最高优先级先发,Preload 严格垫底 → 底图种子帧帧 Blocked,冷会话里
+// 地板要几十秒才落地(真机 ~40s 残余 notex 的成因)。改 Normal 队首后它只让位
+// Urgent(镜头救命瓦)、领先一般细节,42 片粗底 ~2-3 帧种完。代价=冷启动近景
+// 细节晚 ~2-3 帧(粗底轻、一次性;且 never-drop/祖先回落期间画糊不画黑)。
+// 这是**有意反转** Preload 的"不与视野竞争"原意图:地板是正确性,优先于细节。
 //
 // 深度取 2 不取 3:Geographic-TMS 全球 z≤2 = 42 片(GPU 影像 ~11MB 级),
 // z≤3 到 170 片 ~43MB —— 地板只要"不黑",z3 的驻留由钉扎负责。
@@ -72,8 +80,10 @@ void TilesetUpdateFrameRuntime::runBaseCoveragePreload(
                 for (int y = 0; y < scheme.tileCountY(z); ++y) {
                     const TileKey key{scheme.id(), z, x, y};
                     if (tileset.contentAccess_.ensureTile(key)) {
+                        // Normal 队首(见顶部注释):正确性地板优先于细节,
+                        // 只让位 Urgent,避免 Preload 组的恒久饥饿。
                         tileset.loadQueue_.queue(
-                            key, TileLoadPriorityGroup::Preload, 0.0);
+                            key, TileLoadPriorityGroup::Normal, 0.0);
                     }
                 }
             }

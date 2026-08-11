@@ -60,6 +60,14 @@ struct TilesetTestAccess {
     static TilesetTile* findTile(Tileset& tileset, const TileKey& key) {
         return tileset.tileRegistry_.findTile(key);
     }
+    // The priority group `key` currently sits at in the load queue, or -1 if it
+    // is not queued (already dispatched or never seeded).
+    static int queuedGroupOf(const Tileset& tileset, const TileKey& key) {
+        for (const TileLoadRequest& r : tileset.loadQueue_) {
+            if (r.key == key) return static_cast<int>(r.group);
+        }
+        return -1;
+    }
 };
 } // namespace earth_engine
 
@@ -119,9 +127,10 @@ struct Fixture {
     std::unique_ptr<TileScheme> enumScheme = TileScheme::createGeographicTMS();
     std::unique_ptr<Tileset> tileset;
 
-    explicit Fixture(bool pinBaseCoverage) {
+    explicit Fixture(bool pinBaseCoverage, uint32_t maxSimultaneousLoads = 20) {
         TilesetOptions options;
         options.pinBaseCoverage = pinBaseCoverage;
+        options.maximumSimultaneousTileLoads = maxSimultaneousLoads;
         auto provider = std::make_unique<InertTerrainProvider>(
             std::vector<TileKey>{west, east}, /*maxZoom=*/4);
         tileset = std::make_unique<Tileset>(
@@ -221,6 +230,31 @@ TEST(ZoomOutBaseCoverage, UnpinnedDoesNotSeedOutOfViewBaseCoverage) {
     Fixture pinned(/*pinBaseCoverage=*/true);
     pinned.narrowLowFrame(1);
     EXPECT_GT(pinned.countMaterialized(2), unpinned.countMaterialized(2));
+}
+
+// ── 柱② 调度:底图种子必须在**非饥饿**优先级(Normal),不在会垫底饿死的 Preload ──
+// Preload 严格垫底 + 扁平预算按最高优先级先发 ⇒ 视野内 Normal 恒久饿死底图种子,
+// 冷会话地板要几十秒才落地(真机 ~40s 残余 notex 成因)。种在 Normal 队首后只让位
+// Urgent。用极小的每帧加载预算(=1)把绝大多数种子留在队列里,直接读它们的 group。
+TEST(ZoomOutBaseCoverage, BaseCoverageSeededAtNonStarvablePriority) {
+    Fixture fx(/*pinBaseCoverage=*/true, /*maxSimultaneousLoads=*/1);
+    fx.narrowLowFrame(1);
+
+    // Far-east z1/z2 tiles only exist via base-coverage seeding (§ above); with a
+    // 1-load budget nearly all stay retained in the queue, so we can read the
+    // group they were seeded at.
+    int inspected = 0;
+    for (const TileKey& k : kFarEastProbes) {
+        const int group = TilesetTestAccess::queuedGroupOf(*fx.tileset, k);
+        if (group < 0) continue;  // dispatched this frame, not retained
+        ++inspected;
+        EXPECT_EQ(group, static_cast<int>(TileLoadPriorityGroup::Normal))
+            << "far tile z=" << k.z << " x=" << k.x << " y=" << k.y
+            << " must be seeded at Normal (front), not a starvable tier";
+        EXPECT_NE(group, static_cast<int>(TileLoadPriorityGroup::Preload));
+    }
+    EXPECT_GT(inspected, 0)
+        << "expected retained base-coverage seeds to inspect under a 1-load budget";
 }
 
 // ============================================================================
