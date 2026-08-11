@@ -6428,8 +6428,8 @@ void testTilesetBlockingBaseImagerySkipsPlaceholderSurface() {
         *root,
         commands,
         1.0f);
-    check(commands.empty(),
-          "Tileset: blocking base imagery does not draw a placeholder terrain shell before a drawable raster exists");
+    check(!commands.empty(),
+          "Tileset: never-drop draws a base-color terrain shell (count=0) instead of nothing while base imagery loads");
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: missing blocking base imagery keeps strict complete renderable false");
 }
@@ -23692,12 +23692,12 @@ void testScenePresentationHoldsWhenVisibleTerrainHasNoDrawableSurfaceEntry() {
     TilesetTestAccess::beginTilePlan(*terrainRaw);
     TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
     check(!terrainRaw->tilePlan().visibleTiles.empty() &&
-              terrainRaw->tilePlan().renderEntries.empty(),
-          "Scene: presentation hold fixture has visible terrain but no drawable surface entry");
+              terrainRaw->tilePlan().renderEntries.size() == 1,
+          "Scene: never-drop gives visible terrain a base-color entry (not dropped)");
 
     scene.setTileset(std::move(terrainTileset));
-    check(scene.shouldHoldPresentationFrame(),
-          "Scene: presentation hold preserves the previous frame until base imagery is drawable");
+    check(!scene.shouldHoldPresentationFrame(),
+          "Scene: never-drop presents the base-color surface immediately instead of holding for base imagery");
 }
 
 void testScenePresentationHoldsWhenPlannedTerrainMixesDrawableAndMissingBaseImagery() {
@@ -23756,8 +23756,8 @@ void testScenePresentationHoldsWhenPlannedTerrainMixesDrawableAndMissingBaseImag
     childEntry.selectedThisFrame = true;
     plan.renderEntries.push_back(rootEntry);
     plan.renderEntries.push_back(childEntry);
-    check(terrainRaw->shouldHoldPresentationFrame(),
-          "Scene: presentation hold rejects mixed terrain plans with any missing base imagery");
+    check(!terrainRaw->shouldHoldPresentationFrame(),
+          "Scene: never-drop presents mixed plans (textured + base-color) without holding for the missing one");
 }
 
 void testScenePresentationHoldsTerrainTakeoverUntilCoverageRecovers() {
@@ -23961,14 +23961,14 @@ void testScenePresentationHoldsWhenPlannedTerrainLacksBaseImageryCommand() {
     plan.renderEntries.push_back(entry);
 
     const bool presented = scene.render();
-    check(!presented,
-          "Scene: command-level presentation hold rejects planned terrain without a bound base-imagery command");
-    check(device.submittedCommands.empty(),
-          "Scene: command-level presentation hold does not submit sky or shell-only commands");
+    check(presented,
+          "Scene: never-drop presents planned terrain as a base-color surface (no command-level hold)");
+    check(!device.submittedCommands.empty(),
+          "Scene: never-drop submits the base-color terrain command");
     check(scene.diagnostics().terrainRenderEntriesPlanned == 1 &&
-              scene.diagnostics().terrainRenderEntriesMissed == 1 &&
-              scene.diagnostics().terrainSurfaceCommandsSubmitted == 0,
-          "Scene: command-level presentation hold keeps diagnostics on the skipped terrain entry");
+              scene.diagnostics().terrainRenderEntriesMissed == 0 &&
+              scene.diagnostics().terrainSurfaceCommandsSubmitted == 1,
+          "Scene: never-drop counts the base-color entry as a submitted terrain surface");
 }
 
 void testSceneSortsTransparentGltfByCameraDepth() {
@@ -24806,8 +24806,8 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     check(tileset.tilePlan().visibleTiles.size() == 1 &&
               tileset.tilePlan().visibleTiles.front() == rootKey &&
-              tileset.tilePlan().renderEntries.empty(),
-          "TileRenderPlanFrameRefresher: blocking base imagery keeps surface geometry out of the render plan until the raster is drawable");
+              tileset.tilePlan().renderEntries.size() == 1,
+          "TileRenderPlanFrameRefresher: never-drop keeps surface geometry in the render plan as a base-color entry");
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     RasterMappedToTilesetTile* rootMapped =
         root->rasterOverlayState.mappings().empty()
@@ -24895,8 +24895,8 @@ void testTileRenderPlanFrameRefresherCollectsProviderRasterCredits() {
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     const TilePlan& plan = tileset.tilePlan();
-    check(plan.renderEntries.empty(),
-          "TileRenderPlanFrameRefresher: provider credit fixture waits for drawable base imagery before planning a render entry");
+    check(plan.renderEntries.size() == 1,
+          "TileRenderPlanFrameRefresher: never-drop plans a base-color render entry without waiting for base imagery");
     check(plan.frameCredits.size() == 1 &&
               plan.frameCredits.front() == "Provider credit",
           "TileRenderPlanFrameRefresher: provider raster credits are aggregated before tile imagery loads like cesium-native");

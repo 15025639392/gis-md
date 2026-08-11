@@ -864,14 +864,12 @@ void GltfDrawCommandBuilder::build(
         }
         return;
     }
-    if (!TileRasterOverlayReadinessPolicy::
-            terrainSurfaceImageryDrawableReady(tile, overlays)) {
-        if (timings) {
-            timings->eligibilityMs +=
-                perf::nowMs() - eligibilityStartMs;
-        }
-        return;
-    }
+    // never-drop(cesium 语义):base 影像未就绪(自身与祖先都没有 ready 纹理)时,
+    // **不再跳过 draw** —— 几何已可画(上面的 hasDrawableResources 已保证),照常
+    // 建命令,下面的 raster 绑定会得到 rasterOverlayTextureCount=0,着色器出
+    // u_baseColor 的纯色面(Renderer.cpp 地形 FS:mappedRaster 只在 count>0 时叠)。
+    // 这样"几何可画但缺影像"渲成 base 色而非透底洞。祖先影像就绪时下面正常绑上
+    // (逐级缩放的常态),此路只在连祖先都没有(快拉/冷启动下载未完)时触发。
     if (timings) {
         timings->eligibilityMs +=
             perf::nowMs() - eligibilityStartMs;

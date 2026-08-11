@@ -215,6 +215,12 @@ struct TilePlan {
     // dedup —— 这两类才是屏幕上真的没有几何。
     int renderEntryDropClipUvCount = 0;
     int renderEntryDropNotBuildableCount = 0;
+    // never-drop(cesium 语义):几何可画但 base 影像未就绪(连祖先都没有)时,
+    // 不再 drop 成洞,而是发 entry 让命令端出 base 色。这一计数是"本可成洞、被
+    // base 色兜底"的片数 —— 稳态应趋 0(祖先/预载/常驻就绪后),非零=正处在
+    // 冷启动/快拉的下载兜底窗口。与 renderEntryDropNotBuildableCount 互斥:后者
+    // 现在只剩真无几何(nogeo)。
+    int renderEntryBaseColorFallbackCount = 0;
     // NotBuildable 的成因分桶(定「补影像兜底」的范围用):几何就没有 /
     // 没建 mapping / 建了但无可用纹理(含祖先)/ texcoord 越界 / 其它。
     int renderEntryDropNoGeometryCount = 0;

@@ -844,14 +844,16 @@ bool SceneRenderPipeline::shouldHoldPresentationAfterCommandBuild(
         hasTerrainSurfaceCommand = true;
         ++terrainCommands;
         if (!isTerrainSurfaceCommandWithBaseImagery(command)) {
+            // never-drop:缺 base 影像的地形命令现在是**合法的 base 色兜底渲染**
+            // (finalizer 不再 drop、命令端出 count=0 纯色面),**不再算 offender、
+            // 不再据此 hold**。旧行为(判 offender→扣整帧≤60 帧→超限放行)在快拉到
+            // 影像未下载完的经度时,表现为"卡顿一下再露黑";never-drop 下应立即呈现
+            // base 色面(画灰不画黑)。仍计数用于诊断(base 色兜底片数)。
             if (command.gltfRasterOverlayTextureCount <= 0) {
                 ++noTexCount;
             }
             if (command.surfaceBaseRasterState <= 0) {
                 ++noBaseStateCount;
-            }
-            if (!firstOffender) {
-                firstOffender = &command;
             }
         }
     }

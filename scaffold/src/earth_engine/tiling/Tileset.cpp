@@ -567,7 +567,13 @@ bool Tileset::shouldHoldPresentationFrame() const {
         return true;
     }
 
-    return !plannedRenderEntriesHaveRequiredBaseImagery();
+    // never-drop(cesium 语义):渲染集里缺 base 影像的 entry 是合法的 base 色
+    // 兜底渲染(finalizer 发、命令端出 count=0 纯色面),**不再等影像就绪** ——
+    // 有 entry 就立即呈现(画灰不画黑),不冻帧。仅当渲染集彻底为空(冷启动
+    // 首帧,真没几何可画)才 hold(上面那条)。旧行为
+    // (!plannedRenderEntriesHaveRequiredBaseImagery → hold)会在快拉到影像未
+    // 下载完的经度时冻帧 ~2s;never-drop 下该立即呈现兜底面。
+    return false;
 }
 
 bool Tileset::requiresBaseImageryPresentationSurface() const {

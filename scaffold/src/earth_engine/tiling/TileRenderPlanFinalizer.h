@@ -159,14 +159,20 @@ struct TileRenderPlanFinalizer {
                     rasterOverlays,
                     DirectRenderFallbackPolicy::
                         AllowTransientSurfaceAsLastResort)) {
-                // 破洞诊断:自身不可直画、也没有可回落的祖先 → 真空洞。
-                // 再按成因分桶,用来定「补影像兜底」这件事的范围:几何就没有
-                // (nogeo)是一回事;几何在手只差影像,则要分清是「还没建
-                // mapping」(时序)还是「建了但连祖先纹理都没有」(真缺常驻粗
-                // 影像)—— 两者修法完全不同。
-                ++plan.renderEntryDropNotBuildableCount;
-                recordDropReason(plan, *commandTile, rasterOverlays);
-                return;
+                if (!commandTile->content.renderContent
+                         .hasDrawableResources()) {
+                    // 真无几何(nogeo):无面可画,才丢弃。这是唯一还允许 drop
+                    // 的成因,按桶记录用于诊断。
+                    ++plan.renderEntryDropNotBuildableCount;
+                    recordDropReason(plan, *commandTile, rasterOverlays);
+                    return;
+                }
+                // 几何可画、只差 base 影像(自身与祖先都没有 ready 纹理)——
+                // never-drop(cesium 语义):发 entry,命令端 GltfDrawCommandBuilder
+                // 出 count=0 的 base 色面(TileRenderCommandPreparer 已把
+                // renderability 标 drawable-but-incomplete,细化继续追真影像)。
+                // 快拉到影像未下载完的经度时画灰不画黑,绝不留透底洞。
+                ++plan.renderEntryBaseColorFallbackCount;
             }
 
             const RenderGeometryIdentity renderIdentity{

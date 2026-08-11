@@ -561,7 +561,7 @@ cesium-native `Tileset` equivalent. Owns a unified quadtree of terrain + raster-
 | ctor (+ contentProvider) | .h:99-103 | 3D-Tiles content path; wraps provider in `TilesetTerrainProviders` (.cpp:115-126) |
 | `update(FrameState, IPrepareRendererResources*)` | .h:106-107 / .cpp:495-506 | Per-frame entry; delegates to `TilesetUpdateFrameFacade::update`; logs if >5ms |
 | `buildRenderCommands(Renderer&, RenderCommandList&)` | .h:108 / .cpp:507-545 | `++frameNumber_`, `renderCommands_.beginFrame(...)`, then `TilesetRenderFrameExecutor::buildRenderCommands` over `tilePlan_` |
-| `releaseRenderReferences()` | .h:125 / .cpp:649-656 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
+| `releaseRenderReferences()` | .h:125 / .cpp:655-662 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
 | `tilePlan()` / `tileScheme()` | .h:110-111 | Const accessors to the frame selection result |
 | `sampleHeight(lngRad, latRad)` | .h:120 / .cpp:481-493 | Best-loaded terrain height in meters (0 if none); via `LoadedTerrainHeightSampler` |
 | `setOcclusionCallback` / `clearOcclusionCallback` | .h:131-132 / .cpp:247-254 | cesium-native `TileOcclusionRendererProxyPool` input hook |
@@ -575,7 +575,7 @@ Members of interest (.h:170-208): `tilePlan_`, `tileRegistry_`, `contentLifecycl
 
 ### TilesetUpdateFrameRuntime.h / .cpp
 
-Drives one `update()` frame; runs as friend of `Tileset`. `run(tileset, frameState, pPrepRenderer)` (.h:17-21 / .cpp:122-360).
+Drives one `update()` frame; runs as friend of `Tileset`. `run(tileset, frameState, pPrepRenderer)` (.h:17-21 / .cpp:132-372).
 
 | Step | Lines | Action |
 | --- | --- | --- |

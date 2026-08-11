@@ -305,9 +305,13 @@ TEST(
     EXPECT_NEAR(entry.surfaceClipUv[3], 0.515f, 1e-6f);
 }
 
+// never-drop(cesium 语义):几何可画但 blocking base 影像未就绪、且无可回落祖先
+// 时,**不再 drop 成透底洞**,而是发一条 base 色 entry(命令端出 count=0 纯色面,
+// 细化继续追真影像)。原为 SkipsTerrainDirectEntryUntilBlockingBaseImageryIsDrawable,
+// 锁"升级前"的 skip;现锁升级后的兜底。
 TEST(
     TileRenderPlanFinalizerTest,
-    SkipsTerrainDirectEntryUntilBlockingBaseImageryIsDrawable) {
+    EmitsBaseColorEntryWhenBlockingBaseImageryMissing) {
     const TileKey rootKey{"test", 0, 0, 0};
     TilesetTile root(rootKey, Rectangle{0.0, 0.0, 2.0, 2.0});
     root.content.renderContent.prepareGltfContent(
@@ -344,7 +348,12 @@ TEST(
                        terrainSurfaceImageryDrawableReady(tile, overlays);
         });
 
-    EXPECT_TRUE(plan.renderEntries.empty());
+    // never-drop:发一条自身的 base 色 entry,不 drop、不用祖先(本就没有)。
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    EXPECT_EQ(plan.renderEntries[0].selectedKey, rootKey);
+    EXPECT_EQ(plan.renderEntries[0].reason, TileRenderEntryReason::Direct);
+    EXPECT_EQ(plan.renderEntryBaseColorFallbackCount, 1);
+    EXPECT_EQ(plan.renderEntryDropNotBuildableCount, 0);
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
 }
 
@@ -1030,15 +1039,14 @@ TEST(
                        terrainSurfaceImageryDrawableReady(tile, overlays);
         });
 
-    EXPECT_TRUE(plan.renderEntries.empty());
-    EXPECT_EQ(plan.renderEntryDropNotBuildableCount, 1);
-    EXPECT_EQ(plan.renderEntryDropNoReadyTextureCount, 1);
-    EXPECT_EQ(plan.renderEntryDropNoMappingCount, 0);
-    EXPECT_EQ(
-        plan.renderEntryDropNoTexLoadingState,
-        static_cast<int>(RasterOverlayTile::LoadState::Loaded));
-    EXPECT_EQ(plan.renderEntryDropNoTexReadyState, -1);
-    EXPECT_EQ(plan.renderEntryDropNoTexAncestorsWithMapping, 0);
+    // 探针(上面)仍读 NoReadyTexture —— 那是就绪判据,never-drop 不改它。
+    // 但 finalizer 不再据此 drop:几何可画 → 发 base 色 entry,drop 桶归零,
+    // base 色兜底计数 +1。诊断需要"为什么是灰"时仍可按需调 probeNoReadyTexture。
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    EXPECT_EQ(plan.renderEntries[0].selectedKey, rootKey);
+    EXPECT_EQ(plan.renderEntryDropNotBuildableCount, 0);
+    EXPECT_EQ(plan.renderEntryDropNoReadyTextureCount, 0);
+    EXPECT_EQ(plan.renderEntryBaseColorFallbackCount, 1);
 }
 
 // 上一个测试钉住的病:影像 Loaded 了却没人提升。修法 = 让节流泵既发也收。
