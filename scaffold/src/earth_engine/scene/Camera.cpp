@@ -21,7 +21,9 @@ Camera::Camera()
       up_(0.0, 1.0, 0.0),
       right_(1.0, 0.0, 0.0),
       target_(std::numeric_limits<double>::quiet_NaN(), 0.0, 0.0),
+      projectionMode_(ProjectionMode::Perspective),
       verticalFovRadians_(glm::radians(60.0)),
+      orthographicWidthMeters_(1.0e7),
       // OpenGlobus PlanetCamera defaults: near=1.0, far=1e12 with reverse-Z.
       nearPlaneMeters_(1.0),
       farPlaneMeters_(1e12) {}
@@ -48,7 +50,26 @@ void Camera::setPerspective(double verticalFovRadians,
         throw std::invalid_argument("Camera near/far planes must satisfy 0 < near < far.");
     }
 
+    projectionMode_ = ProjectionMode::Perspective;
     verticalFovRadians_ = verticalFovRadians;
+    nearPlaneMeters_ = nearPlaneMeters;
+    farPlaneMeters_ = farPlaneMeters;
+}
+
+void Camera::setOrthographic(double orthographicWidthMeters,
+                             double nearPlaneMeters,
+                             double farPlaneMeters) {
+    if (orthographicWidthMeters <= 0.0) {
+        throw std::invalid_argument(
+            "Camera orthographic width must be positive meters.");
+    }
+    if (nearPlaneMeters <= 0.0 || farPlaneMeters <= nearPlaneMeters) {
+        throw std::invalid_argument(
+            "Camera near/far planes must satisfy 0 < near < far.");
+    }
+
+    projectionMode_ = ProjectionMode::Orthographic;
+    orthographicWidthMeters_ = orthographicWidthMeters;
     nearPlaneMeters_ = nearPlaneMeters;
     farPlaneMeters_ = farPlaneMeters;
 }
@@ -82,6 +103,28 @@ Mat4 Camera::projectionMatrix(double viewportWidthPixels,
     //   P[3][2] = -1  (standard w_clip = -z_eye)
 
     const double aspect = viewportWidthPixels / viewportHeightPixels;
+
+    if (projectionMode_ == ProjectionMode::Orthographic) {
+        // 正交,**同一套 reverse-Z 约定**:z_eye=−near → z_ndc=1,
+        // z_eye=−far → z_ndc=0。解 z_ndc = a·z_eye + b 得
+        //   a = 1/(far−near),b = far/(far−near)。
+        //
+        // ⚠️ 刻意**不复用** `Transforms::createOrthographicMatrix`:那份是
+        // cesium 的前向 Z 且带 Y 翻转(2/(bottom−top)),直接拿来用会让正交下的
+        // 深度测试整个反过来、画面上下颠倒。约定不同的矩阵不能因为"名字对"就复用。
+        const double halfWidth = orthographicWidthMeters_ * 0.5;
+        const double halfHeight = halfWidth / aspect;
+        const double invRange = 1.0 / (farPlaneMeters_ - nearPlaneMeters_);
+
+        glm::dmat4 ortho(0.0);
+        ortho[0][0] = 1.0 / halfWidth;
+        ortho[1][1] = 1.0 / halfHeight;
+        ortho[2][2] = invRange;
+        ortho[3][2] = farPlaneMeters_ * invRange;
+        ortho[3][3] = 1.0;                  // w_clip 恒 1 ⇒ 反投影天然是平行射线
+        return Mat4(ortho);
+    }
+
     const double f = 1.0 / std::tan(verticalFovRadians_ * 0.5);
     const double n = nearPlaneMeters_;
     const double r = farPlaneMeters_;  // "far" becomes the near limit in reverse-Z
@@ -122,7 +165,13 @@ Ray Camera::getPickRay(double screenXPixels,
     const glm::dmat4 inverseViewProjection =
         glm::inverse(viewProjectionMatrix(viewportWidthPixels, viewportHeightPixels).raw());
 
-    // Reverse-Z depth [0,1]: near(1m) → z_ndc=1, far(1e12) → z_ndc=0.
+    // Reverse-Z depth [0,1]: near → z_ndc=1, far → z_ndc=0。
+    //
+    // ⚠️ **正交不需要特判**:反投影只依赖投影矩阵,不依赖它是哪种投影。正交矩阵
+    // 的 w_clip 恒为 1,于是这段反投影天然给出**平行射线**(origin 随像素平移、
+    // direction 恒等于 camera.direction)。架构文档 §8 第 3 条说"现在的 unproject
+    // 在正交下会给出错误 origin",那是**在 projectionMatrix 还没分支的前提下**才
+    // 成立;分支之后这里是净删除——别再加一个正交分支进来。
     const glm::dvec4 nearClip(ndcX, ndcY, 1.0, 1.0);
     const glm::dvec4 farClip(ndcX, ndcY, 0.0, 1.0);
 

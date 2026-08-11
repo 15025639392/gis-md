@@ -49,7 +49,14 @@ void SceneFrameUpdateCoordinator::update(
     // 全被近平面切掉("看到山内部"的根因)。下限/比例常量与碰撞净空的耦合
     // 契约见 CameraSystem 头(static_assert 锁定)。groundState 未解算过
     // (headless/无控制器)退回旧公式与旧下限。
-    if (input.camera) {
+    if (input.camera && input.camera->isOrthographic()) {
+        // ⚠️ **正交下动态 near 无意义,必须在这里断掉**。上面那套公式治的是
+        // reverse-Z 透视的 z_ndc 病态区(near 太远 ⇒ 全部真实距离挤进 ~2e-5 的
+        // 区间,float32 clip-space z 分不开 1m 的深度差)。正交的 z_ndc 对 z_eye
+        // 是**线性**的,精度全程均匀,根本没有那个病态区;照搬公式只会把 near 收到
+        // 脚下几米,把相机前方的地形整片切掉。正交的 near/far 由 setOrthographic
+        // 显式给定,本层不碰。
+    } else if (input.camera) {
         double nearPlane;
         if (input.cameraSystem &&
             input.cameraSystem->groundState().valid) {

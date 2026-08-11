@@ -7,10 +7,14 @@
 
 namespace earth_engine {
 
-/// Perspective camera in ECEF/world meters.
+/// Camera in ECEF/world meters (perspective or orthographic).
 /// Screen coordinates are physical viewport pixels with origin at top-left.
 class Camera {
 public:
+    /// 投影模式。正交与透视**共用同一套 reverse-Z 深度约定**(near→z_ndc=1,
+    /// far→0,depth clear=0 + GreaterEqual),故切换模式不需要动任何深度状态。
+    enum class ProjectionMode { Perspective, Orthographic };
+
     Camera();
 
     const Vec3& position() const { return position_; }
@@ -18,12 +22,18 @@ public:
     const Vec3& up() const { return up_; }
     const Vec3& right() const { return right_; }
 
+    /// ⚠️ 正交下**没有 fov 这回事**,本值只是切模式前的残留。任何"像素→角度"
+    /// 的换算(转台增益、SSE)在正交下都不该读它 —— 见 `orthographicWidthMeters`。
     double verticalFovRadians() const { return verticalFovRadians_; }
     double nearPlaneMeters() const { return nearPlaneMeters_; }
     double farPlaneMeters() const { return farPlaneMeters_; }
 
-    /// 是否正交投影（当前仅支持透视）
-    bool isOrthographic() const { return false; }
+    ProjectionMode projectionMode() const { return projectionMode_; }
+    bool isOrthographic() const {
+        return projectionMode_ == ProjectionMode::Orthographic;
+    }
+    /// 正交视口的世界宽度(米)。高度按视口宽高比推出。
+    double orthographicWidthMeters() const { return orthographicWidthMeters_; }
 
     /// 相机距 WGS84 椭球表面的高度（米）
     double getHeight() const;
@@ -37,6 +47,14 @@ public:
     void setPerspective(double verticalFovRadians,
                         double nearPlaneMeters,
                         double farPlaneMeters);
+
+    /// 切到正交投影。
+    /// @param orthographicWidthMeters 视口覆盖的世界宽度(米),须 > 0
+    /// ⚠️ 正交下 near 可以 ≤ 0(相机平面之后的东西照样在盒子里),但为了与透视
+    /// 共用同一套接口与深度约定,这里仍要求 0 < near < far。
+    void setOrthographic(double orthographicWidthMeters,
+                         double nearPlaneMeters,
+                         double farPlaneMeters);
 
     Mat4 viewMatrix() const;
     Mat4 projectionMatrix(double viewportWidthPixels,
@@ -59,7 +77,9 @@ private:
     Vec3 up_;
     Vec3 right_;
     Vec3 target_;
+    ProjectionMode projectionMode_;
     double verticalFovRadians_;
+    double orthographicWidthMeters_;
     double nearPlaneMeters_;
     double farPlaneMeters_;
 };

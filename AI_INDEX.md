@@ -2237,31 +2237,51 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 ### Camera.h / .cpp
 
-Perspective camera in ECEF/world meters; screen coords are physical viewport pixels, origin top-left. Uses reverse-Z projection matched to OpenGlobus `PlanetCamera`.
+ECEF/世界米制相机,**透视与正交两种投影**;屏幕坐标是物理视口像素、原点左上。
+两种投影**共用同一套 reverse-Z 深度约定**(对齐 OpenGlobus `PlanetCamera`),
+故切换模式不需要动任何深度状态。
 
-| Item | Lines | Description |
-|------|-------|-------------|
-| Accessors | .h:16-23 | `position`/`direction`/`up`/`right`, `verticalFovRadians`/`nearPlaneMeters`/`farPlaneMeters` |
-| `isOrthographic` | .h:26 | Always false (perspective only) |
-| `getHeight` | .h:29, .cpp:138-141 | Height above WGS84 via `cartesianToCartographic` |
-| `getNormalMatrix` | .h:32, .cpp:143-158 | 3×3 (viewMatrix rotation part, 9 floats, column-major) |
-| `setView` | .h:34, .cpp:29-33 | Sets position + orientation; invalidates `target_` (NaN sentinel) so viewMatrix uses position+direction |
-| `lookAt` | .h:35, .cpp:35-39 | Sets position/target/orientation from `target-position` |
-| `setPerspective` | .h:37, .cpp:41-54 | Validates FOV∈(0,π), 0<near<far |
-| `viewMatrix` | .h:41, .cpp:56-65 | `glm::lookAt`; center = `target_` if valid, else `position+direction` |
-| `projectionMatrix` | .h:42, .cpp:67-98 | Reverse-Z perspective (see below) |
-| `viewProjectionMatrix` | .h:44, .cpp:100-103 | `proj * view` |
-| `frustum` | .h:46, .cpp:105-109 | `Frustum::fromViewProjection` |
-| `getPickRay` | .h:49, .cpp:111-136 | NDC from pixels; unproject near(z=1)/far(z=0) clip via inverse VP; returns `Ray(nearWorld, normalize(far-near))` |
-| `setOrientation` (private) | .h:55, .cpp:160-168 | Orthonormalizes: `dir` normalized, `right=dir×up`, `up=right×dir` |
+| 项 | 行 | 说明 |
+|---|---|---|
+| `ProjectionMode` | .h:16 | `Perspective` / `Orthographic` |
+| `isOrthographic` | .h:32 | ⚠️ 曾经**恒返回 false**——那种"永远答同一个值"的查询比没有更糟:消费方(SkyBox、渲染管线)看着像接好了,实际永远走透视分支。现在是真实状态 |
+| `orthographicWidthMeters` | .h:36 | 正交视口的世界宽度(米);高度按视口宽高比推出 |
+| `verticalFovRadians` | .h:27 | ⚠️ **正交下没有 fov 这回事**,该值只是切模式前的残留。任何"像素→角度"换算(转台增益、SSE)在正交下都不该读它 |
+| `setView` | .cpp:31 | 置位姿并让 `target_` 失效(NaN 哨兵)⇒ viewMatrix 走 position+direction |
+| `lookAt` | .cpp:37 | 由 `target−position` 定朝向 |
+| `setPerspective` | .cpp:43 | 校验 FOV∈(0,π)、0<near<far;**并把模式切回透视** |
+| `setOrthographic` | .cpp:59 | 校验宽度>0、0<near<far。校验失败不留半改状态 |
+| `viewMatrix` | .cpp:77 | `glm::lookAt`;center 取 `target_`(有效时)否则 position+direction |
+| `projectionMatrix` | .cpp:88 | 按模式分支,见下 |
+| `viewProjectionMatrix` / `frustum` | .cpp:143 / :148 | `proj*view`;`Frustum::fromViewProjection` **通用提取(Gribb-Hartmann),正交下自然退化成盒子,不需要特判** |
+| `getPickRay` | .cpp:154 | NDC → 反投影 near(z=1)/far(z=0)。⚠️**正交不需要特判**:反投影只依赖投影矩阵。正交矩阵 w_clip 恒为 1 ⇒ 天然给出**平行射线**(origin 随像素平移、direction 恒等于 camera.direction)。架构文档 §8 第 3 条说"unproject 在正交下会给出错误 origin",那是**在 projectionMatrix 还没分支的前提下**成立;分支之后这里是净删除,别再加正交分支 |
+| `setOrientation` (private) | .cpp:209 | 正交归一;`dir∥up` 退化时换与 direction 夹角最大的坐标轴重建基(否则 NaN 基把地形涂成竖直拖影) |
 
-Constructor defaults (.cpp:18-27): position=(0,0,7e6), direction=(0,0,-1), up=(0,1,0), `target_.x`=NaN (invalid), FOV=60°, **near=1.0**, **far=1e12** (OpenGlobus `PlanetCamera` reverse-Z defaults). **`kMinViewportPixels`** = 1.0 (.cpp:15).
+**Reverse-Z 透视** (.cpp:128 起):`z_eye=−near → z_ndc=1`,`−far → 0`。要求 depth
+clear=0.0 + GreaterEqual。`P[0][0]=f/aspect`、`P[1][1]=f`(`f=1/tan(fov/2)`)、
+`proj[2][2]=n·invRange`、`proj[2][3]=−1`(w_clip=−z_eye)、`proj[3][2]=r·n·invRange`。
 
-Reverse-Z projection (.cpp:67-98): maps `z_eye=near(1)→z_ndc=1`, `z_eye=far(1e12)→z_ndc=0`. Requires depth clear=0.0, depth func GreaterEqual. Matrix: `P[0][0]=f/aspect`, `P[1][1]=f` (`f=1/tan(fov/2)`), `proj[2][2]=n·invRange`, `proj[2][3]=-1` (w_clip=-z_eye), `proj[3][2]=r·n·invRange` with `invRange=1/(far-near)`. `getPickRay` mirrors this (near clip z=1.0, far clip z=0.0, .cpp:125-127).
+**Reverse-Z 正交** (.cpp:107 起):同一约定。解 `z_ndc = a·z_eye + b` 得
+`a=1/(far−near)`、`b=far/(far−near)`;`ortho[0][0]=1/halfWidth`、
+`ortho[1][1]=1/halfHeight`(halfHeight = halfWidth/aspect,**用宽度会把画面拉伸**)、
+`ortho[3][3]=1`。
+⚠️ **刻意不复用 `Transforms::createOrthographicMatrix`**:那份是 cesium 的前向 Z 且
+带 Y 翻转(`2/(bottom−top)`),拿来用会让正交下深度测试整个反过来、画面上下颠倒。
+**约定不同的矩阵不能因为"名字对"就复用。**
+
+⚠️ **动态 near 在正交下必须断掉**(接线在 `SceneFrameUpdateCoordinator`):那套公式
+治的是 reverse-Z **透视**的 z_ndc 病态区;正交 z_ndc 对 z_eye 是**线性**的,精度全程
+均匀,没有那个病态区,照搬只会把 near 收到脚下几米、把相机前方的东西整片切掉。
+
+构造默认 (.cpp:18):position=(0,0,7e6)、direction=(0,0,−1)、up=(0,1,0)、
+`target_.x`=NaN、FOV=60°、正交宽度=1e7、**near=1.0**、**far=1e12**。
+`kMinViewportPixels`=1.0 (.cpp:15)。
+
+⚠️ **边界**:相机层的正交是完整的,但**瓦片选择(SSE)仍假定透视**——它按 fov 算
+屏幕空间误差。场景级 2D 模式(墨卡托平面下的瓦片选择/拾取/渲染适配、Cesium 式
+3D↔2D morph)是架构文档明确的**非目标**,本层只保证不堵死它。
 
 ---
-
-## 12. scene — Scene, coordinators, FrameState, Frustum, render pipeline
 
 ### Scene.h / .cpp
 
