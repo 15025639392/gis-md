@@ -97,6 +97,7 @@ struct TileRenderPlanFinalizer {
         plan.renderEntryDeferredPrepCount = 0;
         plan.renderEntryDropClipUvCount = 0;
         plan.renderEntryDropNotBuildableCount = 0;
+        plan.renderEntryBaseColorFallbackCount = 0;
         plan.renderEntryDropNoGeometryCount = 0;
         plan.renderEntryDropNoMappingCount = 0;
         plan.renderEntryDropNoReadyTextureCount = 0;
