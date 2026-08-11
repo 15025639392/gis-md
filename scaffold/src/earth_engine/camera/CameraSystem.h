@@ -8,6 +8,7 @@
 #include "controllers/FlightController.h"
 #include "controllers/TouchGesture.h"
 #include "controllers/FreeGlobeController.h"
+#include "controllers/TetheredController.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cstdint>
@@ -194,6 +195,12 @@ public:
     /// 内置控制器名。`selectController` / `activeControllerName` 用。
     static constexpr const char* kFreeGlobeController = "freeGlobe";
     static constexpr const char* kFlightController = "flight";
+    static constexpr const char* kTetheredController = "tethered";
+
+    /// 系留控制器(阶段 4)。设参考系并切过去 = 相机固连到载体。
+    /// 切换走 `onActivate`,从当前世界位姿换算相对位姿 ⇒ **零跳变**。
+    /// 传空 frame(两个 provider 都空)是允许的,退化成绕地心固定点的 orbit。
+    TetheredController& tetheredController() { return *tethered_; }
 
     // ---- 飞行（阶段 3）----
 
@@ -287,6 +294,7 @@ private:
     // `selector_.active()->onActivate()`，届时这个缓存指针只服务手势路由。
     FreeGlobeController* freeGlobe_ = nullptr;
     FlightController* flight_ = nullptr;
+    TetheredController* tethered_ = nullptr;
 
     // 测量台冻结：true 时 update() 完全空转（见 setMeasurementFreeze）。
     bool measurementFreeze_ = false;

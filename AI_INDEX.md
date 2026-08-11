@@ -2006,23 +2006,23 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 | 方法 | 行 | 算法 |
 |---|---|---|
-| `syncFrameBeforeGesture` | .cpp:75 | 手势起手帧的同步帧(= `update(0.0)`)。dt=0 ⇒ 操控器 `tick` 全程空转,故它等价于 `beginFrame + resolveAtFrameEnd`,**与手势自身的状态重置无先后依赖**——这正是它能从操控器内部提到转发层的原因 |
-| `onPinchGesture`(适配器) | .cpp:101 | ⚠️`scale<=0` 的早退在两侧各判一次:这里判是为了不给非法事件跑同步帧(旧实现里那一帧发生在适配器早退之后) |
-| `update` | .cpp:334 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
-| `updateInternal` | .cpp:342 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
-| `resolveAtFrameEnd` | .cpp:374 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
-| `commitResolvedPose` | .cpp:398 | 指纹 + solver 扫掠基准,同源同时机 |
-| `resolveViewpoint` | .cpp:166 | `Viewpoint` → 世界位姿的**纯解算**(不写相机)。`setViewpoint` 与 `flyTo` **必须共用这一份**——两份实现分岔的表现是"飞过去的落点和直接设过去的位置不一样",画面上极难归因 |
-| `flyTo` | .cpp:287 | 解目标 → `FlightController::start` → 切飞行。起终点重合/曲线退化 ⇒ **直接落位并返回 false**,不制造一个原地不动却撑住 `isSelfAnimating()` 几秒的"飞行" |
-| `cancelFlightForTakeover` | .cpp:322 | 手势/显式视角写入抢占飞行(架构 §5:手势永远优先)。三个手势入口 + `setViewpoint` 都调它 |
+| `syncFrameBeforeGesture` | .cpp:80 | 手势起手帧的同步帧(= `update(0.0)`)。dt=0 ⇒ 操控器 `tick` 全程空转,故它等价于 `beginFrame + resolveAtFrameEnd`,**与手势自身的状态重置无先后依赖**——这正是它能从操控器内部提到转发层的原因 |
+| `onPinchGesture`(适配器) | .cpp:106 | ⚠️`scale<=0` 的早退在两侧各判一次:这里判是为了不给非法事件跑同步帧(旧实现里那一帧发生在适配器早退之后) |
+| `update` | .cpp:339 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
+| `updateInternal` | .cpp:347 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
+| `resolveAtFrameEnd` | .cpp:379 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
+| `commitResolvedPose` | .cpp:403 | 指纹 + solver 扫掠基准,同源同时机 |
+| `resolveViewpoint` | .cpp:171 | `Viewpoint` → 世界位姿的**纯解算**(不写相机)。`setViewpoint` 与 `flyTo` **必须共用这一份**——两份实现分岔的表现是"飞过去的落点和直接设过去的位置不一样",画面上极难归因 |
+| `flyTo` | .cpp:292 | 解目标 → `FlightController::start` → 切飞行。起终点重合/曲线退化 ⇒ **直接落位并返回 false**,不制造一个原地不动却撑住 `isSelfAnimating()` 几秒的"飞行" |
+| `cancelFlightForTakeover` | .cpp:327 | 手势/显式视角写入抢占飞行(架构 §5:手势永远优先)。三个手势入口 + `setViewpoint` 都调它 |
 | `constraintClampCount` | .h | **机制信号**:帧末哨兵实际改动位姿的累计次数。「AGL ≥ 净空」分不清是路径本来合法还是钳位顶上去了(读数相同),飞行验收靠它判"钳位结构性没触发" |
-| `setViewpoint` | .cpp:237 | 「部分 viewpoint」写入。参考系原点**四级回退**:tether → `eyeGeo` → `targetGeo` → 当前 eye;最后一档不是兜底而是语义(纯朝向写入 ⇒ range=0 ⇒ 绕相机自身原地转 = `resetNorthUp`)。⚠️不立刻钳位,交帧末哨兵——往返恒等判据成立的前提 |
-| `currentViewpoint` | .cpp:249 | 反解(世界系)。`eyeGeo`/hpr **恒可解**(hpr 取相机自身位置的 ENU,与 `headingRadians()` 同源);`targetGeo`/`rangeMeters` 需视线∩**椭球**,不交时留 `nullopt`——不伪造地平线外的假焦点 |
-| `distance` / `rotation` | .cpp:432 / :436 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
-| `setNadirOrbitView` | .cpp:445 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
-| `viewDistance` | .cpp:466 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
-| `headingFromFrame` (anon) | .cpp:497 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
-| `resetNorthUp` | .cpp:535 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
+| `setViewpoint` | .cpp:242 | 「部分 viewpoint」写入。参考系原点**四级回退**:tether → `eyeGeo` → `targetGeo` → 当前 eye;最后一档不是兜底而是语义(纯朝向写入 ⇒ range=0 ⇒ 绕相机自身原地转 = `resetNorthUp`)。⚠️不立刻钳位,交帧末哨兵——往返恒等判据成立的前提 |
+| `currentViewpoint` | .cpp:254 | 反解(世界系)。`eyeGeo`/hpr **恒可解**(hpr 取相机自身位置的 ENU,与 `headingRadians()` 同源);`targetGeo`/`rangeMeters` 需视线∩**椭球**,不交时留 `nullopt`——不伪造地平线外的假焦点 |
+| `distance` / `rotation` | .cpp:437 / :436 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
+| `setNadirOrbitView` | .cpp:450 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
+| `viewDistance` | .cpp:471 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
+| `headingFromFrame` (anon) | .cpp:502 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
+| `resetNorthUp` | .cpp:540 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
 
 ⚠️ **三档惯性清零是现状不是设计**:`viewDistance`/`setNadirOrbitView` 调
 `clearPanInertia`、`resetNorthUp` 调 `clearGlideInertia`、冻结/脚本平移调
@@ -2078,6 +2078,53 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 ⚠️ hpr 定义在**参考系原点**的局部系里,同一组 hpr 配不同原点是不同位姿(ENU 基底在球面上
 逐点转动)。这是本设计最容易踩的一条。
+
+### camera/controllers/TouchGesture.h
+
+触摸手势的共享类型 + `ITouchGestureTarget` 接口(56 行)。`PinchMode` / `PinchInput`
+从 `FreeGlobeController` 提到这里,供 Free 与 Tethered 共用。
+
+⚠️ **刻意与 `ICameraController` 分开**:后者是"每帧驱动相机"的契约,这个是"吃这一
+种输入"的能力。`FlightController` 只实现前者(飞行不吃输入),硬合会逼出空实现;
+阶段 6 的桌面控制器吃滚轮不吃触摸,又得再塞一批。编排层靠
+`selector.activeAs<ITouchGestureTarget>()` 路由,返回 nullptr = 当前驱动者不吃触摸
+(如飞行中),事件丢弃。
+
+⚠️ **同一组事件在不同控制器下语义完全不同,这是设计不是缺陷**:Free 下拖拽是"抓住
+地表点跟手"(绕地心的锚点钉合),Tethered 下是"绕载体转"(载体在屏幕中心不动)——载体
+在动,地表锚点当场失去意义。这正是它们必须是两个类而不是一个带 mode 分支的类的原因。
+
+### camera/controllers/TetheredController.h / .cpp
+
+系留控制器(.h 126 行 / .cpp 253 行),`ICameraController` + `ITouchGestureTarget`。
+
+⚠️⚠️ **真值是 (frame, localHPR, range),不是世界位姿**——整套架构的根决策
+(`docs/camera-system-architecture.md` §2)。载体动了而世界位姿不动就等于脱钩,所以
+世界位姿在这里是**每帧派生的量**。`FreeGlobeController` 恰好相反(真值=世界位姿,
+因为掠视/视线不交地面时 focal 根本不存在)。**同一系统里两种真值并存,正是它们必须
+是两个控制器的原因。**
+
+参考系三档(`ViewpointFrame` 两个 provider):空/空 = 退化 orbit;有/空 = 跟车但保持
+北上(地理 ENU);有/有 = 完全固连机体系(座舱视角,roll 跟随载体)。
+
+| 项 | 行 | 说明 |
+|---|---|---|
+| `resolveFrame` | .cpp:61 | provider 返回 false ⇒ **保持上帧,不回落世界系**(那会把相机甩到几内亚湾) |
+| `alignToCurrentPose` | .cpp:89 | 接管对齐。⚠️**保位置、重新对准载体**:真值是 orbit 表述(`eye = origin − direction·range`),表达不了"在载体附近却看着别处"的位姿,位置与朝向**只能保一个**;判据说的是「跳变 < 1e-6 **米**」故保位置。正常用法(本来就看着载体)下两者同时保住 |
+| `tick` | .cpp:152 | 解算参考系 → 判"动没动" → 由真值写世界位姿。**不自己钳位** |
+| `isAnimating` | .h:74 | 判据是"参考系相对上一帧变了"。⚠️恒 true 会让静止的系留相机永远不空闲(按需渲染彻底失效),恒 false 则载体一动画面停在半路 |
+| 手势 | .cpp:194 | 拖拽绕载体转、捏合改 range。**不种惯性**(载体在动,惯性滑行会和跟随打架)。⚠️增益与手感须真机验,host 只钉符号与不变量(range 不变、载体始终在视线上) |
+
+⚠️ **净空不豁免,但真值不被钳位污染**:每帧从真值重算世界位姿,帧末哨兵随后钳位 ⇒
+**渲染的每一帧都是钳过的,真值保持未钳**。载体离开地形后相机精确回到原相对位姿,
+不留下被地形推走的欠账。这个"真值不钳、派生量钳"的分工是 tether 语义能成立的关键,
+别改成钳完写回真值。
+
+⚠️ 调用顺序坑:`onActivate` 会**从当前世界位姿重算全部真值**,故 `setRange` /
+`setLocalOrientation` 必须在 `selectController` **之后**,否则被静默覆盖。
+
+非目标(明确不做):载体姿态的平滑/滞后滤波(Skybolt `orientationLagTimeConstant`)。
+真实载体姿态带噪时相机会抖,那是产品调校,需真机手感判断。
 
 ### camera/controllers/FlightController.h / .cpp
 

@@ -806,6 +806,12 @@ add_executable(test_camera_system
 target_link_libraries(test_camera_system PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_camera_system COMMAND test_camera_system)
 
+add_executable(test_camera_tethered
+    unit/camera/test_camera_tethered.cpp
+)
+target_link_libraries(test_camera_tethered PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_camera_tethered COMMAND test_camera_tethered)
+
 add_executable(test_camera_flight
     unit/camera/test_camera_flight.cpp
 )

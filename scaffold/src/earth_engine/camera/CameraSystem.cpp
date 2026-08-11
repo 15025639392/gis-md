@@ -1,5 +1,6 @@
 #include "CameraSystem.h"
 #include "controllers/FlightController.h"
+#include "controllers/TetheredController.h"
 #include "CameraPoseOps.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -37,6 +38,10 @@ CameraSystem::CameraSystem(Camera* camera)
     auto flight = std::make_unique<FlightController>(camera, &constraintSolver_);
     flight_ = flight.get();
     selector_.add(kFlightController, std::move(flight));
+    auto tethered =
+        std::make_unique<TetheredController>(camera, &constraintSolver_);
+    tethered_ = tethered.get();
+    selector_.add(kTetheredController, std::move(tethered));
 
     // Default to Chongqing area for testing
     const auto& e = Ellipsoid::WGS84();
