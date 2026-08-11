@@ -87,6 +87,13 @@ public:
     /// round-trips) and otherwise costs >150 ms/frame.
     static constexpr double kMaxTerrainHeightMeters = 9000.0;
 
+    /// 相机地心距上限（地球半径单位）。与净空一样属于**相机包络**约束，只是
+    /// 方向朝外；放在这里是因为拆分后两侧都要读它（手势侧的 dolly/滑行封顶、
+    /// 编排侧的 viewDistance 钳位），各写一份字面量就是典型的"同一事实两处
+    /// 各推"。⚠️ 目前它只是调用点的一道闸，尚未进 constrainEye 的统一出口
+    /// （因而无测试覆盖），并入出口是后续的事。
+    static constexpr double kMaxDistanceEarthRadii = 30.0;
+
     /// 探针"每帧至多重建一次"的帧时钟推进。每帧恰好调一次（含手势事件内的
     /// update(0.0)——高频手势事件因此共享同帧探针）。
     void beginFrame() { ++frameIndex_; }
