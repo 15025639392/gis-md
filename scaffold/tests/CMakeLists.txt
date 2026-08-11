@@ -713,6 +713,12 @@ add_executable(test_tileset_selection_refinement
 target_link_libraries(test_tileset_selection_refinement PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_tileset_selection_refinement COMMAND test_tileset_selection_refinement)
 
+add_executable(test_zoom_out_base_coverage
+    unit/tiling/test_zoom_out_base_coverage.cpp
+)
+target_link_libraries(test_zoom_out_base_coverage PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_zoom_out_base_coverage COMMAND test_zoom_out_base_coverage)
+
 # selector 对拍回放测试：include 共享场景头，golden 路径编译期注入
 # （golden 由 tools/selector_diff/cesium_golden_gen 离线生成后提交入库）
 add_executable(test_selector_cesium_golden_diff
