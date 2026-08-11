@@ -2008,21 +2008,21 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 |---|---|---|
 | `syncFrameBeforeGesture` | .cpp:75 | 手势起手帧的同步帧(= `update(0.0)`)。dt=0 ⇒ 操控器 `tick` 全程空转,故它等价于 `beginFrame + resolveAtFrameEnd`,**与手势自身的状态重置无先后依赖**——这正是它能从操控器内部提到转发层的原因 |
 | `onPinchGesture`(适配器) | .cpp:101 | ⚠️`scale<=0` 的早退在两侧各判一次:这里判是为了不给非法事件跑同步帧(旧实现里那一帧发生在适配器早退之后) |
-| `update` | .cpp:321 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
-| `updateInternal` | .cpp:329 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
-| `resolveAtFrameEnd` | .cpp:361 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
-| `commitResolvedPose` | .cpp:385 | 指纹 + solver 扫掠基准,同源同时机 |
-| `resolveViewpoint` | .cpp:153 | `Viewpoint` → 世界位姿的**纯解算**(不写相机)。`setViewpoint` 与 `flyTo` **必须共用这一份**——两份实现分岔的表现是"飞过去的落点和直接设过去的位置不一样",画面上极难归因 |
-| `flyTo` | .cpp:274 | 解目标 → `FlightController::start` → 切飞行。起终点重合/曲线退化 ⇒ **直接落位并返回 false**,不制造一个原地不动却撑住 `isSelfAnimating()` 几秒的"飞行" |
-| `cancelFlightForTakeover` | .cpp:309 | 手势/显式视角写入抢占飞行(架构 §5:手势永远优先)。三个手势入口 + `setViewpoint` 都调它 |
+| `update` | .cpp:334 | `solver.beginFrame()` → `updateInternal` → **帧末哨兵** |
+| `updateInternal` | .cpp:342 | measurementFreeze / scriptedPan 早退 → `manipulator_.tick()`。两个测量台状态**留在本层**,故操控器不认识它们 |
+| `resolveAtFrameEnd` | .cpp:374 | 帧末哨兵:位姿指纹比对判 user-driven(不等 ⇒ 有人绕过操控器裸写:`viewDistance`/`setNadirOrbitView`/scriptedPan/Facade/JNI);冻结时完全不触碰(位姿须逐帧字节稳定) |
+| `commitResolvedPose` | .cpp:398 | 指纹 + solver 扫掠基准,同源同时机 |
+| `resolveViewpoint` | .cpp:166 | `Viewpoint` → 世界位姿的**纯解算**(不写相机)。`setViewpoint` 与 `flyTo` **必须共用这一份**——两份实现分岔的表现是"飞过去的落点和直接设过去的位置不一样",画面上极难归因 |
+| `flyTo` | .cpp:287 | 解目标 → `FlightController::start` → 切飞行。起终点重合/曲线退化 ⇒ **直接落位并返回 false**,不制造一个原地不动却撑住 `isSelfAnimating()` 几秒的"飞行" |
+| `cancelFlightForTakeover` | .cpp:322 | 手势/显式视角写入抢占飞行(架构 §5:手势永远优先)。三个手势入口 + `setViewpoint` 都调它 |
 | `constraintClampCount` | .h | **机制信号**:帧末哨兵实际改动位姿的累计次数。「AGL ≥ 净空」分不清是路径本来合法还是钳位顶上去了(读数相同),飞行验收靠它判"钳位结构性没触发" |
-| `setViewpoint` | .cpp:224 | 「部分 viewpoint」写入。参考系原点**四级回退**:tether → `eyeGeo` → `targetGeo` → 当前 eye;最后一档不是兜底而是语义(纯朝向写入 ⇒ range=0 ⇒ 绕相机自身原地转 = `resetNorthUp`)。⚠️不立刻钳位,交帧末哨兵——往返恒等判据成立的前提 |
-| `currentViewpoint` | .cpp:236 | 反解(世界系)。`eyeGeo`/hpr **恒可解**(hpr 取相机自身位置的 ENU,与 `headingRadians()` 同源);`targetGeo`/`rangeMeters` 需视线∩**椭球**,不交时留 `nullopt`——不伪造地平线外的假焦点 |
-| `distance` / `rotation` | .cpp:419 / :423 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
-| `setNadirOrbitView` | .cpp:432 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
-| `viewDistance` | .cpp:453 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
-| `headingFromFrame` (anon) | .cpp:484 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
-| `resetNorthUp` | .cpp:522 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
+| `setViewpoint` | .cpp:237 | 「部分 viewpoint」写入。参考系原点**四级回退**:tether → `eyeGeo` → `targetGeo` → 当前 eye;最后一档不是兜底而是语义(纯朝向写入 ⇒ range=0 ⇒ 绕相机自身原地转 = `resetNorthUp`)。⚠️不立刻钳位,交帧末哨兵——往返恒等判据成立的前提 |
+| `currentViewpoint` | .cpp:249 | 反解(世界系)。`eyeGeo`/hpr **恒可解**(hpr 取相机自身位置的 ENU,与 `headingRadians()` 同源);`targetGeo`/`rangeMeters` 需视线∩**椭球**,不交时留 `nullopt`——不伪造地平线外的假焦点 |
+| `distance` / `rotation` | .cpp:432 / :436 | 从位姿派生。⚠️旧 `rotation_` 会**与位姿脱节**(`viewDistance`/构造函数改位姿却不改它),派生版恒一致 |
+| `setNadirOrbitView` | .cpp:445 | 目标点上方、正北朝上、看向**地心**。eye 取自地心沿大地法线 (\|target\|+h) 处——原 orbit 语义原样保留,大地法线不过地心故 eye 不严格在 target 正上方(差 ~11') |
+| `viewDistance` | .cpp:466 | 保持 target→eye 方位,置于指定距离并 `lookAt` |
+| `headingFromFrame` (anon) | .cpp:497 | 本地 ENU 方位角;近正俯视退化时用相机 up 的水平分量兜底 |
+| `resetNorthUp` | .cpp:535 | 绕相机自身竖轴原地转,俯仰精确保持(等价 cesium `setView({heading:0})`) |
 
 ⚠️ **三档惯性清零是现状不是设计**:`viewDistance`/`setNadirOrbitView` 调
 `clearPanInertia`、`resetNorthUp` 调 `clearGlideInertia`、冻结/脚本平移调
@@ -2159,16 +2159,16 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 | `anchorExactWeight` (anon) | .cpp:55 | 病态区混合权重:入射余弦 c≥0.35 全精确,≤0.10 全转台,中间 smoothstep。精确解增益 ∝1/c 掠射时爆炸,而硬切换必然跳变或死锁——连续混合 + 退化区整点重取锚点是唯一同时消掉两者的做法 |
 | `onDragStart` | .cpp:97 | `grabSurfacePoint`;清零 pan/zoom 惯性与回中欠账 |
 | `onPinchGesture`(新契约) | .cpp:161 | jerk 限幅 → ①沿 eye→anchor 直线 dolly(精确保锚) → ②绕锚点法线 twist → ③Pitch 模式绕锚点竖转(反 wind-up:被守卫拒绝时重取基线) → ④`applyPinchPin`(**唯一产生横向世界运动的通道**) |
-| `onPinchEnd` | .cpp:365 | 把 pin 角速度种进与单指共用的惯性通道;够动量则启动 zoom 惯性滑行 |
+| `onPinchEnd` | .cpp:336 | 把 pin 角速度种进与单指共用的惯性通道;够动量则启动 zoom 惯性滑行 |
 | `tick` | .cpp:402 | pan 惯性(角速度制,指数阻尼,跌破 `kMinInertiaAngularVelocity` 归零) → zoom 惯性(对数距离空间指数逼近,数学上永不越过锚点) → 回中预算消费。⚠️三段全部要求 `deltaSeconds > 0` ⇒ `tick(0.0)` 是完全空转 |
-| `clampNow` | .cpp:476 | `solver->constrainEye(userDriven=true, dt=0, anchor)` → 写回 → `commitPose`。恒 user-driven 是因为调用方刚刚显式动过相机 |
+| `clampNow` | .cpp:443 | `solver->constrainEye(userDriven=true, dt=0, anchor)` → 写回 → `commitPose`。恒 user-driven 是因为调用方刚刚显式动过相机 |
 | `rotateCameraVerticalAroundPoint` | .cpp:491 | 绕 `camera_->right()` 在竖直面内转。三重守卫:up 翻转、`minSlope`、地形净空预判(用滤波高度,不重采样)。**拒绝而非事后顶起**——顶起要么破坏 Pitch 的锚点不变量,要么(Cesium 式旋转补偿)偷偷改 direction |
-| `accrueRecenterBudget` | .cpp:551 | 高空 zoom-out 回中的**充值**:手势/滑行期只记账不动相机(回中旋转会推开刚钉好的锚点),权重随海拔 1.5e6→8e6 smoothstep 爬升 |
+| `accrueRecenterBudget` | .cpp:518 | 高空 zoom-out 回中的**充值**:手势/滑行期只记账不动相机(回中旋转会推开刚钉好的锚点),权重随海拔 1.5e6→8e6 smoothstep 爬升 |
 | `consumeRecenterBudget` | .cpp:576 | 松手后按指数节奏消费,绕相机自身位置转(eye 不动,仅视线向地心收敛) |
-| `solveAnchorRotation` | .cpp:625 | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
-| `pointOnGrabSphere` | .cpp:663 | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
-| `turntableDeltaFromPixels` | .cpp:688 | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
-| `tryAcquirePinchAnchor` | .cpp:711 | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变) |
+| `solveAnchorRotation` | .cpp:592 | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
+| `pointOnGrabSphere` | .cpp:630 | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
+| `turntableDeltaFromPixels` | .cpp:655 | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
+| `tryAcquirePinchAnchor` | .cpp:678 | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变) |
 | `applyPinchPin` | .cpp:742 | 把锚点钉到目标像素;病态区连续混入质心转台并整点重取锚点;末尾走 `clampNow`(pin 是唯一横向通道,山区横移可能把 eye 转进地形) |
 | `grabSurfacePoint` | .cpp:835 | 抓取锚点。⚠️锚点必须落在拾取射线上——`pickTerrain` 返回点不在射线上,落差会被首个 move 一次性补掉 = 起手跳变(真机实测 227~471px) |
 | `applyAnchorDrag` | .cpp:874 | 良态区精确锚定;病态区 slerp 混入转台 + 应用后整点重取锚点(**永不渐近混合**——混出的锚点不属于任何真实几何,会积欠账);末尾按事件时间戳喂惯性 EMA |

@@ -129,35 +129,6 @@ void FreeGlobeController::onDragEnd() {
     // 惯性参数由最后一次 applyAnchorDrag 设置
 }
 
-void FreeGlobeController::onPinchGesture(float scale,
-                                             float centerX,
-                                             float centerY,
-                                             float rotationRadians,
-                                             float centerDeltaX,
-                                             float centerDeltaY,
-                                             double timestamp) {
-    // 旧契约薄适配器：每事件增量累积成绝对量转发新接口。centerDeltaX/Y
-    // 不再消费——倾斜由 InputManager 的 Pitch latch 走新契约表达。
-    (void)centerDeltaX;
-    (void)centerDeltaY;
-    if (scale <= 0.0f) return;
-    if (!pinching_) {
-        adapterScaleLog_ = 0.0;
-        adapterTwistRadians_ = 0.0;
-    }
-    adapterScaleLog_ += std::log(static_cast<double>(scale));
-    adapterTwistRadians_ += static_cast<double>(rotationRadians);
-
-    PinchInput input;
-    input.scaleFromStart = static_cast<float>(std::exp(adapterScaleLog_));
-    input.twistFromStartRadians = static_cast<float>(adapterTwistRadians_);
-    input.centroidX = centerX;
-    input.centroidY = centerY;
-    input.mode = PinchMode::Manipulate;
-    input.timestamp = timestamp;
-    onPinchGesture(input);
-}
-
 void FreeGlobeController::onPinchGesture(const PinchInput& input) {
     // Pinch starts/updates interrupt drag inertia; mixed inertias feel unstable.
     inertiaAngularVelocity_ = 0.0;
@@ -364,8 +335,6 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
 
 void FreeGlobeController::onPinchEnd() {
     pinching_ = false;
-    adapterScaleLog_ = 0.0;
-    adapterTwistRadians_ = 0.0;
     // 双指 pan 惯性：把手势期累积的 pin 角速度种进与单指拖拽共用的惯性
     // 通道（tick() 统一衰减；量太小会立即跌破 1e-4 地板自然停）。
     inertiaAngularVelocity_ = pinchPanAngularVelocity_;
@@ -389,8 +358,6 @@ void FreeGlobeController::onActivate() {
     hasGrabbedPoint_ = false;
     pinching_ = false;
     hasPinchAnchor_ = false;
-    adapterScaleLog_ = 0.0;
-    adapterTwistRadians_ = 0.0;
     pinchPanAngularVelocity_ = 0.0;
     clearAllInertia();
 }

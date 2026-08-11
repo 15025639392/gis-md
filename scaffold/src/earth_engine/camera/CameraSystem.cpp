@@ -79,28 +79,28 @@ void CameraSystem::syncFrameBeforeGesture() {
 void CameraSystem::onDragStart(float xPixels, float yPixels,
                                    double timestamp) {
     cancelFlightForTakeover();
-    auto* c = selector_.activeAs<FreeGlobeController>();
-    if (!c) return;
+    auto* c = selector_.activeAs<ITouchGestureTarget>();
+    if (!c) return;  // 当前驱动者不吃触摸(如飞行中):事件丢弃
     syncFrameBeforeGesture();
     c->onDragStart(xPixels, yPixels, timestamp);
 }
 
 void CameraSystem::onDragMove(float xPixels, float yPixels,
                                   double timestamp) {
-    if (auto* c = selector_.activeAs<FreeGlobeController>()) {
+    if (auto* c = selector_.activeAs<ITouchGestureTarget>()) {
         c->onDragMove(xPixels, yPixels, timestamp);
     }
 }
 
 void CameraSystem::onDragEnd() {
-    if (auto* c = selector_.activeAs<FreeGlobeController>()) {
+    if (auto* c = selector_.activeAs<ITouchGestureTarget>()) {
         c->onDragEnd();
     }
 }
 
 void CameraSystem::onPinchGesture(const PinchInput& input) {
     cancelFlightForTakeover();
-    auto* c = selector_.activeAs<FreeGlobeController>();
+    auto* c = selector_.activeAs<ITouchGestureTarget>();
     if (!c) return;
     if (!c->pinching()) {
         syncFrameBeforeGesture();
@@ -109,27 +109,40 @@ void CameraSystem::onPinchGesture(const PinchInput& input) {
 }
 
 void CameraSystem::onPinchGesture(float scale,
-                                      float centerX,
-                                      float centerY,
-                                      float rotationRadians,
-                                      float centerDeltaX,
-                                      float centerDeltaY,
-                                      double timestamp) {
-    // 非法 spread 在操控器侧同样早退；这里先判一次是为了不给它跑同步帧
-    // （旧实现里那一帧发生在适配器的早退之后）。
+                                  float centerX,
+                                  float centerY,
+                                  float rotationRadians,
+                                  float centerDeltaX,
+                                  float centerDeltaY,
+                                  double timestamp) {
+    // 旧契约薄适配器:每事件增量累积成绝对量转发新接口。centerDeltaX/Y 不再
+    // 消费——倾斜由 InputManager 的 Pitch latch 走新契约表达。
+    (void)centerDeltaX;
+    (void)centerDeltaY;
     if (scale <= 0.0f) return;
     cancelFlightForTakeover();
-    auto* c = selector_.activeAs<FreeGlobeController>();
+    auto* c = selector_.activeAs<ITouchGestureTarget>();
     if (!c) return;
     if (!c->pinching()) {
+        adapterScaleLog_ = 0.0;
+        adapterTwistRadians_ = 0.0;
         syncFrameBeforeGesture();
     }
-    c->onPinchGesture(scale, centerX, centerY, rotationRadians,
-                      centerDeltaX, centerDeltaY, timestamp);
+    adapterScaleLog_ += std::log(static_cast<double>(scale));
+    adapterTwistRadians_ += static_cast<double>(rotationRadians);
+
+    PinchInput input;
+    input.scaleFromStart = static_cast<float>(std::exp(adapterScaleLog_));
+    input.twistFromStartRadians = static_cast<float>(adapterTwistRadians_);
+    input.centroidX = centerX;
+    input.centroidY = centerY;
+    input.mode = PinchMode::Manipulate;
+    input.timestamp = timestamp;
+    c->onPinchGesture(input);
 }
 
 void CameraSystem::onPinchEnd() {
-    if (auto* c = selector_.activeAs<FreeGlobeController>()) {
+    if (auto* c = selector_.activeAs<ITouchGestureTarget>()) {
         c->onPinchEnd();
     }
 }

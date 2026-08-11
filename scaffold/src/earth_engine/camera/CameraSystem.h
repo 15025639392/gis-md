@@ -6,6 +6,7 @@
 #include "CameraPose.h"
 #include "Viewpoint.h"
 #include "controllers/FlightController.h"
+#include "controllers/TouchGesture.h"
 #include "controllers/FreeGlobeController.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -51,8 +52,10 @@ public:
     //
     // 手势数学与惯性归 FreeGlobeController，别名让调用方
     // （SceneInputCoordinator、测试）继续按 CameraSystem::PinchMode 书写。
-    using PinchMode = FreeGlobeController::PinchMode;
-    using PinchInput = FreeGlobeController::PinchInput;
+    // 类型现归 controllers/TouchGesture.h(两个控制器共用);别名让调用方
+    // (SceneInputCoordinator、测试)继续按 CameraSystem::PinchMode 书写。
+    using PinchMode = earth_engine::PinchMode;
+    using PinchInput = earth_engine::PinchInput;
 
     /// drag 开始（手指按下）
     /// @param timestamp 单调时钟时间戳（秒），用于惯性角速度计算
@@ -288,6 +291,12 @@ private:
     // 测量台冻结：true 时 update() 完全空转（见 setMeasurementFreeze）。
     bool measurementFreeze_ = false;
     uint64_t constraintClampCount_ = 0;
+
+    // 旧契约适配器的每事件增量累计。**放在编排层而不是某个控制器里**:它是
+    // 平台边界的契约转换(音量键合成捏合 / 无 pointer pair 的平台),与"谁在
+    // 驱动"无关;放进 Free 就意味着每个新控制器都要再抄一份。
+    double adapterScaleLog_ = 0.0;
+    double adapterTwistRadians_ = 0.0;
 
     // 测量台脚本化平移(见 setScriptedPan):active 时 update() 每帧原地偏航一步,
     // 内部帧计数确定性驱动,frames 帧后 hold。

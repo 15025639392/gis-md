@@ -2,6 +2,7 @@
 
 #include "../../core/math/Vec3.h"
 #include "ICameraController.h"
+#include "TouchGesture.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cstdint>
@@ -28,7 +29,8 @@ class CameraConstraintSolver;
 /// - 单指拖拽先抓取地表点，移动时让该点尽量跟随手指；
 /// - 双指手势中**只有锚点钉合(pin)产生横向世界运动**，dolly/twist/pitch 在
 ///   数学上全部严格保锚，与 pan 正交——没有意图分类。
-class FreeGlobeController final : public ICameraController {
+class FreeGlobeController final : public ICameraController,
+                                  public ITouchGestureTarget {
 public:
     /// @param camera 受控相机（非空，生命周期由调用者管理）
     /// @param solver 约束求解器（非空，由编排层拥有）
@@ -43,48 +45,17 @@ public:
 
     /// drag 开始（手指按下）
     /// @param timestamp 单调时钟时间戳（秒），用于惯性角速度计算
-    void onDragStart(float xPixels, float yPixels, double timestamp = 0.0);
+    void onDragStart(float xPixels, float yPixels, double timestamp) override;
 
     /// drag 移动（手指滑动）
-    void onDragMove(float xPixels, float yPixels, double timestamp = 0.0);
+    void onDragMove(float xPixels, float yPixels, double timestamp) override;
 
     /// drag 结束（手指抬起，启动惯性）
-    void onDragEnd();
+    void onDragEnd() override;
 
-    /// 双指手势模式（与 InputEvent::PinchMode 同构；相机层不依赖 interaction
-    /// 头，由 SceneInputCoordinator 显式映射）。
-    enum class PinchMode : uint8_t {
-        Undecided,   ///< latch 窗口内：施加 zoom/twist，锚点钉起手质心
-        Manipulate,  ///< zoom+twist+刚性 pan（锚点钉当前质心）
-        Pitch        ///< 双指平行竖移倾斜（锚点钉 latch 质心，质心Y驱动 pitch）
-    };
-
-    /// 双指手势输入（绝对量表述：事件被合并/丢弃不产生累积漂移）。
-    struct PinchInput {
-        float scaleFromStart = 1.0f;      ///< 当前 spread / 起手 spread
-        float twistFromStartRadians = 0.0f;  ///< 连线角累计（unwrap）
-        float centroidX = 0.0f;           ///< 双指质心（物理像素）
-        float centroidY = 0.0f;
-        PinchMode mode = PinchMode::Manipulate;
-        double timestamp = 0.0;
-    };
-    void onPinchGesture(const PinchInput& input);
-
-    /// 旧契约薄适配器（音量键合成捏合 / 无 pointer pair 的平台）：把每事件
-    /// 增量累积成绝对量后转发新接口，mode 恒 Manipulate。centerDeltaX/Y 不再
-    /// 消费（倾斜走 Pitch 模式，由 InputManager latch 判定）。迁移完成后删除。
-    void onPinchGesture(float scale,
-                        float centerX,
-                        float centerY,
-                        float rotationRadians,
-                        float centerDeltaX,
-                        float centerDeltaY,
-                        double timestamp = 0.0);
-    void onPinchEnd();
-
-    /// 是否有活动的双指手势。编排层据此判定"手势起手帧"（起手前要先跑一个
-    /// 同步帧，见 CameraSystem 的转发层）。
-    bool pinching() const { return pinching_; }
+    void onPinchGesture(const PinchInput& input) override;
+    void onPinchEnd() override;
+    bool pinching() const override { return pinching_; }
 
     /// 惯性/滑行/回中的时间步进。编排层在冻结与脚本平移的早退**之后**调用，
     /// 故本函数不认识这两种测量台状态。
@@ -225,9 +196,6 @@ private:
     // 上一事件质心（pin 病态区转台回退的位移基准）。
     float lastPinchCentroidX_ = 0.0f;
     float lastPinchCentroidY_ = 0.0f;
-    // 旧契约适配器的每事件增量累计（新契约不使用）。
-    double adapterScaleLog_ = 0.0;
-    double adapterTwistRadians_ = 0.0;
     // 双指 pan 惯性累积（EMA，静止帧自然衰减向 0）：松手时种进与单指拖拽
     // 共用的 inertiaAxis_/inertiaAngularVelocity_ 通道。zoomInertiaAnchor_
     // 是固定世界点，pan 惯性转的是相机（rotateAboutOrigin），世界点不动，
