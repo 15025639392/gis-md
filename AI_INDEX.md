@@ -210,8 +210,8 @@ WGS84 cartographic → GCJ-02 transform used only by explicitly georeferenced ra
 | Interval bounds (file-local) | .cpp:31-412 | Outward-rounded interval arithmetic, exact sine extrema, 8×8 subdivision, and identity/transformed region union produce conservative rectangle bounds without fixed padding |
 | `transformLatitude` / `transformLongitude` (file-local) | .cpp:415-451 | Standard GCJ-02 periodic latitude/longitude offset polynomials |
 | `isOutsideChina()` | .cpp:455-461 | Identity outside longitude 72.004..137.8347° or latitude 0.8293..55.8271° |
-| `fromWgs84()` | .cpp:463-499 | Applies Krasovsky-axis/eccentricity correction and returns shifted lon/lat with original height |
-| `boundRectangleFromWgs84()` | .cpp:501-527 | Splits antimeridian rectangles, preserves wholly outside-China rectangles exactly, and conservatively bounds transformed/cross-boundary rectangles without losing wrapped longitude semantics |
+| `fromWgs84()` | .cpp:472-508 | Applies Krasovsky-axis/eccentricity correction and returns shifted lon/lat with original height |
+| `boundRectangleFromWgs84()` | .cpp:510-536 | Splits antimeridian rectangles, preserves wholly outside-China rectangles exactly, and conservatively bounds transformed/cross-boundary rectangles without losing wrapped longitude semantics |
 | Constants | .cpp:15-29 | GCJ ellipsoid parameters, hard bounds, radians conversion, and rectangle subdivision count |
 
 ### S2CellID.h / .cpp
@@ -2577,13 +2577,13 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:1024-1017 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
+| `initialize(device, Config)` | .cpp:1035-1028 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
 | `updateVisiblePages(view, ...)` | .cpp:548-954 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1091-1069 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1145-1178 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1102-1080 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1156-1189 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
 | `drainInbox` / `kickPageFetches` | .cpp:1214-1226 / :1104-1142 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1302-1357 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1076-1032 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `drainReadyUploads` | .cpp:1313-1368 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1087-1043 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:262-329 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:373-379 / :477-496 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:380-476 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |

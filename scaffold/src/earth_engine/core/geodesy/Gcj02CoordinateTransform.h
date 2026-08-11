@@ -9,6 +9,14 @@ class Gcj02CoordinateTransform {
 public:
     static bool isOutsideChina(const Cartographic& cartographic);
 
+    /// True when the rectangle straddles the GCJ transform bounds, i.e. it
+    /// contains both transformed and untransformed positions. Rectangles
+    /// wholly inside or wholly outside the bounds return false: a single
+    /// per-rectangle offset represents them to within the warp's own gradient,
+    /// whereas a straddling rectangle has a ~500 m step across it that no
+    /// single offset can represent.
+    static bool crossesChinaBounds(const Rectangle& rectangle);
+
     /// Converts a WGS84 cartographic position to GCJ-02. Positions outside
     /// mainland China's GCJ transform bounds are returned unchanged.
     static Cartographic fromWgs84(const Cartographic& cartographic);

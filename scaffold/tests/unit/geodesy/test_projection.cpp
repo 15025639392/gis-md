@@ -116,6 +116,45 @@ TEST(Gcj02CoordinateTransformTest, OutsideChinaRemainsWgs84) {
     EXPECT_EQ(pennsylvania, transformed);
 }
 
+// crossesChinaBounds 判的是「矩形内同时存在被变换和不被变换的点」——即 δ 在矩形
+// 内是阶跃而非梯度。它是 TerrainPageStore 放弃视锥剔除的闸,判 false 就等于宣称
+// 单个 per-tile worldOffset 能代表整片,漏判会让那些 cell 在合批后渲成纯白面。
+TEST(Gcj02CoordinateTransformTest, WhollyInsideChinaRectangleDoesNotCross) {
+    EXPECT_FALSE(Gcj02CoordinateTransform::crossesChinaBounds(
+        Rectangle::fromDegrees(106.0, 29.0, 107.0, 30.0)));
+}
+
+TEST(Gcj02CoordinateTransformTest, WhollyOutsideChinaRectangleDoesNotCross) {
+    EXPECT_FALSE(Gcj02CoordinateTransform::crossesChinaBounds(
+        Rectangle::fromDegrees(-76.0, 40.0, -75.0, 41.0)));
+    // 纬度带对上、经度带没对上(印度洋)也不算跨。
+    EXPECT_FALSE(Gcj02CoordinateTransform::crossesChinaBounds(
+        Rectangle::fromDegrees(60.0, 20.0, 70.0, 30.0)));
+}
+
+TEST(Gcj02CoordinateTransformTest, RectangleStraddlingEachChinaEdgeCrosses) {
+    // 东 137.8347° / 西 72.004° / 南 0.8293° / 北 55.8271°,逐边各跨一次。
+    EXPECT_TRUE(Gcj02CoordinateTransform::crossesChinaBounds(
+        Rectangle::fromDegrees(137.0, 45.0, 139.0, 46.0)));
+    EXPECT_TRUE(Gcj02CoordinateTransform::crossesChinaBounds(
+        Rectangle::fromDegrees(71.0, 38.0, 73.0, 39.0)));
+    EXPECT_TRUE(Gcj02CoordinateTransform::crossesChinaBounds(
+        Rectangle::fromDegrees(110.0, 0.0, 111.0, 2.0)));
+    EXPECT_TRUE(Gcj02CoordinateTransform::crossesChinaBounds(
+        Rectangle::fromDegrees(110.0, 55.0, 111.0, 57.0)));
+}
+
+TEST(Gcj02CoordinateTransformTest, RectangleEnclosingChinaBoundsCrosses) {
+    // 低 zoom 的粗瓦片把整个框吃进去:内部仍有阶跃,必须判跨。
+    EXPECT_TRUE(Gcj02CoordinateTransform::crossesChinaBounds(
+        Rectangle::fromDegrees(-180.0, -85.0, 180.0, 85.0)));
+}
+
+TEST(Gcj02CoordinateTransformTest, EmptyRectangleDoesNotCross) {
+    EXPECT_FALSE(
+        Gcj02CoordinateTransform::crossesChinaBounds(Rectangle::EMPTY));
+}
+
 TEST(Gcj02CoordinateTransformTest,
      OutsideChinaRectangleMatchesStandardWebMercatorExactly) {
     const Rectangle worldBounds =

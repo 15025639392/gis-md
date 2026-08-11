@@ -614,6 +614,7 @@ void TerrainPageStore::updateVisiblePages(
         // 源坐标 → 世界坐标的平移量。standard 时 fromWgs84 是恒等 → 恒 0。
         double worldOffsetLng = 0.0;
         double worldOffsetLat = 0.0;
+        bool crossesGcjBoundary = false;
         if (projection == RasterOverlayProjection::Gcj02WebMercator) {
             const Cartographic center =
                 Cartographic::fromRadians(cLng, cLat);
@@ -621,12 +622,14 @@ void TerrainPageStore::updateVisiblePages(
                 Gcj02CoordinateTransform::fromWgs84(center);
             worldOffsetLng = shifted.longitude() - center.longitude();
             worldOffsetLat = shifted.latitude() - center.latitude();
+            crossesGcjBoundary =
+                Gcj02CoordinateTransform::crossesChinaBounds(tileRect);
         }
 
         detParamsScratch_.push_back(
             {tile, tileKeyPacked, zoom, gridN, minH, maxH, imgSchemeId,
              placement, texCoordSet >= 0 ? texCoordSet : 0,
-             worldOffsetLng, worldOffsetLat});
+             worldOffsetLng, worldOffsetLat, crossesGcjBoundary});
         detTilesScratch_.push_back({tileKeyPacked, zoom, minH, maxH});
     }
 
@@ -731,7 +734,15 @@ void TerrainPageStore::updateVisiblePages(
                     const std::optional<OrientedBoundingBox> obb =
                         TileBoundsMetrics::boundingRegionObb(subRect, p.minH,
                                                              p.maxH);
-                    if (!obb || !view.frustum.intersectsOBB(*obb)) {
+                    if (!obb) {
+                        continue;  // 无包围体 → 无从测距(编码时默认 miss)
+                    }
+                    // 跨 GCJ 边界的瓦片放弃视锥剔除:worldOffset 在这种瓦片上是
+                    // 阶跃近似,剔除判定不可信,而"视锥外"恰好是合批资格闸唯一
+                    // 无条件放行的一类 —— 假的视锥外会渲成纯白面(见 DetTileParam
+                    // 的 crossesGcjBoundary 注释)。保守全收,让 kept 全驻留去挡。
+                    if (!p.crossesGcjBoundary &&
+                        !view.frustum.intersectsOBB(*obb)) {
                         continue;  // 视锥外 → 不入 kept(编码时默认 miss)
                     }
                     // per-cell 渐变 LOD(§16.3):用**瓦片级** geomError 在 cell 距离处的

@@ -533,10 +533,23 @@ private:
         // 坐标系**的矩形;直接拿它做视锥剔除/测距,等于把 cell 的位置整体挪了一个
         // δ(~500m),视锥边缘的 cell 因此被误剔 —— 真机上表现为东侧一整片空洞
         // (heading=0 时屏幕右侧,与 GCJ 偏东一致)。编址归源空间,剔除/测距归世界
-        // 空间,两件事必须分开。δ 在单瓦片内变化可忽略,故每瓦片求一次即可。
+        // 空间,两件事必须分开。δ 在单瓦片内变化可忽略,故每瓦片求一次即可 ——
+        // 这个前提只在瓦片不跨 GCJ 边界时成立,见 crossesGcjBoundary。
         // 标准 overlay 恒为 0 → 逐字节等价于改造前。
         double worldOffsetLng = 0.0;
         double worldOffsetLat = 0.0;
+        // 瓦片跨 GCJ 变换边界(境内境外各一部分)。此时 δ 在瓦片内是 ~500m 的**阶跃**
+        // 而非梯度,单个 worldOffset 代表不了:境外那半边的 cell 会被错误地平移一个
+        // δ,视锥边缘因此误剔一条约半 cell 宽的带。
+        //
+        // 误剔本身不是新问题,但它在这里会**击穿合批资格闸**:闸放行"视锥外"的 cell
+        // 是因为它们不产生片元(见 fullyResident 处的三类论证),而这里的"视锥外"
+        // 是假的 —— 那些 cell 会产生片元,合批后没有 mappedRaster 回落,渲成纯白面。
+        //
+        // 故跨界瓦片放弃视锥剔除(保守全收),让资格闸按 kept 全驻留正常挡住合批。
+        // 代价是那一列瓦片多取几张页;它们只出现在中国框四条边上(帕米尔/俄远东/
+        // 印尼海域/俄北),不在任何中国境内视角里。标准 overlay 恒 false。
+        bool crossesGcjBoundary = false;
     };
     std::unordered_map<uint64_t, DetTileCacheEntry> detTileCache_;  // tileKey→几何缓存
     std::vector<DetTileParam> detParamsScratch_;

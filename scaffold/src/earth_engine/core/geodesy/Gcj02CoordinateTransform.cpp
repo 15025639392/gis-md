@@ -460,6 +460,15 @@ bool Gcj02CoordinateTransform::isOutsideChina(
            cartographic.latitude() > kChinaNorth;
 }
 
+bool Gcj02CoordinateTransform::crossesChinaBounds(
+    const Rectangle& rectangle) {
+    if (rectangle.isEmpty()) {
+        return false;
+    }
+    const Rectangle bounds(kChinaWest, kChinaSouth, kChinaEast, kChinaNorth);
+    return bounds.intersects(rectangle) && !bounds.contains(rectangle);
+}
+
 Cartographic Gcj02CoordinateTransform::fromWgs84(
     const Cartographic& cartographic) {
     if (isOutsideChina(cartographic)) {
