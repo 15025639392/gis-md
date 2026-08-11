@@ -68,6 +68,42 @@ is the exact anti-pattern this skill exists to avoid.
   unstaged changes, **stop and ask the user** — do not stage or work around
   their work.
 
+#### Whole-project mode (`扫整个项目` / `--all`)
+
+A repo-wide sweep is **not** "read every function" — this engine is ~600 files /
+100k+ lines, and equivalent-rewrite wins are sparse (the trivial patterns like
+`.size()==0` are already absent). Reading it all uniformly burns a fortune to
+find a handful of ≈1.1× candidates that mostly get rejected. It is also **heavy
+multi-agent orchestration — get explicit user opt-in before launching it**
+(never spawn the fleet off a vague "optimize the project"). Do it in three
+stages that turn "read 100k lines" into "deep-read a few hundred candidate
+sites":
+
+1. **Mechanical prefilter (free).** `grep` the whole tree for the catalog
+   shapes in `references/patterns.md` — in-loop `vector`/`string` construction,
+   double `.find`/`.count` on one container, pass-by-value large objects,
+   `push_back` that could `emplace`, `.at()` in loops, etc. The hit lines are
+   the only places a candidate can exist; everything else is provably out.
+
+2. **Scope by hotness, not by coverage.** §4's win is frequency × delta, so
+   *cold code cannot produce a worth-doing win no matter how ugly it is.* Keep
+   the per-frame / per-command / inner-loop subsystems (`renderer/`, `tiling/`,
+   anything on the draw path); drop `tests/`, `tools/`, `third_party/`,
+   generated code. Announce what you dropped (per "no silent caps") — a swept
+   scope that hides what it skipped reads as "covered everything".
+
+3. **Fan out, then merge.** Partition the surviving candidate files into batches;
+   one `sonnet` subagent per batch runs §2–§4 and returns **only worth-doing
+   candidates** as structured data (not prose); one `opus` subagent dedups and
+   ranks the merged set; the main agent writes the final report (§5 format) and
+   the coverage footer. Keep it to a **medium fleet (≤~12 agents)** unless the
+   user asks for more. Per the project's subagent-model rule, pass an explicit
+   cheap model to every scan agent and reserve `opus` for the merge — never let
+   a scan agent inherit the session model by omission.
+
+The output is still §5: only worth-doing candidates, plus a coverage footer that
+now also states which subsystems were swept and which were dropped as cold.
+
 ### 2 — Find candidates
 
 Scan the in-scope functions for the patterns in `references/patterns.md`
