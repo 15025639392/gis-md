@@ -1105,6 +1105,25 @@ static void renderFrame() {
                          gFlightProbe.clampsAtStart),
                      geo.longitudeDegrees(), geo.latitudeDegrees(),
                      geo.height(), cam.activeControllerName().c_str());
+                // 阶段 3 第四条判据的**落地帧就绪快照**,原子单行 —— 逐帧
+                // LoadQual 会被 logd 冲掉(demo 每帧 CamPose/LoadQual/LoadGate
+                // 洪泛),而这一行一次性、且是 dump 前最新,不会丢。就绪率定义:
+                //   R_t = real/(real+fill+ell+unk)  地形真数据占比
+                //   R_i = sharp/(sharp+a1+a2+a3++miss) 影像本级占比
+                // 稳态基线从落地后 settle 的 LoadQual 心跳读(同位姿同缓存温度)。
+                const auto& fq = gEngine->diagnostics();
+                LOGI("FlightReady LANDING vis=%d src=%d/%d/%d/%d "
+                     "img=%d/%d/%d/%d/%d",
+                     fq.visibleTiles,
+                     fq.terrainSurfaceRealCommands,
+                     fq.terrainSurfaceFillProxyCommands,
+                     fq.terrainSurfaceEllipsoidCommands,
+                     fq.terrainSurfaceUnknownCommands,
+                     fq.imageryExactAttachments,
+                     fq.imageryAncestor1Attachments,
+                     fq.imageryAncestor2Attachments,
+                     fq.imageryAncestor3PlusAttachments,
+                     fq.imageryMissingTiles);
                 gFlightProbe.armed = false;
             }
         }
