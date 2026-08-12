@@ -34,3 +34,20 @@ Testing/
 # ⚠️ 只忽略 scaffold/tmp,**不要**写成裸 tmp/ —— 仓库根的 tmp/ab-fps/*.log 是
 # 刻意入库的 A/B 基线(73 文件/38MB),一条裸规则会把它们连带藏掉。
 scaffold/tmp/
+
+# 仓库卫生(project-health-audit 2026-07-17):一次性调试/构建产物不入库。
+# 已跟踪文件需 git rm --cached 才能移出;这里只防复发。
+.run_output*.log
+/click-*.whl
+/glm-*.tar.gz
+
+# 仓库根 tmp:除刻意入库的 tmp/ab-fps A/B 基线外,其余调试截图/日志/样本忽略。
+/tmp/*
+!/tmp/ab-fps/
+!/tmp/ab-fps/**
+
+# scaffold 调试截图与像素检查脚本(均为一次性产物,含损坏文件 screenshot2.png;)
+scaffold/check_png*.py
+scaffold/screenshot*.png
+scaffold/screenshot2.png;
+scaffold/test_via_shell.png
