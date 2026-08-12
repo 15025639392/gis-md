@@ -2346,10 +2346,10 @@ Populates FrameState scalars, selector views, interaction-focus TTL, and environ
 
 | Item | Lines | Description |
 |---|---|---|
-| `build` | .cpp:57-80 | Sets frameId/time/delta/camera; calls `SceneSelectorViewBuilder::populate`; `updateInteractionFocus`; returns `environmentUpdateMs` |
+| `build` | .cpp:104-129 | Sets frameId/time/delta/camera; calls `SceneSelectorViewBuilder::populate`; `updateInteractionFocus`; returns `environmentUpdateMs` |
 | **`kInteractionFocusTtlSeconds`** = 2.5 | .cpp:15 | Focus expires when `timeSeconds - focusTime > 2.5` |
-| `updateInteractionFocus` | .cpp:17-30 | Latches focus dir only within TTL else zeros it |
-| `updateEnvironment` | .cpp:32-53 | No-op unless timeController+skyGradient+camera; `SunDirection::compute(julianDate)`, `geodeticSurfaceNormal` local up, `skyGradient->update`; writes `lightDir` + `clearR/G/B` from horizon color; timed |
+| `updateInteractionFocus` | .cpp:35-49 | Latches focus dir only within TTL else zeros it |
+| `updateEnvironment` | .cpp:50-103 | No-op unless timeController+skyGradient+camera; `SunDirection::compute(julianDate)`, `geodeticSurfaceNormal` local up, `skyGradient->update`; writes `lightDir` + `clearR/G/B` from horizon color; timed |
 
 ### SceneTilesetCoordinator.h / .cpp
 
@@ -2372,7 +2372,7 @@ Owns environment subsystems and exposes them to the update/render phases.
 | Owned | .h:37-40 | `TimeController`, `SkyGradient`, `AtmosphereBackgroundPass`, `SkyBox` |
 | `initializeRenderResources` | .cpp:18-22 | Inits atmosphere pass + skybox GPU resources |
 | time API | .cpp:24-34 | `setTime`/`time`/`advanceTime` delegate to TimeController Julian date |
-| `sunDirection` | .cpp:36-38 | `SunDirection::compute(julianDate)` |
+| `sunDirection` | .cpp:41-45 | `SunDirection::compute(julianDate)` |
 
 ### SceneInteractionCoordinator.h / .cpp
 
@@ -2548,7 +2548,7 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 | Method | Lines | Notes |
 | --- | --- | --- |
 | `initialize()` (no-arg) | .h:34, .cpp:3980-4022 | Compiles **13** shaders: gltf (.cpp:4003), terrain (.cpp:3984), terrainDepth (.cpp:3997), gltfInstanced (.cpp:3977), terrainInstanced (.cpp:3992), terrainDepthInstanced (.cpp:4004), color (.cpp:3984), and 6 vector shaders (fill/pageMesh/line/lineStencil/point/label, .cpp:3993-4011). Builds a 1×1 neutral placeholder tex {174,184,170,255} (.cpp:3987-3846). Treats gltf/gltfInstanced link failure as **non-fatal on both backends** (.cpp:4004-3858, :3895-3899) — a PBR link failure must not blank the globe; terrain still renders via `terrainShader`. |
-| `submit` | .cpp:4163-4027 | Forwards to `device->submit` if initialized. |
+| `submit` | .cpp:4167-4171 | Forwards to `device->submit` if initialized. |
 | `dispose` | .cpp:4180-4045 | Resets the shader/texture resources. |
 | Shared-resource getters | .cpp:4199-4095 | `terrainDepthShader`/`terrainDepthInstancedShader` (.cpp:4199-4059), `colorShader` (:4061), 6 vector getters (:4062-4080), `glyphAtlas`/`iconAtlas` (:4081, :4083), `tileIndexBuffer`/`tileIndexCount` (:4254-4255), `surfacePlaceholderTexture` (:4084), `gltfShader`/`gltfInstancedShader` (:4087-4091), `terrainShader` (:4093-4095), `terrainInstancedShader` (:4197-4199). The `globeShader`/`globeVertexBuffer`/`globeIndexBuffer`/`globeIndexCount` getters are **removed**. |
 | `terrainShader()` | .h:105 / **.cpp:4276 defined** | 32-byte terrain vertex, no PBR extensions. DRAW side wired: `GltfDrawCommandBuilder.cpp:134` calls `makeTerrainPrimitiveCommand` (.cpp:4269). ⚠️ This row previously read "declared, NO definition, linking would fail" — false since at least 2026-07-01; corrected 2026-08-06. |
@@ -2840,11 +2840,11 @@ Single translation unit defining `STB_IMAGE_IMPLEMENTATION` (avoids multiple-def
 | 项 | 行 | 说明 |
 |---|---|---|
 | 内置 GLSL | — | `kFullscreenVertGLSL` (.cpp:14)、`kBlitFragGLSL` (.cpp:26)、`kTonemapFragGLSL` (.cpp:39,PBR-Neutral HDR tonemap)、`kFxaaFragGLSL` (.cpp:68,`luma` 辅助在 .cpp:81) |
-| `diagTag` / `fragForEffect` | .cpp:208-189 / :191-206 | Effect → 诊断名 / 片元源 |
-| `initialize` | .cpp:241-249 | 编 shader,建全屏几何 |
-| `ensureFramebuffer` | .cpp:284-276 | 按尺寸建/复用 FBO |
-| `buildCommand` | .cpp:317-323 | 出后处理 RenderCommand |
-| `dispose` | .cpp:364-330 | |
+| `diagTag` / `fragForEffect` | .cpp:273-288 / :289-311 | Effect → 诊断名 / 片元源 |
+| `initialize` | .cpp:312-354 | 编 shader,建全屏几何 |
+| `ensureFramebuffer` | .cpp:355-389 | 按尺寸建/复用 FBO |
+| `buildCommand` | .cpp:390-437 | 出后处理 RenderCommand |
+| `dispose` | .cpp:438-445 | |
 
 ⚠️ 离屏 FBO **必须带 stencil 附件**,否则贴地面的 stencil 测试恒通过、整侧影染色
 (P6a 根因)。判别法:改 stencil func 探针画面不变 = 先查附件。
@@ -3271,7 +3271,7 @@ Single time source for the environment system (sun, stars). Stores Julian Date (
 
 ### FrameState / render-pass wiring (consumers)
 
-These environment types are owned by `scene/SceneEnvironmentCoordinator` (.h:37-40: `TimeController`, `SkyGradient`, `AtmosphereBackgroundPass`, `SkyBox` as `unique_ptr`s; `sunDirection()` = `SunDirection::compute(timeController->julianDate())`, SceneEnvironmentCoordinator.cpp:37).
+These environment types are owned by `scene/SceneEnvironmentCoordinator` (.h:37-40: `TimeController`, `SkyGradient`, `AtmosphereBackgroundPass`, `SkyBox` as `unique_ptr`s; `sunDirection()` = `SunDirection::compute(timeController->julianDate())`, SceneEnvironmentCoordinator.cpp:41).
 
 Data flow into `FrameState` — `scene/SceneFrameStateBuilder.cpp:33-52`:
 - `sunDir = SunDirection::compute(timeController->julianDate())` (.cpp:39); `skyGradient->update(sunDir, WGS84 normal, camera height)` (.cpp:41-43).
@@ -3449,20 +3449,20 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:59-64 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:70-71 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:77-109 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:387-945 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:387). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:387-945). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:387-945). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:555-556). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:954-949 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:954-958 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:392-961 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:392). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:392-961). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:392-961). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:555-556). |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:962-965 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:966-974 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1025-1020 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1033-1028 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1033-1036 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1041-1044 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1054-1051 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1062-1067 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1102-1101 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1110-1105 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:983-978, 242-244 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:1114-1121 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1122-1125 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:991-994, 1130-1134 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:692-740 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
@@ -3478,7 +3478,7 @@ Thin SDK entry point: `installScene(EarthSceneConfig)` builds providers/overlays
 | `installScene(EarthSceneConfig)` | .h:37, .cpp:285-746 | Move-stores config_, `resetCamera()`, clears overlay vectors, builds raster stack, creates unified Tileset, optional glTF Tileset, sets sim time. See per-kind rows below. |
 | `resetCamera()` | .h:39, .cpp:748-823 | Rebuilds camera from `initialCamera` via `Ellipsoid::WGS84().cartographicToCartesian` + `geodeticSurfaceNormal`; `camera().lookAt(camEcef, targetEcef, up)`. No source rebuild. |
 | `config()` | .h:41 | Const accessor for stored `EarthSceneConfig`. |
-| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:776-792 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
+| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:786-802 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
 
 Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:285-746):
 
