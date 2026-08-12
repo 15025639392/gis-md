@@ -40,6 +40,8 @@ const char* diagTagForEffect(OffscreenPostProcess::Effect effect) {
             return "FOGDIAG";
         case OffscreenPostProcess::Effect::Tonemap:
             return "HDRDIAG";
+        case OffscreenPostProcess::Effect::AerialFogTonemap:
+            return "HDRFOGDIAG";
         case OffscreenPostProcess::Effect::Passthrough:
         default:
             return "RTTDIAG";
@@ -582,8 +584,14 @@ bool Engine::render(double deltaSeconds) {
         const bool wantOffscreen =
             kEnableHdrPipeline || aerialFogEnabled_ || fxaaEnabled_ ||
             offscreenPassthroughEnabled_;
+        // HDR 开时 tonemap 是强制终端;fog 也开则走合并终端(B0,fog 混在
+        // tonemap 前的线性域,消地平线硬切),否则单 tonemap。HDR 关时保持
+        // 原互斥优先级 AerialFog > FXAA > passthrough。
         const OffscreenPostProcess::Effect wantEffect =
-            kEnableHdrPipeline ? OffscreenPostProcess::Effect::Tonemap
+            kEnableHdrPipeline
+                ? (aerialFogEnabled_
+                       ? OffscreenPostProcess::Effect::AerialFogTonemap
+                       : OffscreenPostProcess::Effect::Tonemap)
             : aerialFogEnabled_ ? OffscreenPostProcess::Effect::AerialFog
             : fxaaEnabled_      ? OffscreenPostProcess::Effect::Fxaa
                                : OffscreenPostProcess::Effect::Passthrough;

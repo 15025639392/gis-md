@@ -28,7 +28,15 @@ public:
     /// Tonemap:场景画进线性 HDR(RGBA16F)靶,本 pass 采样 → PBR-Neutral
     /// tonemap → sRGB encode → 8bit 上屏。T2 的强制终端 encode(非可选叠加:
     /// 场景一旦是 HDR,终端必须 tonemap)。见 PipelineConfig.h kEnableHdrPipeline。
-    enum class Effect { Passthrough, Fxaa, AerialFog, Tonemap };
+    ///
+    /// AerialFogTonemap:HDR 路径下的「fog + tonemap 合并终端」(B0)。单 effect
+    /// 槽的互斥问题:HDR 开则 fog 被挤掉 → 地平线硬切。解法是把 fog 合进 tonemap
+    /// 前的**线性域**(aerial perspective 物理上加在相机响应前),同一 pass 内先
+    /// 按视距混雾色(computeSkyColor,与背景天空 + LDR fog 同源)再 PBR-Neutral
+    /// tonemap + sRGB encode。省一张全屏 16F 中转 + 一趟带宽(vs 链式两 pass)。
+    /// ⚠️ 当前切片场景 16F 实为 gamma 空间常数裹进 16F(T1 真线性未做),fogColor
+    /// 与场景同空间故 mix 自洽;T1 落地(B2)时二者须一起线性化。
+    enum class Effect { Passthrough, Fxaa, AerialFog, Tonemap, AerialFogTonemap };
 
     /// aerial fog 每帧参数。非 fog effect 忽略。
     /// 雾色不再是固定常数——shader 每像素按视线方向算天空色作雾色(与大气

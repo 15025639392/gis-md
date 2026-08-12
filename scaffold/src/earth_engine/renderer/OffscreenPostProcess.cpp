@@ -205,6 +205,71 @@ void main() {
 }
 )";
 
+// AerialFogTonemap(B0):HDR 路径下 fog + tonemap 合并终端。共用 kAerialFogFragHead
+// 的 uniform 集(采样离屏 HDR color + depth,重建视距/视线),先按 kAerialFogFragMain
+// 同一套 fog 数学混雾色(在 tonemap 前的线性域),再 PBR-Neutral tonemap + sRGB encode
+// → 8bit 上屏。与纯 AerialFog 的唯一区别是收尾多了 tonemap+encode(那条路场景是 LDR
+// 已在显示空间,直接上屏)。fog 数学与 tonemap 曲线都逐字复用现有两份,不另立第三套。
+// ⚠️ 色彩空间:HDR 下离屏 16F 里地形(kTerrainLightHdrGLSL)与背景天空
+// (kAtmosphereComposeHdr)都是**线性**;computeSkyColor 返回 gamma 显示色,故雾色
+// 必须 srgbToLinear 后再 mix,否则全雾像素比背景天空亮一个 gamma(地平线雾带过亮)。
+const char* kAerialFogTonemapMain = R"(
+vec3 srgbToLinear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
+vec3 pbrNeutralToneMapping(vec3 color) {
+    const float startCompression = 0.8 - 0.04;
+    const float desaturation = 0.15;
+    float x = min(color.r, min(color.g, color.b));
+    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+    color -= offset;
+    float peak = max(color.r, max(color.g, color.b));
+    if (peak < startCompression) return color;
+    float d = 1.0 - startCompression;
+    float newPeak = 1.0 - d * d / (peak + d - startCompression);
+    color *= newPeak / peak;
+    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+    return mix(color, vec3(newPeak), g);
+}
+void main() {
+    vec3 color = texture(u_tileTexture, v_uv).rgb;   // 线性 HDR 场景色
+    float zWin = texture(u_depthTexture, v_uv).r;
+    if (zWin >= 0.25) {                              // 前景地形:加雾(背景天空跳过)
+        float near = u_depthNearFar.x;
+        float far = u_depthNearFar.y;
+        float zNdc = 2.0 * zWin - 1.0;
+        float d = (near * far) / (zNdc * (far - near) + near);
+
+        vec2 ndc = v_uv * 2.0 - 1.0;
+        float tanHalf = u_fovAspect.x;
+        float aspect = u_fovAspect.y;
+        vec3 rayDir = normalize(u_camForward +
+                                u_camRight * ndc.x * tanHalf * aspect +
+                                u_camUp * ndc.y * tanHalf);
+        vec3 up = normalize(u_camPos);
+        vec3 sun = normalize(u_sunDir);
+        float camHeight = max(length(u_camPos) - u_planetRadius, 0.0);
+
+        const float maxHeight = 150000.0;
+        float viewWeight = 1.0 - abs(dot(rayDir, up));
+        float heightWeight = smoothstep(maxHeight, 0.0, camHeight);
+        float density = u_fogParams.x * viewWeight * heightWeight;
+
+        float startDistance = u_fogParams.y;
+        float fogDist = max(d - startDistance, 0.0);
+        float fog = clamp(1.0 - exp(-fogDist * density), 0.0, 1.0);
+        float viewUp = dot(rayDir, up);
+        fog = max(fog, 1.0 - smoothstep(0.0, 0.06, abs(viewUp)));
+
+        float spaceFactor = smoothstep(120000.0, 900000.0, camHeight);
+        // 雾色线性化:与线性地形/背景天空(kAtmosphereComposeHdr 也 srgbToLinear)
+        // 同域,mix 才自洽。
+        vec3 fogColor = srgbToLinear(computeSkyColor(rayDir, up, sun, spaceFactor));
+        color = mix(color, fogColor, fog);
+    }
+    vec3 mapped = pbrNeutralToneMapping(max(color, vec3(0.0)));
+    fragColor = vec4(pow(mapped, vec3(1.0 / 2.2)), 1.0);  // linear → sRGB
+}
+)";
+
 const char* diagTag(OffscreenPostProcess::Effect effect) {
     switch (effect) {
         case OffscreenPostProcess::Effect::Fxaa:
@@ -213,6 +278,8 @@ const char* diagTag(OffscreenPostProcess::Effect effect) {
             return "FOGDIAG";
         case OffscreenPostProcess::Effect::Tonemap:
             return "HDRDIAG";
+        case OffscreenPostProcess::Effect::AerialFogTonemap:
+            return "HDRFOGDIAG";
         case OffscreenPostProcess::Effect::Passthrough:
         default:
             return "RTTDIAG";
@@ -230,6 +297,10 @@ std::string fragForEffect(OffscreenPostProcess::Effect effect) {
                    kAerialFogFragMain;
         case OffscreenPostProcess::Effect::Tonemap:
             return kTonemapFragGLSL;
+        case OffscreenPostProcess::Effect::AerialFogTonemap:
+            // 头(uniform,含 depth)+ 共享 computeSkyColor + fog-then-tonemap main。
+            return std::string(kAerialFogFragHead) + kSkyColorGLSL +
+                   kAerialFogTonemapMain;
         case OffscreenPostProcess::Effect::Passthrough:
         default:
             return kBlitFragGLSL;
@@ -294,12 +365,14 @@ Framebuffer* OffscreenPostProcess::ensureFramebuffer(int width, int height) {
         desc.hasColor = true;
         desc.hasDepth = true;
         desc.samples = 1;
-        // AerialFog 要采样场景深度重建视距 → 深度须可采样。
-        desc.depthSampleable = (effect_ == Effect::AerialFog);
-        // Tonemap:场景画进线性 HDR 靶(RGBA16F),本 pass tonemap→8bit。
-        // 后端探不到 float-color-renderable 时 createFramebuffer 回落 RGBA8
-        // (那时输出偏暗=预期回落,见 PipelineConfig.h)。
-        desc.colorFormat = (effect_ == Effect::Tonemap)
+        // AerialFog / AerialFogTonemap 要采样场景深度重建视距 → 深度须可采样。
+        desc.depthSampleable = (effect_ == Effect::AerialFog ||
+                                effect_ == Effect::AerialFogTonemap);
+        // Tonemap / AerialFogTonemap:场景画进线性 HDR 靶(RGBA16F),本 pass
+        // tonemap→8bit。后端探不到 float-color-renderable 时 createFramebuffer
+        // 回落 RGBA8(那时输出偏暗=预期回落,见 PipelineConfig.h)。
+        desc.colorFormat = (effect_ == Effect::Tonemap ||
+                            effect_ == Effect::AerialFogTonemap)
                                ? TextureDesc::Format::RGBA16F
                                : TextureDesc::Format::RGBA8;
         // 场景主 pass 落在本 FBO 上:矢量 stencil 分类(P6)需要 stencil
@@ -338,7 +411,8 @@ RenderCommand OffscreenPostProcess::buildCommand(
         const float w = static_cast<float>(framebuffer_->width());
         const float h = static_cast<float>(framebuffer_->height());
         cmd.uniforms["u_inverseResolution"] = {1.0f / w, 1.0f / h};
-    } else if (effect_ == Effect::AerialFog) {
+    } else if (effect_ == Effect::AerialFog ||
+               effect_ == Effect::AerialFogTonemap) {
         // depth 绑 unit 1(u_depthTexture);后端 sampler 表已把它固定绑 1。
         cmd.textures.push_back(framebuffer_->depthTexture());
         cmd.uniforms["u_depthNearFar"] = {params.nearPlane, params.farPlane};
