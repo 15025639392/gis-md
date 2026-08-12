@@ -34,6 +34,13 @@ struct FrameState {
     /// 天空环境光颜色（RGB），SkyGradient 求解，喂给地表/glTF 着色作填充光。
     /// 消除只有单方向光时背光面死黑。
     struct { float r = 0.0f; float g = 0.0f; float b = 0.0f; } ambient;
+    // 太阳色温(地形受光面乘算):白天微暖白,日落 sunLow→1 时 mix 到暖橙。CPU
+    // 每帧在 SceneFrameStateBuilder 算;默认=白天值 → 零回归。
+    struct { float r = 1.05f; float g = 1.0f; float b = 0.91f; } sunTint;
+    // 地形阴影面暖补光(乘 baseRgb 相加):白天=0(=现状 u_ambient 未接线,零回
+    // 归),日落 sunLow→1 时给暖橙 → 阴影面也染暖,整片地表笼罩日落光。地形专
+    // 用,不碰 glTF 的 ambient。
+    struct { float r = 0.0f; float g = 0.0f; float b = 0.0f; } terrainSunAmbient;
 
     int viewportWidthPixels = 0;
     int viewportHeightPixels = 0;

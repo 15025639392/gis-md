@@ -24,9 +24,14 @@ namespace earth_engine {
 // terrain-visual-maturity-gap-2026-08-02.md §4.4)。osgEarth(PhongLighting.glsl)
 // 同样用线性 max(dot(N,L),0) —— 两个参考实现在"线性"上一致。
 //
-// 暖阳/冷阴影(GE/摄影级):受光面乘微暖太阳色(红+蓝−),背光面由天空蓝
+// 暖阳/冷阴影(GE/摄影级):受光面乘太阳色 sunTint,背光面由天空蓝
 // ambient 补光——冷暖分离让 relief 更立体、更像真实日照。冷暖/ambient 的分配
 // 按纯 NdotL(sunlit),与亮度增益(directional)解耦。
+// ⚠️ sunTint 由 CPU 按太阳高度角传入(白天=微暖白 (1.05,1.0,0.91);太阳贴地平线
+//    sunLow→1 时 mix 到暖橙 → 日落地表变暖,见 SceneFrameStateBuilder)。**仅 GLES
+//    两变体已提为入参**;MSL 两变体暂保留内部常量,Metal 端口时统一(B4)。
+// ⚠️ 现状:surface_tile 的 u_ambient 未接线(CPU 无写入=0)→ 阴影侧实为本色×
+//    shadowFloor、无天空蓝补光(既存,非本次;冷阴影分离待补 ambient)。
 //
 // 参数全显式传入、不读 uniform → 各 shader 的 uniform 命名(u_ambient vs
 // u.ambient)与本函数解耦。
@@ -47,12 +52,11 @@ namespace earth_engine {
 
 // —— LDR(默认,= T0 gamma,零变化)——
 constexpr const char* kTerrainLightGLSL = R"(
-vec3 terrainSurfaceLight(vec3 baseRgb, float NdotL, vec3 ambient) {
+vec3 terrainSurfaceLight(vec3 baseRgb, float NdotL, vec3 ambient, vec3 sunTint) {
     const float kLambertGain = 0.9;   // = Cesium lambertDiffuseMultiplier
     const float kShadowFloor = 0.3;   // = Cesium vertexShadowDarkness
     float directional = clamp(NdotL * kLambertGain + kShadowFloor, 0.0, 1.0);
     float sunlit = clamp(NdotL, 0.0, 1.0);
-    vec3 sunTint = vec3(1.05, 1.0, 0.91);
     return baseRgb * directional * mix(vec3(1.0), sunTint, sunlit)
          + baseRgb * ambient * (1.0 - sunlit);
 }
@@ -73,14 +77,13 @@ float3 terrainSurfaceLight(float3 baseRgb, float NdotL, float3 ambient) {
 // —— HDR(kEnableHdrPipeline):base→线性,输出线性 HDR,常数 provisional ——
 constexpr const char* kTerrainLightHdrGLSL = R"(
 vec3 srgbToLinear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
-vec3 terrainSurfaceLight(vec3 baseRgb, float NdotL, vec3 ambient) {
+vec3 terrainSurfaceLight(vec3 baseRgb, float NdotL, vec3 ambient, vec3 sunTint) {
     vec3 albedo = srgbToLinear(baseRgb);
     const float kLambertGain = 0.9;
     const float kShadowFloor = 0.15;  // provisional(T0=0.3);T2 tonemap 后重调
     const float kAmbientScale = 0.6;  // provisional;线性下收暗部补光
     float directional = clamp(NdotL * kLambertGain + kShadowFloor, 0.0, 1.0);
     float sunlit = clamp(NdotL, 0.0, 1.0);
-    vec3 sunTint = vec3(1.05, 1.0, 0.91);
     return albedo * directional * mix(vec3(1.0), sunTint, sunlit)
          + albedo * (ambient * kAmbientScale) * (1.0 - sunlit);  // 线性 HDR
 }

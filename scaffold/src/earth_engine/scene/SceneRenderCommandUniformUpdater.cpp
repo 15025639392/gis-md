@@ -127,6 +127,13 @@ void SceneRenderCommandUniformUpdater::apply(
             cmd.uniforms["u_lightDir"] = {frameState.lightDir.x,
                                           frameState.lightDir.y,
                                           frameState.lightDir.z};
+            cmd.uniforms["u_sunTint"] = {frameState.sunTint.r,
+                                         frameState.sunTint.g,
+                                         frameState.sunTint.b};
+            cmd.uniforms["u_ambient"] = {frameState.terrainSunAmbient.r,
+                                         frameState.terrainSunAmbient.g,
+                                         frameState.terrainSunAmbient.b,
+                                         1.0f};
         }
     }
 }

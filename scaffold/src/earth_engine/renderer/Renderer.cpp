@@ -1006,6 +1006,7 @@ uniform vec4 u_heightDisplace;
 
 uniform vec3 u_lightDir;
 uniform vec4 u_ambient;
+uniform vec3 u_sunTint;      // 太阳色温(CPU 按太阳高度角:白天微暖白→日落暖橙)
 uniform vec3 u_eyePositionRTC;
 uniform vec4 u_baseColor;
 uniform float u_hasBaseColorTexture;
@@ -1246,7 +1247,7 @@ void main() {
 
     // GE 式半球光照(单一治理点见 TerrainSurfaceLightGLSL.h:系数来源 / 不用
     // smoothstep 的理由 / 暖阳冷阴影分配)。函数由 withTerrainLight() 注入。
-    vec3 color = terrainSurfaceLight(base.rgb, NdotL, u_ambient.rgb);
+    vec3 color = terrainSurfaceLight(base.rgb, NdotL, u_ambient.rgb, u_sunTint);
     fragColor = vec4(color, alpha * clamp(u_renderOpacity, 0.0, 1.0));
 }
 )glsl";
@@ -1445,6 +1446,7 @@ flat in vec4 v_clipUv;
 
 uniform vec3 u_lightDir;
 uniform vec4 u_ambient;
+uniform vec3 u_sunTint;      // 太阳色温(CPU 按太阳高度角:白天微暖白→日落暖橙)
 uniform vec4 u_baseColor;
 uniform highp sampler2DArray u_pageStore;
 uniform highp sampler2DArray u_pageStoreIndir;
@@ -1553,7 +1555,7 @@ void main() {
 
     // GE 式半球光照(与 terrainShader 共用 TerrainSurfaceLightGLSL.h 的单一
     // 函数;由 withTerrainLight() 注入)。
-    vec3 color = terrainSurfaceLight(base.rgb, NdotL, u_ambient.rgb);
+    vec3 color = terrainSurfaceLight(base.rgb, NdotL, u_ambient.rgb, u_sunTint);
     fragColor = vec4(color, 1.0);
 }
 )glsl";
