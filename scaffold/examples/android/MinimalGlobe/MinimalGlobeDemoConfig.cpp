@@ -106,6 +106,11 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
                                 : kMeasureObliqueElevationDegrees,
         };
     }
+    // 地平线日落 A/B:相机看向日落太阳方位(否则默认 0=正北,与旧行为等价)。
+    config.initialCamera.obliqueAzimuthDegrees =
+        (kMeasureHorizonView && kMeasureHorizonSunset)
+            ? kMeasureHorizonAzimuthDegrees
+            : 0.0;
     // 测量台冻结相机：初始位姿设定后 update() 空转，far 位姿也可复现（见 header）。
     config.initialCamera.freezeCamera = kMeasureFreezeCamera;
     // 测量台脚本化平移（§14.1② live 换页净测，见 header）：确定性受控运动量 ghost。
@@ -279,6 +284,11 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     config.frameGating = kEnableFrameGating;
     config.shadowVerifyIdle = kShadowVerifyIdle;
     config.fixedSimulationJulianDate = kFixedSimulationJulianDate;
+    if (kMeasureHorizonView && kMeasureHorizonSunset) {
+        // 日落 A/B:时钟设到太阳贴地平线的低角(覆盖地形验收的近顶太阳)。
+        config.fixedSimulationJulianDate =
+            2461188.75 + kMeasureHorizonSunsetJulianOffset;
+    }
     if (kEnableInstancedI3dmDemo) {
         // 默认固定时间是宾州凌晨(树在夜侧无光照=全黑),实例化观察改用当地白天
         // (~17:00 UTC = 宾州正午)让树被太阳照亮可见。

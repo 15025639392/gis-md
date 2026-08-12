@@ -710,9 +710,16 @@ void EarthEngineSdkFacade::resetCamera() {
             config_.initialCamera.obliqueElevationDegrees * M_PI / 180.0;
         const double dist =
             config_.initialCamera.heightMeters / std::max(0.05, std::sin(elevRad));
-        // 相机在目标正南、抬高:eye = target + dist*(sin·up - cos·north)。
+        // 水平朝向:azimuth 0=北(默认)→ lookHoriz=north(与旧行为逐字等价);
+        // 一般 azimuth A → lookHoriz = sin(A)·east + cos(A)·north。相机放在
+        // lookHoriz 的反侧、看向 lookHoriz(把该方位的地平线——含日落太阳——摆进画面)。
+        const double azRad =
+            config_.initialCamera.obliqueAzimuthDegrees * M_PI / 180.0;
+        const Vec3 lookHoriz =
+            (eastN * std::sin(azRad) + northN * std::cos(azRad)).normalized();
+        // 相机在目标反朝向侧、抬高:eye = target + dist*(sin·up - cos·lookHoriz)。
         const Vec3 eye = targetEcef +
-            (upN * std::sin(elevRad) - northN * std::cos(elevRad)) * dist;
+            (upN * std::sin(elevRad) - lookHoriz * std::cos(elevRad)) * dist;
         engine_.camera().lookAt(eye, targetEcef, upN);
         engine_.cameraSystem().viewDistance(targetEcef, dist);
         // 位姿设定后再冻结，让 update() 停止一切扰动（测量台专用）。

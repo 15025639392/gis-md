@@ -44,6 +44,11 @@ struct SceneCameraConfig {
     // 初始视角仰角(度): 0 = 正俯视(nadir orbit, 默认/向后兼容); >0 = 自由斜视,
     // 相机从目标点正南、以该仰角俯瞰(适合看竖直 foliage 等地表小物, nadir 下隐形)。
     double obliqueElevationDegrees = 0.0;
+    // 斜视视角的水平朝向(度, 0=正北[默认/向后兼容], 90=东, 180=南, 270=西)。
+    // 仅在 obliqueElevationDegrees>0 时生效:相机放在该方位的**反侧**、看向该方位。
+    // 默认 0 = 相机在正南看向正北(= 旧行为逐字等价)。测量台把日落太阳摆进画面
+    // 时,设成太阳方位角(见 kMeasureHorizonAzimuthDegrees)。
+    double obliqueAzimuthDegrees = 0.0;
     // 北极星测量台冻结相机: true 时初始位姿设定后 CameraSystem::update() 完全
     // 空转，相机逐帧字节稳定，让重载耦合态下的 far 位姿也精确可复现（去耦对拍需
     // 同位姿）。默认 false = 生产交互路径零影响。

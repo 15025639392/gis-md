@@ -37,11 +37,29 @@ vec3 computeSkyColor(vec3 rayDir, vec3 localUp, vec3 sun, float spaceFactor) {
     vec3 sky = mix(horizonSky, zenithSky, pow(skyT, 0.85));
     // 太空:大气变薄,整体压向近黑。
     sky = mix(sky, vec3(0.0, 0.005, 0.025), spaceFactor);
-    // 太阳侧地平线附近微暖(前向 Mie 散射观感),仅近地平线(1-skyT)、
-    // 随 spaceFactor 向太空淡出。
+
+    // ---- 日落着色:随太阳高度从"日间微暖"过渡到"日落橙" ----
+    // sunElev = 太阳相对当地天顶的高度(用相机天顶近似全天);sunLow 在太阳贴
+    // 地平线时→1、升到 ~17°(sin≈0.30)以上→0。高日光下 sunLow=0,以下各项全部
+    // 归零 → 与旧行为逐字等价(仅低太阳场景着色)。
     float mu = max(dot(rayDir, sun), 0.0);
-    sky = mix(sky, vec3(0.95, 0.90, 0.82),
-              pow(mu, 8.0) * 0.30 * (1.0 - skyT) * (1.0 - spaceFactor));
+    float sunElev = dot(sun, localUp);
+    float sunLow = 1.0 - smoothstep(0.0, 0.30, max(sunElev, 0.0));
+    // 暖色向天顶收紧:lowSky 贴地平线≈1、升高按 2.5 次幂快速→0 → 暖色集中在
+    // 地平线带,高空回到 base(蓝),给"近地平线暖、高空冷"的日落层次。
+    float lowSky = pow(1.0 - skyT, 2.5);
+    // 暖色**单一来源**(不引入平行 lowSkyColor 常数):日间→pale、日落→深橙。
+    vec3 warm = mix(vec3(0.95, 0.90, 0.82), vec3(1.00, 0.48, 0.20), sunLow);
+    // 朝阳前向散射辉光:高日光紧致(pow8);日落时叠加展宽项(pow3)成朝阳侧橙霞
+    // (pow3 比 pow2 更集中朝阳、反阳侧衰减更快)。
+    float glow = pow(mu, 8.0) * 0.30 + pow(mu, 3.0) * 0.60 * sunLow;
+    sky = mix(sky, warm, clamp(glow * lowSky * (1.0 - spaceFactor), 0.0, 0.92));
+    // 日落时整条地平线(各方位)再敷一层弱暖洗 → 日落氛围而非仅朝阳侧。lowSky
+    // 已含幂收紧,幅度小(0.20)避免整片天变橙。
+    sky = mix(sky, vec3(0.80, 0.52, 0.45),
+              sunLow * lowSky * 0.20 * (1.0 - spaceFactor));
+    // 日落时天顶侧压向冷蓝紫,强化冷暖对比(仅高空 skyT、随 sunLow)。
+    sky = mix(sky, vec3(0.10, 0.16, 0.42), sunLow * skyT * 0.25 * (1.0 - spaceFactor));
     return sky;
 }
 )";

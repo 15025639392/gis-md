@@ -160,6 +160,16 @@ constexpr bool kMeasureHorizonView = false;
 constexpr double kMeasureHorizonElevationDegrees = 10.0;
 constexpr double kMeasureHorizonHeightMeters = 12000.0;
 
+// kMeasureHorizonSunset:地平线视角切「日落」——相机看向日落太阳方位、时钟设到
+// 太阳贴地平线的低角。用途:HDR 管线(kEnableHdrPipeline)大气 shader 线性化+
+// 太阳 boost 的 payoff 对拍(太阳盘/大气 limb 辉光只有在太阳入画、低角时才显)。
+// 仅在 kMeasureHorizonView=true 时生效。
+//   azimuth 290.5° / JD 偏移 +0.21 → 重庆(106.508E,29.617N)太阳高度角 7.0°、
+//   方位 WNW(见 SunDirection::compute + 手算);相机放 ESE 反侧看向 WNW 日落。
+constexpr bool kMeasureHorizonSunset = false;
+constexpr double kMeasureHorizonAzimuthDegrees = 290.5;
+constexpr double kMeasureHorizonSunsetJulianOffset = 0.21;
+
 // kMeasureTileCompositeBakePoC:北极星 Phase 2b B 方案(逐瓦片合成)PoC。
 // true = 每帧对当前可见瓦片数做 N 个离屏 bake pass,把烘焙耗时报进 EarthPerf
 // 头行(bBake=)。**这是 B vs C 决策缺的第三块数据**——与 C 的 vtReadback 税对

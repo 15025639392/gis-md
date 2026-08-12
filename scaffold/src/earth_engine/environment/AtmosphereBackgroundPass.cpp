@@ -1,5 +1,6 @@
 #include "AtmosphereBackgroundPass.h"
 #include "AtmosphereSkyColorGLSL.h"
+#include "../renderer/PipelineConfig.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include <glm/gtc/constants.hpp>
 #include <cmath>
@@ -57,6 +58,32 @@ float miePhase(float mu) {
     const float g = 0.76;
     float g2 = g * g;
     return 0.18 * (1.0 - g2) / pow(max(1.0 + g2 - 2.0 * g * mu, 0.05), 1.5);
+}
+)";
+
+// ── 大气输出合成:两个变体(LDR 默认 vs HDR)──────────────────────────
+// 按 PipelineConfig.h 的 kEnableHdrPipeline 编译期择一注入(照
+// TerrainSurfaceLightGLSL 的惯例)。composeAtmosphereOutput 把「天空色(空底
+// +scatter+rim,表示空间 ≤1 的大气辉光)」与「太阳发光项(盘/光晕/放射霞光)」
+// 合成为本 pass 的最终输出。
+//   flag OFF → LDR:sky + sun,直出显示色(= 现状,与旧 `color += sun` 逐字等价)。
+//   flag ON  → HDR:sky decode 到线性;太阳项 **boost 到 >1 的 HDR headroom**,
+//              PBR-Neutral tonemap 才会把它压成过曝白芯(不 boost 则线性≈1、
+//              tonemap 近素通→再编码成鈍灰盘,payoff 丢失)。空/rim/scatter 只
+//              decode 不 boost —— 它们表示空间就 ≤1,线性化后 tonemap 素通,消
+//              除「被当线性直显」的洗白。⚠️ kSunHdrBoost 为 **provisional**,
+//              配日落位姿真机对着 tonemap 输出重调(见设计文档 §9 step4)。
+const char* kAtmosphereComposeLdr = R"(
+vec3 composeAtmosphereOutput(vec3 skyColor, vec3 sunEmissive) {
+    return skyColor + sunEmissive;
+}
+)";
+
+const char* kAtmosphereComposeHdr = R"(
+vec3 srgbToLinear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
+vec3 composeAtmosphereOutput(vec3 skyColor, vec3 sunEmissive) {
+    const float kSunHdrBoost = 6.0;   // provisional;太阳→HDR 高光,T2 tonemap 后重调
+    return srgbToLinear(skyColor) + sunEmissive * kSunHdrBoost;
 }
 )";
 
@@ -133,7 +160,8 @@ void main() {
         vec3 gapUp = normalize(cam);
         float gapHeight = max(length(cam) - R, 0.0);
         float gapSpace = smoothstep(120000.0, 900000.0, gapHeight);
-        fragColor = vec4(computeSkyColor(rayDir, gapUp, sun, gapSpace), 1.0);
+        vec3 gapSky = computeSkyColor(rayDir, gapUp, sun, gapSpace);
+        fragColor = vec4(composeAtmosphereOutput(gapSky, vec3(0.0)), 1.0);
         return;
     }
 
@@ -212,6 +240,16 @@ void main() {
     float baseSunRadius = max(u_sunAngularRadius, 0.0001);
     float sunAngle = sqrt(max(2.0 * (1.0 - cosTheta), 0.0));
     float atmoScatter = 1.0 - spaceFactor;  // 大气效果强度:近地=1,太空=0
+    // ---- 日落红移 + 消散变暗 ----
+    // 太阳越低(sunLow→1)穿过大气越厚:①盘/晕/霞光整体向深橙红偏(sunsetTint);
+    // ②亮度被消散压暗(sunDim)。②同时**避开 #3**——低太阳不再 ×full boost 顶到
+    // PBR-Neutral 的漂白区,故红色得以在 tonemap 后存活(暗红 vs 白热芯)。高日光
+    // sunLow=0 → tint=白、dim=1 → 与旧行为逐字等价。
+    float sunElevSky = dot(sun, localUp);
+    float sunLowSky = 1.0 - smoothstep(0.0, 0.25, max(sunElevSky, 0.0));
+    vec3 sunsetTint = mix(vec3(1.0), vec3(1.0, 0.42, 0.16), sunLowSky);
+    float sunDim = mix(1.0, 0.22, sunLowSky);  // 日落太阳整体压暗:芯 boost 后落到
+                                               // ~2 的 tonemap 不漂白区 → 橙红存活
     // d: 归一化角距，1.0 落在圆盘边缘。
     float discRadius = baseSunRadius * 0.72;
     float d = sunAngle / discRadius;
@@ -232,53 +270,46 @@ void main() {
     float forwardScatter = smoothstep(0.5, 1.0, cosTheta);
     float halo1 = exp(-max(d - 0.6, 0.0) * 2.1);   // 贴边的紧致 bloom(镜头/眼睛过曝)
     float halo2 = exp(-max(d - 1.0, 0.0) * 0.55);  // 中层暖金晕染(大气)
-    float halo3 = 1.0 / (1.0 + d * d * 0.085);     // 宽阔的金色大光团(大气)
+    float halo3 = 1.0 / (1.0 + d * d * 0.065);     // 宽阔的金色大光团(大气,删光束后加宽补偿)
     // halo1 太空里也保留(亮源过曝 bloom);halo2/halo3 是大气金色光晕,随 atmoScatter
     // 淡出——太空中只剩紧致亮芯,符合远处小太阳的真实观感。
-    vec3 haloColor = sunHeart * halo1 * 0.74 +
-                     (sunGold * halo2 * 0.54 + sunAmber * halo3 * 0.30) * atmoScatter;
-    haloColor *= forwardScatter;
+    // halo1(贴边紧致 bloom)是**盘的过曝**、与盘同位置最亮 → 归 disc 侧,随日落
+    // 一起压制(否则它保留全 boost 会在芯位置顶出白热,盖住压暗的橙红盘)。
+    // halo2/halo3 是大气金晕、离盘展开 → 归辉光保留 boost。
+    vec3 discBloom = sunHeart * halo1 * 0.74 * forwardScatter;
+    vec3 haloColor = (sunGold * halo2 * 0.54 + sunAmber * halo3 * 0.36)
+                     * atmoScatter * forwardScatter;
 
-    // 放射状霞光(crepuscular rays / sunburst)：屏幕空间里从太阳向外辐射的光束。
-    // 用三组不同频率+相位的角向脉冲叠加，得到粗细不匀、不规则的自然光束(避免
-    // 机械十字星),近太阳最亮、随距离拉长淡出。参考图二的放射霞光。
-    vec3 sunView = vec3(
-        dot(sun, u_camRight),
-        dot(sun, u_camUp),
-        dot(sun, u_camForward));
-    float sunInFront = smoothstep(0.0, 0.05, sunView.z);
-    vec2 screenUv = vec2(ndcX, ndcY);
-    vec2 sunScreenUv = sunView.xy / max(sunView.z * tanFovHalf, 0.0001);
-    vec2 screenDelta = screenUv - sunScreenUv;
-    float screenDist = length(screenDelta);
-    float rayAngle = atan(screenDelta.y, screenDelta.x);
-    float rays = pow(0.5 + 0.5 * cos(rayAngle * 13.0), 7.0) * 1.0 +
-                 pow(0.5 + 0.5 * cos(rayAngle * 24.0 + 1.7), 11.0) * 0.55 +
-                 pow(0.5 + 0.5 * cos(rayAngle * 7.0 - 0.9), 5.0) * 0.6;
-    // 起点略在盘外(smoothstep)避免正中心堆亮点。小衰减系数=光束拉得很长,
-    // 能从太阳一路伸到地球上("太阳光射线直接打到地球")。
-    float sunburst = rays * exp(-screenDist * 1.25) *
-                     smoothstep(0.015, 0.06, screenDist) * 0.38;
-    // 光束在太空里也保留大部分(0.7 floor),这样从太空看太阳的光线也能射到地球;
-    // 近地时(大气)再补足到满。
-    sunburst *= sunInFront * forwardScatter * (0.7 + 0.3 * atmoScatter);
+    // 太阳表现收敛为「盘 + 多层柔和暖光晕」,不再画离散放射光束(屏幕空间的
+    // 角向脉冲 sunburst 本质是 CG 星芒:开阔无云地平线的日落物理上没有云隙光,
+    // 主体就是大气散射的一大片柔光晕。删光束 = 从根上去掉"放射直线"感)。
 
-    vec3 sunColor = discColor * (core + limb * 0.35) +
-                    haloColor +
-                    mix(sunGold, sunHeart, 0.3) * sunburst;
+    // 盘 core 与辉光(halo 光晕)拆开:HDR 大 boost 会把亮源顶进 PBR-Neutral
+    // 漂白区(desaturate→白)。halo 要这种"过曝辉光"观感,保留 boost;但日落
+    // 的**盘本身**该是能直视的暗红盘、不该白热 → discSunset 把盘压进 tonemap 线性
+    // 响应区(峰值~2,几乎不 desaturate),橙红得以存活。高日光 discSunset=1 = 零回归。
+    vec3 sunDisc = discColor * (core + limb * 0.35) + discBloom;
+    vec3 sunGlow = haloColor;
+    float discSunset = mix(1.0, 0.25, sunLowSky);
+    vec3 sunColor = (sunDisc * discSunset + sunGlow) * sunsetTint;   // 日落整体红移
 
     float sunEnabled = step(0.5, u_sunDiskEnabled);
-    color += sunEnabled * sunColor * u_sunIntensity * 1.4;
+    // 太阳发光项(盘/光晕)拆出单独累加,不直接并进 color:HDR 变体
+    // 要对它单独 boost 到 >1 的高光 headroom(见 composeAtmosphereOutput);LDR
+    // 变体等价于旧的 `color += ...`。
+    vec3 sunEmissive = sunEnabled * sunColor * u_sunIntensity * 1.4 * sunDim;
 
     float skyAlpha = mix(1.0, 0.18, spaceFactor);
     float limbAlpha = pathScatterAmount * spaceFactor;
     float rimAlpha = clamp(rim, 0.0, 1.0);   // 让蓝色 rim 在深色太空天中显现
     float sunAlpha = sunEnabled * forwardScatter *
         clamp(core + halo1 * 0.6 +
-                  (halo2 * 0.35 + halo3 * 0.2) * atmoScatter + sunburst,
+                  (halo2 * 0.35 + halo3 * 0.2) * atmoScatter,
               0.0,
               1.0);
     float alpha = max(max(max(skyAlpha, limbAlpha), sunAlpha), rimAlpha);
+    // 合成:天空色(decode/直出)+ 太阳发光(HDR 下 boost)。LDR 下等价 color+sun。
+    color = composeAtmosphereOutput(color, sunEmissive);
     // 打破平滑天空渐变的 8-bit 量化条带(banding):按屏幕位置加 ±0.5/255
     // 的有序抖动,把台阶散成噪声(GE 天空是平滑的)。仅影响最低有效位。
     float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233)))
@@ -306,9 +337,12 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
 
     ShaderDesc shaderDesc;
     shaderDesc.vertexSource = kAtmosphereBackgroundVert;
-    // 拼接:头(uniform+phase 函数) + 共享 computeSkyColor + main。
-    shaderDesc.fragmentSource = std::string(kAtmosphereBackgroundFragHead) +
-                                kSkyColorGLSL + kAtmosphereBackgroundFragMain;
+    // 拼接:头(uniform+phase 函数) + 共享 computeSkyColor + 输出合成变体
+    // (LDR/HDR 编译期择一,见 kEnableHdrPipeline) + main。
+    shaderDesc.fragmentSource =
+        std::string(kAtmosphereBackgroundFragHead) + kSkyColorGLSL +
+        (kEnableHdrPipeline ? kAtmosphereComposeHdr : kAtmosphereComposeLdr) +
+        kAtmosphereBackgroundFragMain;
     auto shaderPtr = device->createShader(shaderDesc);
     if (!shaderPtr) {
         LOGE("initialize: createShader returned null");

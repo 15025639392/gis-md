@@ -3192,21 +3192,22 @@ Plain-data struct of Bruneton-2008-style scattering coefficients; aligns with op
 
 ### AtmosphereBackgroundPass.h / .cpp
 
-Full-screen atmospheric-scattering pass, ported from openglobus `Atmosphere.ts` + `atmosphere.frag.glsl`. Runs real-time Rayleigh+Mie+Ozone with an 8-sample optical-depth integral, sun disk + corona/stellar-ray bloom. No precomputed LUT.
+Full-screen atmospheric-scattering pass, ported from openglobus `Atmosphere.ts` + `atmosphere.frag.glsl`. Runs real-time Rayleigh+Mie+Ozone with an 8-sample optical-depth integral, sun disk + 多层柔和暖光晕(halo;离散放射光束已删). No precomputed LUT.
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| `initialize(RenderDevice*)` | .cpp:299-340 | Compiles shader, uploads 4-vertex fullscreen quad (`TriangleStrip`) |
-| `buildCommand(camPos,fov,vpW,vpH,camRight,camUp,camForward,sunDir,params,opacity=1)` | .cpp:342-399 | Emits one `RenderCommand`, kind `AtmosphereBackground` (.cpp:355) |
-| `isReady()` / `dispose()` | .h:46 / .cpp:401-404 | |
-| GLSL vert `kAtmosphereBackgroundVert` | .cpp:20-28 | Draws at `gl_Position.z=0` (reverse-Z far plane) after terrain; composites only sky pixels |
-| GLSL frag `kAtmosphereBackgroundFrag` | .cpp:30-259 | View ray rebuilt in ECEF from camera basis (.cpp:64-73); ray-sphere shell intersect (.cpp:85-122); **ground-facing rays `discard`** (.cpp:127-129) so ground haze belongs to surface shader |
-| Scatter integral | .cpp:135-152 | `SAMPLE_COUNT=8`, `rayleighScaleHeight=8000`, `mieScaleHeight=1200` |
-| Phase fns | .cpp:52-62 | `rayleighPhase`; softened Henyey-Greenstein `miePhase` (g=0.76) |
-| Sun disk + corona + stellar rays | .cpp:190-249 | Limb darkening, screen-space cross/diagonal flares gated by `spaceFactor` |
-| Alpha composite | .cpp:251-257 | `skyAlpha` fades to 0.18 in space; limb + sun alpha |
+| `initialize(RenderDevice*)` | .cpp:332-376 | Compiles shader (Head+SkyColor+**compose variant**+Main), uploads 4-vertex fullscreen quad (`TriangleStrip`) |
+| `buildCommand(camPos,fov,vpW,vpH,camRight,camUp,camForward,sunDir,params,opacity=1)` | .cpp:378-435 | Emits one `RenderCommand`, kind `AtmosphereBackground` (.cpp:391) |
+| `isReady()` / `dispose()` | .h:46 / .cpp:437-440 | |
+| GLSL vert `kAtmosphereBackgroundVert` | .cpp:19-27 | Draws at `gl_Position.z=0` (reverse-Z far plane) after terrain; composites only sky pixels |
+| GLSL frag (Head+SkyColor+compose+Main) | .cpp:29-322 | View ray rebuilt in ECEF from camera basis (.cpp:94-102); ray-sphere shell intersect (.cpp:114-124); **ground-facing rays → gap-fill haze** (.cpp:159-166) so ground haze belongs to surface shader |
+| Output compose `composeAtmosphereOutput` (LDR/HDR variant) | .cpp:77-90 | `kEnableHdrPipeline` OFF → `sky+sun` 直出显示色(= 现状);ON → sky `srgbToLinear`,太阳项 `*kSunHdrBoost`(provisional 6.0)推进 HDR 高光 → PBR-Neutral tonemap 过曝白芯 |
+| Scatter integral | .cpp:168-189 | `SAMPLE_COUNT=8`, `rayleighScaleHeight=8000`, `mieScaleHeight=1200` |
+| Phase fns | .cpp:51-61 | `rayleighPhase`; softened Henyey-Greenstein `miePhase` (g=0.76) |
+| Sun disk + 多层柔光晕(halo) | .cpp:265-302 | Limb darkening;盘 + halo1/2/3 三层柔光晕。离散放射光束(sunburst)已删——开阔地平线无云隙光,收敛为大气散射柔光晕;拆成 `sunEmissive` 供 compose 单独 boost |
+| Alpha composite | .cpp:304-320 | `skyAlpha` fades to 0.18 in space; limb + sun alpha |
 
-Render command state (.cpp:322-337): `pass="color"`, depthTest on / depthWrite off, alpha blend (SrcAlpha/OneMinusSrcAlpha), no cull. Uniform `u_bottomRadius` is the local surface radius from `Ellipsoid::projectToSurface(cameraPos)` (.cpp:352-357), `u_topRadius = bottom + atmosHeight`.
+Render command state (.cpp:390-406): `pass="color"`, depthTest on / depthWrite off, alpha blend (SrcAlpha/OneMinusSrcAlpha), no cull. Uniform `u_bottomRadius` is the local surface radius from `Ellipsoid::projectToSurface(cameraPos)` (.cpp:421-425), `u_topRadius = bottom + atmosHeight`.
 
 ### SkyBox.h / .cpp
 
