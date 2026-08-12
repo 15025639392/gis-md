@@ -2601,6 +2601,7 @@ struct GltfUniforms {
     packed_float4 pageStoreUv;
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
+    packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
 };
 
 float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
@@ -3410,6 +3411,7 @@ struct GltfUniforms {
     packed_float4 pageStoreUv;
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
+    packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
 };
 
 // TerrainVertexOut is provided by the vertex MSL (the backend concatenates the

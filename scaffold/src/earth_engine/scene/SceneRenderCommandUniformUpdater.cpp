@@ -75,6 +75,22 @@ void SceneRenderCommandUniformUpdater::apply(
                                             frameState.ambient.g,
                                             frameState.ambient.b,
                                             1.0f};
+                // 日落地表暖化(B1):地形受光面乘 sunTint、阴影面叠加暖补光
+                // (terrainSunAmbient)。仅地形——glTF 模型 shader 不读 u_sunTint、
+                // 也不应被地形专属的日落暖补光改动。地形命令走 GltfPrimitive/
+                // Instanced,故在本(上)支按 owner 判定;下方 map 支对地形不可达。
+                if (cmd.owner == "terrain_primitive" ||
+                    cmd.owner == "terrain_instanced") {
+                    cmd.gltfUniforms.sunTint = {frameState.sunTint.r,
+                                                frameState.sunTint.g,
+                                                frameState.sunTint.b,
+                                                0.0f};
+                    cmd.gltfUniforms.ambient = {
+                        frameState.ambient.r + frameState.terrainSunAmbient.r,
+                        frameState.ambient.g + frameState.terrainSunAmbient.g,
+                        frameState.ambient.b + frameState.terrainSunAmbient.b,
+                        1.0f};
+                }
                 // 相机世界坐标相对本瓦片局部帧原点的偏移。RTC 相减在双精度下
                 // 完成，float 只承载小量级差值 → 水面 sun-glint 求视向量 V。
                 // 位移帧路径下 v_position 在 ENU 局部帧，故 eye 也变到该帧
@@ -123,18 +139,11 @@ void SceneRenderCommandUniformUpdater::apply(
             std::memcpy(
                 mvpU.data(), glm::value_ptr(viewProj), 16 * sizeof(float));
         }
-        if (cmd.owner == "surface_tile") {
-            cmd.uniforms["u_lightDir"] = {frameState.lightDir.x,
-                                          frameState.lightDir.y,
-                                          frameState.lightDir.z};
-            cmd.uniforms["u_sunTint"] = {frameState.sunTint.r,
-                                         frameState.sunTint.g,
-                                         frameState.sunTint.b};
-            cmd.uniforms["u_ambient"] = {frameState.terrainSunAmbient.r,
-                                         frameState.terrainSunAmbient.g,
-                                         frameState.terrainSunAmbient.b,
-                                         1.0f};
-        }
+        // 注:地形(surface tile)命令 kind=GltfPrimitive/Instanced,走上支的
+        // gltfUniforms 块并 continue,永不到达这里。日落 sunTint/暖 ambient 已在
+        // 上支按 owner 写入 gltfUniforms(见 terrain_primitive/terrain_instanced
+        // 分支)。此前这里有个 `owner=="surface_tile"` 块——无命令用该 owner,是
+        // 死代码,B1 的地表暖化因此从未生效,已移除。
     }
 }
 

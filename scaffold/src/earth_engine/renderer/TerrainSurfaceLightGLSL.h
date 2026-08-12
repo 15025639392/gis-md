@@ -30,8 +30,11 @@ namespace earth_engine {
 // ⚠️ sunTint 由 CPU 按太阳高度角传入(白天=微暖白 (1.05,1.0,0.91);太阳贴地平线
 //    sunLow→1 时 mix 到暖橙 → 日落地表变暖,见 SceneFrameStateBuilder)。**仅 GLES
 //    两变体已提为入参**;MSL 两变体暂保留内部常量,Metal 端口时统一(B4)。
-// ⚠️ 现状:surface_tile 的 u_ambient 未接线(CPU 无写入=0)→ 阴影侧实为本色×
-//    shadowFloor、无天空蓝补光(既存,非本次;冷阴影分离待补 ambient)。
+// u_ambient / u_sunTint 均经 GltfUniformBlock(gltfUniformTable)上传:ambient=
+//    天空蓝半球补光(frameState.ambient)+ 日落暖补光(terrainSunAmbient);
+//    sunTint 由 CPU 按太阳高度角写入(见 SceneRenderCommandUniformUpdater 的
+//    terrain_primitive/terrain_instanced 分支)。块默认 sunTint=noon 微暖白,
+//    故即便某帧未覆写也取中性。
 //
 // 参数全显式传入、不读 uniform → 各 shader 的 uniform 命名(u_ambient vs
 // u.ambient)与本函数解耦。

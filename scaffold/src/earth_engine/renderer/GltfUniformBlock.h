@@ -170,6 +170,12 @@ struct alignas(16) GltfUniformBlock {
     //   y = 保留给间接纹理层号(Step 2)  z/w = 保留
     // 仅位移命令有效(heightDisplace.z=1 时才被采样),其余恒 0。
     std::array<float, 4> terrainLayers{0.0f, 0.0f, 0.0f, 0.0f};
+
+    // 日落太阳色温(地形受光面乘它:白天微暖白→太阳贴地平线转暖橙,见
+    // SceneFrameStateBuilder / TerrainSurfaceLightGLSL)。仅地形片元读 u_sunTint;
+    // glTF 模型 shader 不声明 → location -1 跳过,写了无害。默认=noon 微暖白,
+    // 未被 updater 覆写时地形仍取中性(非黑)。rgb 有效,w 补齐 16 字节。
+    std::array<float, 4> sunTint{1.05f, 1.0f, 0.91f, 0.0f};
 };
 
 static_assert(alignof(GltfUniformBlock) == 16,
@@ -218,7 +224,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 92> table = {{
+    static const std::array<GltfUniformTableEntry, 93> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -306,6 +312,7 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_pageStoreUv", pageStoreUv, 4),
         EE_GLTF_ENTRY("u_heightDisplace", heightDisplace, 4),
         EE_GLTF_ENTRY("u_terrainLayers", terrainLayers, 4),
+        EE_GLTF_ENTRY("u_sunTint", sunTint, 3),
     }};
 #undef EE_GLTF_ENTRY_AT
 #undef EE_GLTF_TRANSFORM
