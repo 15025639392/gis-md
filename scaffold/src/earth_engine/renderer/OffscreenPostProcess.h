@@ -25,7 +25,10 @@ namespace earth_engine {
 ///      submit(buildCommand(params)) → endPass
 class OffscreenPostProcess {
 public:
-    enum class Effect { Passthrough, Fxaa, AerialFog };
+    /// Tonemap:场景画进线性 HDR(RGBA16F)靶,本 pass 采样 → PBR-Neutral
+    /// tonemap → sRGB encode → 8bit 上屏。T2 的强制终端 encode(非可选叠加:
+    /// 场景一旦是 HDR,终端必须 tonemap)。见 PipelineConfig.h kEnableHdrPipeline。
+    enum class Effect { Passthrough, Fxaa, AerialFog, Tonemap };
 
     /// aerial fog 每帧参数。非 fog effect 忽略。
     /// 雾色不再是固定常数——shader 每像素按视线方向算天空色作雾色(与大气

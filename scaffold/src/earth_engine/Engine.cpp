@@ -4,6 +4,7 @@
 #include "scene/Camera.h"
 #include "camera/CameraSystem.h"
 #include "renderer/OffscreenPostProcess.h"
+#include "renderer/PipelineConfig.h"
 #include "renderer/VirtualTexturePoc.h"
 #include "renderer/TerrainPageStore.h"
 #include "tiling/TerrainDisplacementTemplatePool.h"
@@ -37,6 +38,8 @@ const char* diagTagForEffect(OffscreenPostProcess::Effect effect) {
             return "FXAADIAG";
         case OffscreenPostProcess::Effect::AerialFog:
             return "FOGDIAG";
+        case OffscreenPostProcess::Effect::Tonemap:
+            return "HDRDIAG";
         case OffscreenPostProcess::Effect::Passthrough:
         default:
             return "RTTDIAG";
@@ -573,12 +576,17 @@ bool Engine::render(double deltaSeconds) {
         // 离屏后处理(flag ON 且资源可用时):场景 pass 的目标换成离屏
         // FBO,场景后追加全屏后处理 pass 上屏;任何一环失败都回落直绘。
         // 优先级:AerialFog > FXAA > passthrough 调试直通。
+        // kEnableHdrPipeline(T2):场景画进线性 HDR 靶,Tonemap 作**强制终端**
+        // (最高优先级——场景一旦是 HDR,终端必须 tonemap+encode;与 FXAA/fog
+        // 的组合是后续,切片先单 Tonemap)。默认关 → 走原逻辑,零变化。
         const bool wantOffscreen =
-            aerialFogEnabled_ || fxaaEnabled_ || offscreenPassthroughEnabled_;
+            kEnableHdrPipeline || aerialFogEnabled_ || fxaaEnabled_ ||
+            offscreenPassthroughEnabled_;
         const OffscreenPostProcess::Effect wantEffect =
-            aerialFogEnabled_ ? OffscreenPostProcess::Effect::AerialFog
-            : fxaaEnabled_    ? OffscreenPostProcess::Effect::Fxaa
-                              : OffscreenPostProcess::Effect::Passthrough;
+            kEnableHdrPipeline ? OffscreenPostProcess::Effect::Tonemap
+            : aerialFogEnabled_ ? OffscreenPostProcess::Effect::AerialFog
+            : fxaaEnabled_      ? OffscreenPostProcess::Effect::Fxaa
+                               : OffscreenPostProcess::Effect::Passthrough;
         // 期望的 effect 变了(运行时切换)→ 丢弃旧对象按新 shader 重建。
         if (offscreenPostProcess_ &&
             offscreenPostProcess_->effect() != wantEffect) {

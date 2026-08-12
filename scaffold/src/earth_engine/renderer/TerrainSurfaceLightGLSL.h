@@ -33,6 +33,19 @@ namespace earth_engine {
 //   baseRgb : 反照率(影像/底色,含 mappedRaster 合成后)
 //   NdotL   : 表面法线·太阳方向(未 clamp,函数内自取受光/方向两分量)
 //   ambient : 天空蓝补光色(u_ambient.rgb / u.ambient.rgb)
+//
+// ── 两个变体:LDR(默认)vs HDR(kEnableHdrPipeline)──────────────────
+// withTerrainLight() 按 PipelineConfig.h 的 kEnableHdrPipeline 选注入哪个:
+//   flag OFF → kTerrainLight*   :gamma 空间直算,输出显示色(**现状 = T0,
+//              零变化**;shadowFloor=0.3,不 decode/encode)。
+//   flag ON  → kTerrainLightHdr*:base decode 到线性 → 线性域光照 → **输出线性
+//              HDR**(sRGB encode 移到全屏 tonemap 终端)。srgbToLinear 仅作用
+//              于 color 纹理;heightmap/normal 等数据纹理不经此函数,天然不 decode
+//              (角色感知,见设计文档 §3)。⚠️ HDR 变体常数(shadowFloor=0.15/
+//              ambientScale=0.6)是 **provisional**,真正调参在 T2 对着 tonemap
+//              输出做一次(见设计文档 §9)。pow(2.2) 近似同 czm_srgbToLinear。
+
+// —— LDR(默认,= T0 gamma,零变化)——
 constexpr const char* kTerrainLightGLSL = R"(
 vec3 terrainSurfaceLight(vec3 baseRgb, float NdotL, vec3 ambient) {
     const float kLambertGain = 0.9;   // = Cesium lambertDiffuseMultiplier
@@ -54,6 +67,37 @@ float3 terrainSurfaceLight(float3 baseRgb, float NdotL, float3 ambient) {
     float3 sunTint = float3(1.05, 1.0, 0.91);
     return baseRgb * directional * mix(float3(1.0), sunTint, sunlit)
          + baseRgb * ambient * (1.0 - sunlit);
+}
+)";
+
+// —— HDR(kEnableHdrPipeline):base→线性,输出线性 HDR,常数 provisional ——
+constexpr const char* kTerrainLightHdrGLSL = R"(
+vec3 srgbToLinear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
+vec3 terrainSurfaceLight(vec3 baseRgb, float NdotL, vec3 ambient) {
+    vec3 albedo = srgbToLinear(baseRgb);
+    const float kLambertGain = 0.9;
+    const float kShadowFloor = 0.15;  // provisional(T0=0.3);T2 tonemap 后重调
+    const float kAmbientScale = 0.6;  // provisional;线性下收暗部补光
+    float directional = clamp(NdotL * kLambertGain + kShadowFloor, 0.0, 1.0);
+    float sunlit = clamp(NdotL, 0.0, 1.0);
+    vec3 sunTint = vec3(1.05, 1.0, 0.91);
+    return albedo * directional * mix(vec3(1.0), sunTint, sunlit)
+         + albedo * (ambient * kAmbientScale) * (1.0 - sunlit);  // 线性 HDR
+}
+)";
+
+constexpr const char* kTerrainLightHdrMSL = R"(
+float3 srgbToLinear(float3 c) { return pow(max(c, float3(0.0)), float3(2.2)); }
+float3 terrainSurfaceLight(float3 baseRgb, float NdotL, float3 ambient) {
+    float3 albedo = srgbToLinear(baseRgb);
+    const float kLambertGain = 0.9;
+    const float kShadowFloor = 0.15;  // provisional(T0=0.3);T2 tonemap 后重调
+    const float kAmbientScale = 0.6;  // provisional;线性下收暗部补光
+    float directional = clamp(NdotL * kLambertGain + kShadowFloor, 0.0, 1.0);
+    float sunlit = clamp(NdotL, 0.0, 1.0);
+    float3 sunTint = float3(1.05, 1.0, 0.91);
+    return albedo * directional * mix(float3(1.0), sunTint, sunlit)
+         + albedo * (ambient * kAmbientScale) * (1.0 - sunlit);  // 线性 HDR
 }
 )";
 

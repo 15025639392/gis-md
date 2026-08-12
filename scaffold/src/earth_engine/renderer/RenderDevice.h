@@ -233,7 +233,10 @@ struct TextureDesc {
     /// 见 §13)。数组纹理创建时不带初始 data,各层经 updateTextureRegion
     /// 的 layer 维分别上传。
     int arrayLayers = 1;
-    enum class Format { RGBA8, RGB8, R8, Depth32F } format = Format::RGBA8;
+    // RGBA16F = 半浮点 HDR 颜色(T2:场景画进线性 HDR 靶,末端 tonemap→8bit)。
+    // ⚠️ 渲染进 RGBA16F 靶在 ES3.0/3.1 需 EXT_color_buffer_half_float(3.2 才
+    // 核心)——见 RenderDeviceGLES supportsFloatColorRenderable() 探测 + 回落。
+    enum class Format { RGBA8, RGB8, R8, Depth32F, RGBA16F } format = Format::RGBA8;
     const uint8_t* data = nullptr;  // 原始像素缓冲区
     size_t dataSize = 0;
     bool mipmap = true;
@@ -261,6 +264,10 @@ struct FramebufferDesc {
     bool hasColor = true;
     bool hasDepth = true;
     int samples = 1;
+    // 离屏 color 附件格式(T2)。默认 RGBA8 = 现状零变化;RGBA16F = 线性 HDR
+    // 场景靶(调用方须先经 device 探测 float-color-renderable,否则回落 RGBA8)。
+    // 自建 color 路径(externalColorTarget 为空时)按此建纹理。
+    TextureDesc::Format colorFormat = TextureDesc::Format::RGBA8;
     // depth 是否需被后续 pass 采样(如 aerial fog 从深度重建视距)。
     // false(默认)→ GLES 用 renderbuffer 更省;true → GLES 换深度纹理、
     // Metal 加 ShaderRead usage,经 Framebuffer::depthTexture() 暴露。

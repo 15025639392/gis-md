@@ -257,6 +257,10 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
             internalFormat = GL_DEPTH_COMPONENT32F;
             format = GL_DEPTH_COMPONENT;
             break;
+        case TextureDesc::Format::RGBA16F:
+            internalFormat = GL_RGBA16F;
+            format = GL_RGBA;
+            break;
     }
 
     auto toGlWrap = [](TextureDesc::Wrap wrap) {
@@ -273,7 +277,9 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
     const size_t bytesPerPixelFor =
         desc.format == TextureDesc::Format::R8
             ? 1u
-            : (desc.format == TextureDesc::Format::RGB8 ? 3u : 4u);
+            : (desc.format == TextureDesc::Format::RGB8
+                   ? 3u
+                   : (desc.format == TextureDesc::Format::RGBA16F ? 8u : 4u));
 
     // ---- texture2DArray 路径(合成方案页存储:一页一层)----
     // 只分配层存储(无初始 data),各层随后经 updateTextureRegion(layer) 上传。
@@ -311,7 +317,9 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
 
     glBindTexture(GL_TEXTURE_2D, id);
 
-    GLenum type = GL_UNSIGNED_BYTE;
+    GLenum type = (desc.format == TextureDesc::Format::RGBA16F)
+                      ? GL_HALF_FLOAT
+                      : GL_UNSIGNED_BYTE;
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glTexImage2D(GL_TEXTURE_2D, 0, internalFormat,
                  desc.width, desc.height, 0,
@@ -578,6 +586,25 @@ GLFramebuffer::~GLFramebuffer() {
     // color_ / depthTexture_ 的 GLTexture 析构自删纹理。
 }
 
+// EXT_color_buffer_(half_)float 探测:渲染进 RGBA16F 靶在 ES3.0/3.1 需此扩展
+// (3.2 才核心)。缺失时 createFramebuffer 回落 RGBA8——宁可 LDR 也不建残缺
+// FBO。FBO 创建不频繁,每次直查(不缓存,避免 context lost 后陈旧)。
+static bool glesFloatColorRenderable() {
+    GLint n = 0;
+    glGetIntegerv(GL_NUM_EXTENSIONS, &n);
+    for (GLint i = 0; i < n; ++i) {
+        const char* e =
+            reinterpret_cast<const char*>(glGetStringi(GL_EXTENSIONS, i));
+        if (!e) continue;
+        const std::string name(e);
+        if (name == "GL_EXT_color_buffer_half_float" ||
+            name == "GL_EXT_color_buffer_float") {
+            return true;
+        }
+    }
+    return false;
+}
+
 std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
     const FramebufferDesc& desc) {
     if (desc.width <= 0 || desc.height <= 0 || !desc.hasColor) {
@@ -594,9 +621,25 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
 
     // C-2a:外部 array 层作颜色附件 —— 不自建颜色纹理,直接挂 layer。
     const bool useExternalColor = desc.externalColorTarget != nullptr;
+    // color 附件内部格式:RGBA16F(HDR 场景靶)须 float-color-renderable 扩展,
+    // 缺失回落 RGBA8(T2)。depth GLTexture 记账仍按 4B(32F)。
+    bool colorIsHdr = false;
+    GLenum colorInternal = GL_RGBA8;
+    if (!useExternalColor &&
+        desc.colorFormat == TextureDesc::Format::RGBA16F) {
+        if (glesFloatColorRenderable()) {
+            colorInternal = GL_RGBA16F;
+            colorIsHdr = true;
+        } else {
+            __android_log_print(ANDROID_LOG_WARN, "GLES",
+                "createFramebuffer: RGBA16F 请求但无 EXT_color_buffer_(half_)"
+                "float,回落 RGBA8");
+        }
+    }
     const size_t attachmentBytes =
         static_cast<size_t>(desc.width) *
         static_cast<size_t>(desc.height) * 4u;
+    const size_t colorBytes = attachmentBytes * (colorIsHdr ? 2u : 1u);
     GLuint colorTex = 0;
     std::unique_ptr<GLTexture> color;
     if (useExternalColor) {
@@ -604,14 +647,14 @@ std::unique_ptr<Framebuffer> RenderDeviceGLES::createFramebuffer(
     } else {
         glGenTextures(1, &colorTex);
         glBindTexture(GL_TEXTURE_2D, colorTex);
-        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, desc.width, desc.height);
+        glTexStorage2D(GL_TEXTURE_2D, 1, colorInternal, desc.width, desc.height);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
         glBindTexture(GL_TEXTURE_2D, 0);
         color = std::make_unique<GLTexture>(colorTex, desc.width, desc.height,
-                                            attachmentBytes);
+                                            colorBytes);
     }
 
     // depth:renderbuffer(默认,不可采样)或纹理(depthSampleable)。两者

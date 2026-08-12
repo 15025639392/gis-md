@@ -64,6 +64,8 @@ T2 的 float 靶格式选型:`RGBA16F`(Skybolt/Cesium half-float 路线,带 alph
 
 **倾向判断**:若观感目标止步"匹配 GE"、近期无真 PBR 材质 / 昼夜太空极端动态范围需求 → **A(T0 收手)**,因 T1 重调成本换来的正确性已被手调兑现;只要规划含"物理材质 / 电影级昼夜 / 太空" → **B 迟早要还,越晚重调面越大**。此判断留用户定,不代决。
 
+> **✅ 已裁决(2026-08-12):选 B。** 用户确认太阳盘/大气 limb/地平线辉光、水面镜面高光、黄昏/夜间城市灯光、未来 PBR 材质**全部规划要做**——这些正是产生 >1 值、让线性+HDR+tonemap 兑现的内容。B 从"可选债"变为"这些功能的硬前提"。详见 §9 实测与修正后的顺序。
+
 ## 6. 若选 B 的分期与落地要点
 
 1. **T0(A/B 共同前置,先落)**:新建 `renderer/TerrainSurfaceLightGLSL.h`,暴露 `kTerrainLightGLSL`/`kTerrainLightMSL` 两语言变体,参数全显式传入(照 `computeSkyColor` 解耦约定);4 处 terrain call site 各切 main 前注入函数、块换调用。glTF **不动**(GLSL/MSL 各 1 份,无字节重复;若走 B 会被重写,现抽再写是白做)。闸门:ctest + **真机像素直通**(shader 运行时在设备编译,host ctest 不验 GLSL/MSL 语法)。
@@ -78,8 +80,52 @@ T2 的 float 靶格式选型:`RGBA16F`(Skybolt/Cesium half-float 路线,带 alph
 - **T2 移动端带宽**:half-float 主靶带宽 ×2,tiled GPU 上真成本;须 release 实测帧时(遵 `perf-measured-on-debug-build`),必要时退 `R11G11B10F`。
 - **并行会话**:docs/issues 在另一 worktree(`musing-morse-01ac72`)有副本;本文件为仓库根新路径,不碰对方未提交改动。落地改 `Renderer.cpp` 前须 `git status` 划工作面(遵并行会话协作规则 #3)。
 
-## 8. 未决(待用户裁决)
+## 8. 未决(更新 2026-08-12)
 
-1. **A vs B**:野心问题,本文不代决。
-2. 若 B:T2 是否纳入本轮,还是先 T1 观察线性观感再定。
-3. 若 T2:float 靶格式 `RGBA16F` vs `R11G11B10F`(取决于合成是否需 alpha)。
+1. ~~A vs B~~ → **已定 B**(§5 裁决 / §9)。
+2. **float 靶格式** `RGBA16F` vs `R11G11B10F`:待 T2 立项按移动端带宽 + 是否需 alpha 合成定。
+3. **T2 关键路径 = 补 Metal 离屏**(`RenderDeviceMetal.h:22` 现 `return false`)+ HDR 靶,跨双后端;具体改法待 T2 codebase 调研结论(进行中)。
+
+## 9. 实测与修正后的施工顺序(2026-08-12,真机)
+
+**已落地**:
+- **T0**(commit `1a939be70`)= terrain 光照 4→1 单一治理点;真机 A/B 判定视觉等价(±1 LSB,与 GPU 启动噪声地板同性质)。
+- **T1 P1**(未提交,WIP header)= terrain 切线性(`srgbToLinear`→线性光照→`linearToSrgb`),4 call site 不动,decode/encode 收在共享函数内。
+- **T1 P2**(未提交)= 线性重调(`kShadowFloor 0.15`/`kAmbientScale 0.6` **provisional**),luma 分布对齐 gamma 基线。
+
+**真机实测结论(重庆 1500m/45° 冻结场景)**:
+- P1 未调线性比 gamma 亮 ~10%(暗部被 L^(1/2.2) 抬起);P2 重调后三分位数对齐 gamma。
+- **纯 LDR 下线性观感 ≈ gamma,零可见提升**——为保住认可的观感就得把线性调回 gamma。这印证 §2.3:tonemap/HDR 收益要 >1 值才兑现。
+- **地形是漫反射、天生 ≤1,自己不产生 HDR 值** → tonemap/HDR 对地形本身几乎不做事。可见 payoff 落在太阳/limb/水面镜面/夜灯/PBR 上(用户确认全要做)。
+- 追"比 gamma 更 punchy"在此俯视影像主导场景是**伪目标**(三版 luma 仅差几单位;`kShadowFloor` 是加在整条 NdotL 斜坡上的常数,压它反而降对比)。
+
+**⚠️ 关键洞察(改施工顺序)——别在 LDR 磨常数**:
+上 T2 tonemap 后最终观感由 tonemap 曲线决定,**所有 per-shader 常数须对着 tonemap 输出重调一遍**;P2 在 `linearToSrgb` 下调的值是**一次性丢弃**。更彻底:P1 塞进地形函数的 `linearToSrgb` encode 在 T2 会**被删**(encode 从 per-shader 挪到全屏 tonemap pass)。故 P2/P3 常数只求 good-enough,**唯一真调参在 T2 之后做一次**。
+
+**修正后的关键路径(按依赖 + 避免重复调参)**:
+| 序 | 做什么 | 理由 |
+|---|---|---|
+| 1 | T1 机制铺完(terrain 已 P1;P3 推 glTF/矢量),常数 provisional | 线性是 T2 前提,但不调精 |
+| 2 | **T2 地基**:HDR float 靶 + tonemap-on-HDR + **补 Metal 离屏** | 最大单块,所有 payoff 的闸门 |
+| 3 | 用**现有天空/大气**做第一个 HDR demonstrator(零新数据,太阳/limb 最亮) | 端到端验 T2 通 + 定 tonemap 操作点 |
+| 4 | 对着 tonemap 后管线**调一次**常数(掠视+天空场景) | 唯一真调参 |
+| 5 | 逐个上 payoff:水面镜面 → 夜灯 → PBR,复用已验证管线 | 地基已在,每个都便宜 |
+
+真成本在第 2 步(Metal 离屏 + HDR 靶带宽)。
+
+### 9.1 T2 codebase 研究更正(2026-08-12,opus 代理,现读)
+
+**⚠️ 更正上文"补 Metal 离屏是最大单块"——错。** 研究发现离屏 pass 基础设施**两后端都已完整实现**:
+- Metal 已实 `createFramebuffer`(RenderDeviceMetal.mm:670-741)/`beginPass`(:798-857)/`endPass`(:859-864);GLES 对应 :581-690/:730-772/:774-778。
+- 场景已能画进离屏 FBO(FXAA/AerialFog 开时),Engine.cpp:618-622 已有 `// T2:` `setSceneRenderTarget` 钩子。
+- `supportsOffscreenPostProcess()=false`(RenderDeviceMetal.h:22)**唯一**原因 = 无 MSL 全屏 shader(OffscreenPostProcess 只有 GLSL)。补 = ~4 MSL 片元 + 1 顶点 + fullscreen layout 分支(RenderDeviceMetal.mm:415-497 按入口名推断布局,无 fullscreen 布局)。
+
+**真正最大风险 = Metal 场景 PSO 像素格式耦合**(RenderDeviceMetal.mm:633 `colorAttachments[0].pixelFormat=BGRA8Unorm` 建 PSO 时烘死):PSO 为 BGRA8 建、画进 RGBA16F pass → Metal 附件校验失败**静默画不出**,且 GLES 免疫(程序格式无关)→ **策略:整特性 GLES 先落地验证,再移 Metal**。
+
+**依赖序工作项(8 项)**:①Format+FramebufferDesc 加字段 → ②GLES float 路径(+`EXT_color_buffer_half_float` 探测/回落,修 :216-220 空壳恒 true)→ ③Metal float texture(:241-244/:688)→ **④Metal PSO 格式变体(最大风险)** → ⑤场景 shader 写线性 HDR(去 per-shader encode)+ 重调常数 → ⑥`Effect::Tonemap` 作强制终端 → ⑦Metal MSL 全屏 + 翻 flag → ⑧Engine 接线。GLES 切片 = ①②⑤⑥⑧,Metal 移植 = ③④⑦。
+
+**格式定 `RGBA16F`**(非 R11G11B10F):管线存 alpha=1,ES3+Metal 普遍可渲。带宽 ×2 仍是 release 实测闸门。
+
+**tonemap 非可选叠加而是强制终端 encode**:场景一旦画进 HDR 靶,终端 pass 必须 tonemap+encode;`Passthrough`→`Tonemap`,FXAA/AerialFog 在尾部做 tonemap,否则双重编码 / 对未 tonemap 的 HDR luma 做 FXAA。
+
+**reverse-Z / winding 与 HDR 无冲突**(HDR 只碰 color 附件,depth clear/winding 按 pass 设、格式无关)。

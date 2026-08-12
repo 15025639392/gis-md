@@ -33,6 +33,35 @@ void main() {
 }
 )";
 
+// Tonemap(T2 强制终端):采样线性 HDR 场景色 → Khronos PBR-Neutral tonemap
+// → sRGB encode → 8bit。highp(mediump 存不下 HDR >1)。曲线 = Cesium 默认
+// 同款(hue 稳定、不过饱和)。u_tileTexture=离屏 HDR color(unit 0)。
+const char* kTonemapFragGLSL = R"(#version 300 es
+precision highp float;
+uniform sampler2D u_tileTexture;
+in vec2 v_uv;
+out vec4 fragColor;
+vec3 pbrNeutralToneMapping(vec3 color) {
+    const float startCompression = 0.8 - 0.04;
+    const float desaturation = 0.15;
+    float x = min(color.r, min(color.g, color.b));
+    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
+    color -= offset;
+    float peak = max(color.r, max(color.g, color.b));
+    if (peak < startCompression) return color;
+    float d = 1.0 - startCompression;
+    float newPeak = 1.0 - d * d / (peak + d - startCompression);
+    color *= newPeak / peak;
+    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+    return mix(color, vec3(newPeak), g);
+}
+void main() {
+    vec3 hdr = texture(u_tileTexture, v_uv).rgb;           // 线性 HDR 场景色
+    vec3 mapped = pbrNeutralToneMapping(max(hdr, vec3(0.0)));
+    fragColor = vec4(pow(mapped, vec3(1.0 / 2.2)), 1.0);   // linear → sRGB
+}
+)";
+
 // FXAA(Timothy Lottes / NVIDIA 经典版,luma 边缘检测 + 定向 4-tap 模糊)。
 // u_inverseResolution = (1/width, 1/height),邻域 texel 偏移用。低对比区
 // early-out 保 UI/文字锐利。首版走亮度阈值默认参数,mobile GLES3 稳。
@@ -182,6 +211,8 @@ const char* diagTag(OffscreenPostProcess::Effect effect) {
             return "FXAADIAG";
         case OffscreenPostProcess::Effect::AerialFog:
             return "FOGDIAG";
+        case OffscreenPostProcess::Effect::Tonemap:
+            return "HDRDIAG";
         case OffscreenPostProcess::Effect::Passthrough:
         default:
             return "RTTDIAG";
@@ -197,6 +228,8 @@ std::string fragForEffect(OffscreenPostProcess::Effect effect) {
             // pass 同源。
             return std::string(kAerialFogFragHead) + kSkyColorGLSL +
                    kAerialFogFragMain;
+        case OffscreenPostProcess::Effect::Tonemap:
+            return kTonemapFragGLSL;
         case OffscreenPostProcess::Effect::Passthrough:
         default:
             return kBlitFragGLSL;
@@ -263,6 +296,12 @@ Framebuffer* OffscreenPostProcess::ensureFramebuffer(int width, int height) {
         desc.samples = 1;
         // AerialFog 要采样场景深度重建视距 → 深度须可采样。
         desc.depthSampleable = (effect_ == Effect::AerialFog);
+        // Tonemap:场景画进线性 HDR 靶(RGBA16F),本 pass tonemap→8bit。
+        // 后端探不到 float-color-renderable 时 createFramebuffer 回落 RGBA8
+        // (那时输出偏暗=预期回落,见 PipelineConfig.h)。
+        desc.colorFormat = (effect_ == Effect::Tonemap)
+                               ? TextureDesc::Format::RGBA16F
+                               : TextureDesc::Format::RGBA8;
         // 场景主 pass 落在本 FBO 上:矢量 stencil 分类(P6)需要 stencil
         // 附件,否则测试恒通过分类失效。
         desc.hasStencil = true;

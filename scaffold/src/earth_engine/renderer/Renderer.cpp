@@ -7,6 +7,7 @@
 #include "../core/math/Mat4.h"
 #include "../tiling/TileKey.h"
 #include "TerrainSurfaceLightGLSL.h"
+#include "PipelineConfig.h"
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -3890,7 +3891,11 @@ const char* terrainFragmentMSL() {
 static std::string withTerrainLight(const char* fragmentSource, bool metal) {
     std::string src(fragmentSource);
     const char* anchor = metal ? "fragment float4 " : "void main(";
-    const std::string fn = metal ? kTerrainLightMSL : kTerrainLightGLSL;
+    // kEnableHdrPipeline OFF → LDR/gamma 变体(= T0,零变化);ON → HDR 线性
+    // 变体(base→线性,输出线性 HDR,tonemap 终端 encode)。见 PipelineConfig.h。
+    const std::string fn =
+        kEnableHdrPipeline ? (metal ? kTerrainLightHdrMSL : kTerrainLightHdrGLSL)
+                           : (metal ? kTerrainLightMSL : kTerrainLightGLSL);
     const size_t pos = src.find(anchor);
     // 锚点在每个地形片元 shader 里唯一且必存;若未来编辑删掉入口,宁可越界抛
     // 也不静默产出缺光照函数的 shader(编译期即炸,而非上屏后无光)。
