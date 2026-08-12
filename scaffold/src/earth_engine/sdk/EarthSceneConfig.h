@@ -212,6 +212,12 @@ struct EarthSceneConfig {
     /// 雾色配置项;密度在 shader 内还会乘高度衰减 + 视线角。
     float aerialFogDensity = 8.0e-6f;
     float aerialFogStartDistance = 0.0f;
+    /// 日落地表着色强度(运行时可配)。太阳贴地平线时地形受光面转暖橙、阴影面
+    /// 暖补光,解决"天空黄昏/地面正午"割裂。warmth=受光暖度(0=不变,1=最暖)、
+    /// shadowWarmth=阴影暖补光缩放。色基准为引擎内「自然」档;白天(太阳高)自动
+    /// 无效=零回归。默认=自然档。
+    float sunsetTerrainWarmth = 0.75f;
+    float sunsetTerrainShadowWarmth = 1.0f;
     /// 北极星 Phase 2b 虚拟纹理 C 方案 PoC(默认关,测量台专用):每帧跑
     /// feedback→回读→页表整链,量移动端固定开销(回读 stall),数报进 EarthPerf
     /// 头行 vtReadback=。不改任何渲染,纯旁路测量。当前两后端回读均已实现。

@@ -25,6 +25,11 @@ void SceneEnvironmentCoordinator::setTime(double julianDate) {
     timeController_->setJulianDate(julianDate);
 }
 
+void SceneEnvironmentCoordinator::setSunsetTerrainTint(float warmth,
+                                                       float shadowScale) {
+    skyGradient_->setSunsetTerrainTint(warmth, shadowScale);
+}
+
 double SceneEnvironmentCoordinator::time() const {
     return timeController_->julianDate();
 }

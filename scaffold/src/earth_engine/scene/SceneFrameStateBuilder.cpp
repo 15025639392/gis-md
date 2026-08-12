@@ -82,16 +82,20 @@ double updateEnvironment(const SceneFrameStateBuildInput& input) {
     // 日落地表着色:受光面 sunTint(暖度=warmth) + 阴影面暖补光(=shadowAmbient×
     // sunLow)。档位见 kSunsetTintNatural。白天 sunLow=0 → sunTint=noonTint、
     // ambient=0 = 现状零回归。
+    // 色基准=编译期「自然」档;强度(warmth/shadowScale)运行时可配,来自
+    // EarthSceneConfig → SkyGradient。config 默认 0.75/1.0 = 档位基准 → 逐字等价。
     const TerrainSunsetTint& st = kSunsetTintNatural;
-    float f = static_cast<float>(sunLow) * st.warmth;
+    float warmth = input.skyGradient->sunsetWarmth();
+    float shadowScale = input.skyGradient->sunsetShadowScale();
+    float f = static_cast<float>(sunLow) * warmth;
     frameState.sunTint = {
         st.noonTint[0] + (st.sunsetTint[0] - st.noonTint[0]) * f,
         st.noonTint[1] + (st.sunsetTint[1] - st.noonTint[1]) * f,
         st.noonTint[2] + (st.sunsetTint[2] - st.noonTint[2]) * f};
     float sl = static_cast<float>(sunLow);
-    frameState.terrainSunAmbient = {st.shadowAmbient[0] * sl,
-                                    st.shadowAmbient[1] * sl,
-                                    st.shadowAmbient[2] * sl};
+    frameState.terrainSunAmbient = {st.shadowAmbient[0] * sl * shadowScale,
+                                    st.shadowAmbient[1] * sl * shadowScale,
+                                    st.shadowAmbient[2] * sl * shadowScale};
     return perf::nowMs() - startMs;
 }
 

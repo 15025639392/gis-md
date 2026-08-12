@@ -599,6 +599,8 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     }
 
     engine_.setTime(config_.fixedSimulationJulianDate);
+    engine_.setSunsetTerrainTint(config_.sunsetTerrainWarmth,
+                                 config_.sunsetTerrainShadowWarmth);
     // 效果 setter 在后端不支持时拒绝并返回 false;这里把"配置了但没生效"
     // 汇总成一条显式告警,避免 iOS 上开关静默无效被误判为视觉不明显。
     const bool passthroughOk =

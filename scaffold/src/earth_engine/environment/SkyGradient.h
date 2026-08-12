@@ -46,12 +46,24 @@ public:
     /// 太阳仰角（radian，0=地平线，π/2=头顶）
     double sunElevation() const { return sunElevation_; }
 
+    /// 日落地表着色强度(运行时可配,来源 EarthSceneConfig)。warmth=受光面暖度、
+    /// shadowScale=阴影暖补光缩放;色基准在 SceneFrameStateBuilder 的编译期档位。
+    /// 承载于此仅因 SkyGradient 已穿到 frameState builder,非大气散射本身参数。
+    void setSunsetTerrainTint(float warmth, float shadowScale) {
+        sunsetWarmth_ = warmth;
+        sunsetShadowScale_ = shadowScale;
+    }
+    float sunsetWarmth() const { return sunsetWarmth_; }
+    float sunsetShadowScale() const { return sunsetShadowScale_; }
+
 private:
     AtmosphereParameters params_;
     std::array<float, 4> zenith_;
     std::array<float, 4> horizon_;
     std::array<float, 3> ambient_;
     double sunElevation_ = 0.0;
+    float sunsetWarmth_ = 0.75f;       // = kSunsetTintNatural.warmth 默认
+    float sunsetShadowScale_ = 1.0f;   // 阴影暖补光缩放(1=自然档基准)
 };
 
 } // namespace earth_engine

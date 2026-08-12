@@ -147,6 +147,7 @@ public:
 
     /// 设置模拟时间（Julian Date）
     void setTime(double julianDate);
+    void setSunsetTerrainTint(float warmth, float shadowScale);
     /// 获取当前模拟时间
     double time() const;
     /// 时间步进（秒）

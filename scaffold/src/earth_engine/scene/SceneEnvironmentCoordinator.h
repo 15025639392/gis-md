@@ -22,6 +22,7 @@ public:
     void initializeRenderResources(RenderDevice* device);
 
     void setTime(double julianDate);
+    void setSunsetTerrainTint(float warmth, float shadowScale);
     double time() const;
     void advanceTime(double seconds);
     Vec3 sunDirection() const;

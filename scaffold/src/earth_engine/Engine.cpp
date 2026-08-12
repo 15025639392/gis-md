@@ -1079,6 +1079,10 @@ void Engine::setTime(double julianDate) {
     scene_->setTime(julianDate);
 }
 
+void Engine::setSunsetTerrainTint(float warmth, float shadowScale) {
+    scene_->setSunsetTerrainTint(warmth, shadowScale);
+}
+
 double Engine::time() const {
     return scene_->time();
 }

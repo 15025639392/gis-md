@@ -533,6 +533,10 @@ void Scene::setTime(double julianDate) {
     environment_->setTime(julianDate);
 }
 
+void Scene::setSunsetTerrainTint(float warmth, float shadowScale) {
+    environment_->setSunsetTerrainTint(warmth, shadowScale);
+}
+
 double Scene::time() const {
     return environment_->time();
 }
