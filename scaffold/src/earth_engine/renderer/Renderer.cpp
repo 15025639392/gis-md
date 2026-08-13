@@ -508,6 +508,10 @@ void main() {
         base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
+    // B2 刀2:HDR 下把 sRGB 反照率解到线性(glTF PBR 本为线性设计),BRDF 随之在
+    // 线性域算、结果直接输出即线性 HDR(末端 tonemap encode);LDR 恒等=零回归。
+    // 覆盖 unlit(下方直出 base)与 lit(base 驱动 diffuse/specularColor)两路。
+    base.rgb = hdrAlbedo(base.rgb);
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
         discard;
     }
@@ -556,6 +560,8 @@ void main() {
             u_emissiveTexRotationSinCos);
         emissive *= texture(u_emissiveTexture, emissiveUv).rgb;
     }
+    // B2 刀2:emissive 同为 sRGB,HDR 下解到线性(见 base 处注释)。
+    emissive = hdrAlbedo(emissive);
 
     vec3 sheenColor = max(u_sheenColorFactor, vec3(0.0));
     float sheenRoughness = clamp(u_sheenRoughnessFactor, 0.0, 1.0);
@@ -3932,6 +3938,26 @@ static std::string withSceneOutput(const std::string& fragmentSource) {
     return src;
 }
 
+// B2 刀2:glTF PBR 的 HDR 输入解码。glTF 材质本为线性 PBR 设计,LDR 路径直接把
+// sRGB 反照率当显示色算(gamma 空间,与 terrain LDR 同),HDR 下须把 sRGB 反照率/
+// emissive 解到线性,BRDF 在线性域算,结果直接输出即线性 HDR(末端 tonemap encode)。
+// 注入 hdrAlbedo():HDR → srgbToLinear;LDR → 恒等(零回归)。仅 glTF GLES 片元 shader
+// (base/emissive 处调用),照 withTerrainLight/withSceneOutput 范式。⚠️ 光照常数
+// (ambient/diffuse 权重/specPower)仍 provisional,对 tonemap 输出的重调留刀3。
+static std::string withGltfHdr(const char* fragmentSource) {
+    std::string src(fragmentSource);
+    const char* fn =
+        kEnableHdrPipeline
+            ? "vec3 hdrAlbedo(vec3 c){return pow(max(c,vec3(0.0)),vec3(2.2));}\n"
+            : "vec3 hdrAlbedo(vec3 c){return c;}\n";
+    const size_t pos = src.find("void main(");
+    if (pos == std::string::npos) {
+        return src;
+    }
+    src.insert(pos, fn);
+    return src;
+}
+
 // ============================================================
 // Renderer::Impl
 // ============================================================
@@ -4009,7 +4035,8 @@ bool Renderer::initialize() {
     // ---- glTF primitive shader ----
     ShaderDesc gltfSd;
     gltfSd.vertexSource = isMetal ? kGltfVertexMSL : kGltfVertexGLSL;
-    gltfSd.fragmentSource = isMetal ? kGltfFragmentMSL : kGltfFragmentGLSL;
+    gltfSd.fragmentSource =
+        isMetal ? kGltfFragmentMSL : withGltfHdr(kGltfFragmentGLSL);
     impl_->gltfShader = dev->createShader(gltfSd);
     if (!impl_->gltfShader) {
         // Non-fatal on BOTH backends: a PBR shader link failure (Metal buffer
@@ -4051,7 +4078,7 @@ bool Renderer::initialize() {
     gltfInstancedSd.vertexSource =
         isMetal ? kGltfInstancedVertexMSL : kGltfInstancedVertexGLSL;
     gltfInstancedSd.fragmentSource =
-        isMetal ? kGltfFragmentMSL : kGltfFragmentGLSL;
+        isMetal ? kGltfFragmentMSL : withGltfHdr(kGltfFragmentGLSL);
     impl_->gltfInstancedShader = dev->createShader(gltfInstancedSd);
     if (!impl_->gltfInstancedShader) {
         // Non-fatal on both backends (see gltfShader above): instanced glTF
