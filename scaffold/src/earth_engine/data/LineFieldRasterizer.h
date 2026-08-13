@@ -49,9 +49,13 @@ struct LineFieldImage {
 /// fwidth AA 无料可插,宽了量化步进变粗(2·4/255 ≈ 0.03 texel/级,够细)。
 constexpr double kLineFieldFeatherTexels = 4.0;
 
+/// @param toTargetUnit 逐顶点变换(见 VectorTileRasterizer.h 的 UnitTransform);
+///        GCJ 底图必传(fromWgs84),否则大页/祖先页边缘错位。rect 是目标采样
+///        空间矩形。nullptr = 标准 overlay 线性映射。
 LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
                                       const MercatorRect& rect, int styleZoom,
-                                      const VectorRasterStyle& style,
-                                      int size);
+                                      const VectorRasterStyle& style, int size,
+                                      const UnitTransform* toTargetUnit =
+                                          nullptr);
 
 } // namespace earth_engine

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 #include "MvtDecoder.h"
@@ -57,13 +58,24 @@ struct MercatorRect {
     double y1 = 1.0;
 };
 
+/// 逐顶点坐标变换:把 OSM 顶点的 WGS84 unit-mercator 坐标(u,v)**原地**改写成
+/// 目标采样空间的 unit 坐标。GCJ-02 底图传 wgs→gcj(fromWgs84),使矢量内容与
+/// 地形逐顶点 GCJ texcoord(TileRasterOverlayDetailsGenerator 逐顶点 fromWgs84)
+/// **同精度**对齐 —— 整页单点平移在大页/overzoom 祖先页边缘发散上百米,是真机
+/// 中景错位的根因。nullptr = 恒等(标准 overlay),逐顶点走线性映射,视觉等价
+/// 改造前。
+using UnitTransform = std::function<void(double& u, double& v)>;
+
 /// 把若干源瓦片中落进 rect 的要素画成 size×size RGBA 图。
 /// @param styleZoom 样式求值 zoom(层 min/maxZoom 区间与 filter 的
 ///        zoomCompare)。用**页 zoom**而非源瓦 z:building 只在近景之类的
 ///        门槛应跟屏幕清晰度走,而源瓦 z 被数据 maxZoom 钳死。
+/// @param toTargetUnit 逐顶点变换(见 UnitTransform);GCJ 底图必传,否则大页
+///        错位。rect 是**目标采样空间**矩形(GCJ 时=GCJ 页矩形)。
 VectorRasterImage rasterizeMvtRect(const std::vector<MvtTileRef>& tiles,
                                    const MercatorRect& rect, int styleZoom,
-                                   const VectorRasterStyle& style, int size);
+                                   const VectorRasterStyle& style, int size,
+                                   const UnitTransform* toTargetUnit = nullptr);
 
 /// E4 兼容便捷形:单瓦整图(rect=整张瓦、styleZoom=zoom)。测试与调试用。
 VectorRasterImage rasterizeMvtTile(const MvtTile& tile, int zoom,

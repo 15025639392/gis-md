@@ -34,9 +34,11 @@ inline double latitudeFromUnitY(double v) {
     return 2.0 * std::atan(std::exp(kPi * (1.0 - 2.0 * v))) - kPi / 2.0;
 }
 
-/// GCJ 网格矩形 → 真实 WGS84 覆盖区:按中心点 toWgs84 做常量平移。与渲染侧
-/// per-tile 单点 worldOffset(TerrainPageStore determination)同语义同精度 ——
-/// 两侧都是"整矩形一个偏移",偏移场梯度(~1e-5)在页跨度内的残差远小于纹素。
+/// GCJ 页矩形 → 真实 WGS84 覆盖区(中心点 toWgs84 常量平移)。**仅用于选取
+/// 覆盖的 OSM 源瓦片**(选瓦只需范围粗略够,±500m 偏移被 coverage 的边界
+/// 向外取整吸收)。⚠️ **不再用于栅格化坐标映射** —— 那里整页单点平移在大页/
+/// overzoom 祖先页边缘发散上百米(真机中景错位根因),改由逐顶点
+/// wgsUnitToGcjUnit(见下)承载,与地形逐顶点 GCJ texcoord 同精度。
 inline MercatorRect shiftRectGcjToWgs84(const MercatorRect& rect) {
     const double cu = 0.5 * (rect.x0 + rect.x1);
     const double cv = 0.5 * (rect.y0 + rect.y1);
@@ -47,6 +49,17 @@ inline MercatorRect shiftRectGcjToWgs84(const MercatorRect& rect) {
     const double dv = unitYFromLatitude(wgs.latitude()) - cv;
     return MercatorRect{rect.x0 + du, rect.y0 + dv, rect.x1 + du,
                         rect.y1 + dv};
+}
+
+/// 逐顶点 WGS84 unit-mercator → GCJ unit-mercator(fromWgs84)。作为
+/// VectorTileRasterizer/LineFieldRasterizer 的 UnitTransform 传入:把每个 OSM
+/// 顶点的真实位置搬到 GCJ 采样空间,与高德影像逐像素 GCJ + 地形逐顶点 GCJ
+/// texcoord 完全对齐。逐点做,不受页大小影响(整页平移的发散在此消失)。
+inline void wgsUnitToGcjUnit(double& u, double& v) {
+    const Cartographic gcj = Gcj02CoordinateTransform::fromWgs84(
+        Cartographic::fromRadians(longitudeFromUnitX(u), latitudeFromUnitY(v)));
+    u = unitXFromLongitude(gcj.longitude());
+    v = unitYFromLatitude(gcj.latitude());
 }
 
 struct TileXY {

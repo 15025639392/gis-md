@@ -15,7 +15,8 @@ struct RoadFieldSource::Assembly {
     TileKey pageKey;
     CancellationToken token;
     FieldCallback callback;
-    MercatorRect rect;
+    MercatorRect rect;  // 栅格化目标 = GCJ 页矩形(逐点变换承载偏移)
+    bool gcj = false;   // 目标是 GCJ 采样空间 → 逐顶点 wgsUnitToGcjUnit
     int styleZoom = 0;
     int fieldSize = 256;
     VectorRasterStyle style;  // 按值快照
@@ -45,9 +46,13 @@ void RoadFieldSource::runAssembly(
     for (size_t i = 0; i < assembly->refs.size(); ++i) {
         assembly->refs[i].tile = assembly->holders[i].get();
     }
+    // GCJ 目标:逐顶点 wgsUnitToGcjUnit 把 OSM 顶点搬到 GCJ 采样空间,与地形
+    // 逐顶点 GCJ texcoord + 高德逐像素 GCJ 对齐。标准 overlay = nullptr 线性。
+    static const UnitTransform kGcjXform = mvt_rect::wgsUnitToGcjUnit;
+    const UnitTransform* xf = assembly->gcj ? &kGcjXform : nullptr;
     LineFieldImage field = rasterizeLineFieldRect(
         assembly->refs, assembly->rect, assembly->styleZoom, assembly->style,
-        assembly->fieldSize);
+        assembly->fieldSize, xf);
     if (field.empty()) {
         field.size = assembly->fieldSize;
         field.r8.assign(
@@ -79,21 +84,24 @@ void RoadFieldSource::requestField(const TileKey& pageKey,
         return;
     }
 
-    MercatorRect rect =
+    // rectGcj = 页在 GCJ 采样空间的矩形(栅格化目标,逐点变换承载偏移)。
+    // rectWgs = 真实 WGS84 覆盖区,**仅用于选取 OSM 源瓦片**。
+    const MercatorRect rectGcj =
         mvt_rect::tileToUnitRect(pageKey.z, pageKey.x, pageKey.y);
-    if (options_.gcj02SourceGrid) {
-        rect = mvt_rect::shiftRectGcjToWgs84(rect);
-    }
+    const MercatorRect rectWgs = options_.gcj02SourceGrid
+                                     ? mvt_rect::shiftRectGcjToWgs84(rectGcj)
+                                     : rectGcj;
     const int dataZ =
         std::max(0, std::min(pageKey.z, options_.dataMaxZoom));
     const std::vector<mvt_rect::TileXY> tiles =
-        mvt_rect::coverage(rect, dataZ);
+        mvt_rect::coverage(rectWgs, dataZ);
 
     auto assembly = std::make_shared<Assembly>();
     assembly->pageKey = pageKey;
     assembly->token = token;
     assembly->callback = std::move(callback);
-    assembly->rect = rect;
+    assembly->rect = rectGcj;
+    assembly->gcj = options_.gcj02SourceGrid;
     assembly->styleZoom = pageKey.z;
     assembly->fieldSize = size;
     assembly->style = options_.style;

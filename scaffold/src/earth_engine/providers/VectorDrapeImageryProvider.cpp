@@ -31,7 +31,8 @@ struct VectorDrapeImageryProvider::Assembly {
     TileKey pageKey;
     CancellationToken token;
     TileCallback callback;
-    MercatorRect rect;
+    MercatorRect rect;   // 栅格化目标 = GCJ 页矩形(逐点变换承载偏移)
+    bool gcj = false;
     int styleZoom = 0;
     int tileSize = 256;
     VectorRasterStyle style;  // 按值快照:任务生命周期可超 provider
@@ -57,9 +58,13 @@ void VectorDrapeImageryProvider::runAssembly(
     for (size_t i = 0; i < assembly->refs.size(); ++i) {
         assembly->refs[i].tile = assembly->holders[i].get();
     }
+    // GCJ 目标:逐顶点 wgsUnitToGcjUnit 与地形 GCJ texcoord + 高德影像对齐
+    // (整页平移在大页/祖先页边缘发散,已弃)。标准 overlay = nullptr 线性。
+    static const UnitTransform kGcjXform = mvt_rect::wgsUnitToGcjUnit;
+    const UnitTransform* xf = assembly->gcj ? &kGcjXform : nullptr;
     VectorRasterImage raster = rasterizeMvtRect(
         assembly->refs, assembly->rect, assembly->styleZoom, assembly->style,
-        assembly->tileSize);
+        assembly->tileSize, xf);
     // 空区域/全部源瓦失败 → 全透明图,同样有效:页存储的 assembler 必须
     // 收到每个源才 complete(见类头注释的失败语义)。
     assembly->callback(assembly->pageKey, toDecodedImage(std::move(raster)));
@@ -102,19 +107,21 @@ void VectorDrapeImageryProvider::requestTile(const TileKey& key,
         return;
     }
 
-    MercatorRect rect = mvt_rect::tileToUnitRect(key.z, key.x, key.y);
-    if (options_.gcj02SourceGrid) {
-        rect = mvt_rect::shiftRectGcjToWgs84(rect);
-    }
+    // rectGcj = 栅格化目标(GCJ 采样空间);rectWgs = 选 OSM 源瓦用的真实范围。
+    const MercatorRect rectGcj = mvt_rect::tileToUnitRect(key.z, key.x, key.y);
+    const MercatorRect rectWgs = options_.gcj02SourceGrid
+                                     ? mvt_rect::shiftRectGcjToWgs84(rectGcj)
+                                     : rectGcj;
     const int dataZ = std::max(0, std::min(key.z, options_.dataMaxZoom));
     const std::vector<mvt_rect::TileXY> tiles =
-        mvt_rect::coverage(rect, dataZ);
+        mvt_rect::coverage(rectWgs, dataZ);
 
     auto assembly = std::make_shared<Assembly>();
     assembly->pageKey = key;
     assembly->token = token;
     assembly->callback = std::move(callback);
-    assembly->rect = rect;
+    assembly->rect = rectGcj;
+    assembly->gcj = options_.gcj02SourceGrid;
     assembly->styleZoom = key.z;
     assembly->tileSize = options_.tileSize;
     assembly->style = options_.style;

@@ -27,12 +27,6 @@ struct Canvas {
     }
 };
 
-/// 源瓦片本地坐标 → 超采样像素的仿射(每张源瓦一份)。
-struct TileAffine {
-    double sx, ox;  // px = local.x * sx + ox
-    double sy, oy;
-};
-
 void addEdge(std::vector<Edge>& edges, double x0, double y0, double x1,
              double y1) {
     if (y0 == y1) return;  // 水平边对扫描线无贡献
@@ -129,34 +123,12 @@ void blendLayer(const Canvas& canvas, const std::array<uint8_t, 4>& color,
     }
 }
 
-/// path(源瓦本地坐标)的像素空间 bbox 是否与画布 [0,hi]² 相交(pad 为线宽
-/// 等向外膨胀量)。不相交 ⇒ 既不进入也不可能包围画布(包围 ⇒ bbox ⊇ 画布
-/// ⇒ 相交)⇒ 跳过恒安全。overzoom 的性能地板:源瓦大头在画布外。
-bool pathTouchesCanvas(const std::vector<MvtPoint>& path, const TileAffine& a,
-                       int hi, double pad) {
-    if (path.empty()) return false;
-    double minX = path[0].x, maxX = path[0].x;
-    double minY = path[0].y, maxY = path[0].y;
-    for (const MvtPoint& p : path) {
-        minX = std::min(minX, static_cast<double>(p.x));
-        maxX = std::max(maxX, static_cast<double>(p.x));
-        minY = std::min(minY, static_cast<double>(p.y));
-        maxY = std::max(maxY, static_cast<double>(p.y));
-    }
-    // 仿射保序(sx/sy 恒正:目标矩形与瓦片同为 y 向下且非退化)。
-    const double px0 = minX * a.sx + a.ox - pad;
-    const double px1 = maxX * a.sx + a.ox + pad;
-    const double py0 = minY * a.sy + a.oy - pad;
-    const double py1 = maxY * a.sy + a.oy + pad;
-    return px1 >= 0.0 && px0 <= static_cast<double>(hi) && py1 >= 0.0 &&
-           py0 <= static_cast<double>(hi);
-}
-
 } // namespace
 
 VectorRasterImage rasterizeMvtRect(const std::vector<MvtTileRef>& tiles,
                                    const MercatorRect& rect, int styleZoom,
-                                   const VectorRasterStyle& style, int size) {
+                                   const VectorRasterStyle& style, int size,
+                                   const UnitTransform* toTargetUnit) {
     VectorRasterImage out;
     if (size <= 0) return out;
     const double rectW = rect.x1 - rect.x0;
@@ -195,17 +167,52 @@ VectorRasterImage rasterizeMvtRect(const std::vector<MvtTileRef>& tiles,
                     if (l.name == paint.layer) { layer = &l; break; }
                 }
                 if (!layer) continue;
-                // 本地坐标 → unit mercator → 画布像素,合成单个仿射。
+                // 逐顶点:本地坐标 → WGS84 unit → (可选)目标采样空间 unit →
+                // 画布像素。整页仿射预乘对 GCJ 大页/祖先页边缘发散上百米(见
+                // UnitTransform 注释),故逐点变换;标准 overlay(null)退化线性。
                 const double invExtent =
                     1.0 / static_cast<double>(std::max(1u, layer->extent));
                 const double tileSpan = 1.0 / static_cast<double>(1 << ref.z);
-                TileAffine a;
-                a.sx = tileSpan * invExtent / rectW * hi;
-                a.sy = tileSpan * invExtent / rectH * hi;
-                a.ox = (static_cast<double>(ref.x) * tileSpan - rect.x0) /
-                       rectW * hi;
-                a.oy = (static_cast<double>(ref.y) * tileSpan - rect.y0) /
-                       rectH * hi;
+                const double refX = static_cast<double>(ref.x);
+                const double refY = static_cast<double>(ref.y);
+                auto mapPoint = [&](double lx, double ly, double& px,
+                                    double& py) {
+                    double u = refX * tileSpan + lx * invExtent * tileSpan;
+                    double v = refY * tileSpan + ly * invExtent * tileSpan;
+                    if (toTargetUnit) (*toTargetUnit)(u, v);
+                    px = (u - rect.x0) / rectW * hi;
+                    py = (v - rect.y0) / rectH * hi;
+                };
+                // 剔除:path bbox 4 角 mapPoint → 画布 bbox(GCJ 保序,4 角保守
+                // 界定所有点)。不相交 ⇒ 跳过恒安全(同旧 pathTouchesCanvas)。
+                auto pathTouches = [&](const std::vector<MvtPoint>& path,
+                                       double pad) -> bool {
+                    if (path.empty()) return false;
+                    double mnx = path[0].x, mxx = path[0].x;
+                    double mny = path[0].y, mxy = path[0].y;
+                    for (const MvtPoint& p : path) {
+                        mnx = std::min(mnx, static_cast<double>(p.x));
+                        mxx = std::max(mxx, static_cast<double>(p.x));
+                        mny = std::min(mny, static_cast<double>(p.y));
+                        mxy = std::max(mxy, static_cast<double>(p.y));
+                    }
+                    double cx[4], cy[4];
+                    mapPoint(mnx, mny, cx[0], cy[0]);
+                    mapPoint(mxx, mny, cx[1], cy[1]);
+                    mapPoint(mnx, mxy, cx[2], cy[2]);
+                    mapPoint(mxx, mxy, cx[3], cy[3]);
+                    double px0 = cx[0], px1 = cx[0], py0 = cy[0], py1 = cy[0];
+                    for (int k = 1; k < 4; ++k) {
+                        px0 = std::min(px0, cx[k]);
+                        px1 = std::max(px1, cx[k]);
+                        py0 = std::min(py0, cy[k]);
+                        py1 = std::max(py1, cy[k]);
+                    }
+                    return px1 + pad >= 0.0 &&
+                           px0 - pad <= static_cast<double>(hi) &&
+                           py1 + pad >= 0.0 &&
+                           py0 - pad <= static_cast<double>(hi);
+                };
 
                 const double halfWidth =
                     std::max(0.5, paint.lineWidthPixels * ss * 0.5);
@@ -220,19 +227,19 @@ VectorRasterImage rasterizeMvtRect(const std::vector<MvtTileRef>& tiles,
                         // 环分类沿用解码器那套(绕向自适应),孔环靠 nonzero
                         // 的反向绕向自动挖掉,不必显式区分。
                         for (const auto& ring : feature.paths) {
-                            if (!pathTouchesCanvas(ring, a, hi, 0.0)) continue;
+                            if (!pathTouches(ring, 0.0)) continue;
                             any = true;
+                            double ax, ay, bx, by;
                             for (size_t i = 0; i + 1 < ring.size(); ++i) {
-                                addEdge(edges, ring[i].x * a.sx + a.ox,
-                                        ring[i].y * a.sy + a.oy,
-                                        ring[i + 1].x * a.sx + a.ox,
-                                        ring[i + 1].y * a.sy + a.oy);
+                                mapPoint(ring[i].x, ring[i].y, ax, ay);
+                                mapPoint(ring[i + 1].x, ring[i + 1].y, bx, by);
+                                addEdge(edges, ax, ay, bx, by);
                             }
                             if (ring.size() >= 3) {
-                                addEdge(edges, ring.back().x * a.sx + a.ox,
-                                        ring.back().y * a.sy + a.oy,
-                                        ring.front().x * a.sx + a.ox,
-                                        ring.front().y * a.sy + a.oy);
+                                mapPoint(ring.back().x, ring.back().y, ax, ay);
+                                mapPoint(ring.front().x, ring.front().y, bx,
+                                         by);
+                                addEdge(edges, ax, ay, bx, by);
                             }
                         }
                     } else {
@@ -241,15 +248,14 @@ VectorRasterImage rasterizeMvtRect(const std::vector<MvtTileRef>& tiles,
                             continue;
                         }
                         for (const auto& path : feature.paths) {
-                            if (!pathTouchesCanvas(path, a, hi, halfWidth)) {
-                                continue;
-                            }
+                            if (!pathTouches(path, halfWidth)) continue;
                             any = true;
                             pts.clear();
                             pts.reserve(path.size());
+                            double px, py;
                             for (const MvtPoint& p : path) {
-                                pts.emplace_back(p.x * a.sx + a.ox,
-                                                 p.y * a.sy + a.oy);
+                                mapPoint(p.x, p.y, px, py);
+                                pts.emplace_back(px, py);
                             }
                             if (feature.type == MvtGeomType::Polygon &&
                                 pts.size() >= 3) {

@@ -1775,9 +1775,9 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 |---|---|---|
 | `Assembly` | .cpp:30-47 | 一次 requestTile 的聚合态:slot 独占写、原子计数归零者收尾,样式按值快照;线程池持 weak(拆除竞态) |
 | `runAssembly` | .cpp:49-67 | 收尾本体:取消仍回调 nullptr;失败/空区域产全透明图 |
-| `completeIfReady` | .cpp:68-80 | 计数归零 → weak pool lock 成功 enqueue,失败(host 测试/会话已拆)就地跑 |
-| `requestTile` | .cpp:93-149 | 矩形(可选 GCJ 平移)→ coverage 数据瓦网格 → 逐 slot cache->request(命中同步回调/在途搭车由 cache 负责) |
-| `decodeTile` | .cpp:151-160 | 同步整瓦栅格化(按 dataMaxZoom),测试/调试 |
+| `completeIfReady` | .cpp:73-80 | 计数归零 → weak pool lock 成功 enqueue,失败(host 测试/会话已拆)就地跑 |
+| `requestTile` | .cpp:98-149 | 矩形(可选 GCJ 平移)→ coverage 数据瓦网格 → 逐 slot cache->request(命中同步回调/在途搭车由 cache 负责) |
+| `decodeTile` | .cpp:158-160 | 同步整瓦栅格化(按 dataMaxZoom),测试/调试 |
 
 
 ### RoadFieldSource.h / .cpp
@@ -1788,8 +1788,8 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 |---|---|---|
 | `Assembly` | .cpp:14-27 | 聚合态:slot 独占写、原子计数归零者收尾 |
 | `runAssembly` | .cpp:36-58 | 收尾:取消回空场;rasterizeLineFieldRect;空结果补全 0 |
-| `completeIfReady` | .cpp:60-70 | weak pool lock 成功 enqueue / 失败就地 |
-| `requestField` | .cpp:72-128 | 矩形(GCJ 平移)→ coverage → 逐 slot cache->request |
+| `completeIfReady` | .cpp:65-70 | weak pool lock 成功 enqueue / 失败就地 |
+| `requestField` | .cpp:77-128 | 矩形(GCJ 平移)→ coverage → 逐 slot cache->request |
 
 ### TerrainProvider.h / .cpp
 
@@ -3207,7 +3207,7 @@ MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDr
 | `blendLayer` (file-local) | .cpp:115-133 | 层内 mask 覆盖(自重叠不叠深)、层间 alpha 混合 |
 | `pathTouchesCanvas` (file-local) | .cpp:135-155 | 画布外 bbox 剔除(overzoom 性能地板);bbox 不相交 ⇒ 不可能包围画布,跳过恒安全 |
 | `rasterizeMvtRect` | .cpp:157-292 | 主入口:逐层×fill/line 两遍×逐源瓦仿射;styleZoom 用页 zoom 求值层区间与 filter |
-| `rasterizeMvtTile` | .cpp:294-301 | E4 兼容便捷形:单瓦整图 = z0 原点 + 全 unit 平面矩形,坐标数学与 E4 逐位等价 |
+| `rasterizeMvtTile` | .cpp:300-301 | E4 兼容便捷形:单瓦整图 = z0 原点 + 全 unit 平面矩形,坐标数学与 E4 逐位等价 |
 
 
 ### data/ — 矢量数据管线 — FeatureStore / FeatureBucketGrid / FeatureClusterIndex / FeatureSnapQuery / PolygonTessellator / LineTessellator / StyleExpression / StyleFilter / GeoJsonParser / GeoJsonImporter / MvtVectorSource / VectorTileTree / MvtFeatureConverter / VectorTileMeshBuilder

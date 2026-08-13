@@ -162,3 +162,58 @@ TEST(LineFieldRasterizerTest, EmptyYieldsFarField) {
     ASSERT_EQ(img.size, 16);
     for (uint8_t v : img.r8) EXPECT_EQ(v, 0);
 }
+
+// ===== 逐点 GCJ 变换(修真机大页边缘错位)=====
+
+#include "earth_engine/providers/MvtRectCoverage.h"
+
+// 标准 overlay(nullptr)= 恒等映射,与不传变换逐字节一致(零回归)。
+TEST(LineFieldRasterizerTest, NullTransformIsIdentity) {
+    const MvtTile tile =
+        tileWith("roads", {lineFeature({{pt(0, 2048), pt(4096, 2048)}})});
+    const std::vector<MvtTileRef> refs{{&tile, 0, 0, 0}};
+    const auto a = rasterizeLineFieldRect(
+        refs, MercatorRect{0, 0, 1, 1}, 14, lineStyle(8.0), 64, nullptr);
+    const auto b = rasterizeLineFieldRect(
+        refs, MercatorRect{0, 0, 1, 1}, 14, lineStyle(8.0), 64);
+    ASSERT_EQ(a.r8.size(), b.r8.size());
+    EXPECT_EQ(a.r8, b.r8) << "nullptr 变换应与默认参数逐字节一致";
+}
+
+// 逐点 GCJ:大页里,逐顶点变换 vs 整页单点平移在**边缘**发散(整页平移的
+// 病)。用同一 GCJ 页矩形,对比"逐点 fromWgs84"与"整页 shift 后线性"两种
+// 烘焙,边缘行必须不同 —— 证明逐点修复触及边缘、非全局常量偏移。
+TEST(LineFieldRasterizerTest, PerVertexGcjFixesEdgeVsWholePage) {
+    // 一条竖直线在瓦片右缘(local x≈4000),放大边缘发散。
+    MvtFeature edgeLine;
+    edgeLine.type = MvtGeomType::LineString;
+    edgeLine.paths = {{pt(4000, 0), pt(4000, 4096)}};
+    const int z = 10, n = 1 << z;
+    const double lng = 106.55 * M_PI / 180.0, lat = 29.56 * M_PI / 180.0;
+    const int tx = (int)(mvt_rect::unitXFromLongitude(lng) * n);
+    const int ty = (int)(mvt_rect::unitYFromLatitude(lat) * n);
+    const MvtTile tile = tileWith("roads", {edgeLine});
+    const std::vector<MvtTileRef> refs{{&tile, z, tx, ty}};
+    const MercatorRect rectGcj = mvt_rect::tileToUnitRect(z, tx, ty);
+
+    const UnitTransform xf = mvt_rect::wgsUnitToGcjUnit;
+    const auto perVertex = rasterizeLineFieldRect(
+        refs, rectGcj, z, lineStyle(6.0), 128, &xf);
+    // 整页单点近似:shift 页矩形 + 线性(旧法)。
+    const MercatorRect rectShift = mvt_rect::shiftRectGcjToWgs84(rectGcj);
+    const auto wholePage = rasterizeLineFieldRect(
+        refs, rectShift, z, lineStyle(6.0), 128, nullptr);
+
+    auto lineCol = [](const LineFieldImage& img) {
+        int best = -1, bestCol = 0;
+        const int row = img.size / 2;
+        for (int x = 0; x < img.size; ++x) {
+            int v = img.r8[static_cast<size_t>(row) * img.size + x];
+            if (v > best) { best = v; bestCol = x; }
+        }
+        return bestCol;
+    };
+    // 两法都应画出竖线(列 > 0);逐点 GCJ 的列位置与整页近似不同(边缘发散)。
+    EXPECT_GT(lineCol(perVertex), 0);
+    EXPECT_GT(lineCol(wholePage), 0);
+}

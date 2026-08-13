@@ -7,12 +7,6 @@ namespace earth_engine {
 
 namespace {
 
-/// 源瓦本地坐标 → 输出纹素的仿射(与 VectorTileRasterizer 同构)。
-struct TileAffine {
-    double sx, ox;
-    double sy, oy;
-};
-
 /// 把一条线段(纹素坐标)按 reach=halfWidth+feather 膨胀的 bbox 内逐纹素
 /// 写 min(有符号边缘距离编码)。scatter 的核心。
 void stampSegment(double x0, double y0, double x1, double y1,
@@ -52,8 +46,8 @@ void stampSegment(double x0, double y0, double x1, double y1,
 
 LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
                                       const MercatorRect& rect, int styleZoom,
-                                      const VectorRasterStyle& style,
-                                      int size) {
+                                      const VectorRasterStyle& style, int size,
+                                      const UnitTransform* toTargetUnit) {
     LineFieldImage out;
     if (size <= 0) return out;
     const double rectW = rect.x1 - rect.x0;
@@ -77,16 +71,20 @@ LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
                 if (l.name == paint.layer) { layer = &l; break; }
             }
             if (!layer) continue;
+            // 逐顶点:本地 → WGS84 unit →(可选)目标 unit → 画布(见
+            // VectorTileRasterizer 的 UnitTransform;整页仿射对 GCJ 大页发散)。
             const double invExtent =
                 1.0 / static_cast<double>(std::max(1u, layer->extent));
             const double tileSpan = 1.0 / static_cast<double>(1 << ref.z);
-            TileAffine a;
-            a.sx = tileSpan * invExtent / rectW * size;
-            a.sy = tileSpan * invExtent / rectH * size;
-            a.ox = (static_cast<double>(ref.x) * tileSpan - rect.x0) /
-                   rectW * size;
-            a.oy = (static_cast<double>(ref.y) * tileSpan - rect.y0) /
-                   rectH * size;
+            const double refX = static_cast<double>(ref.x);
+            const double refY = static_cast<double>(ref.y);
+            auto mapPoint = [&](double lx, double ly, double& px, double& py) {
+                double u = refX * tileSpan + lx * invExtent * tileSpan;
+                double v = refY * tileSpan + ly * invExtent * tileSpan;
+                if (toTargetUnit) (*toTargetUnit)(u, v);
+                px = (u - rect.x0) / rectW * size;
+                py = (v - rect.y0) / rectH * size;
+            };
 
             for (const MvtFeature& feature : layer->features) {
                 if (feature.type != MvtGeomType::LineString &&
@@ -99,19 +97,30 @@ LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
                 }
                 for (const auto& path : feature.paths) {
                     if (path.size() < 2) continue;
-                    // path bbox 与画布(膨胀 reach)不相交 → 整条跳过。
-                    double minX = path[0].x, maxX = path[0].x;
-                    double minY = path[0].y, maxY = path[0].y;
+                    // 剔除:path bbox 4 角 mapPoint → 画布 bbox(膨胀 reach)
+                    // 不相交 → 整条跳过(GCJ 保序,4 角保守界定)。
+                    double mnx = path[0].x, mxx = path[0].x;
+                    double mny = path[0].y, mxy = path[0].y;
                     for (const MvtPoint& p : path) {
-                        minX = std::min(minX, static_cast<double>(p.x));
-                        maxX = std::max(maxX, static_cast<double>(p.x));
-                        minY = std::min(minY, static_cast<double>(p.y));
-                        maxY = std::max(maxY, static_cast<double>(p.y));
+                        mnx = std::min(mnx, static_cast<double>(p.x));
+                        mxx = std::max(mxx, static_cast<double>(p.x));
+                        mny = std::min(mny, static_cast<double>(p.y));
+                        mxy = std::max(mxy, static_cast<double>(p.y));
                     }
-                    if (maxX * a.sx + a.ox < -reach ||
-                        minX * a.sx + a.ox > size + reach ||
-                        maxY * a.sy + a.oy < -reach ||
-                        minY * a.sy + a.oy > size + reach) {
+                    double cx[4], cy[4];
+                    mapPoint(mnx, mny, cx[0], cy[0]);
+                    mapPoint(mxx, mny, cx[1], cy[1]);
+                    mapPoint(mnx, mxy, cx[2], cy[2]);
+                    mapPoint(mxx, mxy, cx[3], cy[3]);
+                    double bx0 = cx[0], bx1 = cx[0], by0 = cy[0], by1 = cy[0];
+                    for (int k = 1; k < 4; ++k) {
+                        bx0 = std::min(bx0, cx[k]);
+                        bx1 = std::max(bx1, cx[k]);
+                        by0 = std::min(by0, cy[k]);
+                        by1 = std::max(by1, cy[k]);
+                    }
+                    if (bx1 < -reach || bx0 > size + reach || by1 < -reach ||
+                        by0 > size + reach) {
                         continue;
                     }
                     const bool closeRing =
@@ -121,11 +130,11 @@ LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
                         path.size() - 1 + (closeRing ? 1 : 0);
                     for (size_t i = 0; i < segCount; ++i) {
                         const MvtPoint& p0 = path[i];
-                        const MvtPoint& p1 =
-                            path[(i + 1) % path.size()];
-                        stampSegment(p0.x * a.sx + a.ox, p0.y * a.sy + a.oy,
-                                     p1.x * a.sx + a.ox, p1.y * a.sy + a.oy,
-                                     halfWidth, size, sd);
+                        const MvtPoint& p1 = path[(i + 1) % path.size()];
+                        double ax, ay, bx, by;
+                        mapPoint(p0.x, p0.y, ax, ay);
+                        mapPoint(p1.x, p1.y, bx, by);
+                        stampSegment(ax, ay, bx, by, halfWidth, size, sd);
                     }
                 }
             }
