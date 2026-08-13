@@ -30,6 +30,12 @@ static constexpr int kGltfPageStoreIndirTextureSlot =
 // 顶点 shader texelFetch 取回归一化高度反量化位移)。紧接页存储 indir 槽(21→22)。
 static constexpr int kGltfHeightTextureSlot =
     kGltfPageStoreIndirTextureSlot + 1;
+// 刀2 路网 SDF 场"第二平面":R8 sampler2DArray,与页存储影像 array 同层号
+// 驻留,FS 在同一次间接查找下再采一次做贴地线解算。紧接高度纹理槽(22→23)。
+// ⚠️ 新增最高槽的孪生同步点:RenderCommandTextureList::kCapacity(本文件,
+// 随本常量自动)、RenderDeviceGLES 的 currentTextures 容量与 setSampler 登记、
+// Metal 绑定循环上限 —— 漏任何一处该纹理永不绑定,texelFetch 恒 0。
+static constexpr int kGltfRoadFieldTextureSlot = kGltfHeightTextureSlot + 1;
 static constexpr int kGltfInstanceMatrixStride = 100;
 // 地形合批(Step 3)实例流步长:6× vec4 = 96B。rel 帧 3 行(相对批参考帧
 // frame0)+ dispMorph(minH·fade,range·fade,morphFactor,gridN)+ clipUv +
@@ -45,7 +51,7 @@ static constexpr int kTerrainInstanceStride = 128;
 class RenderCommandTextureList {
 public:
     static constexpr size_t kCapacity =
-        static_cast<size_t>(kGltfHeightTextureSlot) + 1u;
+        static_cast<size_t>(kGltfRoadFieldTextureSlot) + 1u;
 
     RenderCommandTextureList() = default;
     RenderCommandTextureList(std::initializer_list<Texture*> init) {

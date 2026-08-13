@@ -1140,7 +1140,9 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         // sampler2DArray at slot 20, SVT 间接纹理 at slot 21)。纹理槽上限远高于
         // sampler 上限(16);页存储复用共享 terrain sampler(0)、间接纹理用着色器
         // 内 constexpr NEAREST sampler,均不占新 sampler 槽。
-        const NSUInteger maxMaterialTextures = kGltfPageStoreIndirTextureSlot + 1;
+        // 刀2:覆盖到路网场槽(23)。slot22(height)是顶点纹理,fragment 侧
+        // 无对应参数声明,循环多绑到该 index 合法且无副作用。
+        const NSUInteger maxMaterialTextures = kGltfRoadFieldTextureSlot + 1;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
         id<MTLSamplerState> sharedTileSampler = nil;

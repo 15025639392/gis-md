@@ -118,13 +118,17 @@ GLTexture::GLTexture(unsigned int id,
                      int height,
                      size_t sizeBytes,
                      unsigned int target,
-                     int arrayLayers)
+                     int arrayLayers,
+                     unsigned int glFormat,
+                     size_t bytesPerPixel)
     : id_(id),
       width_(width),
       height_(height),
       sizeBytes_(sizeBytes),
       target_(target),
-      arrayLayers_(arrayLayers) {}
+      arrayLayers_(arrayLayers),
+      glFormat_(glFormat),
+      bytesPerPixel_(bytesPerPixel) {}
 
 GLTexture::~GLTexture() {
     if (id_) {
@@ -312,7 +316,7 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
             static_cast<size_t>(layers);
         return std::make_unique<GLTexture>(
             id, desc.width, desc.height, arrayBytes,
-            GL_TEXTURE_2D_ARRAY, layers);
+            GL_TEXTURE_2D_ARRAY, layers, format, bytesPerPixelFor);
     }
 
     glBindTexture(GL_TEXTURE_2D, id);
@@ -391,7 +395,9 @@ bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
         y + height > glTexture->height()) {
         return false;
     }
-    if (rowBytes != static_cast<size_t>(width) * 4u) {
+    // 按纹理自身格式校验(R8=1B/RGB=3B/RGBA=4B):旧硬编码 *4 会静默拒掉
+    // R8 场纹理上传,表现为"场平面永不生效且无一条错误日志"。
+    if (rowBytes != static_cast<size_t>(width) * glTexture->bytesPerPixel()) {
         return false;
     }
 
@@ -414,7 +420,7 @@ bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
                         width,
                         height,
                         1,
-                        GL_RGBA,
+                        glTexture->glFormat(),
                         GL_UNSIGNED_BYTE,
                         data);
         glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
@@ -427,7 +433,7 @@ bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
                         y,
                         width,
                         height,
-                        GL_RGBA,
+                        glTexture->glFormat(),
                         GL_UNSIGNED_BYTE,
                         data);
         glBindTexture(GL_TEXTURE_2D, 0);
@@ -1076,13 +1082,13 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
 
     GLuint currentProgram = 0;
     GLuint currentVao = 0;
-    // +1 覆盖最高纹理槽(kGltfHeightTextureSlot=22,Phase 2c 地形高度纹理):此
+    // +1 覆盖最高纹理槽(kGltfRoadFieldTextureSlot=23,刀2 路网场):此
     // 数组既是逐 unit 绑定缓存,也隐式界定纹理绑定循环的最大 vec 索引
     // (min(cmd.textures.size(), 本数组 size))。定容小于最高槽会把该槽排除出循环
     // → 新纹理永不绑定(真机踩过的孪生 bug:高度纹理槽 22 加入时此处未同步扩容,
     // 导致 GPU 位移瓦片高度纹理永不绑定 → texelFetch 恒 0 → 地形平抬无起伏),故
     // **每新增最高纹理槽都必须同步扩容此数组**。
-    std::array<GLuint, kGltfHeightTextureSlot + 1> currentTextures{};
+    std::array<GLuint, kGltfRoadFieldTextureSlot + 1> currentTextures{};
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool alphaToCoverageEnabled = false;
@@ -1380,6 +1386,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // 成 unit 12,仍 ≤16 底线)。非地形 program 未声明此名 → loc=-1 无副作用。
             setSampler("u_heightTexture",
                        glesGltfTextureUnit(kGltfHeightTextureSlot));
+            // 刀2 路网 SDF 场"第二平面"(slot23 经压缩成 unit 13,≤16 底线)。
+            setSampler("u_roadField",
+                       glesGltfTextureUnit(kGltfRoadFieldTextureSlot));
             setSampler("u_waterMask", 5);
             for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
                 std::string name = "u_overlayTexture" + std::to_string(i);

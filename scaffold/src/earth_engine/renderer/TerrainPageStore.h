@@ -2,7 +2,9 @@
 
 #include "../core/async/WorkLedger.h"
 
+#include <array>
 #include <cstdint>
+#include <functional>
 #include <limits>
 #include <memory>
 #include <unordered_map>
@@ -148,11 +150,26 @@ public:
         // 512×256²×4 ≈ 128MB VRAM 上限;实际按 LRU 只驻留屏幕可见 ~125-185 页。
         int maxPages = 512;
         int maxUploadsPerFrame = 8;  // 每帧上传层数上限(涓流,勿拖动期冻结)
-        /// 合成(重采样+按源序 alphaOver)下放的 worker 池。真机测得 compose 是
+        /// 合成(重采样+按序 alphaOver)下放的 worker 池。真机测得 compose 是
         /// tick 的支配成本且单帧尖刺 33-37ms(2026-08-07 三段插桩),下放后渲染
         /// 线程只剩上传+叠画。null = 就地同步合成(host 测试确定性;行为与
         /// 下放前逐字节一致,只是同帧完成)。
         ThreadPool* composeWorkers = nullptr;
+
+        /// ==== 刀2 路网 SDF 场"第二平面"(可选)====
+        /// 非空时页存储维护一张平行的 R8 texture2DArray(fieldArray),与影像
+        /// 页**同 key 同层号同生命周期** —— FS 在同一次间接查找下再采一次场,
+        /// 祖先回退 scale-bias 数学自动复用。回调契约:r8 尺寸恒为
+        /// pageSizeTexels²;**回调必到**(取消/失败给全 255=无线);可在任意
+        /// 线程回调。页存储对生产者(RoadFieldSource)零依赖,host 测试注入
+        /// fake。
+        using RoadFieldRequestFn = std::function<void(
+            const TileKey& pageTileKey, CancellationToken,
+            std::function<void(std::vector<uint8_t>)>)>;
+        RoadFieldRequestFn roadFieldRequest;
+        /// 场解算的线色(RGBA,非预乘)——经 applyToTerrainCommand 进
+        /// gltfUniforms,FS smoothstep 后 mix。样式快照,换样式换 Config。
+        std::array<float, 4> roadFieldColor{0.96f, 0.96f, 0.94f, 0.86f};
     };
 
     TerrainPageStore() = default;
@@ -386,9 +403,15 @@ private:
         /// 最近一次"上传进度前进"的帧号(建页时初始化为当帧)。
         /// **只服务于帧级按需渲染的在途判定**,不参与 resident/合成任何逻辑。
         uint64_t lastProgressFrame = 0;
+        /// 刀2 场平面:kick 时置 pending,真场上传后清。计入 uploadComplete
+        /// (在途判定跟着走,场没到不停帧;停滞兜底由 kStalledPageFrames
+        /// 承担,场生产者挂死不会永久烧电)。
+        CancellationToken fieldToken;
+        bool fieldPending = false;
         bool uploadedTexels() const { return uploadedSources > 0; }
         bool uploadComplete() const {
-            return totalSources > 0 && uploadedSources >= totalSources;
+            return totalSources > 0 && uploadedSources >= totalSources &&
+                   !fieldPending;
         }
     };
 
@@ -428,6 +451,12 @@ private:
     RenderDevice* device_ = nullptr;
     Config config_{};
     std::unique_ptr<Texture> arrayTexture_;
+    /// 刀2 场"第二平面":R8,与 arrayTexture_ 同尺寸同层数,层号一一对应
+    /// (页的场就在页自己的层上)。仅 Config.roadFieldRequest 非空时创建;
+    /// 创建失败只禁用场平面,不拖垮影像页(nullptr = FS 侧 enable 恒 0)。
+    std::unique_ptr<Texture> fieldArrayTexture_;
+    struct RoadFieldInbox;  // 定义在 .cpp:场 R8 快照投递箱(存活于回调)
+    std::shared_ptr<RoadFieldInbox> fieldInbox_;
 
     TerrainPageLayerPool pool_;
     std::unordered_map<uint64_t, PageEntry> pages_;      // pageKey → 页账本

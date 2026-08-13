@@ -2,6 +2,8 @@
 
 #include "earth_engine/providers/VectorDrapeImageryProvider.h"
 
+#include "earth_engine/data/MvtTileFetchCache.h"
+
 #include <cmath>
 #include <functional>
 #include <string>
@@ -110,6 +112,10 @@ struct FakeFetch {
     }
 };
 
+std::shared_ptr<MvtTileFetchCache> cacheFor(FakeFetch& fetch) {
+    return std::make_shared<MvtTileFetchCache>(fetch.fn(), 48);
+}
+
 int alphaAt(const DecodedImage& img, int x, int y) {
     return img.pixels[(static_cast<size_t>(y) * img.width + x) * 4 + 3];
 }
@@ -147,7 +153,7 @@ double unitYFromLat(double latRad) {
 TEST(VectorDrapeProviderTest, ProducesRgbaImageFromVectorTile) {
     FakeFetch fetch;
     fetch.body = makeHalfTilePolygon("L");
-    VectorDrapeImageryProvider provider(optionsFor("L"), fetch.fn());
+    VectorDrapeImageryProvider provider(optionsFor("L"), cacheFor(fetch));
 
     auto got = request(provider, TileKey{"XYZ-WebMercator", 12, 1, 1});
     ASSERT_NE(got, nullptr);
@@ -163,7 +169,7 @@ TEST(VectorDrapeProviderTest, ProducesRgbaImageFromVectorTile) {
 TEST(VectorDrapeProviderTest, EmptyTileYieldsTransparentImageNotNull) {
     FakeFetch fetch;
     fetch.body = makeHalfTilePolygon("other");
-    VectorDrapeImageryProvider provider(optionsFor("L"), fetch.fn());
+    VectorDrapeImageryProvider provider(optionsFor("L"), cacheFor(fetch));
 
     bool called = false;
     auto got = request(provider, TileKey{"XYZ-WebMercator", 12, 1, 1},
@@ -178,7 +184,7 @@ TEST(VectorDrapeProviderTest, EmptyTileYieldsTransparentImageNotNull) {
 TEST(VectorDrapeProviderTest, FetchFailureYieldsTransparentImageNotNull) {
     FakeFetch fetch;
     fetch.statusCode = 404;
-    VectorDrapeImageryProvider provider(optionsFor("L"), fetch.fn());
+    VectorDrapeImageryProvider provider(optionsFor("L"), cacheFor(fetch));
 
     bool called = false;
     auto got = request(provider, TileKey{"XYZ-WebMercator", 12, 1, 1},
@@ -192,7 +198,7 @@ TEST(VectorDrapeProviderTest, FetchFailureYieldsTransparentImageNotNull) {
 TEST(VectorDrapeProviderTest, CancelledRequestStillInvokesCallback) {
     FakeFetch fetch;
     fetch.body = makeHalfTilePolygon("L");
-    VectorDrapeImageryProvider provider(optionsFor("L"), fetch.fn());
+    VectorDrapeImageryProvider provider(optionsFor("L"), cacheFor(fetch));
 
     CancellationToken token;
     token.cancel();
@@ -214,7 +220,7 @@ TEST(VectorDrapeProviderTest, CancelledRequestStillInvokesCallback) {
 TEST(VectorDrapeProviderTest, OverzoomPaintsAncestorSubRect) {
     FakeFetch fetch;
     fetch.body = makeHalfTilePolygon("L");
-    VectorDrapeImageryProvider provider(optionsFor("L"), fetch.fn());
+    VectorDrapeImageryProvider provider(optionsFor("L"), cacheFor(fetch));
 
     auto nw = request(provider, TileKey{"XYZ-WebMercator", 16, 20, 21});
     ASSERT_NE(nw, nullptr);
@@ -236,7 +242,7 @@ TEST(VectorDrapeProviderTest, StyleZoomUsesPageZoomNotDataZoom) {
     fetch.body = makeHalfTilePolygon("L");
     auto opt = optionsFor("L");
     opt.style.layers[0].minZoom = 15;  // 深于数据上限的门槛
-    VectorDrapeImageryProvider provider(opt, fetch.fn());
+    VectorDrapeImageryProvider provider(opt, cacheFor(fetch));
 
     auto z16 = request(provider, TileKey{"XYZ-WebMercator", 16, 20, 21});
     ASSERT_NE(z16, nullptr);
@@ -251,13 +257,14 @@ TEST(VectorDrapeProviderTest, StyleZoomUsesPageZoomNotDataZoom) {
 TEST(VectorDrapeProviderTest, CacheAvoidsRefetchAcrossPages) {
     FakeFetch fetch;
     fetch.body = makeHalfTilePolygon("L");
-    VectorDrapeImageryProvider provider(optionsFor("L"), fetch.fn());
+    auto cache = cacheFor(fetch);
+    VectorDrapeImageryProvider provider(optionsFor("L"), cache);
 
     request(provider, TileKey{"XYZ-WebMercator", 16, 20, 20});
     request(provider, TileKey{"XYZ-WebMercator", 16, 21, 21});
     request(provider, TileKey{"XYZ-WebMercator", 16, 22, 20});
     EXPECT_EQ(fetch.calls, 1) << "同一 z14 祖先只该拉一次";
-    const auto stats = provider.cacheStats();
+    const auto stats = cache->stats();
     EXPECT_EQ(stats.fetches, 1u);
     EXPECT_EQ(stats.hits, 2u);
 }
@@ -268,7 +275,7 @@ TEST(VectorDrapeProviderTest, InflightRequestsMergeIntoSingleFetch) {
     FakeFetch fetch;
     fetch.body = makeHalfTilePolygon("L");
     fetch.deferred = true;
-    VectorDrapeImageryProvider provider(optionsFor("L"), fetch.fn());
+    VectorDrapeImageryProvider provider(optionsFor("L"), cacheFor(fetch));
 
     std::unique_ptr<DecodedImage> gotA;
     std::unique_ptr<DecodedImage> gotB;
@@ -326,7 +333,7 @@ TEST(VectorDrapeProviderTest, Gcj02GridSelectsWgs84ShiftedContent) {
 
     auto optOn = optionsFor("L");
     optOn.gcj02SourceGrid = true;
-    VectorDrapeImageryProvider on(optOn, fetch.fn());
+    VectorDrapeImageryProvider on(optOn, cacheFor(fetch));
     auto gotOn = request(on, pageKey);
     ASSERT_NE(gotOn, nullptr);
     EXPECT_TRUE(anyOpaquePixel(*gotOn))
@@ -336,7 +343,7 @@ TEST(VectorDrapeProviderTest, Gcj02GridSelectsWgs84ShiftedContent) {
     fetch2.body = fetch.body;
     auto optOff = optionsFor("L");
     optOff.gcj02SourceGrid = false;
-    VectorDrapeImageryProvider off(optOff, fetch2.fn());
+    VectorDrapeImageryProvider off(optOff, cacheFor(fetch2));
     auto gotOff = request(off, pageKey);
     ASSERT_NE(gotOff, nullptr);
     EXPECT_FALSE(anyOpaquePixel(*gotOff))

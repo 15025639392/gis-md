@@ -50,15 +50,13 @@ constexpr const char* kTreeI3dmUrl =
 // 排除干扰是判因的前提,不是洁癖。
 constexpr bool kEnableVectorDemoLayers = false;
 
-// 矢量 P4 MVT 只读底图(**几何通路**,刀1 之后只承载线/路网)。本地
-// tippecanoe 自制重庆 OSM mbtiles,serve_mvt_tiles.py 起 8092 + adb reverse
-// tcp:8092(与地形 8091 同模式)。服务器不在时请求失败仅 markFailed(静默),
-// 不影响其余渲染。
-// 2026-08-13 刀1 分工:**面**(water/building)不再进这条 stencil 链 ——
-// MVT stencil 面 fill 实测 74-142ms GPU(占 94%,TETHER 发热真凶),面改走
-// 下方 kEnableMvtDrapeBasemap 的栅格 drape;线暂留 stencil(12-16ms),
-// 刀2(SDF 场 + 地形 FS 解算)落地后退役。
-constexpr bool kEnableMvtBasemap = true;
+// 矢量 P4 MVT 只读底图(**几何通路**)。本地 tippecanoe 自制重庆 OSM
+// mbtiles,serve_mvt_tiles.py 起 8092 + adb reverse tcp:8092。
+// 刀1(面→drape)后只承载线;**刀2(线→SDF 场+地形 FS 解算)落地,整链
+// 退役**(2026-08-13):路网改走 kEnableMvtRoadField 的场解算,GPU 上
+// vec:mvt-basemap pass 整体消失。编辑要素的 stencil 能力保留(通用能力,
+// 不属本链)。要 A/B 对拍旧路径时临时改回 true。
+constexpr bool kEnableMvtBasemap = false;
 
 // 矢量**面** drape 底图:MVT 面要素动态栅格化冒充影像,进 TerrainPageStore
 // 页合成(与卫星影像同轨,GPU 边际成本≈0)。E4 原版影像通路曾于 2026-08-07
@@ -67,13 +65,27 @@ constexpr bool kEnableMvtBasemap = true;
 // Metal 红利:drape 不依赖 stencil,iOS 首次获得贴地面能力。
 constexpr bool kEnableMvtDrapeBasemap = true;
 
+// 刀2 路网线 SDF 场:逐页 R8 距离场(CPU scatter 烘焙,worker)+ 地形 FS
+// 内解算(smoothstep+fwidth 解析 AA,寄生地形 FS 边际成本≈0 —— S2 场税
+// 探针实测增量在噪声内;独立 overlay pass 同数学 25-30ms,勿走回头路)。
+// 与面 drape 共享 MvtTileFetchCache(同一批 z14 祖先瓦零重复 fetch)。
+constexpr bool kEnableMvtRoadField = true;
+
 // 贴地体的高度范围不在这里配:SceneRenderPipeline 每帧从**可见地形瓦片的
 // 包围体**汇总(O(可见瓦片数),零采样),相机飞到哪都对。
 
-/// 面 drape 通路的栅格样式(water/building 色块)。颜色与几何通路 GLESView
-/// 里的 fillColorExpr 对齐 —— 两条通路交接时观感不变;线不在此配(留几何
-/// 通路,刀2 换 SDF 场)。
+/// 面 drape 通路的栅格样式(water/building 色块)。颜色与几何通路退役前的
+/// fillColorExpr 对齐;线不在此配(走下方场解算样式)。
 VectorRasterStyle makeMvtDrapeStyle();
+
+/// 刀2 场解算的线样式(只消费 line 通道):highway 分级 + 线宽随页 zoom
+/// 分档(styleZoom=页 z,跟屏幕清晰度走)。线色在 FS uniform 统一给出,
+/// 见 kMvtRoadFieldColor。
+VectorRasterStyle makeMvtRoadFieldStyle();
+/// 场解算线色(RGBA 0-1,非预乘):对齐几何通路退役前的 bs.lineColor
+/// (0.95,0.95,0.90,0.85),交接观感不变。
+constexpr std::array<float, 4> kMvtRoadFieldColor{0.95f, 0.95f, 0.90f,
+                                                  0.85f};
 constexpr const char* kMvtBasemapUrlTemplate =
     "http://127.0.0.1:8092/{z}/{x}/{y}.pbf";
 constexpr int kMvtBasemapMinZoom = 0;

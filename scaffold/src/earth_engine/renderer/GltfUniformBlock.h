@@ -176,6 +176,15 @@ struct alignas(16) GltfUniformBlock {
     // glTF 模型 shader 不声明 → location -1 跳过,写了无害。默认=noon 微暖白,
     // 未被 updater 覆写时地形仍取中性(非黑)。rgb 有效,w 补齐 16 字节。
     std::array<float, 4> sunTint{1.05f, 1.0f, 0.91f, 0.0f};
+
+    // 刀2 路网 SDF 场解算(页存储"第二平面",与 pageStore 同一次间接查找):
+    //   x = enable(>0.5 采样场并 mix 线色;无场瓦片恒 0 → 零回归)
+    //   y = 羽化半带宽(texel;场编码窗口 = 边缘 ±y,FS 反量化用)
+    //   z/w = 保留
+    // 仅 TerrainPageStore::applyToTerrainCommand 写;非地形命令恒 0。
+    std::array<float, 4> roadFieldParams{0.0f, 4.0f, 0.0f, 0.0f};
+    // 线色(RGBA 非预乘):FS smoothstep 解算覆盖率后 mix 进底色。
+    std::array<float, 4> roadFieldColor{0.96f, 0.96f, 0.94f, 0.86f};
 };
 
 static_assert(alignof(GltfUniformBlock) == 16,
@@ -224,7 +233,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 93> table = {{
+    static const std::array<GltfUniformTableEntry, 95> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -310,6 +319,8 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_clipEnabled", clipEnabled, 1),
         EE_GLTF_ENTRY("u_pageStoreParams", pageStoreParams, 4),
         EE_GLTF_ENTRY("u_pageStoreUv", pageStoreUv, 4),
+        EE_GLTF_ENTRY("u_roadFieldParams", roadFieldParams, 4),
+        EE_GLTF_ENTRY("u_roadFieldColor", roadFieldColor, 4),
         EE_GLTF_ENTRY("u_heightDisplace", heightDisplace, 4),
         EE_GLTF_ENTRY("u_terrainLayers", terrainLayers, 4),
         EE_GLTF_ENTRY("u_sunTint", sunTint, 3),

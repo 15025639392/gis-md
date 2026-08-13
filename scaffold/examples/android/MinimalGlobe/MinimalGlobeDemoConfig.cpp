@@ -30,6 +30,58 @@ VectorRasterStyle makeMvtDrapeStyle() {
     return style;
 }
 
+VectorRasterStyle makeMvtRoadFieldStyle() {
+    using C = StyleFilter::Compare;
+    // highway 分级:与几何通路退役前的分级表同源(zoom 固定于**页 z**,
+    // styleZoom 跟屏幕清晰度走,可到 z17+)。粗档只留干线,细档逐步放开 ——
+    // 低 zoom 页 texel 覆盖地面大,道路间距小于线宽会连成白块。
+    StyleFilter::Ptr grading = StyleFilter::any({
+        StyleFilter::all({
+            StyleFilter::zoomCompare(C::Less, 10),
+            StyleFilter::in("highway", {"motorway", "trunk"})}),
+        StyleFilter::all({
+            StyleFilter::zoomCompare(C::GreaterEqual, 10),
+            StyleFilter::zoomCompare(C::Less, 12),
+            StyleFilter::in("highway", {"motorway", "trunk", "primary"})}),
+        StyleFilter::all({
+            StyleFilter::zoomCompare(C::GreaterEqual, 12),
+            StyleFilter::zoomCompare(C::Less, 13),
+            StyleFilter::in("highway", {"motorway", "trunk", "primary",
+                                        "secondary"})}),
+        StyleFilter::all({
+            StyleFilter::zoomCompare(C::GreaterEqual, 13),
+            StyleFilter::zoomCompare(C::Less, 14),
+            StyleFilter::in("highway", {"motorway", "trunk", "primary",
+                                        "secondary", "tertiary"})}),
+        StyleFilter::zoomCompare(C::GreaterEqual, 14),
+    });
+
+    // 线宽单位=场纹素 ≈ 设备像素(页按屏幕误差选 zoom)。分档沿几何通路
+    // 退役前的 0.75/1.25/2.5 CSS px × dpr;TODO 同旧注释:dpr 应取自
+    // Android density,现按测试机 3.5 固定。
+    constexpr double kDevicePixelRatio = 3.5;
+    auto roadsAtZoom = [&](StyleFilter::Ptr zoomRange, double cssPixels) {
+        VectorRasterLayerPaint roads;
+        roads.layer = "roads";
+        roads.filter = StyleFilter::all({zoomRange, grading});
+        // lineColor 只用作"该层参与场烘焙"的开关(alpha>0)+ 宽度载体;
+        // 真实线色走 FS uniform(kMvtRoadFieldColor)。
+        roads.lineColor = {255, 255, 255, 255};
+        roads.lineWidthPixels = cssPixels * kDevicePixelRatio;
+        return roads;
+    };
+
+    VectorRasterStyle style;
+    style.layers = {
+        roadsAtZoom(StyleFilter::zoomCompare(C::Less, 11), 0.75),
+        roadsAtZoom(StyleFilter::all({
+                        StyleFilter::zoomCompare(C::GreaterEqual, 11),
+                        StyleFilter::zoomCompare(C::Less, 13)}),
+                    1.25),
+        roadsAtZoom(StyleFilter::zoomCompare(C::GreaterEqual, 13), 2.5)};
+    return style;
+}
+
 EarthSceneConfig makeDefaultDemoSceneConfig() {
     EarthSceneConfig config;
     if (kEnableInstancedI3dmDemo) {

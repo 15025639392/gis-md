@@ -38,6 +38,8 @@
 #include "earth_engine/data/StyleFilter.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
+#include "earth_engine/data/MvtTileFetchCache.h"
+#include "earth_engine/providers/RoadFieldSource.h"
 #include "earth_engine/providers/VectorDrapeImageryProvider.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/scene/Camera.h"
@@ -202,6 +204,9 @@ static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
 // shared_ptr:MvtVectorSource 的 HTTP 回调对 pool 持 weak(见其 ctor 注释),
 // 拆除后迟到的取消回调安全丢弃,不再 enqueue 已析构线程池。
 static std::shared_ptr<ThreadPool> gMvtWorkerPool;
+// 刀2:面 drape 与路网场共享的 MVT 瓦 fetch+decode 缓存(同一批 z14 祖先
+// 瓦零重复拉取)。shared_ptr:两消费者 + 迟到回调自持。
+static std::shared_ptr<MvtTileFetchCache> gMvtTileCache;
 // HttpRequest 是取消句柄(析构即取消),须持有到完成;完成 id 攒起来
 // 由下一次发请求时(渲染线程)剪除,避免在 curl 回调线程里析构句柄。
 struct MvtFetchInflight {
@@ -400,6 +405,14 @@ static bool createEngine() {
             if (!gMvtWorkerPool) {
                 gMvtWorkerPool = std::make_shared<ThreadPool>(2);
             }
+            if (!gMvtTileCache) {
+                gMvtTileCache = std::make_shared<MvtTileFetchCache>(
+                    [](const TileKey& key,
+                       MvtTileFetchCache::FetchCallback cb) {
+                        mvtFetchTile(key, std::move(cb));
+                    },
+                    48);
+            }
             VectorDrapeImageryProvider::Options dopts;
             dopts.id = "mvt-drape";
             dopts.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
@@ -416,12 +429,8 @@ static bool createEngine() {
                 minimal_globe_demo::kUseGaodeSatelliteForDemo;
             auto drapeProvider =
                 std::make_unique<VectorDrapeImageryProvider>(
-                    std::move(dopts),
-                    [](const TileKey& key,
-                       VectorDrapeImageryProvider::FetchCallback cb) {
-                        mvtFetchTile(key, std::move(cb));
-                    },
-                    gMvtWorkerPool);  // shared:provider 内部持 weak 防拆除竞态
+                    std::move(dopts), gMvtTileCache,
+                    gMvtWorkerPool);  // shared:Assembly 内持 weak 防拆除竞态
             RasterOverlay::Options oopts;
             oopts.role = RasterOverlayRole::AnnotationOverlay;
             oopts.priority = RasterOverlayPriority::Normal;
@@ -445,6 +454,39 @@ static bool createEngine() {
                  minimal_globe_demo::kMvtBasemapMinZoom,
                  minimal_globe_demo::kMvtBasemapMaxZoom,
                  minimal_globe_demo::kMeasureImageryMaxZoom,
+                 minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);
+        }
+
+        // ---- 刀2 路网线 SDF 场:页存储"第二平面"生产者注入。----
+        // setRoadFieldSource 须在首帧渲染前调(页存储 lazy init 快照 Config)。
+        if (minimal_globe_demo::kEnableMvtRoadField) {
+            if (!gMvtWorkerPool) {
+                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
+            }
+            if (!gMvtTileCache) {
+                gMvtTileCache = std::make_shared<MvtTileFetchCache>(
+                    [](const TileKey& key,
+                       MvtTileFetchCache::FetchCallback cb) {
+                        mvtFetchTile(key, std::move(cb));
+                    },
+                    48);
+            }
+            RoadFieldSource::Options fopts;
+            fopts.dataMaxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
+            fopts.fieldSize = 256;  // = 页边长(共享间接查找的前提)
+            fopts.style = minimal_globe_demo::makeMvtRoadFieldStyle();
+            fopts.gcj02SourceGrid =
+                minimal_globe_demo::kUseGaodeSatelliteForDemo;
+            auto roadField = std::make_shared<RoadFieldSource>(
+                std::move(fopts), gMvtTileCache, gMvtWorkerPool);
+            gEngine->setRoadFieldSource(
+                [roadField](const TileKey& pageKey, CancellationToken token,
+                            std::function<void(std::vector<uint8_t>)> cb) {
+                    roadField->requestField(pageKey, token, std::move(cb));
+                },
+                minimal_globe_demo::kMvtRoadFieldColor);
+            LOGI("VectorRoadField SDF source installed (data z%d, gcj=%d)",
+                 minimal_globe_demo::kMvtBasemapMaxZoom,
                  minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);
         }
 

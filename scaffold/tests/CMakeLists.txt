@@ -1000,6 +1000,12 @@ add_executable(test_mvt_decoder
 target_link_libraries(test_mvt_decoder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_mvt_decoder COMMAND test_mvt_decoder)
 
+add_executable(test_line_field_rasterizer
+    unit/data/test_line_field_rasterizer.cpp
+)
+target_link_libraries(test_line_field_rasterizer PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_line_field_rasterizer COMMAND test_line_field_rasterizer)
+
 add_executable(test_vector_tile_rasterizer
     unit/data/test_vector_tile_rasterizer.cpp
 )
@@ -1103,6 +1109,12 @@ add_executable(test_heightmap_terrain
 )
 target_link_libraries(test_heightmap_terrain PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_heightmap_terrain COMMAND test_heightmap_terrain)
+
+add_executable(test_road_field_source
+    unit/providers/test_road_field_source.cpp
+)
+target_link_libraries(test_road_field_source PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_road_field_source COMMAND test_road_field_source)
 
 add_executable(test_vector_drape_provider
     unit/providers/test_vector_drape_provider.cpp

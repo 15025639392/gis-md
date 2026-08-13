@@ -260,6 +260,20 @@ struct TerrainPageStore::ReadyUploadInbox {
     std::atomic<uint64_t> composeMicros{0};
 };
 
+/// 刀2 场平面投递箱(shared_ptr:场生产者回调可比页存储活得久)。
+/// placeholder 语义见 kickPageFetches:层复用时旧租户的场必须先被清成
+/// "无线"(全 255),否则真场到达前 FS 会采到上一城市的路网。
+struct TerrainPageStore::RoadFieldInbox {
+    struct Item {
+        uint64_t key = 0;
+        int layer = 0;
+        bool placeholder = false;  // 占位清场,不清 fieldPending
+        std::vector<uint8_t> r8;   // side²×1
+    };
+    std::mutex mutex;
+    std::vector<Item> items;
+};
+
 void TerrainPageStore::resamplePageSource(const DecodedImage& image, int depth,
                                           int subX, int subY, int side,
                                           std::vector<uint8_t>& out) {
@@ -527,6 +541,7 @@ void TerrainPageStore::updateVisiblePages(
             for (CancellationToken& token : entry.fetchTokens) {
                 token.cancel();
             }
+            entry.fieldToken.cancel();
         }
         pages_.clear();
         // pool_ 的槽位不清:key 仍驻留 → 下次 acquire 返回同一 layer、try_emplace 报
@@ -1025,6 +1040,18 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
     indirPool_.configure(kIndirArrayLayers, /*blockLayers=*/1);
     inbox_ = std::make_shared<PendingInbox>();
     readyInbox_ = std::make_shared<ReadyUploadInbox>();
+    // 刀2 场"第二平面":R8、与影像 array 同尺寸同层数(层号一一对应)。
+    // 创建失败只禁用场平面(roadFieldRequest 清空),影像页不受影响。
+    if (config_.roadFieldRequest) {
+        TextureDesc fieldDesc = desc;
+        fieldDesc.format = TextureDesc::Format::R8;
+        fieldArrayTexture_ = device_->createTexture(fieldDesc);
+        if (fieldArrayTexture_) {
+            fieldInbox_ = std::make_shared<RoadFieldInbox>();
+        } else {
+            config_.roadFieldRequest = nullptr;
+        }
+    }
     return true;
 }
 
@@ -1036,6 +1063,7 @@ void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
     for (CancellationToken& token : it->second.fetchTokens) {
         token.cancel();  // 在途 fetch 全部作废(到达也会被 drain 校验丢弃)
     }
+    it->second.fieldToken.cancel();  // 场生产同理(迟到 r8 经账本校验丢弃)
     if (it->second.compose) {
         // 在途合成任务省功早退;迟到快照由 drainReadyUploads 账本校验丢弃。
         it->second.compose->cancelled.store(true, std::memory_order_release);
@@ -1063,10 +1091,12 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
         return;
     }
     const TileIndir& ind = it->second;
-    if (cmd.textures.size() <=
-        static_cast<size_t>(kGltfPageStoreIndirTextureSlot)) {
-        cmd.textures.resize(
-            static_cast<size_t>(kGltfPageStoreIndirTextureSlot) + 1u, nullptr);
+    const size_t maxSlot = fieldArrayTexture_
+                               ? static_cast<size_t>(kGltfRoadFieldTextureSlot)
+                               : static_cast<size_t>(
+                                     kGltfPageStoreIndirTextureSlot);
+    if (cmd.textures.size() <= maxSlot) {
+        cmd.textures.resize(maxSlot + 1u, nullptr);
     }
     cmd.textures[kGltfPageStoreArrayTextureSlot] = arrayTexture_.get();
     // 间接纹理 array 绑 slot21,片元经层号 fetch 定位 layer + 读 A 通道作 miss
@@ -1101,6 +1131,17 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
         static_cast<float>(ind.placement.spanV)};
     cmd.gltfUniforms.terrainLayers[1] = static_cast<float>(ind.layer);
     cmd.terrainPageStoreFullyResident = ind.fullyResident;
+
+    // 刀2 场"第二平面":与影像页同一次间接查找(同 layer/sampleUv/祖先
+    // scale-bias),FS 只多一次采样 + smoothstep。占位清场保证层复用时旧
+    // 租户路网不外泄(见 kickPageFetches),这里无需 per-cell 门控 ——
+    // indir 的 resident(A 通道)已同时门控两个平面。
+    if (fieldArrayTexture_) {
+        cmd.textures[kGltfRoadFieldTextureSlot] = fieldArrayTexture_.get();
+        cmd.gltfUniforms.roadFieldParams[0] = 1.0f;
+        cmd.gltfUniforms.roadFieldParams[1] = 4.0f;  // kLineFieldFeatherTexels
+        cmd.gltfUniforms.roadFieldColor = config_.roadFieldColor;
+    }
 }
 
 void TerrainPageStore::tick() {
@@ -1172,6 +1213,38 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
                 std::lock_guard<std::mutex> lock(inbox->mutex);
                 inbox->pages.push_back(
                     {pageKey, layer, source, depth, subX, subY, std::move(image)});
+            });
+    }
+
+    // ==== 刀2 场平面:与影像 fetch 并行 kick ====
+    if (config_.roadFieldRequest && fieldInbox_) {
+        const int side = config_.pageSizeTexels;
+        // ① 占位清场**同步入队**(FIFO 保证先于真场、且先于本页影像首次
+        //    resident 时被 drain):层是 LRU 复用的,旧租户的场若不清,真场
+        //    到达前 FS 会把上一个城市的路网画在这页上。全 0 = 反向编码的
+        //    "无线"(也是 GLES 未绑定采样的返回值 —— 失败安全同一取向)。
+        {
+            std::lock_guard<std::mutex> lock(fieldInbox_->mutex);
+            fieldInbox_->items.push_back(RoadFieldInbox::Item{
+                pageKey, layer, /*placeholder=*/true,
+                std::vector<uint8_t>(
+                    static_cast<size_t>(side) * side, 0)});
+        }
+        // ② 真场请求(回调必到契约;取消/失败给全 0)。回调只捕 inbox
+        //    shared_ptr —— 页存储先亡不悬垂,迟到结果经账本校验丢弃。
+        entry.fieldToken = CancellationToken{};
+        entry.fieldPending = true;
+        std::shared_ptr<RoadFieldInbox> fieldInbox = fieldInbox_;
+        config_.roadFieldRequest(
+            pageTileKey, entry.fieldToken,
+            [fieldInbox, pageKey, layer, side](std::vector<uint8_t> r8) {
+                if (r8.size() !=
+                    static_cast<size_t>(side) * static_cast<size_t>(side)) {
+                    return;  // 尺寸不符:丢弃(防生产者配置漂移写坏层)
+                }
+                std::lock_guard<std::mutex> lock(fieldInbox->mutex);
+                fieldInbox->items.push_back(RoadFieldInbox::Item{
+                    pageKey, layer, /*placeholder=*/false, std::move(r8)});
             });
     }
 }
@@ -1264,6 +1337,50 @@ void TerrainPageStore::drainReadyUploads() {
     // 阶段 B(上传+叠画,渲染线程):取 worker 快照,按预算 updateTextureRegion。
     // uploadedSources 在此推进 —— determination 的 resident 判定跟它走,
     // 保证间接纹理永远只指向已写入的层。
+    const int side = config_.pageSizeTexels;
+    int uploaded = 0;
+
+    // ==== 刀2 场平面:先于影像 drain(FIFO 内占位清场必须赶在该页影像
+    // 首次 resident 之前写入,顺序=kick 时同步入队 < 影像 fetch+compose)。
+    // 与影像共享 maxUploadsPerFrame 预算(场 64KB/页,记 1 个上传)。====
+    if (fieldInbox_ && fieldArrayTexture_) {
+        std::vector<RoadFieldInbox::Item> fieldReady;
+        {
+            std::lock_guard<std::mutex> lock(fieldInbox_->mutex);
+            fieldReady.swap(fieldInbox_->items);
+        }
+        size_t fieldRequeueFrom = fieldReady.size();
+        for (size_t idx = 0; idx < fieldReady.size(); ++idx) {
+            if (uploaded >= config_.maxUploadsPerFrame) {
+                fieldRequeueFrom = idx;
+                break;
+            }
+            auto& item = fieldReady[idx];
+            const auto it = pages_.find(item.key);
+            if (it == pages_.end() || it->second.layer != item.layer) {
+                continue;  // 淘汰/换租后的迟到场:丢弃
+            }
+            const double uploadStartMs = perf::nowMs();
+            device_->updateTextureRegion(
+                fieldArrayTexture_.get(), 0, 0, side, side, item.r8.data(),
+                static_cast<size_t>(side), item.layer);
+            winUploadMs_ += perf::nowMs() - uploadStartMs;
+            if (!item.placeholder) {
+                it->second.fieldPending = false;
+            }
+            it->second.lastProgressFrame = frameId_;
+            ++uploaded;
+        }
+        if (fieldRequeueFrom < fieldReady.size()) {
+            std::lock_guard<std::mutex> lock(fieldInbox_->mutex);
+            // 放回队首侧保序(占位先于真场的 FIFO 不变量不能被 requeue 破坏)。
+            fieldInbox_->items.insert(
+                fieldInbox_->items.begin(),
+                std::make_move_iterator(fieldReady.begin() + fieldRequeueFrom),
+                std::make_move_iterator(fieldReady.end()));
+        }
+    }
+
     std::vector<ReadyUploadInbox::Item> ready;
     {
         std::lock_guard<std::mutex> lock(readyInbox_->mutex);
@@ -1272,8 +1389,6 @@ void TerrainPageStore::drainReadyUploads() {
     if (ready.empty()) {
         return;
     }
-    const int side = config_.pageSizeTexels;
-    int uploaded = 0;
     size_t requeueFrom = 0;
     for (size_t idx = 0; idx < ready.size(); ++idx) {
         if (uploaded >= config_.maxUploadsPerFrame) {

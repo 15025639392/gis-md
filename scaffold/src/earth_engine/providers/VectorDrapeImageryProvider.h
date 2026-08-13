@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "ImageryProvider.h"
+#include "../data/MvtTileFetchCache.h"
 #include "../data/VectorTileRasterizer.h"
 
 namespace earth_engine {
@@ -40,21 +41,18 @@ class ThreadPool;
 ///
 /// 线程契约:requestTile 可在任意线程调(渲染线程调用方要求立即返回);
 /// 栅格化在 rasterPool(未注入时在拉取回调线程/就地,host 测试用)。
-/// 内部 MvtTile 解码缓存 + 在途合并:overzoom 下同一张 z14 祖先瓦被多个页
-/// 并发请求是常态,不合并会对同一瓦片重复 fetch+decode。
+/// MVT 瓦 fetch+decode 走注入的共享 MvtTileFetchCache(刀2 起与路网场烘焙
+/// 共用同一批 z14 祖先瓦,不共享就是双份 fetch+decode)。
 ///
-/// **拆除竞态(异步回调只带自持数据,tombstone 法则)**:fetch 回调来自
-/// 网络线程,可迟到于 GL 会话拆除 —— 回调捕 shared_ptr<State>(缓存/在途
-/// 账本)而非 this;线程池持 weak_ptr,锁不上就地栅格化(拆除路径回调仍
-/// 必到,页存储账本校验会丢弃迟到结果)。裸指针版真机崩过:
-/// `enqueue on stopped ThreadPool`(demo teardown 先 reset 池,与
-/// MvtVectorSource 的 tombstone_22 同型)。
+/// **拆除竞态(异步回调只带自持数据,tombstone 法则)**:fetch 回调链只捕
+/// shared_ptr(cache 的 State / 本类的 Assembly);线程池持 weak_ptr,锁不上
+/// 就地栅格化(拆除路径回调仍必到,页存储账本校验会丢弃迟到结果)。裸指针
+/// 版真机崩过:`enqueue on stopped ThreadPool`(demo teardown 先 reset 池,
+/// 与 MvtVectorSource 的 tombstone_22 同型)。
 class VectorDrapeImageryProvider : public ImageryProvider {
 public:
-    /// (statusCode, body):200 且非空视为成功。与 MvtVectorSource 同签名,
-    /// demo 可以共用同一个 fetch 实现。
-    using FetchCallback = std::function<void(int, std::vector<uint8_t>)>;
-    using FetchFn = std::function<void(const TileKey&, FetchCallback)>;
+    using FetchCallback = MvtTileFetchCache::FetchCallback;
+    using FetchFn = MvtTileFetchCache::FetchFn;
 
     struct Options {
         std::string id = "vector-drape";
@@ -70,12 +68,10 @@ public:
         VectorRasterStyle style;
         /// 页网格首源是 GCJ-02(高德)时开:请求矩形先 toWgs84 平移。
         bool gcj02SourceGrid = false;
-        /// 解码后 MvtTile 缓存容量(张)。z14 瓦 ~9km 见方,48 张覆盖
-        /// 400km² 级别,远超单视野。
-        size_t tileCacheCapacity = 48;
     };
 
-    VectorDrapeImageryProvider(Options options, FetchFn fetch,
+    VectorDrapeImageryProvider(Options options,
+                               std::shared_ptr<MvtTileFetchCache> tileCache,
                                std::shared_ptr<ThreadPool> rasterPool =
                                    nullptr);
 
@@ -87,7 +83,7 @@ public:
     int tileWidth() const override { return options_.tileSize; }
     int tileHeight() const override { return options_.tileSize; }
 
-    /// 没有真实 URL 概念(拉取由注入的 FetchFn 负责)。仅诊断/日志。
+    /// 没有真实 URL 概念(拉取由注入的 cache/FetchFn 负责)。仅诊断/日志。
     std::string buildUrl(const TileKey& key) const override;
 
     void requestTile(const TileKey& key,
@@ -100,28 +96,16 @@ public:
     std::unique_ptr<DecodedImage> decodeTile(const uint8_t* data,
                                              size_t len) override;
 
-    /// 诊断:自建缓存的累计命中/拉取数(线程安全快照)。
-    struct CacheStats {
-        uint64_t hits = 0;
-        uint64_t fetches = 0;
-    };
-    CacheStats cacheStats() const;
-
 private:
     struct Assembly;  // 一次 requestTile 的聚合状态(等多张源瓦到齐)
-    struct State;     // 缓存/在途账本(shared:fetch 回调自持,防拆除悬垂)
 
-    // static + 只收 shared 状态:这些可能在 provider 亡后的迟到回调里执行。
+    // static + 只收 shared 状态:可能在 provider 亡后的迟到回调里执行。
     static void runAssembly(const std::shared_ptr<Assembly>& assembly);
     static void completeIfReady(const std::shared_ptr<Assembly>& assembly);
-    static void onSourceTileReady(const std::shared_ptr<State>& state,
-                                  uint64_t dataKey,
-                                  std::shared_ptr<const MvtTile> tile);
 
     Options options_;
-    FetchFn fetch_;
+    std::shared_ptr<MvtTileFetchCache> tileCache_;
     std::shared_ptr<ThreadPool> rasterPool_;
-    std::shared_ptr<State> state_;
 };
 
 } // namespace earth_engine

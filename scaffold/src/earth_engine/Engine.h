@@ -3,8 +3,12 @@
 #include "core/math/Vec3.h"
 #include "scene/Diagnostics.h"
 #include "scene/FrameState.h"
+#include "threading/CancellationToken.h"
+#include "tiling/TileKey.h"
 #include "tiling/TileOcclusionCallback.h"
+#include <array>
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <cstdint>
 #include <vector>
@@ -284,6 +288,15 @@ public:
     void setGpuHeightBakeEnabled(bool enabled);
     bool gpuHeightBakeEnabled() const { return gpuHeightBakeEnabled_; }
 
+    /// 刀2 路网 SDF 场:注入页存储"第二平面"的生产回调(签名/契约见
+    /// TerrainPageStore::Config::roadFieldRequest)与线色。**须在首帧渲染前
+    /// 调用**(页存储 lazy 初始化时快照 Config,之后注入不生效)。
+    void setRoadFieldSource(
+        std::function<void(const TileKey&, CancellationToken,
+                           std::function<void(std::vector<uint8_t>)>)>
+            request,
+        std::array<float, 4> lineColor);
+
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
@@ -358,6 +371,11 @@ private:
     bool terrainGpuDisplacementEnabled_ = true;
     // B:GPU 高度烘焙开关(默认关,CPU 烘焙路径;真机 A/B 用)。
     bool gpuHeightBakeEnabled_ = false;
+    // 刀2 路网场注入(页存储 lazy init 时快照进 Config)。
+    std::function<void(const TileKey&, CancellationToken,
+                       std::function<void(std::vector<uint8_t>)>)>
+        roadFieldRequest_;
+    std::array<float, 4> roadFieldColor_{0.96f, 0.96f, 0.94f, 0.86f};
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
     bool offscreenPassActive_ = false;
     int surfaceWidthPixels_ = 0;

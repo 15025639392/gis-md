@@ -219,6 +219,11 @@ uniform highp sampler2DArray u_pageStoreIndir;
 uniform vec4 u_pageStoreParams;
 uniform vec4 u_pageStoreUv;
 uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(片元)
+// 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
+// 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
+uniform highp sampler2DArray u_roadField;
+uniform vec4 u_roadFieldParams;  // x=enable y=羽化半带宽(texel) z/w=保留
+uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 
 out vec4 fragColor;
 
@@ -506,6 +511,17 @@ void main() {
         vec2 origin = floor(gGlobal / span) * span;
         vec2 sampleUv = (gGlobal - origin) / span;
         base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
+        // 刀2 路网 SDF 场:同一间接查找/同层号再采一次 R8 场(反向编码:
+        // 0=远/1=线内/0.5=边缘)。fwidth 屏幕导数做解析 AA —— 锐度与纹素
+        // 密度解耦;祖先粗页导数变大 → 线自然羽化淡出。
+        if (u_roadFieldParams.x > 0.5) {
+            float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
+            float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
+            float roadCov =
+                smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) * e.a *
+                u_roadFieldColor.a;
+            base.rgb = mix(base.rgb, u_roadFieldColor.rgb, roadCov);
+        }
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     // B2 刀2:HDR 下把 sRGB 反照率解到线性(glTF PBR 本为线性设计),BRDF 随之在
@@ -1052,6 +1068,11 @@ uniform vec4 u_pageStoreUv;
 // texture2DArray(固定 64² 每层,texel 写左上 gridN² 区),层号 u_terrainLayers.y。
 uniform highp sampler2DArray u_pageStoreIndir;
 uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(片元)
+// 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
+// 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
+uniform highp sampler2DArray u_roadField;
+uniform vec4 u_roadFieldParams;  // x=enable y=羽化半带宽(texel) z/w=保留
+uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 
 out vec4 fragColor;
 
@@ -1244,6 +1265,17 @@ void main() {
         vec2 sampleUv = (gGlobal - origin) / span;
         base = alphaOver(
             base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
+        // 刀2 路网 SDF 场:同一间接查找/同层号再采一次 R8 场(反向编码:
+        // 0=远/1=线内/0.5=边缘)。fwidth 屏幕导数做解析 AA —— 锐度与纹素
+        // 密度解耦;祖先粗页导数变大 → 线自然羽化淡出。
+        if (u_roadFieldParams.x > 0.5) {
+            float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
+            float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
+            float roadCov =
+                smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) * e.a *
+                u_roadFieldColor.a;
+            base.rgb = mix(base.rgb, u_roadFieldColor.rgb, roadCov);
+        }
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
@@ -1457,6 +1489,11 @@ uniform vec4 u_baseColor;
 uniform highp sampler2DArray u_pageStore;
 uniform highp sampler2DArray u_pageStoreIndir;
 uniform highp sampler2DArray u_heightTexture;
+// 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
+// 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
+uniform highp sampler2DArray u_roadField;
+uniform vec4 u_roadFieldParams;  // x=enable y=羽化半带宽(texel) z/w=保留
+uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 
 out vec4 fragColor;
 
@@ -1558,6 +1595,16 @@ void main() {
     vec2 origin = floor(gGlobal / span) * span;
     vec2 sampleUv = (gGlobal - origin) / span;
     base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
+
+    // 刀2 路网 SDF 场(镜像非实例变体;条件为逐实例 varying,texture/fwidth
+    // 在非 uniform 控制流内与既有 u_pageStore 采样同险,先例已存在)。
+    if (u_roadFieldParams.x > 0.5) {
+        float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
+        float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
+        float roadCov = smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) *
+                        e.a * u_roadFieldColor.a;
+        base.rgb = mix(base.rgb, u_roadFieldColor.rgb, roadCov);
+    }
 
     // GE 式半球光照(与 terrainShader 共用 TerrainSurfaceLightGLSL.h 的单一
     // 函数;由 withTerrainLight() 注入)。
@@ -2608,6 +2655,8 @@ struct GltfUniforms {
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
+    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=羽化半带宽(texel)
+    packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
 };
 
 float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
@@ -2852,6 +2901,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              // 合批 Step 2:间接纹理搬 array(64² 每层,层号 u.terrainLayers.y)。
                              texture2d_array<float> u_pageStore [[texture(20)]],
                              texture2d_array<float> u_pageStoreIndir [[texture(21)]],
+                             texture2d_array<float> u_roadField [[texture(23)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -2961,6 +3011,18 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             base,
             u_pageStore.sample(u_tileSharedSampler, sampleUv, uint(layer)),
             e.a);
+        // 刀2 路网 SDF 场(镜像 GLSL;⚠️ 未经 Metal 真机验证,布局/绑定按
+        // 契约写就,验证前若有问题以 GLES 行为为准)。反向编码 0=远,失败安全。
+        if (u.roadFieldParams.x > 0.5) {
+            float fieldV =
+                u_roadField.sample(u_tileSharedSampler, sampleUv, uint(layer)).r;
+            float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
+            float roadCov =
+                smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) * e.a *
+                float4(u.roadFieldColor).w;
+            base.rgb = mix(base.rgb, float3(float4(u.roadFieldColor).xyz),
+                           roadCov);
+        }
     }
     base = gltfApplyWaterMask(
         base,
@@ -3418,6 +3480,8 @@ struct GltfUniforms {
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
+    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=羽化半带宽(texel)
+    packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
 };
 
 // TerrainVertexOut is provided by the vertex MSL (the backend concatenates the
@@ -3495,6 +3559,7 @@ fragment float4 terrainFragment(
     // 稀疏虚拟纹理(Step B1):间接纹理(RGBA8 编 layer 索引)。合批 Step 2:搬
     // array(64² 每层,层号 u.terrainLayers.y),read() 整数寻址不占 sampler 槽。
     texture2d_array<float> u_pageStoreIndir [[texture(21)]],
+                             texture2d_array<float> u_roadField [[texture(23)]],
     // Metal argument tables cap samplers at 0-15; terrain imagery all uses the
     // same clamp/linear sampling, so a single shared sampler at slot 0 covers
     // the base color, raster overlay (textures 15-18) and water mask (19)
@@ -3590,6 +3655,18 @@ fragment float4 terrainFragment(
             base,
             u_pageStore.sample(u_terrainSampler, sampleUv, uint(layer)),
             e.a);
+        // 刀2 路网 SDF 场(镜像 GLSL;⚠️ 未经 Metal 真机验证)。反向编码
+        // 0=远,失败安全。
+        if (u.roadFieldParams.x > 0.5) {
+            float fieldV =
+                u_roadField.sample(u_terrainSampler, sampleUv, uint(layer)).r;
+            float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
+            float roadCov =
+                smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) * e.a *
+                float4(u.roadFieldColor).w;
+            base.rgb = mix(base.rgb, float3(float4(u.roadFieldColor).xyz),
+                           roadCov);
+        }
     }
     base = terrainApplyWaterMask(
         base, in, u_gltfWaterMaskTexture, u_terrainSampler,
@@ -3799,6 +3876,10 @@ fragment float4 terrainInstancedFragment(
     constant TerrainInstancedFragUniforms& u [[buffer(0)]],
     texture2d_array<float> u_pageStore [[texture(20)]],
     texture2d_array<float> u_pageStoreIndir [[texture(21)]],
+    // 刀2 场纹理已随命令绑定;实例化 MSL 的 frag uniforms 是精简 struct
+    // (无 roadFieldParams),场解算暂缺 —— 与 Metal 侧 depth-only/法线场
+    // 同类特性滞后,补齐时机见 GLES 版注释。参数保留占位。
+    texture2d_array<float> u_roadField [[texture(23)]],
     sampler u_pageSampler [[sampler(0)]]) {
     float2 terrainUv = in.texcoord01.xy;
     if (in.pageParams.z > 0.5 &&

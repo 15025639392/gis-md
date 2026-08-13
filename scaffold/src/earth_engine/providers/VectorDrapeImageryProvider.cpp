@@ -2,60 +2,15 @@
 
 #include <algorithm>
 #include <atomic>
-#include <cmath>
-#include <list>
-#include <mutex>
-#include <unordered_map>
 #include <utility>
 
 #include "../core/async/AsyncSystem.h"
-#include "../core/geodesy/Cartographic.h"
-#include "../core/geodesy/Gcj02CoordinateTransform.h"
 #include "../data/MvtDecoder.h"
+#include "MvtRectCoverage.h"
 
 namespace earth_engine {
 
 namespace {
-
-constexpr double kPi = 3.14159265358979323846;
-
-uint64_t packDataKey(int z, int x, int y) {
-    return (static_cast<uint64_t>(z) << 48) |
-           (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 24) |
-           static_cast<uint64_t>(static_cast<uint32_t>(y));
-}
-
-MercatorRect tileToUnitRect(int z, int x, int y) {
-    const double span = 1.0 / static_cast<double>(1ull << z);
-    return MercatorRect{x * span, y * span, (x + 1) * span, (y + 1) * span};
-}
-
-double unitXFromLongitude(double lngRad) { return lngRad / (2.0 * kPi) + 0.5; }
-
-double unitYFromLatitude(double latRad) {
-    return 0.5 - std::log(std::tan(kPi / 4.0 + latRad / 2.0)) / (2.0 * kPi);
-}
-
-double longitudeFromUnitX(double u) { return (u - 0.5) * 2.0 * kPi; }
-
-double latitudeFromUnitY(double v) {
-    return 2.0 * std::atan(std::exp(kPi * (1.0 - 2.0 * v))) - kPi / 2.0;
-}
-
-/// GCJ 网格矩形 → 真实 WGS84 覆盖区:按中心点 toWgs84 做常量平移。与渲染侧
-/// per-tile 单点 worldOffset(TerrainPageStore determination)同语义同精度 ——
-/// 两侧都是"整矩形一个偏移",偏移场梯度(~1e-5)在页跨度内的残差远小于纹素。
-MercatorRect shiftRectGcjToWgs84(const MercatorRect& rect) {
-    const double cu = 0.5 * (rect.x0 + rect.x1);
-    const double cv = 0.5 * (rect.y0 + rect.y1);
-    const Cartographic gcj = Cartographic::fromRadians(
-        longitudeFromUnitX(cu), latitudeFromUnitY(cv));
-    const Cartographic wgs = Gcj02CoordinateTransform::toWgs84(gcj);
-    const double du = unitXFromLongitude(wgs.longitude()) - cu;
-    const double dv = unitYFromLatitude(wgs.latitude()) - cv;
-    return MercatorRect{rect.x0 + du, rect.y0 + dv, rect.x1 + du,
-                        rect.y1 + dv};
-}
 
 std::unique_ptr<DecodedImage> toDecodedImage(VectorRasterImage&& raster) {
     if (raster.empty()) return nullptr;
@@ -71,8 +26,7 @@ std::unique_ptr<DecodedImage> toDecodedImage(VectorRasterImage&& raster) {
 } // namespace
 
 /// 一次 requestTile 的聚合状态:等覆盖矩形的全部源瓦到齐(命中/拉取/失败)。
-/// slot 由 dataKey 唯一对应,不同源瓦的完成回调并发写不同 slot,互不冲突;
-/// 计数原子递减,归零者负责收尾 —— 无需再持锁。
+/// slot 独占写(每 slot 一个回调闭包),计数原子递减,归零者负责收尾。
 struct VectorDrapeImageryProvider::Assembly {
     TileKey pageKey;
     CancellationToken token;
@@ -86,31 +40,9 @@ struct VectorDrapeImageryProvider::Assembly {
     // enqueue 裸指针(真机崩过 `enqueue on stopped ThreadPool`)。
     std::weak_ptr<ThreadPool> rasterPool;
 
-    std::vector<uint64_t> dataKeys;
     std::vector<MvtTileRef> refs;  // tile 指针延迟到收尾时从 holders 取
     std::vector<std::shared_ptr<const MvtTile>> holders;
     std::atomic<int> remaining{0};
-};
-
-/// 缓存/在途账本。shared_ptr 持有:fetch 回调只捕它,provider 先亡不悬垂
-/// (与 TerrainPageStore 的 PendingInbox、MvtVectorSource 的 weak pool 同一
-/// 条 teardown 法则)。
-struct VectorDrapeImageryProvider::State {
-    std::mutex mutex;
-    // LRU:list 头新尾旧;map 值持 list 迭代器。值 shared_ptr 出借给栅格化
-    // 任务,淘汰不悬垂。
-    struct CacheEntry {
-        uint64_t key;
-        std::shared_ptr<const MvtTile> tile;
-    };
-    std::list<CacheEntry> cacheOrder;
-    std::unordered_map<uint64_t, std::list<CacheEntry>::iterator> cache;
-    // 在途合并:同一 dataKey 的并发请求挂到同一份 waiters。
-    std::unordered_map<uint64_t,
-                       std::vector<std::shared_ptr<Assembly>>> inflight;
-    size_t capacity = 48;
-    uint64_t hits = 0;
-    uint64_t fetches = 0;
 };
 
 /// 收尾本体(可能在 rasterPool、拉取回调线程或调用线程执行)。
@@ -146,49 +78,12 @@ void VectorDrapeImageryProvider::completeIfReady(
     }
 }
 
-void VectorDrapeImageryProvider::onSourceTileReady(
-    const std::shared_ptr<State>& state, uint64_t dataKey,
-    std::shared_ptr<const MvtTile> tile) {
-    std::vector<std::shared_ptr<Assembly>> waiters;
-    {
-        std::lock_guard<std::mutex> lock(state->mutex);
-        auto it = state->inflight.find(dataKey);
-        if (it != state->inflight.end()) {
-            waiters = std::move(it->second);
-            state->inflight.erase(it);
-        }
-        if (tile) {
-            state->cacheOrder.push_front(State::CacheEntry{dataKey, tile});
-            state->cache[dataKey] = state->cacheOrder.begin();
-            while (state->cache.size() > state->capacity) {
-                state->cache.erase(state->cacheOrder.back().key);
-                state->cacheOrder.pop_back();
-            }
-        }
-        // 失败(tile==null)不入缓存:下一批页会重新尝试,server 恢复后自愈。
-    }
-    for (const std::shared_ptr<Assembly>& assembly : waiters) {
-        for (size_t i = 0; i < assembly->dataKeys.size(); ++i) {
-            if (assembly->dataKeys[i] == dataKey) {
-                assembly->holders[i] = tile;
-                break;
-            }
-        }
-        if (assembly->remaining.fetch_sub(1, std::memory_order_acq_rel) ==
-            1) {
-            completeIfReady(assembly);
-        }
-    }
-}
-
 VectorDrapeImageryProvider::VectorDrapeImageryProvider(
-    Options options, FetchFn fetch, std::shared_ptr<ThreadPool> rasterPool)
+    Options options, std::shared_ptr<MvtTileFetchCache> tileCache,
+    std::shared_ptr<ThreadPool> rasterPool)
     : options_(std::move(options)),
-      fetch_(std::move(fetch)),
-      state_(std::make_shared<State>()) {
-    state_->capacity = std::max<size_t>(1, options_.tileCacheCapacity);
-    rasterPool_ = std::move(rasterPool);
-}
+      tileCache_(std::move(tileCache)),
+      rasterPool_(std::move(rasterPool)) {}
 
 std::string VectorDrapeImageryProvider::buildUrl(const TileKey& key) const {
     return options_.id + "://" + std::to_string(key.z) + "/" +
@@ -202,26 +97,18 @@ void VectorDrapeImageryProvider::requestTile(const TileKey& key,
     if (!callback) {
         return;
     }
-    if (!fetch_) {
+    if (!tileCache_) {
         callback(key, nullptr);
         return;
     }
 
-    MercatorRect rect = tileToUnitRect(key.z, key.x, key.y);
+    MercatorRect rect = mvt_rect::tileToUnitRect(key.z, key.x, key.y);
     if (options_.gcj02SourceGrid) {
-        rect = shiftRectGcjToWgs84(rect);
+        rect = mvt_rect::shiftRectGcjToWgs84(rect);
     }
-
     const int dataZ = std::max(0, std::min(key.z, options_.dataMaxZoom));
-    const int n = 1 << dataZ;
-    const auto clampTile = [n](int v) { return std::max(0, std::min(v, n - 1)); };
-    // 右/下边界用 ceil-1:边界恰在瓦缝(无 GCJ 平移时的常态)不多取一排。
-    const int tx0 = clampTile(static_cast<int>(std::floor(rect.x0 * n)));
-    const int tx1 = clampTile(
-        std::max(tx0, static_cast<int>(std::ceil(rect.x1 * n)) - 1));
-    const int ty0 = clampTile(static_cast<int>(std::floor(rect.y0 * n)));
-    const int ty1 = clampTile(
-        std::max(ty0, static_cast<int>(std::ceil(rect.y1 * n)) - 1));
+    const std::vector<mvt_rect::TileXY> tiles =
+        mvt_rect::coverage(rect, dataZ);
 
     auto assembly = std::make_shared<Assembly>();
     assembly->pageKey = key;
@@ -232,71 +119,32 @@ void VectorDrapeImageryProvider::requestTile(const TileKey& key,
     assembly->tileSize = options_.tileSize;
     assembly->style = options_.style;
     assembly->rasterPool = rasterPool_;
-    for (int ty = ty0; ty <= ty1; ++ty) {
-        for (int tx = tx0; tx <= tx1; ++tx) {
-            assembly->dataKeys.push_back(packDataKey(dataZ, tx, ty));
-            MvtTileRef ref;
-            ref.z = dataZ;
-            ref.x = tx;
-            ref.y = ty;
-            assembly->refs.push_back(ref);
-        }
+    assembly->refs.reserve(tiles.size());
+    for (const mvt_rect::TileXY& t : tiles) {
+        MvtTileRef ref;
+        ref.z = dataZ;
+        ref.x = t.x;
+        ref.y = t.y;
+        assembly->refs.push_back(ref);
     }
-    assembly->holders.assign(assembly->dataKeys.size(), nullptr);
+    assembly->holders.assign(assembly->refs.size(), nullptr);
+    assembly->remaining.store(static_cast<int>(assembly->refs.size()),
+                              std::memory_order_release);
 
-    // 命中的当场填;miss 的挂在途(已有人拉则搭车,否则自己发起)。
-    std::vector<size_t> toFetch;
-    int missing = 0;
-    {
-        std::lock_guard<std::mutex> lock(state_->mutex);
-        for (size_t i = 0; i < assembly->dataKeys.size(); ++i) {
-            const uint64_t dk = assembly->dataKeys[i];
-            auto it = state_->cache.find(dk);
-            if (it != state_->cache.end()) {
-                // LRU touch:移到头部。
-                state_->cacheOrder.splice(state_->cacheOrder.begin(),
-                                          state_->cacheOrder, it->second);
-                assembly->holders[i] = it->second->tile;
-                ++state_->hits;
-                continue;
-            }
-            ++missing;
-            auto inIt = state_->inflight.find(dk);
-            if (inIt != state_->inflight.end()) {
-                inIt->second.push_back(assembly);
-            } else {
-                state_->inflight[dk].push_back(assembly);
-                toFetch.push_back(i);
-                ++state_->fetches;
-            }
-        }
-        assembly->remaining.store(missing, std::memory_order_release);
-    }
-
-    if (missing == 0) {
-        completeIfReady(assembly);
-        return;
-    }
-    for (size_t i : toFetch) {
-        const uint64_t dk = assembly->dataKeys[i];
+    for (size_t i = 0; i < assembly->refs.size(); ++i) {
         TileKey fetchKey = key;  // 沿用 schemeId,z/x/y 换成数据瓦
         fetchKey.z = assembly->refs[i].z;
         fetchKey.x = assembly->refs[i].x;
         fetchKey.y = assembly->refs[i].y;
-        // 回调只捕 shared_ptr<State>(不捕 this):provider 可在瓦片在途时
-        // 随引擎拆除,迟到回调只落进自持账本。
-        std::shared_ptr<State> state = state_;
-        fetch_(fetchKey, [state, dk](int statusCode,
-                                     std::vector<uint8_t> body) {
-            std::shared_ptr<const MvtTile> tile;
-            if (statusCode == 200 && !body.empty()) {
-                auto decoded = std::make_shared<MvtTile>();
-                if (decodeMvtTile(body.data(), body.size(), *decoded)) {
-                    tile = std::move(decoded);
+        tileCache_->request(
+            fetchKey,
+            [assembly, i](std::shared_ptr<const MvtTile> tile) {
+                assembly->holders[i] = std::move(tile);  // 失败=null,照画
+                if (assembly->remaining.fetch_sub(
+                        1, std::memory_order_acq_rel) == 1) {
+                    completeIfReady(assembly);
                 }
-            }
-            onSourceTileReady(state, dk, std::move(tile));
-        });
+            });
     }
 }
 
@@ -309,12 +157,6 @@ std::unique_ptr<DecodedImage> VectorDrapeImageryProvider::decodeTile(
     return toDecodedImage(rasterizeMvtTile(tile, options_.dataMaxZoom,
                                            options_.style,
                                            options_.tileSize));
-}
-
-VectorDrapeImageryProvider::CacheStats
-VectorDrapeImageryProvider::cacheStats() const {
-    std::lock_guard<std::mutex> lock(state_->mutex);
-    return CacheStats{state_->hits, state_->fetches};
 }
 
 } // namespace earth_engine

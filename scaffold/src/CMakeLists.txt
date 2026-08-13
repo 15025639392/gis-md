@@ -541,6 +541,9 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/XYZImageryProvider.cpp
     earth_engine/providers/VectorDrapeImageryProvider.h
     earth_engine/providers/VectorDrapeImageryProvider.cpp
+    earth_engine/providers/MvtRectCoverage.h
+    earth_engine/providers/RoadFieldSource.h
+    earth_engine/providers/RoadFieldSource.cpp
     earth_engine/providers/WebMapServiceImageryProvider.h
     earth_engine/providers/WebMapServiceImageryProvider.cpp
     earth_engine/providers/WebMapTileServiceImageryProvider.h
@@ -753,6 +756,10 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/VectorRasterStyle.h
     earth_engine/data/VectorTileRasterizer.h
     earth_engine/data/VectorTileRasterizer.cpp
+    earth_engine/data/LineFieldRasterizer.h
+    earth_engine/data/LineFieldRasterizer.cpp
+    earth_engine/data/MvtTileFetchCache.h
+    earth_engine/data/MvtTileFetchCache.cpp
 )
 
 # ============================================================

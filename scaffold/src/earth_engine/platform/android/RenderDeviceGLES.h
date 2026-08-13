@@ -220,12 +220,16 @@ class GLTexture : public Texture {
 public:
     // target = GL_TEXTURE_2D(普通)或 GL_TEXTURE_2D_ARRAY(合成方案页存储);
     // arrayLayers = 1 表示普通 2D,>1 表示数组层数。
+    // glFormat/bytesPerPixel:updateTextureRegion 按纹理自身格式上传
+    // (R8 场纹理走 GL_RED/1B;旧硬编码 GL_RGBA 会拒掉一切非 4B 格式)。
     GLTexture(unsigned int id,
               int width,
               int height,
               size_t sizeBytes,
               unsigned int target = 0x0DE1 /* GL_TEXTURE_2D */,
-              int arrayLayers = 1);
+              int arrayLayers = 1,
+              unsigned int glFormat = 0x1908 /* GL_RGBA */,
+              size_t bytesPerPixel = 4);
     ~GLTexture() override;
     int width() const override { return width_; }
     int height() const override { return height_; }
@@ -233,12 +237,16 @@ public:
     unsigned int glId() const { return id_; }
     unsigned int target() const { return target_; }
     int arrayLayers() const { return arrayLayers_; }
+    unsigned int glFormat() const { return glFormat_; }
+    size_t bytesPerPixel() const { return bytesPerPixel_; }
 private:
     unsigned int id_;
     int width_, height_;
     size_t sizeBytes_ = 0;
     unsigned int target_;
     int arrayLayers_ = 1;
+    unsigned int glFormat_ = 0x1908;
+    size_t bytesPerPixel_ = 4;
 };
 
 /// 离屏 framebuffer:color 恒为可采样 GLTexture(生命周期归本对象)。
