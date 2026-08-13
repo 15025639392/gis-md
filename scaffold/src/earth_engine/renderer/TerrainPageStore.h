@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "../core/math/OrientedBoundingBox.h"
 #include "../core/math/Rectangle.h"
 #include "../threading/CancellationToken.h"
 #include "../tiling/RasterOverlayProjection.h"
@@ -470,28 +471,29 @@ private:
     uint64_t pageDetFrameCounter_ = 0;                  // 节流 log 用(独立于 frameId_)
     int lastVisiblePageCount_ = 0;
 
-    // ===== determination 缓存(高倾斜 fps:视图+可见瓦片集逐值精确不变 → 跳过逐 cell
-    // 几何枚举 OBB/视锥/SSE,只重跑便宜的驻留编码。缓存的是**纯几何结果**(哪些 cell
-    // 过筛 + cell→pageKey),它只依赖视图+瓦片(key/zoom/minH/maxH)+threshold,不依赖
-    // 页驻留态。**失效判定逐字段 ==**(hash 有碰撞→误判为未变=雷,故用精确比对);
-    // 顺序/内容任一变化 → 全 re-walk(安全侧,只会多跑不会用错)。驻留层(pool.acquire/
-    // touch/淘汰/kick/编码)**每帧必跑**,故冻结相机下异步到页仍逐帧点亮,无 stale。=====
-    struct DetTileSig {  // per-tile 几何签名(决定 kept cells 的全部输入)
-        uint64_t tileKey = 0;
-        int zoom = 0;
-        double minH = 0.0;
-        double maxH = 0.0;
-        bool operator==(const DetTileSig& o) const {
-            return tileKey == o.tileKey && zoom == o.zoom && minH == o.minH &&
-                   maxH == o.maxH;
-        }
-    };
+    // ===== determination 缓存:per-cell 几何(源矩形→OBB,相机无关)按 placement 缓存,
+    // 每帧只在其上做相机相关的 frustum/SSE 分类得到 kept。相机平滑运动下 placement 稳定 →
+    // OBB 跨帧复用(免每帧重算=几何 walk 大头),分类逐位等于现算故 kept 不变。驻留层
+    // (pool.acquire/touch/淘汰/kick/编码)**每帧必跑**,故异步到页逐帧点亮无 stale。=====
     struct DetKeptCell {  // 缓存的「过视锥」cell(纯几何,不含驻留态)
         int dx = 0;
         int dy = 0;
         int d = 0;         // per-cell 渐变 LOD 深度(§16.3):Z-Za,pageKey/fetchKey=粗祖先
         uint64_t pageKey = 0;
         TileKey fetchKey;  // 影像 provider schemeId 的粗祖先页 key(kick fetch 用)
+    };
+    // [pageStore第一刀] 相机无关的 per-cell 几何(源矩形→OBB,建构含三角函数,是几何
+    // walk 的大头)。只随 placement 变化重建,平滑运动下跨帧复用;分类阶段每帧在其上做
+    // frustum+SSE,结果逐位等于现算 → kept 不变,无白面/漏底风险。
+    struct DetCellGeom {
+        int dx = 0;
+        int dy = 0;
+        int subX = 0;  // p.placement.x0 + dx(pageKey 的 cx=subX>>d 用)
+        int subY = 0;
+        OrientedBoundingBox obb;
+        DetCellGeom(int dx_, int dy_, int subX_, int subY_,
+                    const OrientedBoundingBox& obb_)
+            : dx(dx_), dy(dy_), subX(subX_), subY(subY_), obb(obb_) {}
     };
     struct DetTileCacheEntry {
         int gridN = 1;
@@ -502,6 +504,8 @@ private:
         int cellX0 = 0;
         int cellY0 = 0;
         uint64_t lastFrame = 0;  // 访问帧;sweep 清非本帧可见瓦片(同 tileIndirs_)
+        // [pageStore第一刀] 相机无关几何缓存(placement 不变则跨帧复用,免每帧重建 OBB)。
+        std::vector<DetCellGeom> geom;
         std::vector<DetKeptCell> kept;
         // 本瓦片被 SSE 地板剔掉的 cell 数(合批资格用,见 fullyResident)。
         //
@@ -553,19 +557,6 @@ private:
     };
     std::unordered_map<uint64_t, DetTileCacheEntry> detTileCache_;  // tileKey→几何缓存
     std::vector<DetTileParam> detParamsScratch_;
-    std::vector<DetTileSig> detTilesScratch_;
-    // 上一帧几何输入签名(逐值精确比对)。几何只依赖:frustum(intersectsOBB)+
-    // position(cellDist)+ projection/viewportHeight(SSE)+ threshold + provider + 瓦片集。
-    // 存 6 frustum 平面(每面 normal.xyz + distance = 4 double,共 24)= 全朝向含 roll。
-    bool detSigValid_ = false;
-    double detPos_[3] = {};
-    double detPlanes_[24] = {};
-    double detProj_[16] = {};
-    int detVpH_ = 0;
-    double detThreshold_ = 0.0;
-    const void* detProvider_ = nullptr;
-    std::vector<DetTileSig> detTilesPrev_;
-    int lastCulledBySse_ = 0;  // TEMP 诊断:hit 帧复用(walk 跳过故不重算)
 };
 
 }  // namespace earth_engine

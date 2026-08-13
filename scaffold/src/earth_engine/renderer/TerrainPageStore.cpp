@@ -541,7 +541,6 @@ void TerrainPageStore::updateVisiblePages(
     // 「未 cap 会细化到的几何 LOD」;用 overlay MSE 2 会过取 z18)。=====
     const double threshold = std::max(1e-3, terrainMaxScreenSpaceError);
     detParamsScratch_.clear();
-    detTilesScratch_.clear();
     double maxTileSse = 0.0;  // TEMP 诊断
     for (TilesetTile* tile : visibleTiles) {
         if (!tile) {
@@ -630,59 +629,25 @@ void TerrainPageStore::updateVisiblePages(
             {tile, tileKeyPacked, zoom, gridN, minH, maxH, imgSchemeId,
              placement, texCoordSet >= 0 ? texCoordSet : 0,
              worldOffsetLng, worldOffsetLat, crossesGcjBoundary});
-        detTilesScratch_.push_back({tileKeyPacked, zoom, minH, maxH});
     }
 
-    // ===== Phase 2:签名逐字段精确比对(任一不同 → miss,全部瓦片 re-walk 几何)。
-    // 精确 ==(非 hash)杜绝「视图变了却判成未变」的雷。几何输入 = frustum 6 平面 +
-    // position + projection + viewportHeight + threshold + provider + 瓦片集。=====
-    double curPlanes[24];
-    {
-        using PI = Frustum::PlaneIndex;
-        const PI order[6] = {PI::Left, PI::Right,  PI::Bottom,
-                             PI::Top,  PI::Near,   PI::Far};
-        for (int i = 0; i < 6; ++i) {
-            const FrustumPlane& pl = view.frustum.plane(order[i]);
-            curPlanes[i * 4 + 0] = pl.normal.x();
-            curPlanes[i * 4 + 1] = pl.normal.y();
-            curPlanes[i * 4 + 2] = pl.normal.z();
-            curPlanes[i * 4 + 3] = pl.distance;
-        }
-    }
-    double curProj[16];
-    for (int c = 0; c < 4; ++c) {
-        for (int r = 0; r < 4; ++r) {
-            curProj[c * 4 + r] = view.projectionMatrix(r, c);
-        }
-    }
-    bool viewMatch = detSigValid_ && detProvider_ == provider &&
-                     detVpH_ == view.viewportHeightPixels &&
-                     detThreshold_ == threshold &&
-                     detPos_[0] == view.position.x() &&
-                     detPos_[1] == view.position.y() &&
-                     detPos_[2] == view.position.z();
-    for (int i = 0; i < 24 && viewMatch; ++i) {
-        if (detPlanes_[i] != curPlanes[i]) viewMatch = false;
-    }
-    for (int i = 0; i < 16 && viewMatch; ++i) {
-        if (detProj_[i] != curProj[i]) viewMatch = false;
-    }
-    const bool hit = viewMatch && detTilesPrev_ == detTilesScratch_;
-
-    // ===== Phase 3:逐瓦片 —— miss 时 walk 几何填缓存;两路都跑驻留编码(每帧必跑,
-    // 故异步到页逐帧点亮无 stale)。=====
+    // ===== Phase 2:逐瓦片 —— geom 缓存(相机无关几何,placement 变才重建)+ 每帧分类
+    // (frustum/SSE)。驻留编码每帧必跑,故异步到页逐帧点亮无 stale。=====
     visiblePagesScratch_.clear();
     int zMin = std::numeric_limits<int>::max();
     int zMax = std::numeric_limits<int>::min();
-    int culledBySse = hit ? lastCulledBySse_ : 0;
+    // 分类每帧必跑 → culledBySse 每帧从 0 重累加。
+    int culledBySse = 0;
     const int visibleCappedTiles = static_cast<int>(detParamsScratch_.size());
 
     for (const DetTileParam& p : detParamsScratch_) {
         DetTileCacheEntry& cache = detTileCache_[p.tileKeyPacked];
-        // 几何 walk 仅在 miss(或 gridN 变=几何变的保险)时跑。
-        // gridN 之外还要比 cell 范围:GCJ 下 gridN 不变而 placement 可能整体平移
-        // (相机移动跨过源网格线),只比 gridN 会把上一格的 kept 当本格用。
-        if (!hit || cache.gridN != p.gridN ||
+        // geom 缓存:相机无关的 per-cell 几何(源矩形→OBB,建构含三角函数,是几何
+        // walk 的大头)。只在 placement/几何变化时重建 —— 平滑运动下 placement 稳定 →
+        // 跨帧复用,免每帧重算 OBB。geom 逐位等于现算,故下面的分类结果不变(无白面/
+        // 漏底)。此前这里靠 bit-exact 视图签名整体跳过 walk,运动下恒判脏=每帧全量
+        // 重跑;拆成「几何缓存 + 每帧分类」后运动稳态 walk 6-12ms → ~0.3ms。
+        if (cache.gridN != p.gridN ||
             cache.cellsX != p.placement.cellsX ||
             cache.cellsY != p.placement.cellsY ||
             cache.cellX0 != p.placement.x0 ||
@@ -692,8 +657,7 @@ void TerrainPageStore::updateVisiblePages(
             cache.cellsY = p.placement.cellsY;
             cache.cellX0 = p.placement.x0;
             cache.cellY0 = p.placement.y0;
-            cache.kept.clear();
-            cache.sseFloorCulled = 0;
+            cache.geom.clear();
             // cell 网格 = **源瓦片网格**(D)。标准 overlay 下 placement 退化成
             // x0=key.x*gridN、cells=gridN,与改造前逐格相同;GCJ 等源网格不对齐的
             // overlay 才走到偏移后的 range(通常多一列一行)。
@@ -705,8 +669,7 @@ void TerrainPageStore::updateVisiblePages(
                     sub.x = p.placement.x0 + dx;
                     sub.y = p.placement.y0 + dy;
                     // 覆盖范围可能比瓦片宽一格:完全不压在本瓦片上的 cell 不产生
-                    // 片元,给它取页纯属浪费(且会拉高 fetch 量)。标准 overlay 下
-                    // 恒相交 → 逐格等价于改造前。
+                    // 片元,不入 geom。标准 overlay 下恒相交 → 逐格等价于改造前。
                     const double cellLo = static_cast<double>(dx);
                     const double cellHi = cellLo + 1.0;
                     const double tileLo = p.placement.originU;
@@ -737,56 +700,60 @@ void TerrainPageStore::updateVisiblePages(
                     if (!obb) {
                         continue;  // 无包围体 → 无从测距(编码时默认 miss)
                     }
-                    // 跨 GCJ 边界的瓦片放弃视锥剔除:worldOffset 在这种瓦片上是
-                    // 阶跃近似,剔除判定不可信,而"视锥外"恰好是合批资格闸唯一
-                    // 无条件放行的一类 —— 假的视锥外会渲成纯白面(见 DetTileParam
-                    // 的 crossesGcjBoundary 注释)。保守全收,让 kept 全驻留去挡。
-                    if (!p.crossesGcjBoundary &&
-                        !view.frustum.intersectsOBB(*obb)) {
-                        continue;  // 视锥外 → 不入 kept(编码时默认 miss)
-                    }
-                    // per-cell 渐变 LOD(§16.3):用**瓦片级** geomError 在 cell 距离处的
-                    // 屏幕误差 → cell 该细化到的影像 zoom Za。近 cell(cellDist≈瓦片距)→
-                    // cellSse≈tileSse → Za=Z、d=0(逐字节=现状精页);远 cell → Za 渐降
-                    // → 采粗祖先页,多远 cell 共享同一粗页(池去重)→ 工作集有界。替代
-                    // §15.3① 的硬剔到 z12 悬崖(=模糊带根因)为随距离单调 ≤1 级渐变。
-                    const double cellDist = std::sqrt(
-                        obb->computeDistanceSquaredToPosition(view.position));
-                    const double cellSse =
-                        TileSelectionInputMetrics::screenSpaceErrorForView(
-                            p.tile->geometricError, view.projectionMatrix,
-                            view.viewportHeightPixels, cellDist);
-                    // 真 miss 地板(§16.3⑥):屏幕贡献 < 1/4 阈值的 cell = 厚 OBB 掠射
-                    // 假阳性,不给页(回落 mappedRaster),防 near-nadir 枚举爆量。
-                    if (cellSse < threshold * kCellSseMissFloorFraction) {
-                        ++culledBySse;
-                        ++cache.sseFloorCulled;  // per-tile:合批资格要用
-                        continue;
-                    }
-                    int za = p.tile->key.z;
-                    if (cellSse > threshold) {
-                        za = p.tile->key.z +
-                             static_cast<int>(
-                                 std::lround(std::log2(cellSse / threshold)));
-                    }
-                    za = std::clamp(za, p.tile->key.z, p.zoom);  // [tileZ, Z]
-                    const int d = p.zoom - za;  // 相对精网格下降级数(≥0)
-                    // 粗祖先页(zoom=Za):cx=(tileX*gridN+dx)>>d、cy=(...)>>d。
-                    // (tileX*gridN 是 2^d 倍数,右移无进位污染,§13.4 对齐推导。)
-                    DetKeptCell kc;
-                    kc.dx = dx;
-                    kc.dy = dy;
-                    kc.d = d;
-                    const int cx = sub.x >> d;
-                    const int cy = sub.y >> d;
-                    kc.fetchKey.schemeId = p.imgSchemeId;
-                    kc.fetchKey.z = za;
-                    kc.fetchKey.x = cx;
-                    kc.fetchKey.y = cy;
-                    kc.pageKey = packKey(kc.fetchKey);  // 粗页去重 key(同祖先→同 key)
-                    cache.kept.push_back(kc);
+                    cache.geom.emplace_back(dx, dy, sub.x, sub.y, *obb);
                 }
             }
+        }
+
+        // [pageStore第一刀] 分类(相机相关,每帧必跑):在缓存几何上做 frustum+SSE →
+        // kept。逐位复刻原 walk 的相机相关段,只是 OBB/矩形不再每帧重建。
+        cache.kept.clear();
+        cache.sseFloorCulled = 0;
+        for (const DetCellGeom& g : cache.geom) {
+            // 跨 GCJ 边界的瓦片放弃视锥剔除:worldOffset 是阶跃近似,假的"视锥外"
+            // 会渲成纯白面(见 DetTileParam 的 crossesGcjBoundary 注释)。保守全收。
+            if (!p.crossesGcjBoundary &&
+                !view.frustum.intersectsOBB(g.obb)) {
+                continue;  // 视锥外 → 不入 kept(编码时默认 miss)
+            }
+            // per-cell 渐变 LOD(§16.3):用**瓦片级** geomError 在 cell 距离处的屏幕
+            // 误差 → cell 该细化到的影像 zoom Za。近 cell→Za=Z、d=0(逐字节=现状精
+            // 页);远 cell→Za 渐降采粗祖先页(池去重,工作集有界)。
+            const double cellDist = std::sqrt(
+                g.obb.computeDistanceSquaredToPosition(view.position));
+            const double cellSse =
+                TileSelectionInputMetrics::screenSpaceErrorForView(
+                    p.tile->geometricError, view.projectionMatrix,
+                    view.viewportHeightPixels, cellDist);
+            // 真 miss 地板(§16.3⑥):屏幕贡献 < 1/4 阈值的 cell = 厚 OBB 掠射假阳性,
+            // 不给页(回落 mappedRaster),防 near-nadir 枚举爆量。
+            if (cellSse < threshold * kCellSseMissFloorFraction) {
+                ++culledBySse;
+                ++cache.sseFloorCulled;  // per-tile:合批资格要用
+                continue;
+            }
+            int za = p.tile->key.z;
+            if (cellSse > threshold) {
+                za = p.tile->key.z +
+                     static_cast<int>(
+                         std::lround(std::log2(cellSse / threshold)));
+            }
+            za = std::clamp(za, p.tile->key.z, p.zoom);  // [tileZ, Z]
+            const int d = p.zoom - za;  // 相对精网格下降级数(≥0)
+            // 粗祖先页(zoom=Za):cx=(tileX*gridN+dx)>>d、cy=(...)>>d。
+            // (tileX*gridN 是 2^d 倍数,右移无进位污染,§13.4 对齐推导。)
+            DetKeptCell kc;
+            kc.dx = g.dx;
+            kc.dy = g.dy;
+            kc.d = d;
+            const int cx = g.subX >> d;
+            const int cy = g.subY >> d;
+            kc.fetchKey.schemeId = p.imgSchemeId;
+            kc.fetchKey.z = za;
+            kc.fetchKey.x = cx;
+            kc.fetchKey.y = cy;
+            kc.pageKey = packKey(kc.fetchKey);  // 粗页去重 key(同祖先→同 key)
+            cache.kept.push_back(kc);
         }
 
         // 驻留编码(**每帧必跑**):按当前 resident/uploaded 重建间接纹理。
@@ -961,23 +928,6 @@ void TerrainPageStore::updateVisiblePages(
             ++it;
         }
     }
-
-    // 保存本帧签名(供下帧 Phase 2 逐值比对)。
-    detSigValid_ = true;
-    detProvider_ = provider;
-    detVpH_ = view.viewportHeightPixels;
-    detThreshold_ = threshold;
-    detPos_[0] = view.position.x();
-    detPos_[1] = view.position.y();
-    detPos_[2] = view.position.z();
-    for (int i = 0; i < 24; ++i) {
-        detPlanes_[i] = curPlanes[i];
-    }
-    for (int i = 0; i < 16; ++i) {
-        detProj_[i] = curProj[i];
-    }
-    detTilesPrev_ = detTilesScratch_;
-    lastCulledBySse_ = culledBySse;
 
     // 策略生效率:可见瓦片里有多少达到了合批资格(= 所有产片元的 cell 都有页)。
     // 这个比率恒 0 正是"资格闸事实上不可达"那次的表征,当时无人察觉。
