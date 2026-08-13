@@ -211,9 +211,10 @@ constexpr bool kBlackFrameProbe = false;
 constexpr bool kEnableFrameGating = true;
 
 // kEnableGpuHeightBake:B 方案——地形 height/normal 纹理 GPU 烘焙(替代 CPU
-// bakeTerrainHeightNormalTexels ~6ms/瓦片)。默认关(CPU 路径),真机 A/B:
-// off=CPU 烘焙、on=GPU RTT 烘焙。精度已验证守无缝。调查期用,收官前评估设默认。
-constexpr bool kEnableGpuHeightBake = false;
+// bakeTerrainHeightNormalTexels ~6ms/瓦片)。**默认开**:GLES 已验证正确+无缝安全+
+// 更顺滑(dense descent 顿挫 4/min→0)+热中性。后端守卫仅 GLES 走 GPU,Metal 回退
+// CPU(MSL 待设备验证)。想 A/B 回 CPU 烘焙路径时置 false。
+constexpr bool kEnableGpuHeightBake = true;
 
 // kEnableSeamEdgeMismatchProbe:接边错位诊断探针(SeamDiag)。默认关 —— 常开
 // 每帧 measure 约 4ms(真机 tether 实测,占 selPlan/update 大头),无缝北极星已

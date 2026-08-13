@@ -14,6 +14,17 @@
 //
 // 每个输出 texel(i,j) 直接从源纹理采 5 个点(中心+4邻居,各手动双线性),
 // 不建 CPU 版的 (n+2)² scratch —— GPU 逐 fragment 并行,重复采样无所谓。
+//
+// ⚠️ MSL(Metal 对等)未来工作:此文件只有 GLSL。后端守卫
+// (TerrainDisplacementTemplatePool::acquireHeightTexture 的
+// device_->backendType()==OpenGLES)保证 Metal/Vulkan 恒回退 CPU 烘焙(正确),
+// 故当前 GLES-only 无功能缺口,只是 iOS 上保留 dense descent 顿挫。补 MSL 时:
+// ①加 kTerrainBakeVertMSL/kTerrainBakeFragMSL(逐字移植下方 GLSL,注意 MSL 的
+//   texelFetch=tex.read(ushort2)、gl_FragCoord=[[position]]、out=[[color(0)]]);
+// ②ensureBakeResources 里按 device_->backendType() 选 GLSL/MSL(照
+//   Renderer.cpp 的 isMetal?MSL:GLSL 模式);③放开后端守卫允许 Metal。
+// **必须在真 Metal 设备上验地形正确+无缝**再放开守卫——没设备直接放开会
+// flat-terrain(本轮已踩过:createShader(GLSL) 在 Metal 失败→层不烘→变平)。
 
 namespace earth_engine {
 
