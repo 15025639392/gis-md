@@ -169,6 +169,8 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // 地形 fill 代理:根瓦片加载期间,先把已到的影像贴到椭球代理,真实地形网格
     // 到达后再替换,避免加载窗口只剩天空。
     config.tileset.enableTerrainFillProxy = true;
+    // 接边错位诊断探针默认关(常开每帧 ~4ms=selPlan 大头,无缝已收官)。
+    config.tileset.seamEdgeMismatchProbe = kEnableSeamEdgeMismatchProbe;
     // LOD geomorph:距离连续 geomorph 已启用(P2 引擎 + P3 skirt 之上)。morph 进度
     // 纯由本瓦片 SSE 驱动(finalizer,gate 在 maxSSE>0)。子瓦片从 morph=0
     // (coarse-self≈父面,worker 烘焙 heightDelta,规则栅格 in-tile 自降采样,根治旧

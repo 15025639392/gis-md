@@ -95,6 +95,10 @@ struct TilesetOptions {
     // true → 影像 isMoreDetailAvailable 不再捏造上采样地形子瓦片,几何 cap 在 DEM
     // native max LOD。默认 false = 忠实 cesium(不改 golden)。
     bool decoupleImageryFromGeometry = false;
+    // 接边错位诊断探针(SeamDiag)。默认关 —— 常开每帧 measure 约 4ms 是 selPlan
+    // 大头(真机 tether 实测),无缝北极星已收官,探针只为再启动接边 A/B 时用。
+    // 见 TileRenderPlanFrameRefresher::refresh 的 logEdgeMismatch 门控。
+    bool seamEdgeMismatchProbe = false;
     bool renderTilesUnderCamera = true;
     int64_t maximumCachedBytes = 512LL * 1024 * 1024;
     // 每帧主线程加载时间预算（毫秒）。>0 时 FrameResourceBudget 按实测

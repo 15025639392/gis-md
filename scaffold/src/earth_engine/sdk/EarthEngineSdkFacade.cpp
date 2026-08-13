@@ -57,6 +57,7 @@ TilesetOptions makeSceneTilesetOptions(const SceneTilesetConfig& config) {
     options.enableTerrainFillProxy = config.enableTerrainFillProxy;
     options.terrainFillProxyGridSize = config.terrainFillProxyGridSize;
     options.decoupleImageryFromGeometry = config.decoupleImageryFromGeometry;
+    options.seamEdgeMismatchProbe = config.seamEdgeMismatchProbe;
     // 场景主地形 tileset 承担底图覆盖 → 根层常驻(漏底根修,
     // 见 TileBaseCoveragePin.h)。内容树 tileset 不走本函数,保持默认关。
     options.pinBaseCoverage = true;

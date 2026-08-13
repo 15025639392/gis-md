@@ -321,7 +321,11 @@ void TileRenderPlanFrameRefresher::refresh(
                                            std::move(table));
         }
     }
-    logEdgeMismatch(tilePlan);
+    // 接边错位探针默认关:每帧 measure 约 4ms(真机 tether 实测,占 selPlan 大头),
+    // 无缝北极星已收官,只在再启动接边 A/B 时经 config 开(见 seamEdgeMismatchProbe)。
+    if (options.seamEdgeMismatchProbe) {
+        logEdgeMismatch(tilePlan);
+    }
     refreshFrameCredits(tilePlan, rasterOverlays);
     refreshFrameProgress(tilePlan);
 }

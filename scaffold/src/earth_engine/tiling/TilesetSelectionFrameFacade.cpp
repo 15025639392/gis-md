@@ -96,7 +96,8 @@ void TilesetSelectionFrameFacade::selectTiles(
                     TileRenderPlanFrameRefreshOptions{
                         tileset.interactionActiveForFrame_,
                         tileset.resourceSmoothingActiveForFrame_,
-                        tileset.options_.maximumScreenSpaceError}});
+                        tileset.options_.maximumScreenSpaceError,
+                        tileset.options_.seamEdgeMismatchProbe}});
         });
 }
 

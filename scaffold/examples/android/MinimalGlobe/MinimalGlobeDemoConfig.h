@@ -215,6 +215,11 @@ constexpr bool kEnableFrameGating = true;
 // off=CPU 烘焙、on=GPU RTT 烘焙。精度已验证守无缝。调查期用,收官前评估设默认。
 constexpr bool kEnableGpuHeightBake = false;
 
+// kEnableSeamEdgeMismatchProbe:接边错位诊断探针(SeamDiag)。默认关 —— 常开
+// 每帧 measure 约 4ms(真机 tether 实测,占 selPlan/update 大头),无缝北极星已
+// 收官,探针只在再启动接边 A/B 时开。置 true 恢复逐帧累积 + 每 60 帧报告。
+constexpr bool kEnableSeamEdgeMismatchProbe = false;
+
 // kShadowVerifyIdle:影子渲染自检(方案 C)。gating 判定 idle 后不立刻睡,
 // 继续渲 20 帧比对帧指纹 —— 画面在"应该静止"之后还变 = 有异步产物落地却
 // 没人置脏位。本轮四次"零报错冻屏"里唯一有普适性的守卫(它不关心是哪个

@@ -113,6 +113,10 @@ struct SceneTilesetConfig {
     // 爆 22×)。置 true = 几何按 DEM 几何误差细化,cap 在 native max LOD(z12);
     // 影像不再驱动 refine,近景影像走 scale-bias 祖先复用(暂糊,Phase 2b 补清)。
     bool decoupleImageryFromGeometry = false;
+    // 接边错位诊断探针(SeamDiag)。无缝北极星已收官,探针只为再启动接边 A/B;
+    // 常开每帧 measure 约 4ms(selPlan 大头,真机 tether 实测),故默认关。
+    // 置 true 恢复逐帧累积 + 每 60 帧 SeamDiag 报告。见 TileRenderPlanFrameRefresher。
+    bool seamEdgeMismatchProbe = false;
 };
 
 struct RasterOverlaySourceConfig {
