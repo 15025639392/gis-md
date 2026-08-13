@@ -476,7 +476,7 @@ TEST(TerrainPageStoreIndir, EncodeDecodeRoundTrip) {
         for (bool resident : {true, false}) {
             for (int depth : {0, 1, 3, 6}) {  // §16.3:d 独立于 layer round-trip
                 uint8_t rgba[4] = {0, 0, 0, 0};
-                TerrainPageStore::encodeLayerRGBA8(layer, resident, depth, rgba);
+                TerrainPageStore::encodeLayerRGBA8(layer, resident, /*fieldReady=*/true, depth, rgba);
                 EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), layer)
                     << "layer=" << layer << " resident=" << resident
                     << " depth=" << depth;
@@ -491,41 +491,48 @@ TEST(TerrainPageStoreIndir, EncodeDecodeRoundTrip) {
 // 负数 → 0,超 6 → 6;解码回值 = clamp 后。layer 编码不受 depth 影响。
 TEST(TerrainPageStoreIndir, DepthClampToMaxDetDepth) {
     uint8_t rgba[4] = {0, 0, 0, 0};
-    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*depth=*/-3, rgba);
+    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*fieldReady=*/true, /*depth=*/-3, rgba);
     EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), 0);
     EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), 42);
-    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*depth=*/6, rgba);
+    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*fieldReady=*/true, /*depth=*/6, rgba);
     EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), 6);
-    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*depth=*/99, rgba);
+    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*fieldReady=*/true, /*depth=*/99, rgba);
     EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), 6);  // clamp 到 6
 }
 
 // 编码约定:R=layer&0xFF、G=(layer>>8)&0xFF、B=depth(§16.3)、A=resident?255:0。
 TEST(TerrainPageStoreIndir, EncodeChannelLayout) {
     uint8_t rgba[4] = {9, 9, 9, 9};
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*depth=*/0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 0);
     EXPECT_EQ(rgba[1], 0);
     EXPECT_EQ(rgba[2], 0);    // B = depth 0
     EXPECT_EQ(rgba[3], 255);  // A = resident → 255
 
     // B 通道 = depth(渐变 LOD 级数),独立于 layer/resident。
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*depth=*/2, rgba);
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*fieldReady=*/true, /*depth=*/2, rgba);
     EXPECT_EQ(rgba[2], 2);
 
-    // A 通道 = resident 标志:miss(resident=false)→ A=0,片元 alphaOver factor=0。
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/false, /*depth=*/0, rgba);
-    EXPECT_EQ(rgba[3], 0);
+    // A 通道三态门控(刀2):miss(resident=false)→ 0;影像 resident + 场未 ready
+    // → 128(片元采影像不采场);影像+场都 ready → 255。
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/false, /*fieldReady=*/true, /*depth=*/0, rgba);
+    EXPECT_EQ(rgba[3], 0) << "miss → A=0";
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*fieldReady=*/false, /*depth=*/0, rgba);
+    EXPECT_EQ(rgba[3], 128) << "影像 resident + 场 pending → A=128";
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
+    EXPECT_EQ(rgba[3], 255) << "影像+场 ready → A=255";
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/false, /*fieldReady=*/false, /*depth=*/0, rgba);
+    EXPECT_EQ(rgba[3], 0) << "miss 恒 0(fieldReady 无关)";
 
-    TerrainPageStore::encodeLayerRGBA8(255, /*resident=*/true, /*depth=*/0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(255, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 255);  // R 满
     EXPECT_EQ(rgba[1], 0);
 
-    TerrainPageStore::encodeLayerRGBA8(256, /*resident=*/true, /*depth=*/0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(256, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 0);    // R 归零
     EXPECT_EQ(rgba[1], 1);    // 进 G 位
 
-    TerrainPageStore::encodeLayerRGBA8(513, /*resident=*/true, /*depth=*/0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(513, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 1);    // 513 = 1 + 2*256
     EXPECT_EQ(rgba[1], 2);
 }

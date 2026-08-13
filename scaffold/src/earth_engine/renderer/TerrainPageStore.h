@@ -342,11 +342,16 @@ public:
     /// 故用 RGBA8 承载 16 位 layer 索引(容 ≤ 65535 页)+ 深度 d(≤ kMaxDetDepthLevels,
     /// 单 fetch 无需第二张 RG16 纹理)。**depth = Z-Za**:该 cell 采样的粗祖先页相对本瓦片
     /// 屏幕界定 max zoom Z 下降的级数(0=精页/现状,>0=粗页,片元用 span=2^d 定位子区)。
-    /// **A 通道 = resident 标志(B2b)**:片元用它作 alphaOver factor —— resident=1 页存储
-    /// 覆盖、miss=0 保留 mappedRaster(部分就绪/视锥外 cell 优雅降级,决策② 共存不出洞)。
+    /// **A 通道 = 三态门控**:0=miss(保留 mappedRaster)、128=影像 resident 但**场未
+    /// ready**(片元采影像不采场)、255=影像+场都 ready(采影像+采场)。影像 factor 在
+    /// 片元里对 A 做 step(0.3) 离散化(A≥128 → 1),场 gate 用 A>0.6(仅 255)。
+    /// fieldReady=true 时(无场功能 or 层已装本页真场)退化成 0/255 二态,逐位=改造前。
     /// out 需 ≥4 字节;depth clamp 到 [0, kMaxDetDepthLevels]。
-    static void encodeLayerRGBA8(int layer, bool resident, int depth,
-                                 uint8_t out[4]);
+    static void encodeLayerRGBA8(int layer, bool resident, bool fieldReady,
+                                 int depth, uint8_t out[4]);
+    /// 场 gate 事实源:该 layer 当前**已上传真场**是否属于 pageKey
+    /// (fieldLayerKey_[layer]==pageKey)。无场功能恒 true(二态零回归)。
+    bool fieldLayerReady(int layer, uint64_t pageKey) const;
     /// 与片元 shader 解码逐位一致:floor(r*255+0.5)+floor(g*255+0.5)*256 = R+G*256。
     /// 供 host round-trip 单测证明「编 layer → RGBA8 → 解码回 layer」链路正确。
     static int decodeLayerRGBA8(const uint8_t in[4]);
@@ -457,6 +462,14 @@ private:
     std::unique_ptr<Texture> fieldArrayTexture_;
     struct RoadFieldInbox;  // 定义在 .cpp:场 R8 快照投递箱(存活于回调)
     std::shared_ptr<RoadFieldInbox> fieldInbox_;
+    /// 每层当前**已上传真场**的 pageKey(size=maxPages,初值 kInvalidFieldKey)。
+    /// 场 resident 门控的唯一事实源:间接纹理 A 三态由 fieldLayerKey_[layer]==本页
+    /// key 决定(相等 → 场 ready → A=255;否则场 pending → A=128 只采影像)。
+    /// 同 key 页淘汰后重建:层仍装本页真场,fieldLayerKey_ 不变 → 复用不重烘不
+    /// 闪。不同 key 抢层:!= → pending 期 A=128 不采(无旧租户残留)。淘汰/
+    /// pages_.clear() 都不清它(layer↔真场映射独立于 PageEntry 生命周期)。
+    std::vector<uint64_t> fieldLayerKey_;
+    static constexpr uint64_t kInvalidFieldKey = ~0ull;  // z0/0/0 是合法 key,故用 MAX
 
     TerrainPageLayerPool pool_;
     std::unordered_map<uint64_t, PageEntry> pages_;      // pageKey → 页账本
@@ -475,8 +488,7 @@ private:
     double winUploadMs_ = 0.0;
     double winMaxTickMs_ = 0.0;
     int winInboxItems_ = 0;
-    int winFieldUploads_ = 0;  // 刀2 诊断:真场层上传数(占位清场另计)
-    int winFieldClears_ = 0;
+    int winFieldUploads_ = 0;  // 刀2 诊断:真场层上传数(证明第二平面在工作)
 
     // C-1:有序源列表(providers_[0] = 底图,定分块/zoom/最大级)。每帧由
     // determination 刷新;变化时作废全部已合成页(旧页少一层或多一层都是错的)。

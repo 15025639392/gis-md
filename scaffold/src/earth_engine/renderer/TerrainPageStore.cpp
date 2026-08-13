@@ -261,18 +261,24 @@ struct TerrainPageStore::ReadyUploadInbox {
 };
 
 /// 刀2 场平面投递箱(shared_ptr:场生产者回调可比页存储活得久)。
-/// placeholder 语义见 kickPageFetches:层复用时旧租户的场必须先被清成
-/// "无线"(全 255),否则真场到达前 FS 会采到上一城市的路网。
+/// 只投递**真场**;层复用时旧租户残留由间接纹理 A 三态门控挡住(场未 ready
+/// 的层 A=128,片元不采场),不再靠占位清场(占位在同 key 页 churn 重建时会
+/// 清掉刚上传的正确真场 → 运动期路网闪烁,已改用 fieldLayerKey_ 门控)。
 struct TerrainPageStore::RoadFieldInbox {
     struct Item {
         uint64_t key = 0;
         int layer = 0;
-        bool placeholder = false;  // 占位清场,不清 fieldPending
         std::vector<uint8_t> r8;   // side²×1
     };
     std::mutex mutex;
     std::vector<Item> items;
 };
+
+bool TerrainPageStore::fieldLayerReady(int layer, uint64_t pageKey) const {
+    if (!fieldArrayTexture_) return true;  // 无场功能 → 二态零回归
+    return layer >= 0 && layer < static_cast<int>(fieldLayerKey_.size()) &&
+           fieldLayerKey_[layer] == pageKey;
+}
 
 void TerrainPageStore::resamplePageSource(const DecodedImage& image, int depth,
                                           int subX, int subY, int side,
@@ -343,7 +349,8 @@ void TerrainPageStore::resamplePageSource(const DecodedImage& image, int depth,
     }
 }
 
-void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident, int depth,
+void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident,
+                                        bool fieldReady, int depth,
                                         uint8_t out[4]) {
     const unsigned int v = static_cast<unsigned int>(std::max(0, layer));
     out[0] = static_cast<uint8_t>(v & 0xFFu);          // R = layer & 0xFF
@@ -351,9 +358,11 @@ void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident, int depth,
     // B = per-cell 渐变 LOD 深度 d(§16.3),clamp [0, kMaxDetDepthLevels]。片元
     // span=2^d 定位粗祖先页子区;d=0 逐字节=现状精页。
     out[2] = static_cast<uint8_t>(std::clamp(depth, 0, kMaxDetDepthLevels));
-    // A = resident 标志(B2b):片元 alphaOver factor。resident=页已 uploaded → 覆盖;
-    // miss(视锥外/未 fetch/未到)→ 0 → 保留 base=mappedRaster(优雅降级不出洞)。
-    out[3] = resident ? 255 : 0;
+    // A 三态门控(刀2 场 resident 独立):miss=0(保留 mappedRaster)、影像 resident
+    // 但场未 ready=128(片元采影像不采场)、影像+场都 ready=255。片元对影像做
+    // step(0.3) 离散(A≥128 → 采影像),场 gate 用 A>0.6(仅 255)。无场功能时
+    // fieldReady 恒 true → 退化 0/255 二态,逐位=改造前。
+    out[3] = resident ? (fieldReady ? 255 : 128) : 0;
 }
 
 int TerrainPageStore::decodeLayerRGBA8(const uint8_t in[4]) {
@@ -809,7 +818,9 @@ void TerrainPageStore::updateVisiblePages(
                 // C-1:首源合成上传即算 resident(底图先亮),不等最慢的源。
                 if (pe.uploadedTexels()) {
                     // 目标页就绪 = 理想 LOD(settled 逐字节=现状精/粗页)。
-                    encodeLayerRGBA8(pe.layer, true, kc.d, texel);
+                    encodeLayerRGBA8(pe.layer, true,
+                                     fieldLayerReady(pe.layer, kc.pageKey),
+                                     kc.d, texel);
                     ++residentCells;
                     continue;
                 }
@@ -824,6 +835,7 @@ void TerrainPageStore::updateVisiblePages(
             const int maxAd = p.zoom - p.tile->key.z;  // za=Z 到 tileZ 的最大深度
             int foundLayer = -1;
             int foundD = -1;
+            uint64_t foundKey = 0;  // 祖先页 key,供场 gate 判定
             for (int ad = 0; ad <= maxAd; ++ad) {
                 TileKey aKey;
                 aKey.schemeId = p.imgSchemeId;
@@ -835,15 +847,19 @@ void TerrainPageStore::updateVisiblePages(
                 if (ait != pages_.end() && ait->second.uploadedTexels()) {
                     foundLayer = ait->second.layer;
                     foundD = ad;
+                    foundKey = aPageKey;
                     pool_.touch(aPageKey, frameId_);  // 显示中的祖先页不该被淘汰
                     break;
                 }
             }
             if (foundLayer >= 0) {
-                encodeLayerRGBA8(foundLayer, true, foundD, texel);
+                encodeLayerRGBA8(foundLayer, true,
+                                 fieldLayerReady(foundLayer, foundKey), foundD,
+                                 texel);
                 ++residentCells;
             } else {
-                encodeLayerRGBA8(0, false, kc.d, texel);  // 全冷 → mappedRaster
+                // 全冷 → mappedRaster(resident=false;fieldReady 无关给 true)。
+                encodeLayerRGBA8(0, false, true, kc.d, texel);
             }
         }
 
@@ -1048,6 +1064,9 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
         fieldArrayTexture_ = device_->createTexture(fieldDesc);
         if (fieldArrayTexture_) {
             fieldInbox_ = std::make_shared<RoadFieldInbox>();
+            // 每层真场租户 key,初值哨兵(≠任何合法 packKey)→ 首访必判 pending。
+            fieldLayerKey_.assign(static_cast<size_t>(config_.maxPages),
+                                  kInvalidFieldKey);
             platformLog(LogLevel::Info, "PageStore",
                         "roadField plane ready (R8 %dx%d x%d layers)",
                         config_.pageSizeTexels, config_.pageSizeTexels,
@@ -1175,16 +1194,14 @@ void TerrainPageStore::tick() {
     if (frameId_ % 60u == 0u) {
         platformLog(LogLevel::Info, "PageStore",
                     "tick60 compose=%.1fms upload=%.1fms "
-                    "maxTick=%.1fms items=%d fields=%d clears=%d",
+                    "maxTick=%.1fms items=%d fields=%d",
                     winComposeMs_, winUploadMs_,
-                    winMaxTickMs_, winInboxItems_, winFieldUploads_,
-                    winFieldClears_);
+                    winMaxTickMs_, winInboxItems_, winFieldUploads_);
         winComposeMs_ = 0.0;
         winUploadMs_ = 0.0;
         winMaxTickMs_ = 0.0;
         winInboxItems_ = 0;
         winFieldUploads_ = 0;
-        winFieldClears_ = 0;
     }
 }
 
@@ -1229,33 +1246,34 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
     // ==== 刀2 场平面:与影像 fetch 并行 kick ====
     if (config_.roadFieldRequest && fieldInbox_) {
         const int side = config_.pageSizeTexels;
-        // ① 占位清场**同步入队**(FIFO 保证先于真场、且先于本页影像首次
-        //    resident 时被 drain):层是 LRU 复用的,旧租户的场若不清,真场
-        //    到达前 FS 会把上一个城市的路网画在这页上。全 0 = 反向编码的
-        //    "无线"(也是 GLES 未绑定采样的返回值 —— 失败安全同一取向)。
-        {
-            std::lock_guard<std::mutex> lock(fieldInbox_->mutex);
-            fieldInbox_->items.push_back(RoadFieldInbox::Item{
-                pageKey, layer, /*placeholder=*/true,
-                std::vector<uint8_t>(
-                    static_cast<size_t>(side) * side, 0)});
+        if (layer >= 0 && layer < static_cast<int>(fieldLayerKey_.size()) &&
+            fieldLayerKey_[layer] == pageKey) {
+            // **同 key 页 churn 重建**(淘汰后同 key 复用同层):层里仍装本页
+            // 真场,内容正确 → 不重烘、不清、fieldReady 立即 true(间接纹理
+            // A=255 继续采旧真场)→ 运动期不闪。这正是占位清场治不了的病:
+            // 占位会把这份正确真场清成 0,新真场到达前无线。
+            entry.fieldPending = false;
+        } else {
+            // 新层 / 不同 key 抢层:场 pending。pending 期该 layer 的 fieldReady
+            // 为 false → 间接纹理 A=128 → 片元采影像不采场(不显示旧租户残留/
+            // 新层垃圾)。真场到达 drainReadyUploads 设 fieldLayerKey_ 并放行。
+            entry.fieldToken = CancellationToken{};
+            entry.fieldPending = true;
+            std::shared_ptr<RoadFieldInbox> fieldInbox = fieldInbox_;
+            config_.roadFieldRequest(
+                pageTileKey, entry.fieldToken,
+                [fieldInbox, pageKey, layer, side](std::vector<uint8_t> r8) {
+                    if (r8.size() !=
+                        static_cast<size_t>(side) * static_cast<size_t>(side)) {
+                        return;  // 尺寸不符:丢弃(防生产者配置漂移写坏层)
+                    }
+                    // 回调只捕 inbox shared_ptr —— 页存储先亡不悬垂,迟到结果
+                    // 经账本校验丢弃。
+                    std::lock_guard<std::mutex> lock(fieldInbox->mutex);
+                    fieldInbox->items.push_back(
+                        RoadFieldInbox::Item{pageKey, layer, std::move(r8)});
+                });
         }
-        // ② 真场请求(回调必到契约;取消/失败给全 0)。回调只捕 inbox
-        //    shared_ptr —— 页存储先亡不悬垂,迟到结果经账本校验丢弃。
-        entry.fieldToken = CancellationToken{};
-        entry.fieldPending = true;
-        std::shared_ptr<RoadFieldInbox> fieldInbox = fieldInbox_;
-        config_.roadFieldRequest(
-            pageTileKey, entry.fieldToken,
-            [fieldInbox, pageKey, layer, side](std::vector<uint8_t> r8) {
-                if (r8.size() !=
-                    static_cast<size_t>(side) * static_cast<size_t>(side)) {
-                    return;  // 尺寸不符:丢弃(防生产者配置漂移写坏层)
-                }
-                std::lock_guard<std::mutex> lock(fieldInbox->mutex);
-                fieldInbox->items.push_back(RoadFieldInbox::Item{
-                    pageKey, layer, /*placeholder=*/false, std::move(r8)});
-            });
     }
 }
 
@@ -1350,9 +1368,9 @@ void TerrainPageStore::drainReadyUploads() {
     const int side = config_.pageSizeTexels;
     int uploaded = 0;
 
-    // ==== 刀2 场平面:先于影像 drain(FIFO 内占位清场必须赶在该页影像
-    // 首次 resident 之前写入,顺序=kick 时同步入队 < 影像 fetch+compose)。
-    // 与影像共享 maxUploadsPerFrame 预算(场 64KB/页,记 1 个上传)。====
+    // ==== 刀2 场平面:与影像共享 maxUploadsPerFrame 预算(场 64KB/页,记
+    // 1 个上传)。上传真场后设 fieldLayerKey_[layer]=key + 清 fieldPending →
+    // determination 下帧判该层场 ready(间接纹理 A=255)放行采样。====
     if (fieldInbox_ && fieldArrayTexture_) {
         std::vector<RoadFieldInbox::Item> fieldReady;
         {
@@ -1375,18 +1393,19 @@ void TerrainPageStore::drainReadyUploads() {
                 fieldArrayTexture_.get(), 0, 0, side, side, item.r8.data(),
                 static_cast<size_t>(side), item.layer);
             winUploadMs_ += perf::nowMs() - uploadStartMs;
-            if (!item.placeholder) {
-                it->second.fieldPending = false;
-                ++winFieldUploads_;
-            } else {
-                ++winFieldClears_;
+            // 记住该层现装的是这个 key 的真场 → 同 key 淘汰重建可跳烘不闪;
+            // 不同 key 抢层前该值仍是旧 key(pending 门控靠它挡住旧残留)。
+            if (item.layer >= 0 &&
+                item.layer < static_cast<int>(fieldLayerKey_.size())) {
+                fieldLayerKey_[item.layer] = item.key;
             }
+            it->second.fieldPending = false;
+            ++winFieldUploads_;
             it->second.lastProgressFrame = frameId_;
             ++uploaded;
         }
         if (fieldRequeueFrom < fieldReady.size()) {
             std::lock_guard<std::mutex> lock(fieldInbox_->mutex);
-            // 放回队首侧保序(占位先于真场的 FIFO 不变量不能被 requeue 破坏)。
             fieldInbox_->items.insert(
                 fieldInbox_->items.begin(),
                 std::make_move_iterator(fieldReady.begin() + fieldRequeueFrom),

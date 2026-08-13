@@ -510,11 +510,11 @@ void main() {
         vec2 gGlobal = g + psPhase;
         vec2 origin = floor(gGlobal / span) * span;
         vec2 sampleUv = (gGlobal - origin) / span;
-        base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
+        base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), step(0.3, e.a));
         // 刀2 路网 SDF 场:同一间接查找/同层号再采一次 R8 场(反向编码:
         // 0=远/1=线内/0.5=边缘)。fwidth 屏幕导数做解析 AA —— 锐度与纹素
         // 密度解耦;祖先粗页导数变大 → 线自然羽化淡出。
-        if (u_roadFieldParams.x > 0.5) {
+        if (u_roadFieldParams.x > 0.5 && e.a > 0.6) {
             float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
             float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
             float roadCov =
@@ -1264,11 +1264,11 @@ void main() {
         vec2 origin = floor(gGlobal / span) * span;
         vec2 sampleUv = (gGlobal - origin) / span;
         base = alphaOver(
-            base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
+            base, texture(u_pageStore, vec3(sampleUv, layer)), step(0.3, e.a));
         // 刀2 路网 SDF 场:同一间接查找/同层号再采一次 R8 场(反向编码:
         // 0=远/1=线内/0.5=边缘)。fwidth 屏幕导数做解析 AA —— 锐度与纹素
         // 密度解耦;祖先粗页导数变大 → 线自然羽化淡出。
-        if (u_roadFieldParams.x > 0.5) {
+        if (u_roadFieldParams.x > 0.5 && e.a > 0.6) {
             float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
             float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
             float roadCov =
@@ -1594,11 +1594,11 @@ void main() {
     vec2 gGlobal = g + v_pageAux.xy;
     vec2 origin = floor(gGlobal / span) * span;
     vec2 sampleUv = (gGlobal - origin) / span;
-    base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), e.a);
+    base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), step(0.3, e.a));
 
     // 刀2 路网 SDF 场(镜像非实例变体;条件为逐实例 varying,texture/fwidth
     // 在非 uniform 控制流内与既有 u_pageStore 采样同险,先例已存在)。
-    if (u_roadFieldParams.x > 0.5) {
+    if (u_roadFieldParams.x > 0.5 && e.a > 0.6) {
         float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
         float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
         float roadCov = smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) *
@@ -3010,10 +3010,10 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         base = gltfAlphaOver(
             base,
             u_pageStore.sample(u_tileSharedSampler, sampleUv, uint(layer)),
-            e.a);
+            step(0.3, e.a));
         // 刀2 路网 SDF 场(镜像 GLSL;⚠️ 未经 Metal 真机验证,布局/绑定按
         // 契约写就,验证前若有问题以 GLES 行为为准)。反向编码 0=远,失败安全。
-        if (u.roadFieldParams.x > 0.5) {
+        if (u.roadFieldParams.x > 0.5 && e.a > 0.6) {
             float fieldV =
                 u_roadField.sample(u_tileSharedSampler, sampleUv, uint(layer)).r;
             float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
@@ -3654,10 +3654,10 @@ fragment float4 terrainFragment(
         base = terrainAlphaOver(
             base,
             u_pageStore.sample(u_terrainSampler, sampleUv, uint(layer)),
-            e.a);
+            step(0.3, e.a));
         // 刀2 路网 SDF 场(镜像 GLSL;⚠️ 未经 Metal 真机验证)。反向编码
         // 0=远,失败安全。
-        if (u.roadFieldParams.x > 0.5) {
+        if (u.roadFieldParams.x > 0.5 && e.a > 0.6) {
             float fieldV =
                 u_roadField.sample(u_terrainSampler, sampleUv, uint(layer)).r;
             float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
@@ -3923,7 +3923,8 @@ fragment float4 terrainInstancedFragment(
     float2 origin = floor(gGlobal / span) * span;
     float2 sampleUv = (gGlobal - origin) / span;
     base = tiAlphaOver(
-        base, u_pageStore.sample(u_pageSampler, sampleUv, uint(layer)), e.a);
+        base, u_pageStore.sample(u_pageSampler, sampleUv, uint(layer)),
+        step(0.3, e.a));
 
     // GE 式半球光照(与 GLSL 侧共用 TerrainSurfaceLightGLSL.h 的单一函数;由
     // withTerrainLight() 注入 kTerrainLightMSL)。
