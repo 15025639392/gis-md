@@ -48,12 +48,12 @@ constexpr const char* kTreeI3dmUrl =
 // (ClampToGround),地形一重钳它们也跟着动,屏幕上的"接缝/跳变"未必是地形;
 // 且 refreshClusterDisplay() 每帧跑一次聚合与标注避让,占主线程。
 // 排除干扰是判因的前提,不是洁癖。
-constexpr bool kEnableVectorDemoLayers = true;
+constexpr bool kEnableVectorDemoLayers = false;
 
 // 矢量 P4 MVT 只读底图。本地 tippecanoe 自制重庆 OSM mbtiles,
 // serve_mvt_tiles.py 起 8092 + adb reverse tcp:8092(与地形 8091 同模式)。
 // 服务器不在时请求失败仅 markFailed(静默),不影响其余渲染。
-constexpr bool kEnableMvtBasemap = true;
+constexpr bool kEnableMvtBasemap = false;
 
 // 矢量底图走**几何通路**(FeatureRenderLayer + 瓦片桶):屏幕空间渲染,无分辨率
 // 上限;贴地走 stencil 分类,挤出体由区域高度范围驱动(worker 拿不到地形采样器,
