@@ -38,6 +38,8 @@
 #include "earth_engine/data/StyleFilter.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
+#include "earth_engine/providers/VectorDrapeImageryProvider.h"
+#include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
 #include "earth_engine/platform/android/RenderDeviceGLES.h"
@@ -391,6 +393,61 @@ static bool createEngine() {
                 *gEngine,
                 *gRenderDevice,
                 *gPlatformBridge);
+        // ---- 刀1 矢量**面** drape:MVT 面栅格化冒充影像进页存储合成。----
+        // 必须在 installScene **之前**注册:pendingCustomOverlays_ 在
+        // installScene 里消费,排在配置 overlay(卫星影像)之后 = 叠其上。
+        if (minimal_globe_demo::kEnableMvtDrapeBasemap) {
+            if (!gMvtWorkerPool) {
+                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
+            }
+            VectorDrapeImageryProvider::Options dopts;
+            dopts.id = "mvt-drape";
+            dopts.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
+            dopts.dataMaxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
+            // 与卫星影像同深:页 determination 按屏幕清晰度要多深,面就
+            // 现画多深(overzoom),这是"动态栅格化"的机关。
+            dopts.advertisedMaxZoom =
+                minimal_globe_demo::kMeasureImageryMaxZoom;
+            dopts.tileSize = 256;  // 页原生边长,再大页存储也会缩回 256
+            dopts.style = minimal_globe_demo::makeMvtDrapeStyle();
+            // 页网格按首源(高德卫星,GCJ-02)建 → 矢量矩形先平移回 WGS84
+            // 再选 OSM 瓦,与渲染侧 worldOffset 修正互补(逐像素同位)。
+            dopts.gcj02SourceGrid =
+                minimal_globe_demo::kUseGaodeSatelliteForDemo;
+            auto drapeProvider =
+                std::make_unique<VectorDrapeImageryProvider>(
+                    std::move(dopts),
+                    [](const TileKey& key,
+                       VectorDrapeImageryProvider::FetchCallback cb) {
+                        mvtFetchTile(key, std::move(cb));
+                    },
+                    gMvtWorkerPool.get());  // demo 静态 pool,活到进程尾
+            RasterOverlay::Options oopts;
+            oopts.role = RasterOverlayRole::AnnotationOverlay;
+            oopts.priority = RasterOverlayPriority::Normal;
+            // 矢量面缺席不该阻塞地形瓦片判定 complete(server 不在时整场
+            // 景仍按纯影像走)。
+            oopts.blocksCompleteRenderable = false;
+            // ⚠️ mappedRaster 兜底路径按 overlay 自己的 georeference 喂
+            // key:本 provider 产出的是"GCJ 空间矩形"语义的图(见
+            // gcj02SourceGrid),故声明 Gcj02 让兜底版也走同一套修正,
+            // 否则页 miss 瞬间面会闪 ~500m 错位。
+            oopts.georeference =
+                minimal_globe_demo::kUseGaodeSatelliteForDemo
+                    ? RasterOverlayGeoreference::Gcj02WebMercator
+                    : RasterOverlayGeoreference::Standard;
+            gSdkFacade->addCustomImageryOverlay(
+                std::move(drapeProvider),
+                TileScheme::createXYZWebMercator(), oopts);
+            LOGI("VectorDrape MVT face basemap overlay installed: %s "
+                 "(data z%d-%d, advertised z%d, gcj=%d)",
+                 minimal_globe_demo::kMvtBasemapUrlTemplate,
+                 minimal_globe_demo::kMvtBasemapMinZoom,
+                 minimal_globe_demo::kMvtBasemapMaxZoom,
+                 minimal_globe_demo::kMeasureImageryMaxZoom,
+                 minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);
+        }
+
         gSdkFacade->installScene(
             minimal_globe_demo::makeDefaultDemoSceneConfig());
 
@@ -457,12 +514,11 @@ static bool createEngine() {
                                                     "tertiary"})}),
                     StyleFilter::zoomCompare(C::GreaterEqual, 12),
                 });
-                SourceLayerRule building;
-                building.layer = "building";
-                building.minZoom = 13;  // 建筑只在近景可辨,粗档整层跳过
-                SourceLayerRule water;
-                water.layer = "water";
-                mvtOpts.layerRules = {roads, building, water};
+                // 刀1:water/building **面层不再进 stencil 链**(整层排除,
+                // 连 Feature 都不产生)—— 面 fill 实测 ~75ms GPU 是发热
+                // 真凶,已改走 kEnableMvtDrapeBasemap 的栅格 drape(页存储
+                // 合成)。本链只承载线,待刀2(SDF 场)落地后整链退役。
+                mvtOpts.layerRules = {roads};
             }
             mvtOpts.tree.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
             mvtOpts.tree.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;

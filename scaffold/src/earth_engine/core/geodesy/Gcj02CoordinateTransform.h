@@ -21,6 +21,15 @@ public:
     /// mainland China's GCJ transform bounds are returned unchanged.
     static Cartographic fromWgs84(const Cartographic& cartographic);
 
+    /// Inverse of fromWgs84: recovers the WGS84 position for a GCJ-02
+    /// position via fixed-point iteration (the warp's gradient is ~1e-5, so
+    /// two rounds converge to sub-millimetre). The inside-China test is
+    /// evaluated on the GCJ input — asymmetric with fromWgs84 by up to the
+    /// warp magnitude (~500 m) right at the bounds; callers dealing with
+    /// straddling rectangles should consult crossesChinaBounds, same as the
+    /// forward direction.
+    static Cartographic toWgs84(const Cartographic& cartographic);
+
     /// Computes a conservative GCJ-02 longitude/latitude envelope for a WGS84
     /// rectangle. Outside-China rectangles are returned bit-for-bit unchanged.
     static Rectangle boundRectangleFromWgs84(const Rectangle& rectangle);

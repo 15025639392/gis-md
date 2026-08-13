@@ -50,25 +50,30 @@ constexpr const char* kTreeI3dmUrl =
 // 排除干扰是判因的前提,不是洁癖。
 constexpr bool kEnableVectorDemoLayers = false;
 
-// 矢量 P4 MVT 只读底图。本地 tippecanoe 自制重庆 OSM mbtiles,
-// serve_mvt_tiles.py 起 8092 + adb reverse tcp:8092(与地形 8091 同模式)。
-// 服务器不在时请求失败仅 markFailed(静默),不影响其余渲染。
-constexpr bool kEnableMvtBasemap = false;
+// 矢量 P4 MVT 只读底图(**几何通路**,刀1 之后只承载线/路网)。本地
+// tippecanoe 自制重庆 OSM mbtiles,serve_mvt_tiles.py 起 8092 + adb reverse
+// tcp:8092(与地形 8091 同模式)。服务器不在时请求失败仅 markFailed(静默),
+// 不影响其余渲染。
+// 2026-08-13 刀1 分工:**面**(water/building)不再进这条 stencil 链 ——
+// MVT stencil 面 fill 实测 74-142ms GPU(占 94%,TETHER 发热真凶),面改走
+// 下方 kEnableMvtDrapeBasemap 的栅格 drape;线暂留 stencil(12-16ms),
+// 刀2(SDF 场 + 地形 FS 解算)落地后退役。
+constexpr bool kEnableMvtBasemap = true;
 
-// 矢量底图走**几何通路**(FeatureRenderLayer + 瓦片桶):屏幕空间渲染,无分辨率
-// 上限;贴地走 stencil 分类,挤出体由区域高度范围驱动(worker 拿不到地形采样器,
-// 但拿得到一对标量)。
-// ⚠️ 对立的**影像通路**(栅格化进地形页存储)已于 2026-08-07 整链删除 —— 页纹素
-// 给分辨率封了顶,近景/斜视下线糊成栅格块。Metal 的 supportsStencilClassification
-// 恒 false,故 iOS 上几何通路暂不贴地,补 Metal stencil 分类是那边的解。
+// 矢量**面** drape 底图:MVT 面要素动态栅格化冒充影像,进 TerrainPageStore
+// 页合成(与卫星影像同轨,GPU 边际成本≈0)。E4 原版影像通路曾于 2026-08-07
+// 整链删除(页纹素封顶,近景**线**糊成栅格块);本版按"面 drape/线 SDF"
+// 新分工复活,overzoom 现画不再封顶,见 VectorDrapeImageryProvider.h。
+// Metal 红利:drape 不依赖 stencil,iOS 首次获得贴地面能力。
+constexpr bool kEnableMvtDrapeBasemap = true;
 
 // 贴地体的高度范围不在这里配:SceneRenderPipeline 每帧从**可见地形瓦片的
 // 包围体**汇总(O(可见瓦片数),零采样),相机飞到哪都对。
 
-/// E4 影像通路的栅格样式(颜色 + 分级表)。与几何通路的 SourceLayerRule
-/// 同源:同一套 StyleFilter 谓词、同一张道路分级表 —— 两条通路的取舍语义
-/// 必须一致,否则 A/B 对拍比的就不是「贴地与否」而是「画了不同的东西」。
-VectorRasterStyle makeMvtRasterStyle();
+/// 面 drape 通路的栅格样式(water/building 色块)。颜色与几何通路 GLESView
+/// 里的 fillColorExpr 对齐 —— 两条通路交接时观感不变;线不在此配(留几何
+/// 通路,刀2 换 SDF 场)。
+VectorRasterStyle makeMvtDrapeStyle();
 constexpr const char* kMvtBasemapUrlTemplate =
     "http://127.0.0.1:8092/{z}/{x}/{y}.pbf";
 constexpr int kMvtBasemapMinZoom = 0;

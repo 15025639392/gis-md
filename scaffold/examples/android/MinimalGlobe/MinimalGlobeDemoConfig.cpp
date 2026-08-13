@@ -4,82 +4,29 @@
 
 namespace earth_engine::minimal_globe_demo {
 
-VectorRasterStyle makeMvtRasterStyle() {
-    using C = StyleFilter::Compare;
-    // 道路分级表:与几何通路 GLESView 里那份同源(zoom 固定于瓦片 z,
-    // 相机缩放不触发重烘)。
-    // ⚠️ 每档准入的等级要跟着**屏幕上的道路间距**走,不是跟着"这一档有多少
-    // 数据"走:z9 时整个主城只占屏幕 ~300px,画到 secondary 就有上百条线挤在
-    // 里面,间距小于线宽 → 必然连成白块(与线宽分档是同一现象的两个因子,
-    // 缺一个都不够)。这里的分档比早先收紧约两档,与 OpenMapTiles 系样式在
-    // 低 zoom 只保留 motorway/trunk 的取舍一致。
-    StyleFilter::Ptr roadGrading = StyleFilter::any({
-        StyleFilter::all({
-            StyleFilter::zoomCompare(C::Less, 10),
-            StyleFilter::in("highway", {"motorway", "trunk"})}),
-        StyleFilter::all({
-            StyleFilter::zoomCompare(C::GreaterEqual, 10),
-            StyleFilter::zoomCompare(C::Less, 12),
-            StyleFilter::in("highway", {"motorway", "trunk", "primary"})}),
-        StyleFilter::all({
-            StyleFilter::zoomCompare(C::GreaterEqual, 12),
-            StyleFilter::zoomCompare(C::Less, 13),
-            StyleFilter::in("highway", {"motorway", "trunk", "primary",
-                                        "secondary"})}),
-        StyleFilter::all({
-            StyleFilter::zoomCompare(C::GreaterEqual, 13),
-            StyleFilter::zoomCompare(C::Less, 14),
-            StyleFilter::in("highway", {"motorway", "trunk", "primary",
-                                        "secondary", "tertiary"})}),
-        StyleFilter::zoomCompare(C::GreaterEqual, 14),
-    });
-
+VectorRasterStyle makeMvtDrapeStyle() {
+    // 刀1:只配**面**层(水/建筑色块)。线(roads)不进 drape —— 线对
+    // 栅格模糊极敏感(E4 死因),留几何通路守擂,刀2 换 SDF 场。
+    // 颜色与几何通路 GLESView 的 fillColorExpr 对齐(0-255 = float×255):
+    // water (0.25,0.50,0.85,0.55)、building (0.60,0.60,0.62,0.55) ——
+    // 交接时观感不变;alpha 沿用半透明,叠在卫星影像上不糊死地物。
     VectorRasterStyle style;
     // 背景全透明:底图矢量叠在卫星影像之上,不该盖住影像。
     style.background = {0, 0, 0, 0};
 
     VectorRasterLayerPaint water;
     water.layer = "water";
-    water.fillColor = {70, 120, 190, 170};
+    water.fillColor = {64, 128, 217, 140};
 
     VectorRasterLayerPaint building;
     building.layer = "building";
+    // 与几何通路的 building.minZoom=13 同门槛:建筑只在近景可辨。
+    // styleZoom 是**页 zoom**(屏幕清晰度),数据钳在 z14 不影响此门槛。
     building.minZoom = 13;
-    building.fillColor = {150, 150, 155, 140};
+    building.fillColor = {153, 153, 158, 140};
 
-    // 线宽单位是**输出纹理像素**(≈设备像素,因页存储按屏幕误差选页 zoom):
-    // 烘进纹理后随地形贴合被拉伸,与几何通路的「屏幕恒定宽」语义不同 ——
-    // 这是 draping 的固有性质(maplibre 的 line 进 RTT 后同样如此),不是 bug。
-    //
-    // ⚠️ **必须随 zoom 分档,不能用一个常数**。屏幕线宽恒定听起来无害,但
-    // 道路间距在屏幕上随 zoom 降低而压缩:z9 时重庆主城只占屏幕 ~300px,
-    // 几十条 secondary 级道路的间距已小于线宽,相邻线在页纹理里合并成实心块
-    // ——观感是整片白色马赛克(为 z14 近景调的 2.5 CSS px,在 z9 页上一条路
-    // 相当于 2.7km 宽的地面条带)。maplibre 用 zoom 插值表达式解决同一问题,
-    // 低 zoom 取 0.5-1px;这里用分档近似。
-    // TODO: 3.5 乘数应取自 Android density(wm density / 160),现按测试机固定;
-    //       更干净的解是让 lineWidthPixels 接受 StyleExpression(P6b 已有 zoom
-    //       插值),样式侧一条规则即可,不必按档复制。
-    constexpr double kDevicePixelRatio = 3.5;
-    auto roadsAtZoom = [&](StyleFilter::Ptr zoomRange, double cssPixels) {
-        VectorRasterLayerPaint roads;
-        roads.layer = "roads";
-        roads.filter = StyleFilter::all({zoomRange, roadGrading});
-        roads.lineColor = {245, 245, 245, 220};
-        roads.lineWidthPixels = cssPixels * kDevicePixelRatio;
-        return roads;
-    };
-
-    // 顺序 = 绘制顺序:水面在下,建筑其次,路网压顶。zoom 区间互斥 → 同一
-    // 瓦片只会命中其中一条,不会重复描边。
-    style.layers = {
-        water, building,
-        roadsAtZoom(StyleFilter::zoomCompare(C::Less, 11), 0.75),
-        roadsAtZoom(StyleFilter::all({
-                        StyleFilter::zoomCompare(C::GreaterEqual, 11),
-                        StyleFilter::zoomCompare(C::Less, 13)}),
-                    1.25),
-        roadsAtZoom(StyleFilter::zoomCompare(C::GreaterEqual, 13), 2.5)};
+    // 顺序 = 绘制顺序:水面在下,建筑在上。
+    style.layers = {water, building};
     return style;
 }
 

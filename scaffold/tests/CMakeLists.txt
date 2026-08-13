@@ -202,6 +202,12 @@ add_executable(test_projection
 target_link_libraries(test_projection PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_projection COMMAND test_projection)
 
+add_executable(test_gcj02_transform
+    unit/geodesy/test_gcj02_transform.cpp
+)
+target_link_libraries(test_gcj02_transform PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_gcj02_transform COMMAND test_gcj02_transform)
+
 add_executable(test_quadtree_geometric_error
     unit/geodesy/test_quadtree_geometric_error.cpp
 )
@@ -994,6 +1000,12 @@ add_executable(test_mvt_decoder
 target_link_libraries(test_mvt_decoder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_mvt_decoder COMMAND test_mvt_decoder)
 
+add_executable(test_vector_tile_rasterizer
+    unit/data/test_vector_tile_rasterizer.cpp
+)
+target_link_libraries(test_vector_tile_rasterizer PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_vector_tile_rasterizer COMMAND test_vector_tile_rasterizer)
+
 add_executable(test_vector_tile_tree
     unit/data/test_vector_tile_tree.cpp
 )
@@ -1091,6 +1103,12 @@ add_executable(test_heightmap_terrain
 )
 target_link_libraries(test_heightmap_terrain PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_heightmap_terrain COMMAND test_heightmap_terrain)
+
+add_executable(test_vector_drape_provider
+    unit/providers/test_vector_drape_provider.cpp
+)
+target_link_libraries(test_vector_drape_provider PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_vector_drape_provider COMMAND test_vector_drape_provider)
 
 add_executable(test_raster_overlay_lifecycle
     unit/providers/test_raster_overlay_lifecycle.cpp

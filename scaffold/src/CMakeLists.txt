@@ -539,6 +539,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/GoogleMapTilesImageryProvider.cpp
     earth_engine/providers/XYZImageryProvider.h
     earth_engine/providers/XYZImageryProvider.cpp
+    earth_engine/providers/VectorDrapeImageryProvider.h
+    earth_engine/providers/VectorDrapeImageryProvider.cpp
     earth_engine/providers/WebMapServiceImageryProvider.h
     earth_engine/providers/WebMapServiceImageryProvider.cpp
     earth_engine/providers/WebMapTileServiceImageryProvider.h
@@ -748,6 +750,9 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/MvtFeatureConverter.cpp
     earth_engine/data/MvtVectorSource.h
     earth_engine/data/MvtVectorSource.cpp
+    earth_engine/data/VectorRasterStyle.h
+    earth_engine/data/VectorTileRasterizer.h
+    earth_engine/data/VectorTileRasterizer.cpp
 )
 
 # ============================================================

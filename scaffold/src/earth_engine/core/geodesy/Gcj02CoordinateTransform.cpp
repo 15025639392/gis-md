@@ -507,6 +507,22 @@ Cartographic Gcj02CoordinateTransform::fromWgs84(
         cartographic.height());
 }
 
+Cartographic Gcj02CoordinateTransform::toWgs84(
+    const Cartographic& cartographic) {
+    if (isOutsideChina(cartographic)) {
+        return cartographic;
+    }
+    Cartographic wgs = cartographic;
+    for (int i = 0; i < 3; ++i) {
+        const Cartographic forward = fromWgs84(wgs);
+        wgs.setLongitude(wgs.longitude() -
+                         (forward.longitude() - cartographic.longitude()));
+        wgs.setLatitude(wgs.latitude() -
+                        (forward.latitude() - cartographic.latitude()));
+    }
+    return wgs;
+}
+
 Rectangle Gcj02CoordinateTransform::boundRectangleFromWgs84(
     const Rectangle& rectangle) {
     if (!rectangle.crossesAntimeridian()) {

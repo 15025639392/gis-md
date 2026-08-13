@@ -211,7 +211,8 @@ WGS84 cartographic → GCJ-02 transform used only by explicitly georeferenced ra
 | `transformLatitude` / `transformLongitude` (file-local) | .cpp:415-451 | Standard GCJ-02 periodic latitude/longitude offset polynomials |
 | `isOutsideChina()` | .cpp:455-461 | Identity outside longitude 72.004..137.8347° or latitude 0.8293..55.8271° |
 | `fromWgs84()` | .cpp:472-508 | Applies Krasovsky-axis/eccentricity correction and returns shifted lon/lat with original height |
-| `boundRectangleFromWgs84()` | .cpp:510-536 | Splits antimeridian rectangles, preserves wholly outside-China rectangles exactly, and conservatively bounds transformed/cross-boundary rectangles without losing wrapped longitude semantics |
+| `toWgs84()` | .cpp:510-524 | Inverse of fromWgs84 via three-round fixed-point iteration (warp gradient ~1e-5 → sub-millimetre); inside-China test evaluated on the GCJ input |
+| `boundRectangleFromWgs84()` | .cpp:526-552 | Splits antimeridian rectangles, preserves wholly outside-China rectangles exactly, and conservatively bounds transformed/cross-boundary rectangles without losing wrapped longitude semantics |
 | Constants | .cpp:15-29 | GCJ ellipsoid parameters, hard bounds, radians conversion, and rectangle subdivision count |
 
 ### S2CellID.h / .cpp
@@ -1764,6 +1765,23 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 | `generateTile` | .cpp:34-194 | Hash-colored 32px checkerboard, white 1px border, 3×5 bitmap-digit z/x/y labels |
 | `decodeTile` | .cpp:28-32 | Returns nullptr (no real decode) |
 
+### VectorDrapeImageryProvider.h / .cpp
+
+矢量**面** drape 源(刀1,2026-08-13):MVT 面要素动态栅格化冒充影像,进 TerrainPageStore 页合成(与卫星影像同轨,GPU 边际成本≈0)。E4 原版(`VectorImageryProvider`,2026-08-07 删除)死因是"页纹素封顶,近景线糊";本版三点本质差异:①overzoom 现画(谎报 maxZoom,内部钳 dataMaxZoom 取祖先只画子矩形,分辨率不封顶)②只承载面(线走几何通路/刀2 SDF 场)③GCJ-02 源网格适配(页网格按首源高德建,矩形按中心 toWgs84 平移回 WGS84 选 OSM 瓦)。失败语义与 E4 相反:fetch/解码失败回**全透明图**而非 nullptr(nullptr 让 PageSourceAssembler 永不 complete,合成缓冲滞留)。
+
+| Item | Lines | Description |
+|---|---|---|
+| `packDataKey` (file-local) | .cpp:19-23 | z<<48 \| x<<24 \| y,数据瓦缓存/在途 key |
+| `tileToUnitRect` (file-local) | .cpp:25-28 | XYZ 瓦 → unit Web-Mercator 矩形 |
+| `shiftRectGcjToWgs84` (file-local) | .cpp:45-58 | GCJ 网格矩形按中心点 toWgs84 常量平移,与渲染侧 per-tile worldOffset 同语义互补 |
+| `Assembly` | .cpp:73-87 | 一次 requestTile 的聚合态:slot 按 dataKey 对应、原子计数归零者收尾,样式按值快照 |
+| `completeIfReady` | .cpp:101-129 | 计数归零 → rasterPool(缺省就地)跑 rasterizeMvtRect;取消仍回调 nullptr;失败/空区域产全透明图 |
+| `onSourceTileReady` | .cpp:131-163 | 摘 inflight waiters + 成功瓦入 LRU(失败不入缓存,后续页自愈);逐 waiter 填 slot、递减计数 |
+| `requestTile` | .cpp:165-268 | 矩形(可选 GCJ 平移)→ ceil-1 数据瓦网格 → 缓存命中/在途搭车/发起 fetch;fetch 回调捕 this(provider 由 RasterOverlay 持有到引擎拆除) |
+| `decodeTile` | .cpp:270-279 | 同步整瓦栅格化(按 dataMaxZoom),测试/调试 |
+| `cacheStats` | .cpp:281-285 | 累计命中/拉取数快照 |
+
+
 ### TerrainProvider.h / .cpp
 
 Abstract terrain interface + `DecodedHeightmap`. cesium-native terrain data-source equivalent; owns no GPU resources. `HeightmapTerrainProvider` is the live subclass.
@@ -3147,6 +3165,22 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 叠加层样式值类型(12 行)。`Color` (.h:16)、`AltitudeMode` (.h:47)、
 `PointStyle` (.h:58)、`LineStyle` (.h:71);`InteractionStyle::find` (.cpp:5)
 按状态名查交互态覆盖。
+
+### VectorTileRasterizer.h / .cpp
+
+矢量瓦片 → RGBA 位图(刀1 面 drape 的栅格化核心,E4 通路的复活改造版;E4 原版 2026-08-07 删除)。与 E4 版的关键差异是**任意 unit Web-Mercator 目标矩形**:源瓦按各自 key 仿射映射,一次调用支持 overzoom 子矩形现画、跨瓦拼接、调用方先平移实现 GCJ 对齐 —— 纯函数不感知投影,worker 可并发。算法三件套沿用 E4 验证版:nonzero 环绕数扫描线填充(MVT 孔环反绕向天然挖孔)、折线方形接头描边(miter 甩刺)、超采样盒式降采样 AA。
+
+| Item | Lines | Description |
+|---|---|---|
+| `Edge`/`Canvas`/`TileAffine` (file-local) | .cpp:12-34 | 扫描线边(winding ±1)/超采样 0-1 覆盖 mask/源瓦 local→画布像素仿射 |
+| `addEdge` (file-local) | .cpp:36-41 | 水平边剔除 + 方向归一(winding 编码) |
+| `fillEdges` (file-local) | .cpp:47-83 | nonzero 扫描线填充,像素中心采样避免整数行重复计数 |
+| `strokePathEdges` (file-local) | .cpp:85-113 | 每段四边形 + 接头方块(square cap);绕向必须一致否则 nonzero 相消(路口打洞) |
+| `blendLayer` (file-local) | .cpp:115-133 | 层内 mask 覆盖(自重叠不叠深)、层间 alpha 混合 |
+| `pathTouchesCanvas` (file-local) | .cpp:135-155 | 画布外 bbox 剔除(overzoom 性能地板);bbox 不相交 ⇒ 不可能包围画布,跳过恒安全 |
+| `rasterizeMvtRect` | .cpp:157-292 | 主入口:逐层×fill/line 两遍×逐源瓦仿射;styleZoom 用页 zoom 求值层区间与 filter |
+| `rasterizeMvtTile` | .cpp:294-301 | E4 兼容便捷形:单瓦整图 = z0 原点 + 全 unit 平面矩形,坐标数学与 E4 逐位等价 |
+
 
 ### data/ — 矢量数据管线 — FeatureStore / FeatureBucketGrid / FeatureClusterIndex / FeatureSnapQuery / PolygonTessellator / LineTessellator / StyleExpression / StyleFilter / GeoJsonParser / GeoJsonImporter / MvtVectorSource / VectorTileTree / MvtFeatureConverter / VectorTileMeshBuilder
 
