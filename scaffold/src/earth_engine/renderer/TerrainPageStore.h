@@ -475,6 +475,8 @@ private:
     double winUploadMs_ = 0.0;
     double winMaxTickMs_ = 0.0;
     int winInboxItems_ = 0;
+    int winFieldUploads_ = 0;  // 刀2 诊断:真场层上传数(占位清场另计)
+    int winFieldClears_ = 0;
 
     // C-1:有序源列表(providers_[0] = 底图,定分块/zoom/最大级)。每帧由
     // determination 刷新;变化时作废全部已合成页(旧页少一层或多一层都是错的)。

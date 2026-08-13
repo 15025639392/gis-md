@@ -1048,7 +1048,14 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
         fieldArrayTexture_ = device_->createTexture(fieldDesc);
         if (fieldArrayTexture_) {
             fieldInbox_ = std::make_shared<RoadFieldInbox>();
+            platformLog(LogLevel::Info, "PageStore",
+                        "roadField plane ready (R8 %dx%d x%d layers)",
+                        config_.pageSizeTexels, config_.pageSizeTexels,
+                        config_.maxPages);
         } else {
+            platformLog(LogLevel::Warning, "PageStore",
+                        "roadField R8 array creation FAILED; field plane "
+                        "disabled");
             config_.roadFieldRequest = nullptr;
         }
     }
@@ -1168,13 +1175,16 @@ void TerrainPageStore::tick() {
     if (frameId_ % 60u == 0u) {
         platformLog(LogLevel::Info, "PageStore",
                     "tick60 compose=%.1fms upload=%.1fms "
-                    "maxTick=%.1fms items=%d",
+                    "maxTick=%.1fms items=%d fields=%d clears=%d",
                     winComposeMs_, winUploadMs_,
-                    winMaxTickMs_, winInboxItems_);
+                    winMaxTickMs_, winInboxItems_, winFieldUploads_,
+                    winFieldClears_);
         winComposeMs_ = 0.0;
         winUploadMs_ = 0.0;
         winMaxTickMs_ = 0.0;
         winInboxItems_ = 0;
+        winFieldUploads_ = 0;
+        winFieldClears_ = 0;
     }
 }
 
@@ -1367,6 +1377,9 @@ void TerrainPageStore::drainReadyUploads() {
             winUploadMs_ += perf::nowMs() - uploadStartMs;
             if (!item.placeholder) {
                 it->second.fieldPending = false;
+                ++winFieldUploads_;
+            } else {
+                ++winFieldClears_;
             }
             it->second.lastProgressFrame = frameId_;
             ++uploaded;
