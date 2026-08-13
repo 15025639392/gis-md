@@ -421,7 +421,7 @@ static bool createEngine() {
                        VectorDrapeImageryProvider::FetchCallback cb) {
                         mvtFetchTile(key, std::move(cb));
                     },
-                    gMvtWorkerPool.get());  // demo 静态 pool,活到进程尾
+                    gMvtWorkerPool);  // shared:provider 内部持 weak 防拆除竞态
             RasterOverlay::Options oopts;
             oopts.role = RasterOverlayRole::AnnotationOverlay;
             oopts.priority = RasterOverlayPriority::Normal;
@@ -485,7 +485,11 @@ static bool createEngine() {
             // demo 侧不再设 —— 两处真相会在相机飞离本区时打架。
             gMvtBasemapLayer = basemapLayer.get();
 
-            gMvtWorkerPool = std::make_shared<ThreadPool>(2);
+            // 与 drape 段共享同一个池:无条件重建会把 drape provider 里的
+            // weak_ptr 指向的旧池顶掉析构 → drape 恒 lock 失败退化就地跑。
+            if (!gMvtWorkerPool) {
+                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
+            }
             MvtVectorSource::Options mvtOpts;
             // E2:道路分级过滤从数据侧(tippecanoe -j)搬回样式侧。改分级
             // 策略不再需要重切整套瓦片,同一份数据也能给不同样式复用 ——

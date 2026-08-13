@@ -1771,15 +1771,17 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 
 | Item | Lines | Description |
 |---|---|---|
-| `packDataKey` (file-local) | .cpp:19-23 | z<<48 \| x<<24 \| y,数据瓦缓存/在途 key |
-| `tileToUnitRect` (file-local) | .cpp:25-28 | XYZ 瓦 → unit Web-Mercator 矩形 |
-| `shiftRectGcjToWgs84` (file-local) | .cpp:45-58 | GCJ 网格矩形按中心点 toWgs84 常量平移,与渲染侧 per-tile worldOffset 同语义互补 |
-| `Assembly` | .cpp:73-87 | 一次 requestTile 的聚合态:slot 按 dataKey 对应、原子计数归零者收尾,样式按值快照 |
-| `completeIfReady` | .cpp:101-129 | 计数归零 → rasterPool(缺省就地)跑 rasterizeMvtRect;取消仍回调 nullptr;失败/空区域产全透明图 |
-| `onSourceTileReady` | .cpp:131-163 | 摘 inflight waiters + 成功瓦入 LRU(失败不入缓存,后续页自愈);逐 waiter 填 slot、递减计数 |
-| `requestTile` | .cpp:165-268 | 矩形(可选 GCJ 平移)→ ceil-1 数据瓦网格 → 缓存命中/在途搭车/发起 fetch;fetch 回调捕 this(provider 由 RasterOverlay 持有到引擎拆除) |
-| `decodeTile` | .cpp:270-279 | 同步整瓦栅格化(按 dataMaxZoom),测试/调试 |
-| `cacheStats` | .cpp:281-285 | 累计命中/拉取数快照 |
+| `packDataKey` (file-local) | .cpp:22-26 | z<<48 \| x<<24 \| y,数据瓦缓存/在途 key |
+| `tileToUnitRect` (file-local) | .cpp:28-31 | XYZ 瓦 → unit Web-Mercator 矩形 |
+| `shiftRectGcjToWgs84` (file-local) | .cpp:48-58 | GCJ 网格矩形按中心点 toWgs84 常量平移,与渲染侧 per-tile worldOffset 同语义互补 |
+| `Assembly` | .cpp:76-93 | 一次 requestTile 的聚合态:slot 按 dataKey 对应、原子计数归零者收尾,样式按值快照;线程池持 weak(拆除竞态) |
+| `State` | .cpp:98-114 | 缓存/在途账本,shared_ptr 持有 —— fetch 回调只捕它不捕 this,provider 先亡不悬垂 |
+| `runAssembly` | .cpp:117-134 | 收尾本体:取消仍回调 nullptr;失败/空区域产全透明图 |
+| `completeIfReady` | .cpp:136-147 | 计数归零 → weak pool lock 成功 enqueue,失败(host 测试/会话已拆)就地跑 |
+| `onSourceTileReady` | .cpp:149-182 | 摘 inflight waiters + 成功瓦入 LRU(失败不入缓存,后续页自愈);逐 waiter 填 slot、递减计数 |
+| `requestTile` | .cpp:198-301 | 矩形(可选 GCJ 平移)→ ceil-1 数据瓦网格 → 缓存命中/在途搭车/发起 fetch;fetch 回调只捕 shared State |
+| `decodeTile` | .cpp:303-313 | 同步整瓦栅格化(按 dataMaxZoom),测试/调试 |
+| `cacheStats` | .cpp:315-319 | 累计命中/拉取数快照 |
 
 
 ### TerrainProvider.h / .cpp

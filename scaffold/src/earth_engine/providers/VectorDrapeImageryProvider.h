@@ -2,11 +2,8 @@
 
 #include <cstdint>
 #include <functional>
-#include <list>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include "ImageryProvider.h"
@@ -45,6 +42,13 @@ class ThreadPool;
 /// 栅格化在 rasterPool(未注入时在拉取回调线程/就地,host 测试用)。
 /// 内部 MvtTile 解码缓存 + 在途合并:overzoom 下同一张 z14 祖先瓦被多个页
 /// 并发请求是常态,不合并会对同一瓦片重复 fetch+decode。
+///
+/// **拆除竞态(异步回调只带自持数据,tombstone 法则)**:fetch 回调来自
+/// 网络线程,可迟到于 GL 会话拆除 —— 回调捕 shared_ptr<State>(缓存/在途
+/// 账本)而非 this;线程池持 weak_ptr,锁不上就地栅格化(拆除路径回调仍
+/// 必到,页存储账本校验会丢弃迟到结果)。裸指针版真机崩过:
+/// `enqueue on stopped ThreadPool`(demo teardown 先 reset 池,与
+/// MvtVectorSource 的 tombstone_22 同型)。
 class VectorDrapeImageryProvider : public ImageryProvider {
 public:
     /// (statusCode, body):200 且非空视为成功。与 MvtVectorSource 同签名,
@@ -72,7 +76,8 @@ public:
     };
 
     VectorDrapeImageryProvider(Options options, FetchFn fetch,
-                               ThreadPool* rasterPool = nullptr);
+                               std::shared_ptr<ThreadPool> rasterPool =
+                                   nullptr);
 
     std::string id() const override { return options_.id; }
     std::string type() const override { return "vector-drape"; }
@@ -104,29 +109,19 @@ public:
 
 private:
     struct Assembly;  // 一次 requestTile 的聚合状态(等多张源瓦到齐)
+    struct State;     // 缓存/在途账本(shared:fetch 回调自持,防拆除悬垂)
 
-    void onSourceTileReady(uint64_t dataKey,
-                           std::shared_ptr<const MvtTile> tile);
-    void completeIfReady(const std::shared_ptr<Assembly>& assembly);
+    // static + 只收 shared 状态:这些可能在 provider 亡后的迟到回调里执行。
+    static void runAssembly(const std::shared_ptr<Assembly>& assembly);
+    static void completeIfReady(const std::shared_ptr<Assembly>& assembly);
+    static void onSourceTileReady(const std::shared_ptr<State>& state,
+                                  uint64_t dataKey,
+                                  std::shared_ptr<const MvtTile> tile);
 
     Options options_;
     FetchFn fetch_;
-    ThreadPool* rasterPool_ = nullptr;
-
-    mutable std::mutex mutex_;
-    // LRU:list 头新尾旧;map 值持 list 迭代器。值 shared_ptr 出借给栅格化
-    // 任务,淘汰不悬垂。
-    struct CacheEntry {
-        uint64_t key;
-        std::shared_ptr<const MvtTile> tile;
-    };
-    std::list<CacheEntry> cacheOrder_;
-    std::unordered_map<uint64_t, std::list<CacheEntry>::iterator> cache_;
-    // 在途合并:同一 dataKey 的并发请求挂到同一份 waiters。
-    std::unordered_map<uint64_t,
-                       std::vector<std::shared_ptr<Assembly>>> inflight_;
-    uint64_t cacheHits_ = 0;
-    uint64_t cacheFetches_ = 0;
+    std::shared_ptr<ThreadPool> rasterPool_;
+    std::shared_ptr<State> state_;
 };
 
 } // namespace earth_engine

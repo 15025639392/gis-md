@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <list>
+#include <mutex>
+#include <unordered_map>
 #include <utility>
 
 #include "../core/async/AsyncSystem.h"
@@ -78,7 +81,10 @@ struct VectorDrapeImageryProvider::Assembly {
     int styleZoom = 0;
     int tileSize = 256;
     VectorRasterStyle style;  // 按值快照:任务生命周期可超 provider
-    ThreadPool* rasterPool = nullptr;
+    // weak:GL 会话拆除会 stop/析构线程池,而 fetch 回调(网络线程)可迟到
+    // 于拆除 —— 锁不上就地栅格化(仍回调,账本校验丢迟到结果),绝不
+    // enqueue 裸指针(真机崩过 `enqueue on stopped ThreadPool`)。
+    std::weak_ptr<ThreadPool> rasterPool;
 
     std::vector<uint64_t> dataKeys;
     std::vector<MvtTileRef> refs;  // tile 指针延迟到收尾时从 holders 取
@@ -86,16 +92,45 @@ struct VectorDrapeImageryProvider::Assembly {
     std::atomic<int> remaining{0};
 };
 
-VectorDrapeImageryProvider::VectorDrapeImageryProvider(Options options,
-                                                       FetchFn fetch,
-                                                       ThreadPool* rasterPool)
-    : options_(std::move(options)),
-      fetch_(std::move(fetch)),
-      rasterPool_(rasterPool) {}
+/// 缓存/在途账本。shared_ptr 持有:fetch 回调只捕它,provider 先亡不悬垂
+/// (与 TerrainPageStore 的 PendingInbox、MvtVectorSource 的 weak pool 同一
+/// 条 teardown 法则)。
+struct VectorDrapeImageryProvider::State {
+    std::mutex mutex;
+    // LRU:list 头新尾旧;map 值持 list 迭代器。值 shared_ptr 出借给栅格化
+    // 任务,淘汰不悬垂。
+    struct CacheEntry {
+        uint64_t key;
+        std::shared_ptr<const MvtTile> tile;
+    };
+    std::list<CacheEntry> cacheOrder;
+    std::unordered_map<uint64_t, std::list<CacheEntry>::iterator> cache;
+    // 在途合并:同一 dataKey 的并发请求挂到同一份 waiters。
+    std::unordered_map<uint64_t,
+                       std::vector<std::shared_ptr<Assembly>>> inflight;
+    size_t capacity = 48;
+    uint64_t hits = 0;
+    uint64_t fetches = 0;
+};
 
-std::string VectorDrapeImageryProvider::buildUrl(const TileKey& key) const {
-    return options_.id + "://" + std::to_string(key.z) + "/" +
-           std::to_string(key.x) + "/" + std::to_string(key.y);
+/// 收尾本体(可能在 rasterPool、拉取回调线程或调用线程执行)。
+void VectorDrapeImageryProvider::runAssembly(
+    const std::shared_ptr<Assembly>& assembly) {
+    // 取消后仍要回调:上层按「回调必到」管理在途计数。取消路径页已
+    // 淘汰,nullptr 会被 kickPageFetches 的回调直接丢弃。
+    if (assembly->token.isCancelled()) {
+        assembly->callback(assembly->pageKey, nullptr);
+        return;
+    }
+    for (size_t i = 0; i < assembly->refs.size(); ++i) {
+        assembly->refs[i].tile = assembly->holders[i].get();
+    }
+    VectorRasterImage raster = rasterizeMvtRect(
+        assembly->refs, assembly->rect, assembly->styleZoom, assembly->style,
+        assembly->tileSize);
+    // 空区域/全部源瓦失败 → 全透明图,同样有效:页存储的 assembler 必须
+    // 收到每个源才 complete(见类头注释的失败语义)。
+    assembly->callback(assembly->pageKey, toDecodedImage(std::move(raster)));
 }
 
 void VectorDrapeImageryProvider::completeIfReady(
@@ -103,47 +138,31 @@ void VectorDrapeImageryProvider::completeIfReady(
     if (assembly->remaining.load(std::memory_order_acquire) != 0) {
         return;
     }
-    auto work = [assembly]() {
-        // 取消后仍要回调:上层按「回调必到」管理在途计数。取消路径页已
-        // 淘汰,nullptr 会被 kickPageFetches 的回调直接丢弃。
-        if (assembly->token.isCancelled()) {
-            assembly->callback(assembly->pageKey, nullptr);
-            return;
-        }
-        for (size_t i = 0; i < assembly->refs.size(); ++i) {
-            assembly->refs[i].tile = assembly->holders[i].get();
-        }
-        VectorRasterImage raster = rasterizeMvtRect(
-            assembly->refs, assembly->rect, assembly->styleZoom,
-            assembly->style, assembly->tileSize);
-        // 空区域/全部源瓦失败 → 全透明图,同样有效:页存储的 assembler 必须
-        // 收到每个源才 complete(见类头注释的失败语义)。
-        assembly->callback(assembly->pageKey,
-                           toDecodedImage(std::move(raster)));
-    };
-    if (assembly->rasterPool) {
-        assembly->rasterPool->enqueue(std::move(work));
+    if (std::shared_ptr<ThreadPool> pool = assembly->rasterPool.lock()) {
+        pool->enqueue([assembly]() { runAssembly(assembly); });
     } else {
-        work();
+        // 池未注入(host 测试)或已随会话拆除:就地跑,回调仍必到。
+        runAssembly(assembly);
     }
 }
 
 void VectorDrapeImageryProvider::onSourceTileReady(
-    uint64_t dataKey, std::shared_ptr<const MvtTile> tile) {
+    const std::shared_ptr<State>& state, uint64_t dataKey,
+    std::shared_ptr<const MvtTile> tile) {
     std::vector<std::shared_ptr<Assembly>> waiters;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
-        auto it = inflight_.find(dataKey);
-        if (it != inflight_.end()) {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        auto it = state->inflight.find(dataKey);
+        if (it != state->inflight.end()) {
             waiters = std::move(it->second);
-            inflight_.erase(it);
+            state->inflight.erase(it);
         }
         if (tile) {
-            cacheOrder_.push_front(CacheEntry{dataKey, tile});
-            cache_[dataKey] = cacheOrder_.begin();
-            while (cache_.size() > options_.tileCacheCapacity) {
-                cache_.erase(cacheOrder_.back().key);
-                cacheOrder_.pop_back();
+            state->cacheOrder.push_front(State::CacheEntry{dataKey, tile});
+            state->cache[dataKey] = state->cacheOrder.begin();
+            while (state->cache.size() > state->capacity) {
+                state->cache.erase(state->cacheOrder.back().key);
+                state->cacheOrder.pop_back();
             }
         }
         // 失败(tile==null)不入缓存:下一批页会重新尝试,server 恢复后自愈。
@@ -160,6 +179,20 @@ void VectorDrapeImageryProvider::onSourceTileReady(
             completeIfReady(assembly);
         }
     }
+}
+
+VectorDrapeImageryProvider::VectorDrapeImageryProvider(
+    Options options, FetchFn fetch, std::shared_ptr<ThreadPool> rasterPool)
+    : options_(std::move(options)),
+      fetch_(std::move(fetch)),
+      state_(std::make_shared<State>()) {
+    state_->capacity = std::max<size_t>(1, options_.tileCacheCapacity);
+    rasterPool_ = std::move(rasterPool);
+}
+
+std::string VectorDrapeImageryProvider::buildUrl(const TileKey& key) const {
+    return options_.id + "://" + std::to_string(key.z) + "/" +
+           std::to_string(key.x) + "/" + std::to_string(key.y);
 }
 
 void VectorDrapeImageryProvider::requestTile(const TileKey& key,
@@ -215,26 +248,26 @@ void VectorDrapeImageryProvider::requestTile(const TileKey& key,
     std::vector<size_t> toFetch;
     int missing = 0;
     {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<std::mutex> lock(state_->mutex);
         for (size_t i = 0; i < assembly->dataKeys.size(); ++i) {
             const uint64_t dk = assembly->dataKeys[i];
-            auto it = cache_.find(dk);
-            if (it != cache_.end()) {
+            auto it = state_->cache.find(dk);
+            if (it != state_->cache.end()) {
                 // LRU touch:移到头部。
-                cacheOrder_.splice(cacheOrder_.begin(), cacheOrder_,
-                                   it->second);
+                state_->cacheOrder.splice(state_->cacheOrder.begin(),
+                                          state_->cacheOrder, it->second);
                 assembly->holders[i] = it->second->tile;
-                ++cacheHits_;
+                ++state_->hits;
                 continue;
             }
             ++missing;
-            auto inIt = inflight_.find(dk);
-            if (inIt != inflight_.end()) {
+            auto inIt = state_->inflight.find(dk);
+            if (inIt != state_->inflight.end()) {
                 inIt->second.push_back(assembly);
             } else {
-                inflight_[dk].push_back(assembly);
+                state_->inflight[dk].push_back(assembly);
                 toFetch.push_back(i);
-                ++cacheFetches_;
+                ++state_->fetches;
             }
         }
         assembly->remaining.store(missing, std::memory_order_release);
@@ -250,11 +283,11 @@ void VectorDrapeImageryProvider::requestTile(const TileKey& key,
         fetchKey.z = assembly->refs[i].z;
         fetchKey.x = assembly->refs[i].x;
         fetchKey.y = assembly->refs[i].y;
-        // 捕 this 安全性:provider 由 RasterOverlay 持有,生命周期到引擎
-        // 拆除;拆除时页存储先 cancel 全部在途(providers_ 变更即整店清),
-        // 与 MvtVectorSource 对 fetch 回调的既有假设一致。
-        fetch_(fetchKey, [this, dk](int statusCode,
-                                    std::vector<uint8_t> body) {
+        // 回调只捕 shared_ptr<State>(不捕 this):provider 可在瓦片在途时
+        // 随引擎拆除,迟到回调只落进自持账本。
+        std::shared_ptr<State> state = state_;
+        fetch_(fetchKey, [state, dk](int statusCode,
+                                     std::vector<uint8_t> body) {
             std::shared_ptr<const MvtTile> tile;
             if (statusCode == 200 && !body.empty()) {
                 auto decoded = std::make_shared<MvtTile>();
@@ -262,7 +295,7 @@ void VectorDrapeImageryProvider::requestTile(const TileKey& key,
                     tile = std::move(decoded);
                 }
             }
-            onSourceTileReady(dk, std::move(tile));
+            onSourceTileReady(state, dk, std::move(tile));
         });
     }
 }
@@ -280,8 +313,8 @@ std::unique_ptr<DecodedImage> VectorDrapeImageryProvider::decodeTile(
 
 VectorDrapeImageryProvider::CacheStats
 VectorDrapeImageryProvider::cacheStats() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return CacheStats{cacheHits_, cacheFetches_};
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    return CacheStats{state_->hits, state_->fetches};
 }
 
 } // namespace earth_engine
