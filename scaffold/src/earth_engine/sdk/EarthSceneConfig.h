@@ -249,6 +249,9 @@ struct EarthSceneConfig {
     /// 判据(见 Engine::setFrameGatingEnabled 的注释)。
     /// ⚠️ 失效方向是"画面冻住且零报错",接线新的异步产物时必须同步置脏位。
     bool frameGating = false;
+    /// B:地形高度/法线纹理 GPU 烘焙(替代 CPU bakeTerrainHeightNormalTexels)。
+    /// 默认关(CPU 路径);真机 A/B 用。精度已验证守无缝(f32 缝=CPU double 1.5°)。
+    bool gpuHeightBake = false;
     /// 影子渲染自检(见 Engine::setShadowVerifyEnabled)。dev 专用,默认关,
     /// **严禁在性能测量时开启**(自检帧含同步回读 = 管线 flush)。
     bool shadowVerifyIdle = false;

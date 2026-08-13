@@ -621,6 +621,7 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     engine_.setGpuPassTimingEnabled(config_.gpuPassTiming);
     engine_.setBlackFrameProbeEnabled(config_.blackFrameProbe);
     engine_.setFrameGatingEnabled(config_.frameGating);
+    engine_.setGpuHeightBakeEnabled(config_.gpuHeightBake);
     engine_.setShadowVerifyEnabled(config_.shadowVerifyIdle);
 
     // 环境快照 boot 段:场景装好、开关最终值已定(效果 setter 可能被后端拒绝)

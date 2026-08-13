@@ -280,6 +280,10 @@ public:
         return terrainGpuDisplacementEnabled_;
     }
 
+    // B:GPU 高度烘焙开关(存储值 + 转发给 pool;out-of-line,pool 类型在 .cpp 完整)。
+    void setGpuHeightBakeEnabled(bool enabled);
+    bool gpuHeightBakeEnabled() const { return gpuHeightBakeEnabled_; }
+
 private:
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
@@ -352,6 +356,8 @@ private:
     std::vector<RasterOverlayTileProvider*> pageProvidersScratch_;
     // 北极星 Phase 2c 地形 GPU 位移开关(P5 默认开;仍保留 flag 供运行时 A/B 关闭)。
     bool terrainGpuDisplacementEnabled_ = true;
+    // B:GPU 高度烘焙开关(默认关,CPU 烘焙路径;真机 A/B 用)。
+    bool gpuHeightBakeEnabled_ = false;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
     bool offscreenPassActive_ = false;
     int surfaceWidthPixels_ = 0;

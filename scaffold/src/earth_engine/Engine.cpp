@@ -342,6 +342,15 @@ Renderer* Engine::renderer() const {
     return scene_ ? scene_->renderer() : nullptr;
 }
 
+void Engine::setGpuHeightBakeEnabled(bool enabled) {
+    gpuHeightBakeEnabled_ = enabled;
+    // pool 可能尚未创建(config 先于 eager pool 建时应用)——两个 pool 创建点也会
+    // 按 gpuHeightBakeEnabled_ 应用,故此处只需转发给已存在的 pool。
+    if (terrainDisplacementPool_) {
+        terrainDisplacementPool_->setGpuHeightBakeEnabled(enabled);
+    }
+}
+
 void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
     terrainGpuDisplacementEnabled_ = enabled;
     Tileset* tileset = scene_ ? scene_->tileset() : nullptr;
@@ -355,6 +364,7 @@ void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
             terrainDisplacementPool_ =
                 std::make_unique<TerrainDisplacementTemplatePool>();
             terrainDisplacementPool_->initialize(device_);
+            terrainDisplacementPool_->setGpuHeightBakeEnabled(gpuHeightBakeEnabled_);
             scene_->setTerrainDisplacementPool(terrainDisplacementPool_.get());
         }
         // 失效已缓存的地形命令 → 下帧全部按 GPU 位移路径重建(否则开关前已加载
@@ -430,6 +440,7 @@ bool Engine::render(double deltaSeconds) {
         terrainDisplacementPool_ =
             std::make_unique<TerrainDisplacementTemplatePool>();
         terrainDisplacementPool_->initialize(device_);
+        terrainDisplacementPool_->setGpuHeightBakeEnabled(gpuHeightBakeEnabled_);
         scene_->setTerrainDisplacementPool(terrainDisplacementPool_.get());
     }
 

@@ -282,6 +282,7 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     config.gpuPassTiming = kMeasureGpuPassTiming;
     config.blackFrameProbe = kBlackFrameProbe;
     config.frameGating = kEnableFrameGating;
+    config.gpuHeightBake = kEnableGpuHeightBake;
     config.shadowVerifyIdle = kShadowVerifyIdle;
     config.fixedSimulationJulianDate = kFixedSimulationJulianDate;
     if (kMeasureHorizonView && kMeasureHorizonSunset) {

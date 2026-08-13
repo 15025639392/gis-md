@@ -341,6 +341,12 @@ add_executable(test_terrain_edge_normal_seam
 target_link_libraries(test_terrain_edge_normal_seam PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_terrain_edge_normal_seam COMMAND test_terrain_edge_normal_seam)
 
+add_executable(test_terrain_bake_f32_seam
+    unit/tiling/test_terrain_bake_f32_seam.cpp
+)
+target_link_libraries(test_terrain_bake_f32_seam PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_bake_f32_seam COMMAND test_terrain_bake_f32_seam)
+
 add_executable(test_tileset_sample_height
     unit/tiling/test_tileset_sample_height.cpp
 )

@@ -14,6 +14,7 @@
 #include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
 #include "../renderer/Renderer.h"
+#include "../tiling/TerrainDisplacementTemplatePool.h"  // B:flushHeightBakes
 #include "../tiling/TileBoundsMetrics.h"
 #include "../tiling/Tileset.h"
 
@@ -205,6 +206,12 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     buildSkyCommands(context, skyMs);
     buildAtmosphereCommands(context, atmosphereMs);
     buildLayerCommands(context, layerCommandsMs, vectorCommandsMs);
+    // B:消费本帧登记的 GPU 高度烘焙请求(buildLayerCommands 里 acquireHeightTexture
+    // 登记)。必须在任何主/prepass pass 打开之前(pass 不可嵌套),且在 depth prepass
+    // 与主 submit 之前——它们要采样这些高度纹理层。flag off 时 pending 空,早退无副作用。
+    if (auto* pool = context.renderer.terrainDisplacementPool()) {
+        pool->flushHeightBakes();
+    }
     // Fill the web-mercator polar gap (±85°→pole) so it degrades to a flat
     // polar surface instead of showing through to space at globe scale.
     // Appended before the MVP pass so the caps receive per-frame uniforms.

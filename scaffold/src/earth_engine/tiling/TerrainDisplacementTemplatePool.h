@@ -17,6 +17,8 @@ namespace earth_engine {
 class RenderDevice;
 class Buffer;
 class Texture;
+class ShaderProgram;
+class Framebuffer;
 struct DecodedHeightmap;
 
 // 把 (gridSize+1)² 栅格节点烘成 RGBA8 texel:R/G = 16bit 归一化高度
@@ -242,6 +244,15 @@ public:
     // 已上传模板 VBO 总字节（§5 有界性观测：应随可见 {LOD,row} 数封顶）。
     size_t totalVertexBytes() const { return totalVertexBytes_; }
 
+    // B 方案:GPU 烘焙开关。on 时 acquireHeightTexture 不做 CPU 烘焙,而是登记
+    // 一个 bake 请求;flushHeightBakes() 在渲染线程(build 之后、depth prepass
+    // 之前)统一以 GPU RTT pass 填层。off = 原 CPU 烘焙路径(默认,零行为变化)。
+    void setGpuHeightBakeEnabled(bool enabled) { gpuBakeEnabled_ = enabled; }
+    bool gpuHeightBakeEnabled() const { return gpuBakeEnabled_; }
+    // 消费 pending bake 请求:逐请求把源高度打包纹理传 GPU + 一遍片元 pass 渲进
+    // 目标层。须在渲染线程、任何主/prepass pass 打开之前调(pass 不可嵌套)。
+    void flushHeightBakes();
+
 private:
     struct Entry {
         std::unique_ptr<Buffer> vertexBuffer;
@@ -301,6 +312,32 @@ private:
     std::map<int, SharedIndexBuffer> sharedIndexBuffers_;
     uint64_t denseBudgetFrame_ = 0;
     int denseBuiltThisFrame_ = 0;
+
+    // ---- B 方案:GPU 烘焙 ----
+    // 一次 bake 请求:源已打包(hi/lo→RG8,含重叠环)按值自持(不留 heightmap
+    // 指针,虽 flush 同帧同线程,按值更省心),+ 目标层 + shader uniform 全套。
+    struct PendingHeightBake {
+        Texture* targetTexture = nullptr;  // 目标 height array(不持有)
+        int layer = 0;
+        int gridSize = 0;
+        std::vector<uint8_t> srcPacked;    // srcSize² RGBA8,R=码hi G=码lo
+        int srcSize = 0;
+        float srcInset = 0.5f;
+        float quantBase = 0.0f;
+        float quantStep = 0.125f;
+        float minH = 0.0f;
+        float range = 1.0f;
+        float widthM = 1.0f;
+        float heightM = 1.0f;
+        float reach = 0.0f;
+    };
+    bool gpuBakeEnabled_ = false;
+    std::vector<PendingHeightBake> pendingBakes_;
+    std::unique_ptr<ShaderProgram> bakeShader_;
+    std::unique_ptr<Buffer> bakeQuad_;
+    std::map<int, std::unique_ptr<Framebuffer>> bakeFbos_;   // 按 n=gridSize+1 定 viewport
+    std::map<int, std::unique_ptr<Texture>> bakeSrcTex_;     // 按 srcSize 复用源 scratch
+    bool ensureBakeResources();
 };
 
 }  // namespace earth_engine

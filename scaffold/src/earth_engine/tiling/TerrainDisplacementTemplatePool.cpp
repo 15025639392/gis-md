@@ -8,7 +8,9 @@
 
 #include "../content/TerrainDisplacementTemplate.h"
 #include "../providers/TerrainProvider.h"  // DecodedHeightmap
+#include "../renderer/RenderCommand.h"
 #include "../renderer/RenderDevice.h"
+#include "../renderer/TerrainHeightBakeShader.h"  // B:GPU 烘焙 shader
 #include "GltfRenderGeometryBuilder.h"  // TerrainGpuVertex
 #include "SchemeId.h"
 
@@ -317,13 +319,49 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     const int n = gridSize + 1;
     const float minH = heightmap.minHeight;
     const float range = std::max(1e-3f, heightmap.maxHeight - heightmap.minHeight);
-    const std::vector<uint8_t> bytes =
-        bakeTerrainHeightNormalTexels(heightmap, bounds, gridSize, minH, range);
-    if (!device_->updateTextureRegion(arr->texture.get(), 0, 0, n, n,
-                                      bytes.data(),
-                                      static_cast<size_t>(n) * 4, layer)) {
-        arr->layerPool.release(k);
-        return nullptr;
+    // 后端守卫:bake shader 目前只有 GLSL(kTerrainBakeFragGLSL),仅 OpenGLES 可用。
+    // Metal 需 MSL(未写)、Vulkan 需 SPIR-V —— 那两个后端强行走 GPU 路径会因
+    // createShader 失败使高度层永不烘 → 地形变平。故非 GLES 一律回退 CPU 烘焙。
+    const bool gpuBakeUsable =
+        gpuBakeEnabled_ &&
+        device_->backendType() == RenderDevice::Backend::OpenGLES;
+    if (gpuBakeUsable) {
+        // B:登记 GPU bake 请求(源按值打包自持),主区内容由 flushHeightBakes 在
+        // build 之后、depth prepass 之前以片元 pass 填。edge-LUT 行仍在下面 CPU 初始化。
+        PendingHeightBake req;
+        req.targetTexture = arr->texture.get();
+        req.layer = layer;
+        req.gridSize = gridSize;
+        req.srcSize = heightmap.tileSize;
+        req.srcInset = heightmap.borderInset;
+        req.quantBase = static_cast<float>(heightmap.quantBase);
+        req.quantStep = DecodedHeightmap::kQuantStep;
+        req.minH = minH;
+        req.range = range;
+        const double centerLat = 0.5 * (bounds.north() + bounds.south());
+        req.widthM = static_cast<float>(std::max(
+            1.0, bounds.width() * std::cos(centerLat) * 6378137.0));
+        req.heightM =
+            static_cast<float>(std::max(1.0, bounds.height() * 6378137.0));
+        req.reach = heightmap.overscanReach();
+        // quantizedHeights(uint16 码)→ RGBA8:R=码高字节 G=码低字节,BA 空。
+        const size_t px = static_cast<size_t>(req.srcSize) * req.srcSize;
+        req.srcPacked.assign(px * 4, 0);
+        for (size_t p = 0; p < px; ++p) {
+            const uint16_t code = heightmap.quantizedHeights[p];
+            req.srcPacked[p * 4 + 0] = static_cast<uint8_t>(code >> 8);
+            req.srcPacked[p * 4 + 1] = static_cast<uint8_t>(code & 0xFF);
+        }
+        pendingBakes_.push_back(std::move(req));
+    } else {
+        const std::vector<uint8_t> bytes =
+            bakeTerrainHeightNormalTexels(heightmap, bounds, gridSize, minH, range);
+        if (!device_->updateTextureRegion(arr->texture.get(), 0, 0, n, n,
+                                          bytes.data(),
+                                          static_cast<size_t>(n) * 4, layer)) {
+            arr->layerPool.release(k);
+            return nullptr;
+        }
     }
     // ①-1:把本层的边 LUT 行初始化为「差值 0」。层是 LRU 复用的,不初始化就会
     // 读到上一个租户留下的差值;而 0 恰好等于改前的自纹理吸附,是安全默认。
@@ -349,6 +387,103 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     view.epoch = arr->layerEpochs[static_cast<size_t>(layer)];
     auto inserted = arr->index.emplace(k, view);
     return &inserted.first->second;
+}
+
+bool TerrainDisplacementTemplatePool::ensureBakeResources() {
+    if (!device_) return false;
+    if (bakeShader_ && bakeQuad_) return true;
+    ShaderDesc sd;
+    sd.vertexSource = kTerrainBakeVertGLSL();
+    sd.fragmentSource = kTerrainBakeFragGLSL();
+    bakeShader_ = device_->createShader(sd);
+    const float quad[] = {-1.f, -1.f, 1.f, -1.f, -1.f, 1.f, 1.f, 1.f};
+    BufferDesc bd;
+    bd.size = sizeof(quad);
+    bd.data = quad;
+    bd.usage = BufferDesc::Usage::Static;
+    bd.type = BufferDesc::Type::Vertex;
+    bakeQuad_ = device_->createBuffer(bd);
+    return bakeShader_ && bakeQuad_;
+}
+
+void TerrainDisplacementTemplatePool::flushHeightBakes() {
+    if (pendingBakes_.empty()) return;
+    if (!ensureBakeResources()) {
+        pendingBakes_.clear();  // 建不出(如 Metal 缺 MSL)→ 丢弃,层留空由 P5b 兜底
+        return;
+    }
+    for (auto& req : pendingBakes_) {
+        const int n = req.gridSize + 1;
+        // 按 n 建 bake FBO:viewport=fbo 尺寸(RenderDeviceGLES beginPass),取 n×n
+        // 恰好只覆盖主区、不碰底部 edge-LUT 行。externalColorTarget 建时给一个,
+        // 逐请求 setFramebufferColorLayer 改绑同 array 的目标层。
+        auto& fbo = bakeFbos_[n];
+        if (!fbo) {
+            FramebufferDesc fd;
+            fd.width = n;
+            fd.height = n;
+            fd.hasColor = true;
+            fd.hasDepth = false;
+            fd.externalColorTarget = req.targetTexture;
+            fd.externalColorLayer = req.layer;
+            fbo = device_->createFramebuffer(fd);
+            if (!fbo) continue;
+        }
+        // 按 srcSize 复用源 scratch 纹理(NEAREST,含重叠环)。
+        auto& src = bakeSrcTex_[req.srcSize];
+        if (!src) {
+            TextureDesc td;
+            td.width = req.srcSize;
+            td.height = req.srcSize;
+            td.format = TextureDesc::Format::RGBA8;
+            td.mipmap = false;
+            td.minFilter = TextureDesc::Filter::Nearest;
+            td.magFilter = TextureDesc::Filter::Nearest;
+            td.data = req.srcPacked.data();
+            td.dataSize = req.srcPacked.size();
+            src = device_->createTexture(td);
+            if (!src) continue;
+        } else {
+            device_->updateTextureRegion(
+                src.get(), 0, 0, req.srcSize, req.srcSize, req.srcPacked.data(),
+                static_cast<size_t>(req.srcSize) * 4, 0);
+        }
+        // 改绑目标层。false = 后端不支持 → 短路(决不画到错误层)。
+        if (!device_->setFramebufferColorLayer(fbo.get(), req.targetTexture,
+                                               req.layer)) {
+            continue;
+        }
+        if (!device_->beginPass(fbo.get(), /*clearTarget*/ false)) continue;
+        RenderCommand cmd;
+        cmd.kind = RenderCommandKind::Unknown;
+        cmd.owner = "terrain_height_bake";
+        cmd.pass = "bake";
+        cmd.shader = bakeShader_.get();
+        cmd.vertexBuffer = bakeQuad_.get();
+        cmd.vertexCount = 4;
+        cmd.vertexStride = 2 * sizeof(float);
+        cmd.primitive = RenderCommand::PrimitiveType::TriangleStrip;
+        cmd.depthTest = false;
+        cmd.depthWrite = false;
+        cmd.blend = false;
+        cmd.cullFace = false;
+        cmd.textures.push_back(src.get());  // unit 0 = 源(shader u_tileTexture)
+        cmd.uniforms["u_srcSize"] = {static_cast<float>(req.srcSize)};
+        cmd.uniforms["u_srcInset"] = {req.srcInset};
+        cmd.uniforms["u_gridSize"] = {static_cast<float>(req.gridSize)};
+        cmd.uniforms["u_quantBase"] = {req.quantBase};
+        cmd.uniforms["u_quantStep"] = {req.quantStep};
+        cmd.uniforms["u_minH"] = {req.minH};
+        cmd.uniforms["u_range"] = {req.range};
+        cmd.uniforms["u_widthM"] = {req.widthM};
+        cmd.uniforms["u_heightM"] = {req.heightM};
+        cmd.uniforms["u_reach"] = {req.reach};
+        RenderCommandList cmds;
+        cmds.push_back(std::move(cmd));
+        device_->submit(cmds);
+        device_->endPass();
+    }
+    pendingBakes_.clear();
 }
 
 bool TerrainDisplacementTemplatePool::updateEdgeLutRows(const TileKey& key,

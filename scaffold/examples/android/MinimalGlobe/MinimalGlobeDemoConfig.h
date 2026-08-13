@@ -210,6 +210,11 @@ constexpr bool kBlackFrameProbe = false;
 // 它落地时没人消费。判据与接线见 Engine::setFrameGatingEnabled。
 constexpr bool kEnableFrameGating = true;
 
+// kEnableGpuHeightBake:B 方案——地形 height/normal 纹理 GPU 烘焙(替代 CPU
+// bakeTerrainHeightNormalTexels ~6ms/瓦片)。默认关(CPU 路径),真机 A/B:
+// off=CPU 烘焙、on=GPU RTT 烘焙。精度已验证守无缝。调查期用,收官前评估设默认。
+constexpr bool kEnableGpuHeightBake = false;
+
 // kShadowVerifyIdle:影子渲染自检(方案 C)。gating 判定 idle 后不立刻睡,
 // 继续渲 20 帧比对帧指纹 —— 画面在"应该静止"之后还变 = 有异步产物落地却
 // 没人置脏位。本轮四次"零报错冻屏"里唯一有普适性的守卫(它不关心是哪个
