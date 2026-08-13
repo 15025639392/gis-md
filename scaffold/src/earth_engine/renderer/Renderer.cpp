@@ -1587,7 +1587,7 @@ uniform vec4 u_color;
 out vec4 fragColor;
 
 void main() {
-    fragColor = u_color;
+    fragColor = vec4(encodeSceneOutput(u_color.rgb), u_color.a);
 }
 )glsl";
 
@@ -1660,7 +1660,7 @@ in vec4 v_color;
 out vec4 fragColor;
 
 void main() {
-    fragColor = v_color;
+    fragColor = vec4(encodeSceneOutput(v_color.rgb), v_color.a);
 }
 )glsl";
 
@@ -1741,7 +1741,7 @@ in vec4 v_color;
 out vec4 fragColor;
 
 void main() {
-    fragColor = v_color;
+    fragColor = vec4(encodeSceneOutput(v_color.rgb), v_color.a);
 }
 )glsl";
 
@@ -1881,7 +1881,7 @@ void main() {
         float phase = fract(v_lengthSoFar / u_dashPeriodMeters);
         if (phase >= u_dashOnFraction) a = 0.0;
     }
-    fragColor = vec4(v_color.rgb, a);
+    fragColor = vec4(encodeSceneOutput(v_color.rgb), a);
 }
 )glsl";
 
@@ -2023,7 +2023,7 @@ uniform vec4 u_color;
 out vec4 fragColor;
 
 void main() {
-    fragColor = u_color;
+    fragColor = vec4(encodeSceneOutput(u_color.rgb), u_color.a);
 }
 )glsl";
 
@@ -2248,7 +2248,7 @@ void main() {
         vec4 tex = texture(u_iconAtlas, v_uv);
         float alpha = tex.a * v_color.a;
         if (alpha <= 0.004) discard;
-        fragColor = vec4(tex.rgb * v_color.rgb, alpha);
+        fragColor = vec4(encodeSceneOutput(tex.rgb * v_color.rgb), alpha);
         return;
     }
     // 解析 SDF:fwidth 自适应软边(尺寸无关,任意缩放都是 ~1px)。
@@ -2256,7 +2256,7 @@ void main() {
     float w = max(fwidth(d), 1e-5);
     float alpha = (1.0 - smoothstep(-w, w, d)) * v_color.a;
     if (alpha <= 0.004) discard;
-    fragColor = vec4(v_color.rgb, alpha);
+    fragColor = vec4(encodeSceneOutput(v_color.rgb), alpha);
 }
 )glsl";
 
@@ -2401,7 +2401,7 @@ void main() {
     float alpha = max(fill * u_color.a, halo * u_haloColor.a) * v_opacity;
     if (alpha <= 0.004) discard;
     vec3 rgb = mix(u_haloColor.rgb, u_color.rgb, fill);
-    fragColor = vec4(rgb, alpha);
+    fragColor = vec4(encodeSceneOutput(rgb), alpha);
 }
 )glsl";
 
@@ -3910,6 +3910,28 @@ static std::string withTerrainLight(const char* fragmentSource, bool metal) {
     return src;
 }
 
+// B2 刀1:场景内容输出编码。HDR 下场景画进线性 16F 靶、末端 tonemap+sRGB
+// encode(见 kEnableHdrPipeline / OffscreenPostProcess Tonemap)。无光照的矢量/
+// 标签/图标 shader 输出的是**显示空间**手调色,直接写进线性靶会被 tonemap 当线性
+// 处理而偏亮/色偏。此处按 flag 注入 encodeSceneOutput():
+//   HDR → srgbToLinear(把显示色转线性,过 tonemap+encode 后往返回原显示色,亮部
+//         受 tonemap 轻压,与 terrain/sky 同调);LDR → 恒等(**零回归**,函数被优化掉)。
+// 各 A 档 GLES 片元 shader 末尾 fragColor.rgb 包一层本函数,assembly 时注入定义。
+// 仅 GLES(Metal HDR 终端未接线,留刀4);地形/天空/fog 已各自在 HDR 变体里输出线性。
+static std::string withSceneOutput(const std::string& fragmentSource) {
+    std::string src(fragmentSource);
+    const char* fn =
+        kEnableHdrPipeline
+            ? "vec3 encodeSceneOutput(vec3 c){return pow(max(c,vec3(0.0)),vec3(2.2));}\n"
+            : "vec3 encodeSceneOutput(vec3 c){return c;}\n";
+    const size_t pos = src.find("void main(");
+    if (pos == std::string::npos) {
+        return src;  // 锚点必存;缺失宁可返回原样让编译期炸(缺函数定义)
+    }
+    src.insert(pos, fn);
+    return src;
+}
+
 // ============================================================
 // Renderer::Impl
 // ============================================================
@@ -4076,7 +4098,7 @@ bool Renderer::initialize() {
     // ---- Color shader (vector layers) ----
     ShaderDesc colorSd;
     colorSd.vertexSource = isMetal ? kColorVertexMSL : kColorVertexGLSL;
-    colorSd.fragmentSource = isMetal ? kColorFragmentMSL : kColorFragmentGLSL;
+    colorSd.fragmentSource = isMetal ? kColorFragmentMSL : withSceneOutput(kColorFragmentGLSL);
     impl_->colorShader = dev->createShader(colorSd);
     // colorShader failure is non-fatal (vector layers won't render but tiles still work)
 
@@ -4085,7 +4107,7 @@ bool Renderer::initialize() {
     vectorFillSd.vertexSource =
         isMetal ? kVectorFillVertexMSL : kVectorFillVertexGLSL;
     vectorFillSd.fragmentSource =
-        isMetal ? kVectorFillFragmentMSL : kVectorFillFragmentGLSL;
+        isMetal ? kVectorFillFragmentMSL : withSceneOutput(kVectorFillFragmentGLSL);
     impl_->vectorFillShader = dev->createShader(vectorFillSd);
     if (!impl_->vectorFillShader) {
         // 非致命:fill 不出图,其余矢量/地形不受影响
@@ -4097,7 +4119,7 @@ bool Renderer::initialize() {
     vectorPageMeshSd.vertexSource =
         isMetal ? kVectorPageMeshVertexMSL : kVectorPageMeshVertexGLSL;
     vectorPageMeshSd.fragmentSource =
-        isMetal ? kVectorPageMeshFragmentMSL : kVectorPageMeshFragmentGLSL;
+        isMetal ? kVectorPageMeshFragmentMSL : withSceneOutput(kVectorPageMeshFragmentGLSL);
     impl_->vectorPageMeshShader = dev->createShader(vectorPageMeshSd);
     if (!impl_->vectorPageMeshShader) {
         // 非致命:矢量不进页存储,cell 回落 mappedRaster 的栅格版(糊但有)。
@@ -4111,7 +4133,7 @@ bool Renderer::initialize() {
     vectorLineSd.vertexSource =
         isMetal ? kVectorLineVertexMSL : kVectorLineVertexGLSL;
     vectorLineSd.fragmentSource =
-        isMetal ? kVectorLineFragmentMSL : kVectorLineFragmentGLSL;
+        isMetal ? kVectorLineFragmentMSL : withSceneOutput(kVectorLineFragmentGLSL);
     impl_->vectorLineShader = dev->createShader(vectorLineSd);
     if (!impl_->vectorLineShader) {
         // 非致命:矢量线不出图,fill/地形不受影响
@@ -4124,7 +4146,7 @@ bool Renderer::initialize() {
         isMetal ? kVectorLineStencilVertexMSL : kVectorLineStencilVertexGLSL;
     vectorLineStencilSd.fragmentSource = isMetal
                                              ? kVectorLineStencilFragmentMSL
-                                             : kVectorLineStencilFragmentGLSL;
+                                             : withSceneOutput(kVectorLineStencilFragmentGLSL);
     impl_->vectorLineStencilShader = dev->createShader(vectorLineStencilSd);
     if (!impl_->vectorLineStencilShader) {
         // 非致命:贴地线命令对不生成(shader 指针为空即跳过),不影响其余
@@ -4138,7 +4160,7 @@ bool Renderer::initialize() {
     vectorPointSd.vertexSource =
         isMetal ? kVectorPointVertexMSL : kVectorPointVertexGLSL;
     vectorPointSd.fragmentSource =
-        isMetal ? kVectorPointFragmentMSL : kVectorPointFragmentGLSL;
+        isMetal ? kVectorPointFragmentMSL : withSceneOutput(kVectorPointFragmentGLSL);
     impl_->vectorPointShader = dev->createShader(vectorPointSd);
     if (!impl_->vectorPointShader) {
         // 非致命:点符号不出图,其余矢量/地形不受影响
@@ -4150,7 +4172,7 @@ bool Renderer::initialize() {
     vectorLabelSd.vertexSource =
         isMetal ? kVectorLabelVertexMSL : kVectorLabelVertexGLSL;
     vectorLabelSd.fragmentSource =
-        isMetal ? kVectorLabelFragmentMSL : kVectorLabelFragmentGLSL;
+        isMetal ? kVectorLabelFragmentMSL : withSceneOutput(kVectorLabelFragmentGLSL);
     impl_->vectorLabelShader = dev->createShader(vectorLabelSd);
     if (!impl_->vectorLabelShader) {
         // 非致命:标注不出图,其余矢量/地形不受影响
