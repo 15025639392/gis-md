@@ -102,13 +102,15 @@ VectorRasterStyle makeMvtRoadFieldStyle() {
     };
 
     VectorRasterStyle style;
+    // 2026-08-14:0.75/1.25/2.5 → 0.6/1.0/1.8(整体 -25~30%,用户观感
+    // 「太粗」;SDF 解析 AA 下线宽只是 smoothstep 阈值,改档零成本)。
     style.layers = {
-        roadsAtZoom(StyleFilter::zoomCompare(C::Less, 11), 0.75),
+        roadsAtZoom(StyleFilter::zoomCompare(C::Less, 11), 0.6),
         roadsAtZoom(StyleFilter::all({
                         StyleFilter::zoomCompare(C::GreaterEqual, 11),
                         StyleFilter::zoomCompare(C::Less, 13)}),
-                    1.25),
-        roadsAtZoom(StyleFilter::zoomCompare(C::GreaterEqual, 13), 2.5)};
+                    1.0),
+        roadsAtZoom(StyleFilter::zoomCompare(C::GreaterEqual, 13), 1.8)};
     return style;
 }
 
