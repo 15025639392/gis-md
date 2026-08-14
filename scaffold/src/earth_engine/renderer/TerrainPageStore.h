@@ -550,15 +550,15 @@ private:
         // [pageStore第一刀] 相机无关几何缓存(placement 不变则跨帧复用,免每帧重建 OBB)。
         std::vector<DetCellGeom> geom;
         std::vector<DetKeptCell> kept;
-        // 本瓦片被 SSE 地板剔掉的 cell 数(合批资格用,见 fullyResident)。
+        // 本瓦片落在 SSE 地板以下、被降级到**最粗祖先页**兜底的远 cell 数(纯诊断)。
         //
-        // 必须与 kept 同寿命:几何 walk 只在 det 缓存 miss 时跑,算在缓存外就会在
-        // hit 帧丢失,让资格闸看到假的 0。
-        //
-        // 语义关键:被地板剔掉的 cell **通过了视锥测试** —— 它在屏幕上、会产生
-        // 片元,只是被判定"屏幕贡献太小,不值得给页"。视锥外的 cell 不产生片元,
-        // 两者对合批的安全性含义完全相反,不能混在一个计数里。
-        int sseFloorCulled = 0;
+        // 历史:此计数曾名 sseFloorCulled —— 那时地板以下的 cell 被直接剔除(A=0 回落
+        // mappedRaster),故要参与合批资格判定。刀1/刀2 后 drape 面与 SDF 路网场只寄生在
+        // 页上、mappedRaster 无矢量等价物,剔除 = 远景高俯角整片没水面/没路网;改为让这些
+        // cell 照常走渐变路径取粗页(za 恒钳 tileZ,与本瓦近地板 cell 同页,零新增页)。
+        // 现在它们进 kept、有页、参与 residentCells → 合批资格由 residentCells==kept.size()
+        // 统一覆盖,**本计数不再进合批闸**,仅供真机验收判「远景补覆盖是否生效(应 >0)」。
+        int coarseFarCells = 0;
     };
     struct DetTileParam {  // 本帧 per-tile 参数(签名阶段算,walk/encode 复用)
         TilesetTile* tile = nullptr;

@@ -660,8 +660,8 @@ void TerrainPageStore::updateVisiblePages(
     visiblePagesScratch_.clear();
     int zMin = std::numeric_limits<int>::max();
     int zMax = std::numeric_limits<int>::min();
-    // 分类每帧必跑 → culledBySse 每帧从 0 重累加。
-    int culledBySse = 0;
+    // 分类每帧必跑 → coarseFarCells 每帧从 0 重累加(全瓦合计,供 PageDet 日志)。
+    int coarseFarCells = 0;
     const int visibleCappedTiles = static_cast<int>(detParamsScratch_.size());
 
     for (const DetTileParam& p : detParamsScratch_) {
@@ -732,7 +732,7 @@ void TerrainPageStore::updateVisiblePages(
         // [pageStore第一刀] 分类(相机相关,每帧必跑):在缓存几何上做 frustum+SSE →
         // kept。逐位复刻原 walk 的相机相关段,只是 OBB/矩形不再每帧重建。
         cache.kept.clear();
-        cache.sseFloorCulled = 0;
+        cache.coarseFarCells = 0;
         for (const DetCellGeom& g : cache.geom) {
             // 跨 GCJ 边界的瓦片放弃视锥剔除:worldOffset 是阶跃近似,假的"视锥外"
             // 会渲成纯白面(见 DetTileParam 的 crossesGcjBoundary 注释)。保守全收。
@@ -749,12 +749,22 @@ void TerrainPageStore::updateVisiblePages(
                 TileSelectionInputMetrics::screenSpaceErrorForView(
                     p.tile->geometricError, view.projectionMatrix,
                     view.viewportHeightPixels, cellDist);
-            // 真 miss 地板(§16.3⑥):屏幕贡献 < 1/4 阈值的 cell = 厚 OBB 掠射假阳性,
-            // 不给页(回落 mappedRaster),防 near-nadir 枚举爆量。
+            // [远景矢量补覆盖] §16.3⑥ 曾把屏幕贡献 < 1/4 阈值的 cell 判「真 miss」直接
+            // 剔除(A=0)回落 mappedRaster。「页=纯影像」时代无害(远景卫图 mappedRaster
+            // 兜底够用),但刀1/刀2 后 drape 面与 SDF 路网场**只寄生在页上**、mappedRaster
+            // 无矢量等价物 → 远景高俯角整片没水面/没路网。改法:不再 continue 丢弃,而是让
+            // 它照常走下面的渐变路径取**最粗祖先页**(cellSse<threshold → za 恒钳到 tileZ)。
+            //
+            // 边界(为何不重现注释担心的「near-nadir 枚举爆量」):za 钳到 tileZ 后,本 cell
+            // 的祖先 pageKey = (tileZ,tileX,tileY),与本瓦**所有** za=tileZ 的近地板 cell 同
+            // 一张页 —— 补覆盖只是让更多 cell 指向渐变**已经请求**的那张粗页,**零新增页**,
+            // 工作集不变。地板当年真正防的是 §15.3 硬剔可能落到的**细**页;对「远 cell→共享
+            // 粗页」这条路径,爆量从来不成立,地板只是白白丢了远景矢量、无页预算收益。
+            //
+            // 计数保留仅作真机验收诊断(远景该 >0 = 补覆盖生效),不再据此剔除或卡合批。
             if (cellSse < threshold * kCellSseMissFloorFraction) {
-                ++culledBySse;
-                ++cache.sseFloorCulled;  // per-tile:合批资格要用
-                continue;
+                ++coarseFarCells;
+                ++cache.coarseFarCells;  // per-tile 诊断:降级到粗页兜底的远 cell 数
             }
             int za = p.tile->key.z;
             if (cellSse > threshold) {
@@ -796,7 +806,7 @@ void TerrainPageStore::updateVisiblePages(
             visiblePagesScratch_.insert(kc.pageKey);  // 去重计数(粗页共享 → 少)
             zMin = std::min(zMin, kc.fetchKey.z);  // 实际页 zoom = Za(渐变后 ≤ Z)
             zMax = std::max(zMax, kc.fetchKey.z);
-            // 请求目标页(za,d)并占槽/touch。
+            // 请求目标页(za,d)并占槽/touch(建页副作用:emplace + kick fetch)。
             uint64_t evicted = 0;
             const int layer = pool_.acquire(kc.pageKey, frameId_, &evicted);
             if (evicted != 0) {
@@ -815,27 +825,26 @@ void TerrainPageStore::updateVisiblePages(
                     pe.lastProgressFrame = frameId_;  // 建页即算一次进度
                     kickPageFetches(kc.fetchKey, kc.pageKey, layer, pe);
                 }
-                // C-1:首源合成上传即算 resident(底图先亮),不等最慢的源。
-                if (pe.uploadedTexels()) {
-                    // 目标页就绪 = 理想 LOD(settled 逐字节=现状精/粗页)。
-                    encodeLayerRGBA8(pe.layer, true,
-                                     fieldLayerReady(pe.layer, kc.pageKey),
-                                     kc.d, texel);
-                    ++residentCells;
-                    continue;
-                }
             }
-            // 目标未就绪(page-in 中 / 池本帧满):回落**最细的已驻留祖先页**(§16.4
-            // 运动抗模糊带)。沿本 cell 祖先链从细到粗(ad 升序=za 降序)找首个 uploaded
-            // 页,用它 + 其深度 foundD 采样;touch 保活。运动中相邻距离带的祖先常已驻留
-            // (gradient 覆盖 + LRU 保留)→ 显略粗/略细一级而非 z12 mappedRaster 悬崖。
-            // 全冷(祖先链无驻留)才 A=0 回落 mappedRaster。settled 目标就绪走上分支不进此。
+            // [刀2 运动闪烁根修] 沿祖先链一次 walk(ad 升序=细→粗;深度轴统一 =
+            // p.zoom-pageZoom,self 恰在 ad=kc.d),分三层择页:
+            //   Tier1 最细**双就绪**页(影像+场都在)→ 线稳、面/线 LOD 同步升级(消闪)
+            //   Tier2 最细**影像就绪**页(场 pending)→ A=128:面走快路、线短暂缺
+            //         (=改造前"抗模糊带"行为;救面的影像就绪页不再被场 gate 误杀成 A=0)
+            //   Tier3 全冷 → A=0 回落 mappedRaster
+            // 为何 Tier1 宁取更粗的双就绪页:线纯 MVT 派生、无卫星快源,细页场必然滞后
+            // 卫星;若一见细页卫星就切过去会 A=128 掉线(旧行为=闪)。场未就绪时继续用已
+            // 双就绪的粗祖先(面粗一级、几十 ms、无感),细页场落地下帧升级 → 线不闪。
+            // 关键:找不到双就绪祖先时**退回 Tier2 影像就绪**(而非 A=0),故最坏=改造前,
+            // 不出现"线消失+面降级"。场功能关闭时 fieldLayerReady 恒 true → Tier1=Tier2,
+            // 逐字节回到改造前。
             const int subX = p.placement.x0 + kc.dx;
             const int subY = p.placement.y0 + kc.dy;
             const int maxAd = p.zoom - p.tile->key.z;  // za=Z 到 tileZ 的最大深度
-            int foundLayer = -1;
-            int foundD = -1;
-            uint64_t foundKey = 0;  // 祖先页 key,供场 gate 判定
+            int dualLayer = -1, dualD = -1;
+            uint64_t dualKey = 0;  // 最细双就绪页(Tier1)
+            int imgLayer = -1, imgD = -1;
+            uint64_t imgKey = 0;  // 最细影像就绪页(Tier2 兜底)
             for (int ad = 0; ad <= maxAd; ++ad) {
                 TileKey aKey;
                 aKey.schemeId = p.imgSchemeId;
@@ -844,18 +853,29 @@ void TerrainPageStore::updateVisiblePages(
                 aKey.y = subY >> ad;
                 const uint64_t aPageKey = packKey(aKey);
                 const auto ait = pages_.find(aPageKey);
-                if (ait != pages_.end() && ait->second.uploadedTexels()) {
-                    foundLayer = ait->second.layer;
-                    foundD = ad;
-                    foundKey = aPageKey;
-                    pool_.touch(aPageKey, frameId_);  // 显示中的祖先页不该被淘汰
-                    break;
+                if (ait == pages_.end() || !ait->second.uploadedTexels()) {
+                    continue;
+                }
+                if (imgLayer < 0) {  // 最细影像就绪 = 首个 uploaded(仅记一次)
+                    imgLayer = ait->second.layer;
+                    imgD = ad;
+                    imgKey = aPageKey;
+                }
+                if (fieldLayerReady(ait->second.layer, aPageKey)) {
+                    dualLayer = ait->second.layer;  // 最细双就绪 = 首个场也就绪
+                    dualD = ad;
+                    dualKey = aPageKey;
+                    break;  // 更粗的无需再看
                 }
             }
-            if (foundLayer >= 0) {
-                encodeLayerRGBA8(foundLayer, true,
-                                 fieldLayerReady(foundLayer, foundKey), foundD,
-                                 texel);
+            if (dualLayer >= 0) {
+                pool_.touch(dualKey, frameId_);  // 显示中的页不该被淘汰
+                encodeLayerRGBA8(dualLayer, true, true, dualD, texel);
+                ++residentCells;
+            } else if (imgLayer >= 0) {
+                pool_.touch(imgKey, frameId_);
+                encodeLayerRGBA8(imgLayer, true, false, imgD,
+                                 texel);  // A=128:面走快路,线短暂缺
                 ++residentCells;
             } else {
                 // 全冷 → mappedRaster(resident=false;fieldReady 无关给 true)。
@@ -907,26 +927,25 @@ void TerrainPageStore::updateVisiblePages(
         // 而是停在 u_baseColor,渲染成被光照打亮的纯色面(真机实测:半屏纯白,
         // 地形起伏还在,像雪山,比出洞更难在截图里被认出来)。
         //
-        // 所以三类 cell 要分开看:
+        // 所以两类 cell 要分开看:
         //   视锥外剔除   → 不产生片元 → 无所谓 → 可放行
-        //   SSE 地板剔除 → **产生片元**(它过了视锥测试)→ 必须挡住
         //   kept 但页未到 → 产生片元 → 必须挡住(residentCells 覆盖)
+        // (曾有第三类「SSE 地板剔除」cell 会产生片元却无页,须单独挡;远景补覆盖后它们
+        //  已进 kept、取粗页,故并入「kept 但页未到」由 residentCells 统一覆盖,不再单列。)
         //
-        // 旧条件 residentCells == gridN² 把三类一起挡了,安全但在 gridN 稍大时
+        // 旧条件 residentCells == gridN² 把各类一起挡了,安全但在 gridN 稍大时
         // **事实上不可达**(真机 gridN=32 要 1024 cell 全驻留,而全局只有 ~52 页),
         // 合批因此长期空转。现条件保留全部安全性,同时让闸真的可达。
         ind.fullyResident = ind.layer >= 0 &&
-                            cache.sseFloorCulled == 0 &&
                             residentCells == static_cast<int>(cache.kept.size());
         // 合批资格的**唯一**卡点在这里,但此前只有布尔结果、没有距离达标多远的量:
         // 于是"合批为什么一个批都不成形"完全不可查(BatchDet 只能报到
         // notFullyResident 为止)。记下最差覆盖率,把"差一点"与"根本达不到"分开。
         // 策略生效率:会产生片元的 cell 里有多少真拿到了高清页。
-        // 分母 = kept(过视锥且过 SSE 地板)+ 被地板剔掉的(它们也在屏幕上,只是
-        // 判定为贡献太小不给页)。差额全部回落 mappedRaster = 糊。
+        // 分母 = kept(过视锥的全部 cell,含被降级到粗页的远 cell —— 远景补覆盖后它们
+        // 都在 kept 里)。差额是页尚未到达的 cell,回落 mappedRaster = 糊。
         policy::observe(policy::Id::CellPageCoverage, residentCells,
-                        static_cast<int>(cache.kept.size()) +
-                            cache.sseFloorCulled);
+                        static_cast<int>(cache.kept.size()));
         // 分母跟 **cell 网格**走,不跟几何等分走:GCJ 下二者不等(源网格多一列
         // 一行),用 gridN² 会让覆盖率恒 <1 而看不出是分母错还是真没覆盖。
         const int cellsNeeded = p.placement.cellsX * p.placement.cellsY;
@@ -984,11 +1003,11 @@ void TerrainPageStore::updateVisiblePages(
         platformLog(LogLevel::Warning, "PageDet",
                     "uniquePages=%d residentPages=%d uploadedTotal=%d "
                     "visibleCappedTiles=%d zMin=%d zMax=%d maxTileSse=%.0f "
-                    "culledBySse=%d sources=%d complete=%d partial=%d "
+                    "coarseFarCells=%d sources=%d complete=%d partial=%d "
                     "fullyResident=%d/%d worstCellRatio=%.2f",
                     lastVisiblePageCount_, pool_.residentCount(),
                     uploadedLayerTotal_, visibleCappedTiles, logZMin, logZMax,
-                    maxTileSse, culledBySse,
+                    maxTileSse, coarseFarCells,
                     static_cast<int>(providers_.size()), completePages,
                     partialPages,
                     fullyResidentTiles_, residencyCheckedTiles_,
