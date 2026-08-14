@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <string>
 #include <vector>
 
 #include "../core/math/Vec3.h"
@@ -24,6 +25,25 @@ struct VolumeCpuGroup {
     std::vector<uint32_t> indices;
 };
 using VolumeCpuGroups = std::map<uint32_t, VolumeCpuGroup>;
+
+/// 瓦片点符号实例(worker 产出的中间表)。
+///
+/// 点符号**不在 worker 侧定型 quad**:图集查找(位图帧 uv)是渲染线程状态。
+/// worker 把纯计算部分全部做完(锚点投影、表达式求值出颜色/图形名、属性
+/// 抽取),渲染线程准入时只做「图集解析 + 展开 4 顶点」——一瓦一次,非逐帧。
+struct TileSymbolCpu {
+    /// 锚点大地坐标(radian/meter,**原始几何高**,未含样式 offset)。
+    /// 存经纬度而非 ECEF:贴地模式的地形采样是渲染线程状态,准入定型时
+    /// 才能把锚点落到地面 —— worker 侧给 ECEF 就把高度焊死在椭球面了
+    /// (山地会整批埋进地形被遮挡判定吃掉)。
+    double lonRad = 0.0;
+    double latRad = 0.0;
+    double heightM = 0.0;
+    float colorPacked = 0.0f;  ///< RGBA8 打包(worker 已求值样式表达式)
+    int rank = 6;              ///< 数据侧重要度(小=重要),准入截断依据
+    std::string icon;          ///< 已求值图形名(内置形状名或图集帧名,可空)
+    std::string name;          ///< 标签文字(文字刀期用,先携带免二次解码)
+};
 
 /// 一块瓦片镶嵌后的 CPU 顶点/索引(E1 worker 全链镶嵌的产物)。
 ///
@@ -48,10 +68,13 @@ struct FeatureTileMesh {
     /// **互斥**,同时产出会让同一份内容画两遍)。
     VolumeCpuGroups fillVolumeGroups;
     VolumeCpuGroups lineVolumeGroups;
+    /// 点符号实例表(quad 定型留在渲染线程,见 TileSymbolCpu)。
+    std::vector<TileSymbolCpu> symbols;
 
     bool empty() const {
         return fillIndices.empty() && lineIndices.empty() &&
-               fillVolumeGroups.empty() && lineVolumeGroups.empty();
+               fillVolumeGroups.empty() && lineVolumeGroups.empty() &&
+               symbols.empty();
     }
 };
 

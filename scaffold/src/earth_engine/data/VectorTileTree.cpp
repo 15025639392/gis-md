@@ -147,10 +147,19 @@ VectorTileTree::UpdateResult VectorTileTree::update(
 }
 
 void VectorTileTree::provide(const TileKey& key, MvtTile tile) {
+    provideShared(key, std::make_shared<const MvtTile>(std::move(tile)));
+}
+
+void VectorTileTree::provideShared(const TileKey& key,
+                                   std::shared_ptr<const MvtTile> tile) {
+    if (!tile) {
+        markFailed(key);
+        return;
+    }
     pending_.erase(key);
     failed_.erase(key);
     CachedTile& entry = loaded_[key];
-    entry.tile = std::make_shared<const MvtTile>(std::move(tile));
+    entry.tile = std::move(tile);
     entry.lastUsedFrame = frame_;
 }
 

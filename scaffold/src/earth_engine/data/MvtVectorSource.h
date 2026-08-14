@@ -3,6 +3,7 @@
 #include "FeatureStore.h"
 #include "FeatureTileMesh.h"
 #include "MvtDecoder.h"
+#include "MvtTileFetchCache.h"
 #include "StyleFilter.h"
 #include "VectorTileTree.h"
 #include "../tiling/TileKey.h"
@@ -42,10 +43,10 @@ class ThreadPool;
 /// 迟到的回调安全(shared_ptr 收件箱)。
 class MvtVectorSource {
 public:
-    /// (statusCode, body):statusCode==200 且 body 非空视为成功。
-    using FetchCallback = std::function<void(int, std::vector<uint8_t>)>;
-    /// 由调用方注入网络实现(P4c demo 接 CurlScheduler;测试注入假源)。
-    using FetchFn = std::function<void(const TileKey&, FetchCallback)>;
+    /// 获取层单一化(符号刀A.5):瓦片获取/解码/在途去重/LRU 全部经
+    /// MvtTileFetchCache —— 与 drape(面)/路网场(线)共享同一实例时,
+    /// 同一块数据瓦网络恰一次、解码恰一次、内存恰一份。本类不再自带
+    /// fetch+decode 栈(旧 FetchFn 路径已删,测试用假 FetchFn 建 cache)。
 
     struct Options {
         VectorTileTree::Options tree;
@@ -91,12 +92,14 @@ public:
         DropFn drop;
     };
 
-    /// decodePool 为空则在 fetch 回调线程就地解码+镶嵌(仍不占渲染线程)。
-    /// decodePool 用 shared_ptr:HTTP 完成/取消回调在 curl 线程**异步**送达
-    /// (取消也会补送 callback(-1)),可能晚于宿主拆除 —— 回调里对 pool 只持
+    /// tileCache:获取层(fetch+解码+在途去重+LRU)。与其他消费方共享同一
+    /// 实例即获得跨消费方去重;解码在 cache 的 fetch 回调线程完成。
+    /// decodePool 为空则镶嵌在 cache 回调线程就地跑(仍不占渲染线程)。
+    /// decodePool 用 shared_ptr:回调可能晚于宿主拆除 —— 回调里对 pool 只持
     /// weak,锁不上就丢弃工作。裸指针版真机崩过(tombstone_22:回调 enqueue
     /// 已析构线程池 = destroyed mutex abort)。
-    MvtVectorSource(Options options, Sinks sinks, FetchFn fetch,
+    MvtVectorSource(Options options, Sinks sinks,
+                    std::shared_ptr<MvtTileFetchCache> tileCache,
                     std::shared_ptr<ThreadPool> decodePool = nullptr);
 
     /// 渲染线程每帧调用:驱动树、发缺瓦片请求、消化 worker 产物、
@@ -129,8 +132,8 @@ public:
 private:
     struct Inbox {
         std::mutex mutex;
-        /// worker 解码产物(样式无关,进树的 LRU 缓存)。
-        std::vector<std::pair<TileKey, MvtTile>> decoded;
+        /// 获取层解码产物(共享持有,进树时不再拷贝)。
+        std::vector<std::pair<TileKey, std::shared_ptr<const MvtTile>>> decoded;
         /// worker 镶嵌产物(样式相关的派生物,进 readyMeshes_ 等 commit)。
         /// 带规则代次:setLayerRules 之后在途的任务用的是旧规则,回来时按
         /// 代次丢弃 —— 否则旧规则的网格会盖掉新规则刚镶好的。
@@ -142,7 +145,7 @@ private:
 
     Options options_;
     Sinks sinks_;
-    FetchFn fetch_;
+    std::shared_ptr<MvtTileFetchCache> tileCache_;
     std::shared_ptr<ThreadPool> decodePool_;
 
     VectorTileTree tree_;

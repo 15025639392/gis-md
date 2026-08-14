@@ -88,9 +88,36 @@ TEST(FeatureTileMeshTest, TessellationIsDeterministic) {
     EXPECT_EQ(a.lineIndices, b.lineIndices);
 }
 
-// v1 边界:只收 fill/line。Point 要素不该产出任何几何 —— 它走 store 路径
-// (要图集)。这条钉住边界,免得后人以为瓦片桶已经全类型覆盖。
-TEST(FeatureTileMeshTest, PointFeaturesProduceNoTileGeometry) {
+// 符号刀A:Point 要素在 worker 产 TileSymbolCpu 实例表,**不产任何顶点**
+// (quad 定型要图集,留渲染线程准入)。锚点存大地坐标而非 ECEF:贴地的
+// 地形采样也是渲染线程状态。全程零图集解引用 —— 图集传 nullptr 即验证。
+TEST(FeatureTileMeshTest, PointFeaturesEmitSymbolInstancesNotGeometry) {
+    FeatureRenderStyle style;
+    Feature point;
+    point.type = GeometryType::Point;
+    point.rings = {{Cartographic(106.5 * kDeg, 29.6 * kDeg)}};
+    point.properties["name"] = "解放碑";
+    point.properties["rank"] = "3";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        makeContext(style, nullptr, nullptr), {point});
+
+    ASSERT_EQ(1u, mesh.symbols.size());
+    const TileSymbolCpu& s = mesh.symbols[0];
+    EXPECT_DOUBLE_EQ(106.5 * kDeg, s.lonRad);
+    EXPECT_DOUBLE_EQ(29.6 * kDeg, s.latRad);
+    EXPECT_EQ("解放碑", s.name);
+    EXPECT_EQ(3, s.rank);
+    EXPECT_NE(0.0f, s.colorPacked) << "worker 应已求值样式色并打包";
+    EXPECT_TRUE(mesh.hasOrigin) << "纯符号瓦片也要有 RTE 原点";
+    EXPECT_FALSE(mesh.empty()) << "实例表非空的瓦片不得被 drop";
+    EXPECT_TRUE(mesh.fillIndices.empty() && mesh.lineIndices.empty())
+        << "Point 不产几何顶点(定型在准入)";
+}
+
+// 属性缺省的回落:无 rank 属性 → 默认 6(最不重要,截断时先丢);
+// 无 name → 空串(刀B 文字期不出标签,但图标照常)。
+TEST(FeatureTileMeshTest, SymbolInstanceDefaultsWithoutProperties) {
     FeatureRenderStyle style;
     Feature point;
     point.type = GeometryType::Point;
@@ -98,8 +125,9 @@ TEST(FeatureTileMeshTest, PointFeaturesProduceNoTileGeometry) {
 
     const auto mesh = FeatureRenderLayer::tessellateTileMesh(
         makeContext(style, nullptr, nullptr), {point});
-    EXPECT_TRUE(mesh.empty())
-        << "Point 属 store 路径(需图集),瓦片桶 v1 不收";
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(6, mesh.symbols[0].rank);
+    EXPECT_TRUE(mesh.symbols[0].name.empty());
 }
 
 // 空输入不该产出原点,commitTileMesh 会据此走 drop 分支。

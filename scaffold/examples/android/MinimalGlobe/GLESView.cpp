@@ -522,6 +522,10 @@ static bool createEngine() {
                 StyleExpression::zoom(),
                 {{8.0, StyleExpression::literal(1.0)},
                  {15.0, StyleExpression::literal(5.0)}});
+            // 符号刀A:POI 点。暖红在亮白路网/绿地上都有对比;底部锚定
+            // 规避「居中锚定被身前地形吃掉下半个」(P6c 明记的深度语义)。
+            bs.pointColor = {0.92f, 0.26f, 0.21f, 0.95f};
+            bs.pointAnchor = SymbolAnchor::Bottom;
             basemapLayer->setStyle(bs);
             // 贴地体的高度范围由 SceneRenderPipeline 每帧从可见地形瓦片汇总,
             // demo 侧不再设 —— 两处真相会在相机飞离本区时打架。
@@ -564,14 +568,46 @@ static bool createEngine() {
                 // 连 Feature 都不产生)—— 面 fill 实测 ~75ms GPU 是发热
                 // 真凶,已改走 kEnableMvtDrapeBasemap 的栅格 drape(页存储
                 // 合成)。本链只承载线,待刀2(SDF 场)落地后整链退役。
-                mvtOpts.layerRules = {roads};
+
+                // POI 符号刀A:点要素按 rank 分级放行(rank 语义见数据管线
+                // extract_chongqing_geojson.py 的 POI_RANKS:1=城市级地名,
+                // 6=一般设施)。同 roads:分级在样式侧,瓦片 z 固定 →
+                // 相机缩放不触发重镶。
+                SourceLayerRule poi;
+                poi.layer = "poi";
+                poi.filter = StyleFilter::any({
+                    StyleFilter::all({
+                        StyleFilter::zoomCompare(C::Less, 10),
+                        StyleFilter::compare("rank", C::LessEqual, 2.0)}),
+                    StyleFilter::all({
+                        StyleFilter::zoomCompare(C::GreaterEqual, 10),
+                        StyleFilter::zoomCompare(C::Less, 12),
+                        StyleFilter::compare("rank", C::LessEqual, 4.0)}),
+                    StyleFilter::zoomCompare(C::GreaterEqual, 12),
+                });
+                // 符号刀A:本链现役只承载 poi(线走 SDF 场、面走 drape)。
+                // ⚠️ 整层排除靠 includeLayers 白名单,**不是** layerRules——
+                // rules 里未列出的层是「全收」不是「跳过」(rule==nullptr 即
+                // 不过滤)。曾因此把 roads/water/building 全量灌进 stencil
+                // 几何链:新老两种路网同屏叠加 + 单帧 GPU ~54ms。
+                // A/B 对拍旧几何路径时:includeLayers 加回 "roads" 并把上方
+                // roads 分级规则塞回 layerRules(缺分级会全量画)。
+                (void)roads;
+                mvtOpts.includeLayers = {"poi"};
+                mvtOpts.layerRules = {poi};
             }
             mvtOpts.tree.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
             mvtOpts.tree.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
-            auto fetchFn = [](const TileKey& key,
-                              MvtVectorSource::FetchCallback cb) {
-                mvtFetchTile(key, std::move(cb));
-            };
+            // 获取层单一化(刀A.5):与 drape/场共享同一 MvtTileFetchCache
+            // —— 同一块数据瓦三消费方网络恰一次、解码恰一次、内存恰一份。
+            if (!gMvtTileCache) {
+                gMvtTileCache = std::make_shared<MvtTileFetchCache>(
+                    [](const TileKey& key,
+                       MvtTileFetchCache::FetchCallback cb) {
+                        mvtFetchTile(key, std::move(cb));
+                    },
+                    48);
+            }
             // E1 接线:镶嵌钩子在 worker 上跑,持一份样式快照(图集置空,
             // 见 FeatureRenderLayer::workerTessellationContext 的线程契约);
             // commit/drop 在渲染线程由 update() 调。裸指针安全:两者生命
@@ -599,8 +635,7 @@ static bool createEngine() {
                 layerPtr->dropTileMesh(key);
             };
             gMvtSource = std::make_unique<MvtVectorSource>(
-                mvtOpts, std::move(sinks), std::move(fetchFn),
-                gMvtWorkerPool);
+                mvtOpts, std::move(sinks), gMvtTileCache, gMvtWorkerPool);
             gEngine->addFeatureRenderLayer(std::move(basemapLayer));
             LOGI("VectorP4 MVT basemap installed: %s (z%d-%d)",
                  minimal_globe_demo::kMvtBasemapUrlTemplate,
@@ -1141,9 +1176,11 @@ static void renderFrame() {
     }
     if (frameId <= 3 || frameId % 120 == 0 ||
         frameTotalMs >= 25.0 || swapMs >= 8.0) {
+        const auto& stageDiag = gEngine->diagnostics();
         LOGI(
             "FrameLoop frame=%llu total=%.3f engine=%.3f "
-            "post=%.3f swap=%.3f callback=%.3f cpu=%d hint=%d presented=%d swapOk=%d",
+            "post=%.3f swap=%.3f callback=%.3f cpu=%d hint=%d presented=%d swapOk=%d "
+            "upd=%.2f build=%.2f submit=%.2f terrUpd=%.2f",
             static_cast<unsigned long long>(frameId),
             frameTotalMs,
             engineMs,
@@ -1160,7 +1197,11 @@ static void renderFrame() {
                 ? 1
                 : 0,
             presented ? 1 : 0,
-            swapOk == EGL_TRUE ? 1 : 0);
+            swapOk == EGL_TRUE ? 1 : 0,
+            stageDiag.sceneUpdateMs,
+            stageDiag.renderCommandBuildMs,
+            stageDiag.renderSubmitMs,
+            stageDiag.terrainUpdateMs);
         // 北极星 Phase 0 测量台:每帧(采样)打相机真实位姿,消除"nadir/oblique"
         // 猜测——用它标注每个 measure stop 的实际视角。
         const auto& camTrace = gEngine->presentationTrace().camera;

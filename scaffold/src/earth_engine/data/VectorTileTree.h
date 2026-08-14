@@ -60,6 +60,11 @@ public:
 
     /// 解码完成回灌。未请求过的 key 也接受(幂等)。
     void provide(const TileKey& key, MvtTile tile);
+    /// 共享回灌(获取层单一化):瓦片由 MvtTileFetchCache 解码并共享持有,
+    /// 树内只存引用 —— 同一块解码瓦在 drape/场/符号三消费方之间恰一份。
+    /// 空指针视为失败(等价 markFailed)。
+    void provideShared(const TileKey& key,
+                       std::shared_ptr<const MvtTile> tile);
     /// 请求失败登记;失败瓦片不再重复请求,直到 clearFailed()。
     void markFailed(const TileKey& key);
     void clearFailed();

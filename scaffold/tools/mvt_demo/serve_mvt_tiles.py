@@ -10,6 +10,7 @@ Content-Encoding 头避免 curl 提前解压——两边都能解,原样最省)�
 真机需:adb reverse tcp:8092 tcp:8092
 """
 
+import os
 import sqlite3
 import sys
 import threading
@@ -52,8 +53,11 @@ class TileHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
-    def log_message(self, fmt, *args):  # 静默逐请求日志
-        pass
+    def log_message(self, fmt, *args):
+        # 默认静默;MVT_LOG=1 开逐请求日志(消费方去重对拍用:数同一
+        # z/x/y 被拉几次)。
+        if os.environ.get("MVT_LOG"):
+            sys.stderr.write(fmt % args + "\n")
 
 
 def main():

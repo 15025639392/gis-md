@@ -64,11 +64,24 @@ python3 "$SCRIPT_DIR/overpass_to_geojsonseq.py" "$WORK/buildings.json" "$WORK/bu
 # ⚠️ tippecanoe 的 -j 里 zoom 是 "$zoom" **字面量**,不是 ["zoom"] 表达式。
 # 用后者会报 `comparison key is not a string`,而且**照常退出 0 并产出一个
 # 几十 KB 的空 mbtiles** —— 极容易被当成「数据源没抓到」而查错方向。
+# POI 层(符号系统刀0):Overpass 路径不产它 —— 来源是 pbf 全量路径
+#   python3 extract_chongqing_geojson.py <china-latest.osm.pbf> <工作目录> only_poi
+# 存在才挂上,避免本脚本单独重跑时把 poi 层静默丢掉。
+# -r1:关掉 tippecanoe 的点按缩放抽稀 —— rank 分级过滤在引擎样式侧
+# (GLESView SourceLayerRule),数据侧只管密度;点总量 ~1.4k 不构成体积压力。
+POI_ARGS=()
+if [ -s "$WORK/poi.geojsonseq" ]; then
+    POI_ARGS=(-r1 -L "poi:$WORK/poi.geojsonseq")
+else
+    echo "!! 无 poi.geojsonseq,本次 mbtiles 不含 POI 层(符号不出图)"
+fi
+
 echo "== tippecanoe 切瓦片(z0-14,分层 + 分级过滤)=="
 "$TIPPECANOE" -o "$WORK/chongqing.mbtiles" --force \
     -Z 0 -z 14 \
     --drop-densest-as-needed \
     --extend-zooms-if-still-dropping \
+    "${POI_ARGS[@]}" \
     -L roads:"$WORK/roads.geojsonseq" \
     -L water:"$WORK/water.geojsonseq" \
     -L building:"$WORK/buildings.geojsonseq" \

@@ -18,6 +18,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <cstdlib>
 #include <cmath>
 #include <cstring>
 #include <limits>
@@ -149,6 +150,46 @@ ResolvedSymbol resolveSymbol(const std::string& name,
                               symbolShapeIsBottomAnchored(builtin));
     }
     return out;
+}
+
+/// 追加一个符号 billboard quad(36B 布局:anchor 3f + offsetUnit 2f +
+/// uv 2f + color 1f + shape 1f;VS 按 u_pointSizePx 展开)。
+/// store 镶嵌(tessellateFeatureInto)与瓦片准入定型(commitTileMesh)
+/// 共用 —— 顶点布局契约只此一份,不得各自内联。
+void appendSymbolQuad(const std::array<float, 3>& rel,
+                      const ResolvedSymbol& sym,
+                      float colorPacked,
+                      std::vector<float>& pointVerts,
+                      std::vector<uint32_t>& pointIndices) {
+    const uint32_t base =
+        static_cast<uint32_t>(pointVerts.size() / kPointVertexFloats);
+    // corner ∈ {±1}²(x 右为正,y 上为正)。
+    static constexpr float kCorners[4][2] = {
+        {-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f}};
+    for (const auto& corner : kCorners) {
+        // 竖直对齐:居中 y∈[-0.5,0.5];底部锚定 y∈[0,1]。
+        const float offsetY = sym.bottomAnchored ? (corner[1] + 1.0f) * 0.5f
+                                                 : corner[1] * 0.5f;
+        // 图集通道 uv 取 frame 矩形(纹理 v 向下,屏幕 y 向上 → 上边角取
+        // v0);内置形状 uv 即 [-1,1]² 局部坐标。
+        const float u = sym.shape < 0.0f
+                            ? (corner[0] < 0.0f ? sym.u0 : sym.u1)
+                            : corner[0];
+        const float v = sym.shape < 0.0f
+                            ? (corner[1] > 0.0f ? sym.v0 : sym.v1)
+                            : corner[1];
+        pointVerts.push_back(rel[0]);
+        pointVerts.push_back(rel[1]);
+        pointVerts.push_back(rel[2]);
+        pointVerts.push_back(corner[0] * sym.halfWidthUnits);
+        pointVerts.push_back(offsetY);
+        pointVerts.push_back(u);
+        pointVerts.push_back(v);
+        pointVerts.push_back(colorPacked);
+        pointVerts.push_back(sym.shape);
+    }
+    const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
+    for (uint32_t idx : quad) pointIndices.push_back(base + idx);
 }
 
 std::unique_ptr<Buffer> makeBuffer(RenderDevice* device,
@@ -533,36 +574,10 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 resolveString(ctx.style.pointImageExpr, feature.properties,
                               ctx.style.pointImage),
                 ctx.style.pointAnchor, ctx.iconAtlas);
-            const uint32_t base =
-                static_cast<uint32_t>(pointVerts.size() / kPointVertexFloats);
-            // corner ∈ {±1}²(x 右为正,y 上为正)。
-            static constexpr float kCorners[4][2] = {
-                {-1.0f, -1.0f}, {1.0f, -1.0f}, {1.0f, 1.0f}, {-1.0f, 1.0f}};
-            for (const auto& corner : kCorners) {
-                // 竖直对齐:居中 y∈[-0.5,0.5];底部锚定 y∈[0,1]。
-                const float offsetY = sym.bottomAnchored
-                                          ? (corner[1] + 1.0f) * 0.5f
-                                          : corner[1] * 0.5f;
-                // 图集通道 uv 取 frame 矩形(纹理 v 向下,屏幕 y 向上 →
-                // 上边角取 v0);内置形状 uv 即 [-1,1]² 局部坐标。
-                const float u = sym.shape < 0.0f
-                                    ? (corner[0] < 0.0f ? sym.u0 : sym.u1)
-                                    : corner[0];
-                const float v = sym.shape < 0.0f
-                                    ? (corner[1] > 0.0f ? sym.v0 : sym.v1)
-                                    : corner[1];
-                pointVerts.push_back(static_cast<float>(rel.x()));
-                pointVerts.push_back(static_cast<float>(rel.y()));
-                pointVerts.push_back(static_cast<float>(rel.z()));
-                pointVerts.push_back(corner[0] * sym.halfWidthUnits);
-                pointVerts.push_back(offsetY);
-                pointVerts.push_back(u);
-                pointVerts.push_back(v);
-                pointVerts.push_back(pointColorPacked);
-                pointVerts.push_back(sym.shape);
-            }
-            const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
-            for (uint32_t idx : quad) pointIndices.push_back(base + idx);
+            appendSymbolQuad({static_cast<float>(rel.x()),
+                              static_cast<float>(rel.y()),
+                              static_cast<float>(rel.z())},
+                             sym, pointColorPacked, pointVerts, pointIndices);
             break;
         }
     }
@@ -1312,9 +1327,9 @@ bool FeatureRenderLayer::stencilClassificationSupported() const {
 FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
     const TessellationContext& ctx, const std::vector<Feature>& features) {
     TileMeshCpu mesh;
-    // point/label 的产物接在临时容器里,出了本函数即丢弃(它们要图集,
-    // 必须渲染线程)。**不能**图省事传同一组容器 —— point 顶点混进 fill 流
-    // 会让 stride 对不上,画出乱码三角。
+    // 非点要素的 point/label 副产物(如线/面的标签)接在临时容器里,出了
+    // 本函数即丢弃(它们要图集,必须渲染线程)。**不能**图省事传同一组容器
+    // —— point 顶点混进 fill 流会让 stride 对不上,画出乱码三角。
     // stencil 体不再丢弃:贴地瓦片的内容全在里面。
     std::vector<float> pointVerts;
     std::vector<uint32_t> pointIndices;
@@ -1327,6 +1342,12 @@ FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
     const AreaSampleFn noSample;
 
     for (const Feature& feature : features) {
+        // 点要素不定型 quad,进实例表(TileSymbolCpu):纯计算部分(锚点
+        // 投影 + 样式表达式求值)worker 做完,图集相关留给准入定型。
+        if (feature.type == GeometryType::Point) {
+            appendTileSymbol(ctx, feature, mesh);
+            continue;
+        }
         tessellateFeatureInto(ctx, feature, noSample, mesh.origin,
                               mesh.hasOrigin, mesh.fillVerts, mesh.fillIndices,
                               mesh.lineVerts, mesh.lineIndices, pointVerts,
@@ -1337,19 +1358,106 @@ FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
     return mesh;
 }
 
+void FeatureRenderLayer::appendTileSymbol(const TessellationContext& ctx,
+                                          const Feature& feature,
+                                          TileMeshCpu& mesh) {
+    if (feature.rings.empty() || feature.rings[0].empty()) return;
+    const Cartographic& c = feature.rings[0][0];
+    // origin 只是 RTE 参考点,不必在地面上 —— 用原始高投影即可。锚点的
+    // 最终高度(贴地采样 + offset)在准入定型时算。
+    if (!mesh.hasOrigin) {
+        mesh.origin = ctx.ellipsoid.cartographicToCartesian(c);
+        mesh.hasOrigin = true;
+    }
+
+    TileSymbolCpu sym;
+    sym.lonRad = c.longitude();
+    sym.latRad = c.latitude();
+    sym.heightM = c.height();
+    sym.colorPacked = packColorFloat(
+        resolveColor(ctx.style.pointColorExpr, feature.properties,
+                     ctx.style.pointColor));
+    sym.icon = resolveString(ctx.style.pointImageExpr, feature.properties,
+                             ctx.style.pointImage);
+    const auto rankIt = feature.properties.find("rank");
+    if (rankIt != feature.properties.end()) {
+        // 非数字/空串按 atoi 语义得 0 = 最高重要度;数据管线保证是数字。
+        sym.rank = std::atoi(rankIt->second.c_str());
+    }
+    const auto nameIt = feature.properties.find("name");
+    if (nameIt != feature.properties.end()) sym.name = nameIt->second;
+    mesh.symbols.push_back(std::move(sym));
+}
+
 void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) {
     if (mesh.empty() || !mesh.hasOrigin) {
         dropTileMesh(key);
         return;
     }
+    // 准入定型:实例表 → 符号 quad(图集解析必须渲染线程;一瓦一次非逐帧)。
+    // rank 升序截断是 placement 预算刀之前的容量闸:瓦片密度再高,上屏
+    // 片元也被钉在「可见瓦数 × 上限」内。截断丢的是数据侧最不重要的尾部。
+    std::vector<float> pointVerts;
+    std::vector<uint32_t> pointIndices;
+    if (!mesh.symbols.empty()) {
+        constexpr size_t kMaxSymbolsPerTile = 128;
+        if (mesh.symbols.size() > kMaxSymbolsPerTile) {
+            std::nth_element(mesh.symbols.begin(),
+                             mesh.symbols.begin() + kMaxSymbolsPerTile,
+                             mesh.symbols.end(),
+                             [](const TileSymbolCpu& a, const TileSymbolCpu& b) {
+                                 return a.rank < b.rank;
+                             });
+            mesh.symbols.resize(kMaxSymbolsPerTile);
+        }
+        pointVerts.reserve(mesh.symbols.size() * 4 * kPointVertexFloats);
+        pointIndices.reserve(mesh.symbols.size() * 6);
+        // 贴地:锚点落到地面(采样器覆盖全部锚点的 bbox)。采样不可用
+        // (地形未注入/瓦片未驻留)退回原始几何高 —— 山地下可能被地形
+        // 遮挡吃掉,属加载瞬态;瓦片换代重 commit 时自愈。
+        std::vector<std::vector<Cartographic>> anchorRing(1);
+        anchorRing[0].reserve(mesh.symbols.size());
+        for (const TileSymbolCpu& s : mesh.symbols) {
+            anchorRing[0].emplace_back(s.lonRad, s.latRad, 0.0);
+        }
+        const AreaSampleFn groundSample = makeClampSampler(anchorRing);
+        for (const TileSymbolCpu& s : mesh.symbols) {
+            double h = s.heightM;
+            if (groundSample) {
+                const auto ground = groundSample(s.lonRad, s.latRad);
+                if (ground) h = *ground;
+            }
+            const Vec3 anchor = ellipsoid_.cartographicToCartesian(
+                Cartographic(s.lonRad, s.latRad,
+                             h + style_.heightOffset));
+            const Vec3 rel = anchor - mesh.origin;
+            const ResolvedSymbol sym =
+                resolveSymbol(s.icon, style_.pointAnchor, iconAtlas_);
+            appendSymbolQuad({static_cast<float>(rel.x()),
+                              static_cast<float>(rel.y()),
+                              static_cast<float>(rel.z())},
+                             sym, s.colorPacked, pointVerts, pointIndices);
+        }
+    }
+
+    // 符号刀A 诊断:worker→commit 链路的落点计数(排查「数据有点但屏上
+    // 无符号」时,第一眼看这行有没有出现、syms 是否为 0)。
+    if (!mesh.symbols.empty()) {
+        platformLog(LogLevel::Info, "TileSymbol",
+                    "commit z=%d x=%d y=%d syms=%zu quads=%zu ground=%d",
+                    key.z, key.x, key.y, mesh.symbols.size(),
+                    pointIndices.size() / 6,
+                    style_.altitudeMode == FeatureAltitudeMode::ClampToGround
+                        ? 1 : 0);
+    }
+
     // 整瓦原子替换:先建好新 GPU 资源,成功了才换掉旧的。中途失败保留旧瓦
     // 而不是留半张 —— 半张瓦片在画面上是缺口,比旧数据糟。
     BucketGpu gpu;
-    static const std::vector<float> kNoVerts;
     static const std::vector<uint32_t> kNoIndices;
     if (!uploadBucketGpu(mesh.origin, mesh.fillVerts, mesh.fillIndices,
-                         mesh.lineVerts, mesh.lineIndices, kNoVerts, kNoIndices,
-                         std::vector<float>(), kNoIndices,
+                         mesh.lineVerts, mesh.lineIndices, pointVerts,
+                         pointIndices, std::vector<float>(), kNoIndices,
                          std::vector<LabelEntry>(), mesh.fillVolumeGroups,
                          mesh.lineVolumeGroups, gpu)) {
         return;

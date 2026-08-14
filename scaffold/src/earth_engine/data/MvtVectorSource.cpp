@@ -9,11 +9,12 @@
 
 namespace earth_engine {
 
-MvtVectorSource::MvtVectorSource(Options options, Sinks sinks, FetchFn fetch,
+MvtVectorSource::MvtVectorSource(Options options, Sinks sinks,
+                                 std::shared_ptr<MvtTileFetchCache> tileCache,
                                  std::shared_ptr<ThreadPool> decodePool)
     : options_(std::move(options)),
       sinks_(std::move(sinks)),
-      fetch_(std::move(fetch)),
+      tileCache_(std::move(tileCache)),
       decodePool_(std::move(decodePool)),
       tree_(options_.tree),
       inbox_(std::make_shared<Inbox>()) {}
@@ -65,40 +66,26 @@ void MvtVectorSource::update(const Rectangle& viewRect,
     VectorTileTree::UpdateResult result =
         tree_.update(viewRect, cameraHeightMeters);
 
-    // 发缺瓦片请求。回调持 shared_ptr 收件箱,本对象析构后迟到安全。
-    // 这一段**只解码**:解码产物 MvtTile 是样式无关的,归树的 LRU 缓存,
-    // 瓦片重入视口时零重拉取。镶嵌是样式相关的派生物,拆成下面独立一段
-    // 按需重做 —— 把两者揉进一个任务会让「重入」要么重拉网络、要么缓存
-    // 一份样式一变就失效的网格。
-    for (const TileKey& key : result.requestTiles) {
-        std::weak_ptr<Inbox> weakInbox = inbox_;
-        // pool 只持 weak(与 inbox 同一纪律,此前只做了一半):本回调在 curl
-        // 线程异步送达 —— 取消也会补送 callback(-1) —— 可能晚于宿主拆除,
-        // 裸指针 enqueue 已析构的线程池 = destroyed mutex abort(tombstone_22)。
-        std::weak_ptr<ThreadPool> weakPool = decodePool_;
-        const bool hadPool = decodePool_ != nullptr;
-        fetch_(key, [key, weakInbox, weakPool, hadPool](
-                        int statusCode, std::vector<uint8_t> body) {
-            auto work = [key, weakInbox, body = std::move(body), statusCode]() {
-                auto inbox = weakInbox.lock();
-                if (!inbox) return;
-                MvtTile tile;
-                const bool ok = statusCode == 200 && !body.empty() &&
-                                decodeMvtTile(body.data(), body.size(), tile);
-                std::lock_guard<std::mutex> lock(inbox->mutex);
-                if (ok) {
-                    inbox->decoded.emplace_back(key, std::move(tile));
-                } else {
-                    inbox->failed.push_back(key);
-                }
-            };
-            if (auto pool = weakPool.lock()) {
-                pool->enqueue(std::move(work));
-            } else if (!hadPool) {
-                work();
-            }
-            // hadPool 且锁不上 = 宿主已拆除:丢弃(inbox 也已随之失效)。
-        });
+    // 发缺瓦片请求(获取层单一化):fetch+解码+在途去重全在 tileCache_ ——
+    // 与 drape/场共享实例时,同一块数据瓦跨消费方网络恰一次、解码恰一次。
+    // 回调持 shared_ptr 收件箱,本对象析构后迟到安全;回调本体只做入箱
+    // (mutex + push),无需再借 decodePool。树的 pending 集保证同一 key
+    // 不重复走到这里,cache 的 inflight 兜跨消费方并发。
+    if (tileCache_) {
+        for (const TileKey& key : result.requestTiles) {
+            std::weak_ptr<Inbox> weakInbox = inbox_;
+            tileCache_->request(
+                key, [key, weakInbox](std::shared_ptr<const MvtTile> tile) {
+                    auto inbox = weakInbox.lock();
+                    if (!inbox) return;
+                    std::lock_guard<std::mutex> lock(inbox->mutex);
+                    if (tile) {
+                        inbox->decoded.emplace_back(key, std::move(tile));
+                    } else {
+                        inbox->failed.push_back(key);
+                    }
+                });
+        }
     }
 
     // 已解码但还没网格的渲染瓦片 → 派 worker 镶嵌。持共享所有权,树的 LRU
@@ -207,7 +194,7 @@ void MvtVectorSource::setLayerRules(std::vector<SourceLayerRule> rules) {
 }
 
 void MvtVectorSource::ingestInbox() {
-    std::vector<std::pair<TileKey, MvtTile>> decoded;
+    std::vector<std::pair<TileKey, std::shared_ptr<const MvtTile>>> decoded;
     std::vector<std::tuple<TileKey, FeatureTileMesh, uint64_t>> meshes;
     std::vector<TileKey> failed;
     {
@@ -217,7 +204,7 @@ void MvtVectorSource::ingestInbox() {
         failed.swap(inbox_->failed);
     }
     for (auto& [key, tile] : decoded) {
-        tree_.provide(key, std::move(tile));
+        tree_.provideShared(key, std::move(tile));
     }
     for (auto& [key, mesh, epoch] : meshes) {
         tessellating_.erase(key);

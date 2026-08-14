@@ -76,17 +76,21 @@ std::vector<uint8_t> makePointTile(const std::string& layerName) {
     return tile.bytes;
 }
 
-/// 假网络:记录请求,立即成功回调
+/// 假网络:记录请求,立即成功回调。刀A.5 后源经 MvtTileFetchCache 获取,
+/// 假网络包成 cache 注入(requested 记的是**穿透到网络**的请求 —— cache
+/// 命中不计,这正是「零重拉取」断言想要的语义)。
 struct FakeFetch {
     std::vector<TileKey> requested;
     std::vector<uint8_t> body;
     int statusCode = 200;
 
-    MvtVectorSource::FetchFn fn() {
-        return [this](const TileKey& key, MvtVectorSource::FetchCallback cb) {
-            requested.push_back(key);
-            cb(statusCode, body);
-        };
+    std::shared_ptr<MvtTileFetchCache> cache() {
+        return std::make_shared<MvtTileFetchCache>(
+            [this](const TileKey& key, MvtTileFetchCache::FetchCallback cb) {
+                requested.push_back(key);
+                cb(statusCode, body);
+            },
+            48);
     }
 };
 
@@ -129,7 +133,7 @@ TEST(MvtVectorSource, FetchDecodeTessellateCommitPipeline) {
     FakeFetch fetch;
     fetch.body = makePointTile("pois");
     FakeSinks sinks;
-    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.fn());
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     source.update(view, heightForZoom(2));
@@ -154,7 +158,7 @@ TEST(MvtVectorSource, ReentryRetessellatesWithoutRefetch) {
     FakeFetch fetch;
     fetch.body = makePointTile("pois");
     FakeSinks sinks;
-    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.fn());
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
 
     Rectangle near = rectDeg(1, 1, 10, 10);
     for (int i = 0; i < 3; ++i) source.update(near, heightForZoom(2));
@@ -183,7 +187,7 @@ TEST(MvtVectorSource, FailedFetchMarksFailedNoRerequest) {
     FakeFetch fetch;
     fetch.statusCode = 404;
     FakeSinks sinks;
-    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.fn());
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     source.update(view, heightForZoom(2));
@@ -201,7 +205,7 @@ TEST(MvtVectorSource, ZoomChangeSwapsTilesNoLeftovers) {
     FakeFetch fetch;
     fetch.body = makePointTile("pois");
     FakeSinks sinks;
-    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.fn());
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(2));
@@ -224,7 +228,7 @@ TEST(MvtVectorSource, CommitBudgetSpreadsAcrossUpdates) {
     MvtVectorSource::Options opt = optionsForTest();
     opt.maxTileCommitsPerUpdate = 2;
     FakeSinks sinks;
-    MvtVectorSource source(opt, sinks.fn(), fetch.fn());
+    MvtVectorSource source(opt, sinks.fn(), fetch.cache());
 
     Rectangle view = rectDeg(-80, -40, 80, 40);  // z2 多瓦片视口
     size_t prev = 0;
@@ -251,7 +255,7 @@ TEST(MvtVectorSource, LayerRuleZoomRangeSkipsWholeLayer) {
     rule.maxZoom = 14;
     opt.layerRules = {rule};
     FakeSinks sinks;
-    MvtVectorSource source(opt, sinks.fn(), fetch.fn());
+    MvtVectorSource source(opt, sinks.fn(), fetch.cache());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(2));
@@ -270,7 +274,7 @@ TEST(MvtVectorSource, LayerRuleFeatureFilterApplies) {
                                        std::string("poi"));
     opt.layerRules = {keep};
     FakeSinks sinks;
-    MvtVectorSource source(opt, sinks.fn(), fetch.fn());
+    MvtVectorSource source(opt, sinks.fn(), fetch.cache());
     Rectangle view = rectDeg(1, 1, 40, 40);
     for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(2));
     EXPECT_GT(sinks.lastFeatureCount, 0u) << "匹配的要素应留下";
@@ -293,7 +297,7 @@ TEST(MvtVectorSource, IncludeLayersFilters) {
     MvtVectorSource::Options opt = optionsForTest();
     opt.includeLayers = {"roads"};  // 瓦片只有 water 层 → 全被滤掉
     FakeSinks sinks;
-    MvtVectorSource source(opt, sinks.fn(), fetch.fn());
+    MvtVectorSource source(opt, sinks.fn(), fetch.cache());
 
     Rectangle view = rectDeg(1, 1, 40, 40);
     for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(2));

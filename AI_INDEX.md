@@ -3022,22 +3022,22 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `setStyle` | .cpp:186-217 | 换样式并标脏;越界表达式在此剥离降级 |
-| `stencilClassificationSupported` | .cpp:1308-1310 | 后端静态能力位(渲染线程读设备,快照给 worker) |
-| `makeClampSampler` / `prepareClampedFeature` | .cpp:256-281 / :283-363 | 贴地方案 A:边细分 + Steiner 采高,与渲染网格**同源采样**(顶破根修)。⚠️ ctx 带区域高度范围时**整段跳过采样**,点取范围中点 —— worker 贴地的前提 |
-| `syncDirtyBuckets` | .cpp:364-372 | 每帧入口:重建脏桶,返回重建数 |
-| `tessellateFeatureInto` | .cpp:373-722 | 镶嵌总控(面/线/点/标签分派) |
-| `appendFillVolume` / `appendLineVolume` | .cpp:723-895 / :896-1145 | 面体 / 线体几何生成(线含 dash、闭环 seam 复制)。体的高度跨度取自区域范围(有)或逐点采样(无);**取窄了该片区整片不显示** |
-| `uploadBucketGpu` | .cpp:1146-1237 | 桶上传;⚠️ fade/opacity 变化也必须回写(曾因"无变化早退"导致 opacity 永不回写) |
-| `rebuildBucket` | .cpp:1238-1307 | 单桶重建 |
-| `tessellateTileMesh` / `commitTileMesh` / `dropTileMesh` | .cpp:1312-1339 / :1340-1359 / :1360-1363 | MVT 底图路径:瓦片即桶,镶嵌在 worker 完成(E1)。贴地时产 stencil 体(与 fill/line 流**互斥**) |
-| `buildRenderCommands` | .cpp:1364-1473 | 出命令总入口 |
-| `visibleBucketKeys` | .cpp:1474-1543 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:1544-1623 | 标签避让 + fade + 地平线剔除(P5c) |
-| `appendTerrainOcclusion` | .cpp:1624-1635 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:1636-1915 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:1925-1931 / :1932-1938 / :1939-1964 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
-| `pick` | .cpp:2017-2226 | 要素拾取 |
+| `setStyle` | .cpp:227-267 | 换样式并标脏;越界表达式在此剥离降级 |
+| `stencilClassificationSupported` | .cpp:1323-1326 | 后端静态能力位(渲染线程读设备,快照给 worker) |
+| `makeClampSampler` / `prepareClampedFeature` | .cpp:297-323 / :324-404 | 贴地方案 A:边细分 + Steiner 采高,与渲染网格**同源采样**(顶破根修)。⚠️ ctx 带区域高度范围时**整段跳过采样**,点取范围中点 —— worker 贴地的前提 |
+| `syncDirtyBuckets` | .cpp:405-413 | 每帧入口:重建脏桶,返回重建数 |
+| `tessellateFeatureInto` | .cpp:414-737 | 镶嵌总控(面/线/点/标签分派) |
+| `appendFillVolume` / `appendLineVolume` | .cpp:738-910 / :911-1160 | 面体 / 线体几何生成(线含 dash、闭环 seam 复制)。体的高度跨度取自区域范围(有)或逐点采样(无);**取窄了该片区整片不显示** |
+| `uploadBucketGpu` | .cpp:1161-1252 | 桶上传;⚠️ fade/opacity 变化也必须回写(曾因"无变化早退"导致 opacity 永不回写) |
+| `rebuildBucket` | .cpp:1253-1322 | 单桶重建 |
+| `tessellateTileMesh` / `appendTileSymbol` / `commitTileMesh` / `dropTileMesh` | .cpp:1327-1360 / :1361-1391 / :1392-1456 / :1457-1460 | MVT 底图路径:瓦片即桶,镶嵌在 worker 完成(E1)。贴地时产 stencil 体(与 fill/line 流**互斥**);点要素 worker 出 TileSymbolCpu 实例表,commit 采地面高+图集解析定型 quad(符号刀A) |
+| `buildRenderCommands` | .cpp:1472-1581 | 出命令总入口 |
+| `visibleBucketKeys` | .cpp:1582-1651 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:1652-1731 | 标签避让 + fade + 地平线剔除(P5c) |
+| `appendTerrainOcclusion` | .cpp:1732-1743 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:1744-2032 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2033-2048 / :2049-2055 / :2056-2081 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
+| `pick` | .cpp:2125-2343 | 要素拾取 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
@@ -3227,7 +3227,7 @@ MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDr
 | `GeoJsonParser` (230) | `parseRing` (GeoJsonParser.cpp:44)、`parseGeometry` (GeoJsonParser.cpp:61)、`parseFeature` (GeoJsonParser.cpp:167)、`parseFeatureCollection` (GeoJsonParser.cpp:195)、`parse` (GeoJsonParser.cpp:219) | GeoJSON 解析 |
 | `GeoJsonImporter` (39) | `mapType` (GeoJsonImporter.cpp:9)、`importInto` (GeoJsonImporter.cpp:20) | 解析结果 → `FeatureStore` |
 | `MvtVectorSource` (225) | `horizonViewRectangle` (MvtVectorSource.cpp:21)、`update` (MvtVectorSource.cpp:61)、`setLayerRules` (MvtVectorSource.cpp:185)、`ingestInbox` (MvtVectorSource.cpp:201) | MVT 源:按视口拉瓦片 |
-| `VectorTileTree` (209) | `splitAntimeridian` (VectorTileTree.cpp:11)、`zoomForCameraHeight` (VectorTileTree.cpp:31)、`update` (VectorTileTree.cpp:39)、`provide` (VectorTileTree.cpp:149)、`markFailed` (VectorTileTree.cpp:157) | 瓦片树。⚠️ 必须缓存 `MvtTile` 而非网格,否则"重入零重拉取"会丢 |
+| `VectorTileTree` (209) | `splitAntimeridian` (VectorTileTree.cpp:11)、`zoomForCameraHeight` (VectorTileTree.cpp:31)、`update` (VectorTileTree.cpp:39)、`provide` (VectorTileTree.cpp:149)、`provideShared` (VectorTileTree.cpp:153)、`markFailed` (VectorTileTree.cpp:166) | 瓦片树。⚠️ 必须缓存 `MvtTile` 而非网格,否则"重入零重拉取"会丢 |
 | `MvtFeatureConverter` (89) | `mvtToCartographic` (MvtFeatureConverter.cpp:13)、`mvtLayerToFeatures` (MvtFeatureConverter.cpp:34)、`mvtTileRectangle` (MvtFeatureConverter.cpp:26,瓦片地理矩形,贴地高度范围按块取局部值用) | MVT → `Feature` |
 | `VectorTileMeshBuilder` (207) | `pushVertex` (VectorTileMeshBuilder.cpp:23)、`pushQuad` (VectorTileMeshBuilder.cpp:37)、`appendPolygonFill` (VectorTileMeshBuilder.cpp:50)、`appendStrokedPath` (VectorTileMeshBuilder.cpp:101)、`buildVectorTileMesh` (VectorTileMeshBuilder.cpp:139) | 瓦片网格镶嵌(**在 worker 上跑**,E1) |
 

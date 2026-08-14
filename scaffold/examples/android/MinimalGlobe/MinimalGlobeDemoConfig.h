@@ -52,11 +52,15 @@ constexpr bool kEnableVectorDemoLayers = false;
 
 // 矢量 P4 MVT 只读底图(**几何通路**)。本地 tippecanoe 自制重庆 OSM
 // mbtiles,serve_mvt_tiles.py 起 8092 + adb reverse tcp:8092。
-// 刀1(面→drape)后只承载线;**刀2(线→SDF 场+地形 FS 解算)落地,整链
-// 退役**(2026-08-13):路网改走 kEnableMvtRoadField 的场解算,GPU 上
-// vec:mvt-basemap pass 整体消失。编辑要素的 stencil 能力保留(通用能力,
-// 不属本链)。要 A/B 对拍旧路径时临时改回 true。
-constexpr bool kEnableMvtBasemap = false;
+// 刀1(面→drape)后只承载线;刀2(线→SDF 场+地形 FS 解算)落地后线也
+// 退役(2026-08-13)。**符号刀A(2026-08-14)复活本链为点符号通路**:
+// layerRules 只放行 poi 层 → worker 出 TileSymbolCpu 实例表,准入定型
+// billboard。至此三分工闭环:面=drape 页合成 / 线=SDF 场 / 点=本链。
+// 要 A/B 对拍旧路网几何路径:includeLayers 加回 "roads" + roads 分级规则
+// 塞回 layerRules(见 GLESView;⚠️ 整层白名单是 includeLayers,layerRules
+// 未列出的层是全收)。获取层已与 drape/场共享 MvtTileFetchCache(刀A.5),
+// 同一数据瓦网络/解码/内存恰一份。
+constexpr bool kEnableMvtBasemap = true;
 
 // 矢量**面** drape 底图:MVT 面要素动态栅格化冒充影像,进 TerrainPageStore
 // 页合成(与卫星影像同轨,GPU 边际成本≈0)。E4 原版影像通路曾于 2026-08-07

@@ -480,6 +480,14 @@ public:
     static TileMeshCpu tessellateTileMesh(const TessellationContext& ctx,
                                           const std::vector<Feature>& features);
 
+    /// **worker 线程**:单个点要素 → TileSymbolCpu 实例(锚点投影 + 样式
+    /// 表达式求值 + name/rank 属性抽取),追加进 mesh.symbols。quad 定型
+    /// 留给 commitTileMesh(图集是渲染线程状态)。static 同 tessellate
+    /// FeatureInto:不碰成员由编译器保证。
+    static void appendTileSymbol(const TessellationContext& ctx,
+                                 const Feature& feature,
+                                 TileMeshCpu& mesh);
+
     /// **渲染线程**:上传并整瓦原子替换。mesh 为空 → 等价 dropTileMesh。
     /// 上传失败 → 丢弃该瓦(下次 provide 重试),不留半张。
     void commitTileMesh(const TileKey& key, TileMeshCpu&& mesh);

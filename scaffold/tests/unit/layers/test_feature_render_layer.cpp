@@ -195,6 +195,65 @@ TEST_F(FeatureRenderLayerTest, MultiplePointsShareOneCommand) {
     EXPECT_EQ(18, commands[0].indexCount);  // 3 quad × 6
 }
 
+// 符号刀A:瓦片实例表在准入(commitTileMesh)定型成 billboard quad,
+// 走与 store 路径同一条 VectorPoint 命令层。纯符号瓦片(无 fill/line)
+// 也必须出命令 —— empty() 若不认 symbols,这里整瓦被 drop。
+TEST_F(FeatureRenderLayerTest, TileSymbolsRenderAfterCommit) {
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    mesh.hasOrigin = true;
+    TileSymbolCpu s;
+    s.lonRad = 6.0 * kDeg;
+    s.latRad = 29.0 * kDeg;
+    s.colorPacked = 1.0f;
+    mesh.symbols.push_back(s);
+
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(RenderCommandKind::VectorPoint, commands[0].kind);
+    EXPECT_EQ(36, commands[0].vertexStride);
+    EXPECT_EQ(6, commands[0].indexCount);
+    // 锚点 = 桶原点 → 首顶点 rel(0,0,0)(与 store 路径同一打包契约)。
+    const auto* vb = dynamic_cast<const DummyBuffer*>(commands[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_FLOAT_EQ(0.0f, floats[0]);
+    EXPECT_FLOAT_EQ(0.0f, floats[1]);
+    EXPECT_FLOAT_EQ(0.0f, floats[2]);
+}
+
+// rank 升序截断:超过单瓦上限时留 rank 最小(最重要)的那批。这是
+// placement 预算刀之前的容量闸 —— 上限本身是实现细节,契约是「重要的
+// 活下来 + 总量被钉住」。
+TEST_F(FeatureRenderLayerTest, TileSymbolsCappedByRankAscending) {
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    mesh.hasOrigin = true;
+    constexpr int kOverfill = 400;  // > 单瓦上限
+    for (int i = 0; i < kOverfill; ++i) {
+        TileSymbolCpu s;
+        s.lonRad = (6.0 + i * 1e-5) * kDeg;
+        s.latRad = 29.0 * kDeg;
+        s.colorPacked = 1.0f;
+        // 前 8 个 rank=1(必须活),其余 rank=9(截断候选)。
+        s.rank = i < 8 ? 1 : 9;
+        mesh.symbols.push_back(s);
+    }
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    const int quadCount = commands[0].indexCount / 6;
+    EXPECT_LT(quadCount, kOverfill) << "单瓦符号数没有上限,容量闸失效";
+    EXPECT_GE(quadCount, 8) << "截断把高重要度符号也丢了";
+}
+
 TEST_F(FeatureRenderLayerTest, OutOfHorizonBucketEmitsNoCommands) {
     // 视口桶裁剪:相机(星下点 0°E/0°N,高 ~8.6e6m,地平线角 ~65°)看不到
     // 的桶不出命令。视野内 polygon 出 fill+outline 两条;150°E 的桶被裁。
