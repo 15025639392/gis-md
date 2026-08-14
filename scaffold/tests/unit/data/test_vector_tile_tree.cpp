@@ -320,3 +320,41 @@ TEST(VectorTileTree, TilesLeavingRenderSetAreImmediatelyEvictable) {
     EXPECT_EQ(tree.loadedTile(wasRendering), nullptr)
         << "若这条红了 = 已给出集瓦片加了保活,请更新 V24 判据";
 }
+
+/// 缺陷⑤(**先于 R 就存在**,R 会让它更频繁):祖先回退是逐瓦独立决定的,
+/// 兄弟瓦已加载时,祖先仍会被拉进渲染集 —— 祖先覆盖全部四个象限,
+/// 于是同一块地被画两遍。我们不做逐瓦裁剪(世界空间渲染),没有 stencil
+/// 掩掉重叠,所以这不是"多画一点"而是"要素重影"。
+TEST(VectorTileTree, AncestorFallbackOverlapsLoadedSiblings) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 0;
+    opt.maxZoom = 14;
+    VectorTileTree tree(opt);
+    // 视口跨多张 z13 瓦,保证同一父瓦下有多个子瓦
+    const Rectangle view = rectDeg(106.45, 29.45, 106.55, 29.55);
+
+    // 先在 z12 喂满(父辈)
+    VectorTileTree::UpdateResult coarse = tree.update(view, heightForZoom(12));
+    for (const TileKey& k : coarse.requestTiles) tree.provide(k, emptyTile());
+    tree.update(view, heightForZoom(12));
+
+    // 到 z13:请求子瓦,但**只喂一半**(模拟部分到达)
+    VectorTileTree::UpdateResult fine = tree.update(view, heightForZoom(13));
+    ASSERT_GE(fine.requestTiles.size(), 2u)
+        << "renderTiles=" << fine.renderTiles.size()
+        << " 首个 z=" << (fine.renderTiles.empty() ? -1
+                                                  : fine.renderTiles[0].z);
+    for (size_t i = 0; i < fine.requestTiles.size() / 2; ++i) {
+        tree.provide(fine.requestTiles[i], emptyTile());
+    }
+    fine = tree.update(view, heightForZoom(13));
+
+    // 渲染集里同时有 z13 子瓦和 z12 祖先 → 祖先覆盖子瓦所在象限 = 重叠
+    bool hasChild = false, hasAncestor = false;
+    for (const TileKey& k : fine.renderTiles) {
+        if (k.z == 13) hasChild = true;
+        if (k.z == 12) hasAncestor = true;
+    }
+    EXPECT_TRUE(hasChild && hasAncestor)
+        << "若这条红了 = 已按象限抑制重叠,请更新 V24 判据";
+}
