@@ -790,6 +790,47 @@ void TerrainPageStore::updateVisiblePages(
             cache.kept.push_back(kc);
         }
 
+        // [拉远连续性] 整瓦「锚页」恒驻(za=tileZ,最粗层):祖先 walk 的结构约束
+        // 是只能从 p.zoom 走到 tileZ、比 p.zoom 细的页不可寻址(一粗 cell 需 4 细页)。
+        // 拉远时 za 逐层变粗、新层页 just-in-time 才 kick,p.zoom 掉穿"最后一层暖层"
+        // 的瞬间 walk 全空 → A=0:影像有 mappedRaster 兜底看不出断,线没有等价物 →
+        // 整片消失再出现。锚页让最粗一层永远有双就绪兜底:任意拉远速度,线最多短暂
+        // 变粗(锚页干线级),不消失;细层页到达逐层锐化。成本 +1 页/可见瓦(≤~52,
+        // 池 512 富余);与远景补覆盖的地板 cell 目标页同 key,try_emplace 天然去重。
+        // up=0 本瓦锚页;up=1 **父瓦锚页预暖**——换代(子→父)瞬间父瓦 p.zoom 收缩到
+        // ≈tileZ、gridN 收到 1-2,单 cell 直接要父瓦整页,而它在换代帧才首次 kick(冷);
+        // 子瓦时期的细锚页比新 p.zoom 细、结构上不可寻址(d≥0)→ walk 全空 → 整屏线
+        // 同步消失(平移只在屏缘小面积异步补,故只有缩放显)。子瓦还在渲染时就把父锚
+        // 页烘好,换代帧 Tier1 直接命中。4 子共享 1 父锚,增量 ≈ +25% 瓦数。
+        for (int up = 0; up <= 1 && p.tile->key.z - up >= 0; ++up) {
+            TileKey anchorKey;
+            anchorKey.schemeId = p.imgSchemeId;
+            anchorKey.z = p.tile->key.z - up;
+            anchorKey.x = p.tile->key.x >> up;
+            anchorKey.y = p.tile->key.y >> up;
+            const uint64_t anchorPageKey = packKey(anchorKey);
+            uint64_t anchorEvicted = 0;
+            const int anchorLayer =
+                pool_.acquire(anchorPageKey, frameId_, &anchorEvicted);
+            if (anchorEvicted != 0) {
+                erasePageEntry(anchorEvicted);
+            }
+            if (anchorLayer >= 0) {
+                auto [it, inserted] = pages_.try_emplace(anchorPageKey);
+                PageEntry& pe = it->second;
+                if (inserted) {
+                    pe.layer = anchorLayer;
+                    pe.compose = std::make_shared<PageComposeState>();
+                    pe.compose->assembler.configure(
+                        static_cast<int>(providers_.size()),
+                        config_.pageSizeTexels);
+                    pe.totalSources = static_cast<int>(providers_.size());
+                    pe.lastProgressFrame = frameId_;
+                    kickPageFetches(anchorKey, anchorPageKey, anchorLayer, pe);
+                }
+            }
+        }
+
         // 驻留编码(**每帧必跑**):按当前 resident/uploaded 重建间接纹理。
         // residentCells 统计本帧真正拿到高清页(A=255,含祖先回退)的 cell 数;
         // == gridN² 即「全 cell 驻留」= 合批资格闸(此时 mappedRaster fallback
