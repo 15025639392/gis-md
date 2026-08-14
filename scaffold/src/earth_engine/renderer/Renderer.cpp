@@ -6,6 +6,7 @@
 #include "../core/math/Vec3.h"
 #include "../core/math/Mat4.h"
 #include "../tiling/TileKey.h"
+#include "PageStoreSamplingGLSL.h"
 #include "TerrainSurfaceLightGLSL.h"
 #include "PipelineConfig.h"
 
@@ -497,33 +498,13 @@ void main() {
                             floor(psPack / 512.0));
         vec2 psUv = uvFromSet(mod(psPack, 8.0));
         vec2 cells = max(u_pageStoreParams.yz, vec2(1.0));
-        vec2 g = u_pageStoreUv.xy + clamp(psUv, 0.0, 1.0) * u_pageStoreUv.zw;
-        vec2 cell = clamp(floor(g), vec2(0.0), cells - vec2(1.0));
-        vec4 e = texelFetch(
-            u_pageStoreIndir,
-            ivec3(ivec2(cell), int(u_terrainLayers.y + 0.5)), 0);
-        float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
-        // per-cell 渐变 LOD(§16.3):d>0 → cell 采粗祖先页(覆盖 span=2^d 个精 cell)。
-        // origin=该粗页在精网格的左下角,sampleUv=片元在粗页内 [0,1] 子区。
-        // d=0:span=1、origin=cell → sampleUv=g-cell(逐字节=现状精页,无回归)。
-        float d = floor(e.b * 255.0 + 0.5);
-        vec2 span = vec2(exp2(d));
-        // 祖先子区在**全局**源瓦片下标上定位(见 params.w 相位注释)。
-        vec2 gGlobal = g + psPhase;
-        vec2 origin = floor(gGlobal / span) * span;
-        vec2 sampleUv = (gGlobal - origin) / span;
-        base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), step(0.3, e.a));
-        // 刀2 路网 SDF 场:同一间接查找/同层号再采一次 R8 场(反向编码:
-        // 0=远/1=线内/0.5=边缘)。fwidth 屏幕导数做解析 AA —— 锐度与纹素
-        // 密度解耦;祖先粗页导数变大 → 线自然羽化淡出。
-        if (u_roadFieldParams.x > 0.5 && e.a > 0.6) {
-            float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
-            float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
-            float roadCov =
-                smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) * e.a *
-                u_roadFieldColor.a;
-            base.rgb = mix(base.rgb, u_roadFieldColor.rgb, roadCov);
-        }
+        // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h,
+        // withPageStoreSampling() 注入)。本变体 UV = details 逐顶点 texcoord,
+        // 轴对齐 origin/span 以退化仿射传入(g = origin + uv·span 逐位同旧式)。
+        base = eePageStoreCompose(
+            base, psUv, vec4(u_pageStoreUv.xy, u_pageStoreUv.z, 0.0),
+            vec2(0.0, u_pageStoreUv.w), psPhase, cells,
+            int(u_terrainLayers.y + 0.5), u_roadFieldParams, u_roadFieldColor);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     // B2 刀2:HDR 下把 sRGB 反照率解到线性(glTF PBR 本为线性设计),BRDF 随之在
@@ -1251,39 +1232,13 @@ void main() {
             psUv = u_clipUV.xy + psUv * u_clipUV.zw;
         }
         vec2 cells = max(u_pageStoreParams.yz, vec2(1.0));
-        // [瓦界对齐] 位移路径的 psUv 是共享模板**几何** UV,须走逐瓦几何仿射
-        // (u_pageGeomA/B,与 instanced 同源),不能走 details-UV 标定的
+        // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
+        // [瓦界对齐] 位移路径 UV = 共享模板几何 UV,传逐瓦几何仿射
+        // u_pageGeomA/B(与 instanced 同源),不能走 details-UV 标定的
         // u_pageStoreUv——GCJ 下差出瓦包围矩形翘曲,瓦界错缝 ~30m。
-        vec2 uvc = clamp(psUv, 0.0, 1.0);
-        vec2 g = u_pageGeomA.xy + uvc.x * u_pageGeomA.zw + uvc.y * u_pageGeomB.xy;
-        vec2 cell = clamp(floor(g), vec2(0.0), cells - vec2(1.0));
-        // Step B1:经间接纹理单次 fetch 定位层(替代闭式 layerBase+…)。
-        // RGBA8 解码 R+G*256(floor(x*255+0.5) 从 unorm 取回整数字节)。
-        // 合批 Step 2:texelFetch 整数寻址 array 层(texel 在左上 gridN² 区)。
-        vec4 e = texelFetch(
-            u_pageStoreIndir,
-            ivec3(ivec2(cell), int(u_terrainLayers.y + 0.5)), 0);
-        float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
-        // per-cell 渐变 LOD(§16.3,镜像 gltf):d>0 采粗祖先页;d=0=现状精页。
-        float d = floor(e.b * 255.0 + 0.5);
-        vec2 span = vec2(exp2(d));
-        // 祖先子区在**全局**源瓦片下标上定位(见 params.w 相位注释)。
-        vec2 gGlobal = g + psPhase;
-        vec2 origin = floor(gGlobal / span) * span;
-        vec2 sampleUv = (gGlobal - origin) / span;
-        base = alphaOver(
-            base, texture(u_pageStore, vec3(sampleUv, layer)), step(0.3, e.a));
-        // 刀2 路网 SDF 场:同一间接查找/同层号再采一次 R8 场(反向编码:
-        // 0=远/1=线内/0.5=边缘)。fwidth 屏幕导数做解析 AA —— 锐度与纹素
-        // 密度解耦;祖先粗页导数变大 → 线自然羽化淡出。
-        if (u_roadFieldParams.x > 0.5 && e.a > 0.6) {
-            float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
-            float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
-            float roadCov =
-                smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) * e.a *
-                u_roadFieldColor.a;
-            base.rgb = mix(base.rgb, u_roadFieldColor.rgb, roadCov);
-        }
+        base = eePageStoreCompose(
+            base, psUv, u_pageGeomA, u_pageGeomB.xy, psPhase, cells,
+            int(u_terrainLayers.y + 0.5), u_roadFieldParams, u_roadFieldColor);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
@@ -1594,32 +1549,12 @@ void main() {
     if (psSet > 0.5 && v_pageParams.z > 1.5) {
         psUv = v_clipUv.xy + psUv * v_clipUv.zw;
     }
-    // [瓦界对齐] psUv 是共享模板的**几何** UV(边到边 0..1),映射到源格须用逐瓦
-    // 几何仿射(c0=pageUv.xy,dU=pageUv.zw,dV=pageAux.zw;含交叉项)——GCJ 下
-    // 旧的轴对齐 origin/span 按 details-UV 标定,喂几何 UV 会差出瓦包围矩形的
-    // 翘曲量(瓦界错缝 ~30m)。相邻瓦共享角点 → 瓦界按构造连续。
-    vec2 uvc = clamp(psUv, 0.0, 1.0);
-    vec2 g = v_pageUv.xy + uvc.x * v_pageUv.zw + uvc.y * v_pageAux.zw;
-    vec2 cell = clamp(floor(g), vec2(0.0), cells - vec2(1.0));
-    vec4 e = texelFetch(u_pageStoreIndir, ivec3(ivec2(cell), indirLayer), 0);
-    float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
-    float d = floor(e.b * 255.0 + 0.5);
-    vec2 span = vec2(exp2(d));
-    // 祖先子区在**全局**源瓦片下标上定位(见非实例变体的相位注释)。
-    vec2 gGlobal = g + v_pageAux.xy;
-    vec2 origin = floor(gGlobal / span) * span;
-    vec2 sampleUv = (gGlobal - origin) / span;
-    base = alphaOver(base, texture(u_pageStore, vec3(sampleUv, layer)), step(0.3, e.a));
-
-    // 刀2 路网 SDF 场(镜像非实例变体;条件为逐实例 varying,texture/fwidth
-    // 在非 uniform 控制流内与既有 u_pageStore 采样同险,先例已存在)。
-    if (u_roadFieldParams.x > 0.5 && e.a > 0.6) {
-        float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
-        float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
-        float roadCov = smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) *
-                        e.a * u_roadFieldColor.a;
-        base.rgb = mix(base.rgb, u_roadFieldColor.rgb, roadCov);
-    }
+    // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
+    // [瓦界对齐] UV = 共享模板几何 UV,仿射经实例流传入(c0=pageUv.xy,
+    // dU=pageUv.zw,dV=pageAux.zw;相位=pageAux.xy)。
+    base = eePageStoreCompose(
+        base, psUv, v_pageUv, v_pageAux.zw, v_pageAux.xy, cells,
+        int(v_pageParams.y + 0.5), u_roadFieldParams, u_roadFieldColor);
 
     // GE 式半球光照(与 terrainShader 共用 TerrainSurfaceLightGLSL.h 的单一
     // 函数;由 withTerrainLight() 注入)。
@@ -3009,37 +2944,15 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         float2 psUv = gltfUvFromSet(in, fmod(psPack, 8.0));
         float2 cells = max(float2(u.pageStoreParams.y, u.pageStoreParams.z),
                            float2(1.0));
-        float2 g = float2(u.pageStoreUv.x, u.pageStoreUv.y) +
-                   clamp(psUv, 0.0, 1.0) *
-                       float2(u.pageStoreUv.z, u.pageStoreUv.w);
-        float2 cell = clamp(floor(g), float2(0.0), cells - float2(1.0));
-        // 合批 Step 2:read() 整数寻址 array 层。
-        float4 e = u_pageStoreIndir.read(
-            uint2(cell), uint(u.terrainLayers.y + 0.5), 0);
-        float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
-        // per-cell 渐变 LOD(§16.3,镜像 GLSL):d>0 采粗祖先页;d=0=现状精页。
-        float d = floor(e.b * 255.0 + 0.5);
-        float2 span = float2(exp2(d));
-        // 祖先子区在**全局**源瓦片下标上定位(见 params.w 相位注释)。
-        float2 gGlobal = g + psPhase;
-        float2 origin = floor(gGlobal / span) * span;
-        float2 sampleUv = (gGlobal - origin) / span;
-        base = gltfAlphaOver(
-            base,
-            u_pageStore.sample(u_tileSharedSampler, sampleUv, uint(layer)),
-            step(0.3, e.a));
-        // 刀2 路网 SDF 场(镜像 GLSL;⚠️ 未经 Metal 真机验证,布局/绑定按
-        // 契约写就,验证前若有问题以 GLES 行为为准)。反向编码 0=远,失败安全。
-        if (u.roadFieldParams.x > 0.5 && e.a > 0.6) {
-            float fieldV =
-                u_roadField.sample(u_tileSharedSampler, sampleUv, uint(layer)).r;
-            float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
-            float roadCov =
-                smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) * e.a *
-                float4(u.roadFieldColor).w;
-            base.rgb = mix(base.rgb, float3(float4(u.roadFieldColor).xyz),
-                           roadCov);
-        }
+        // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
+        // 本变体 UV = details 逐顶点 texcoord,轴对齐 origin/span 退化仿射传入。
+        base = eePageStoreCompose(
+            u_pageStore, u_pageStoreIndir, u_roadField, u_tileSharedSampler,
+            base, psUv,
+            float4(u.pageStoreUv.x, u.pageStoreUv.y, u.pageStoreUv.z, 0.0),
+            float2(0.0, u.pageStoreUv.w), psPhase, cells,
+            int(u.terrainLayers.y + 0.5), float4(u.roadFieldParams),
+            float4(u.roadFieldColor));
     }
     base = gltfApplyWaterMask(
         base,
@@ -3653,41 +3566,14 @@ fragment float4 terrainFragment(
         }
         float2 cells = max(float2(u.pageStoreParams.y, u.pageStoreParams.z),
                            float2(1.0));
-        // [瓦界对齐] 位移路径几何 UV → 逐瓦仿射(镜像 GLSL 位移变体)。
-        float2 uvc2 = clamp(psUv, 0.0, 1.0);
-        float2 g = float2(u.pageGeomA.x, u.pageGeomA.y) +
-                   uvc2.x * float2(u.pageGeomA.z, u.pageGeomA.w) +
-                   uvc2.y * float2(u.pageGeomB.x, u.pageGeomB.y);
-        float2 cell = clamp(floor(g), float2(0.0), cells - float2(1.0));
-        // Step B1(镜像 GLSL):经间接纹理单次 fetch 定位层;RGBA8 解码 R+G*256。
-        // 合批 Step 2:read() 整数寻址 array 层(texel 在左上 gridN² 区)。
-        float4 e = u_pageStoreIndir.read(
-            uint2(cell), uint(u.terrainLayers.y + 0.5), 0);
-        float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
-        // per-cell 渐变 LOD(§16.3,镜像 GLSL):d>0 采粗祖先页;d=0=现状精页。
-        float d = floor(e.b * 255.0 + 0.5);
-        float2 span = float2(exp2(d));
-        // 祖先子区在**全局**源瓦片下标上定位(见 params.w 相位注释)。
-        float2 gGlobal = g + psPhase;
-        float2 origin = floor(gGlobal / span) * span;
-        float2 sampleUv = (gGlobal - origin) / span;
-        // B2b(镜像 GLSL):factor = e.a(resident 标志)。miss=0 保留 mappedRaster。
-        base = terrainAlphaOver(
-            base,
-            u_pageStore.sample(u_terrainSampler, sampleUv, uint(layer)),
-            step(0.3, e.a));
-        // 刀2 路网 SDF 场(镜像 GLSL;⚠️ 未经 Metal 真机验证)。反向编码
-        // 0=远,失败安全。
-        if (u.roadFieldParams.x > 0.5 && e.a > 0.6) {
-            float fieldV =
-                u_roadField.sample(u_terrainSampler, sampleUv, uint(layer)).r;
-            float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
-            float roadCov =
-                smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) * e.a *
-                float4(u.roadFieldColor).w;
-            base.rgb = mix(base.rgb, float3(float4(u.roadFieldColor).xyz),
-                           roadCov);
-        }
+        // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
+        // [瓦界对齐] 位移路径 UV = 共享模板几何 UV,传逐瓦仿射 pageGeomA/B。
+        base = eePageStoreCompose(
+            u_pageStore, u_pageStoreIndir, u_roadField, u_terrainSampler,
+            base, psUv, float4(u.pageGeomA),
+            float2(u.pageGeomB.x, u.pageGeomB.y), psPhase, cells,
+            int(u.terrainLayers.y + 0.5), float4(u.roadFieldParams),
+            float4(u.roadFieldColor));
     }
     base = terrainApplyWaterMask(
         base, in, u_gltfWaterMaskTexture, u_terrainSampler,
@@ -3932,24 +3818,16 @@ fragment float4 terrainInstancedFragment(
     float psSet = floor(packed / 16384.0);
     uint indirLayer = uint(in.pageParams.y + 0.5);
     float2 psUv = psSet > 0.5 ? in.texcoord01.zw : in.texcoord01.xy;
-    // [瓦界对齐] 几何 UV → 源格逐瓦仿射(镜像 GLSL 实例化变体,c0/dU/dV 语义
-    // 见 TerrainInstanceBatcher::InstanceRecord 注释)。
-    float2 uvc = clamp(psUv, 0.0, 1.0);
-    float2 g = float2(in.pageUv.x, in.pageUv.y) +
-               uvc.x * float2(in.pageUv.z, in.pageUv.w) +
-               uvc.y * float2(in.pageAux.z, in.pageAux.w);
-    float2 cell = clamp(floor(g), float2(0.0), cells - float2(1.0));
-    float4 e = u_pageStoreIndir.read(uint2(cell), indirLayer, 0);
-    float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
-    float d = floor(e.b * 255.0 + 0.5);
-    float2 span = float2(exp2(d));
-    // 祖先子区在**全局**源瓦片下标上定位。
-    float2 gGlobal = g + float2(in.pageAux.x, in.pageAux.y);
-    float2 origin = floor(gGlobal / span) * span;
-    float2 sampleUv = (gGlobal - origin) / span;
-    base = tiAlphaOver(
-        base, u_pageStore.sample(u_pageSampler, sampleUv, uint(layer)),
-        step(0.3, e.a));
+    // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
+    // [瓦界对齐] UV = 共享模板几何 UV,仿射经实例流传入。
+    // ⚠️ instanced MSL 的精简 uniform struct 尚无场参数 → 场参数传 0(场支路
+    // 死代码),特性滞后同 depth-only;Metal 补齐时把 roadFieldParams/Color
+    // 加进 TerrainInstancedFragUniforms 并改此两参即可。
+    base = eePageStoreCompose(
+        u_pageStore, u_pageStoreIndir, u_roadField, u_pageSampler, base, psUv,
+        float4(in.pageUv), float2(in.pageAux.z, in.pageAux.w),
+        float2(in.pageAux.x, in.pageAux.y), cells, int(indirLayer),
+        float4(0.0), float4(0.0));
 
     // GE 式半球光照(与 GLSL 侧共用 TerrainSurfaceLightGLSL.h 的单一函数;由
     // withTerrainLight() 注入 kTerrainLightMSL)。
@@ -4005,6 +3883,23 @@ const char* terrainFragmentMSL() {
 // 选 GLSL/MSL 变体、插到入口(GLSL `void main(` / MSL `fragment float4 `)前,
 // 使其排在全部 precision/uniform/helper 声明之后、唯一调用者之前。镜像
 // computeSkyColor 的字符串拼接惯例(AtmosphereSkyColorGLSL.h)。
+// 页存储采样 + 场解算的单一治理点注入(PageStoreSamplingGLSL.h;照
+// withTerrainLight 惯例,拼在片元入口前)。六个消费 shader:gltf / terrain /
+// terrainInstanced × GLES/Metal(Metal instanced 待 Step 4 接线时同样须包)。
+static std::string withPageStoreSampling(const std::string& fragmentSource,
+                                         bool metal) {
+    std::string src(fragmentSource);
+    const char* anchor = metal ? "fragment float4 " : "void main(";
+    const char* fn = metal ? kPageStoreSamplingMSL : kPageStoreSamplingGLSL;
+    const size_t pos = src.find(anchor);
+    // 锚点必存;缺失宁可返回原样让编译期炸(缺函数定义),不静默产出坏 shader。
+    if (pos == std::string::npos) {
+        return src;
+    }
+    src.insert(pos, std::string(fn) + "\n");
+    return src;
+}
+
 static std::string withTerrainLight(const char* fragmentSource, bool metal) {
     std::string src(fragmentSource);
     const char* anchor = metal ? "fragment float4 " : "void main(";
@@ -4142,8 +4037,8 @@ bool Renderer::initialize() {
     // ---- glTF primitive shader ----
     ShaderDesc gltfSd;
     gltfSd.vertexSource = isMetal ? kGltfVertexMSL : kGltfVertexGLSL;
-    gltfSd.fragmentSource =
-        isMetal ? kGltfFragmentMSL : withGltfHdr(kGltfFragmentGLSL);
+    gltfSd.fragmentSource = withPageStoreSampling(
+        isMetal ? kGltfFragmentMSL : withGltfHdr(kGltfFragmentGLSL), isMetal);
     impl_->gltfShader = dev->createShader(gltfSd);
     if (!impl_->gltfShader) {
         // Non-fatal on BOTH backends: a PBR shader link failure (Metal buffer
@@ -4159,8 +4054,10 @@ bool Renderer::initialize() {
     // compile on BOTH backends. Treat link failure as fatal.
     ShaderDesc terrainSd;
     terrainSd.vertexSource = isMetal ? kTerrainVertexMSL : kTerrainVertexGLSL;
-    terrainSd.fragmentSource = withTerrainLight(
-        isMetal ? kTerrainFragmentMSL : kTerrainFragmentGLSL, isMetal);
+    terrainSd.fragmentSource = withPageStoreSampling(
+        withTerrainLight(
+            isMetal ? kTerrainFragmentMSL : kTerrainFragmentGLSL, isMetal),
+        isMetal);
     impl_->terrainShader = dev->createShader(terrainSd);
     if (!impl_->terrainShader) {
         fprintf(stderr, "[Renderer] terrainShader failed\n");
@@ -4184,8 +4081,8 @@ bool Renderer::initialize() {
     ShaderDesc gltfInstancedSd;
     gltfInstancedSd.vertexSource =
         isMetal ? kGltfInstancedVertexMSL : kGltfInstancedVertexGLSL;
-    gltfInstancedSd.fragmentSource =
-        isMetal ? kGltfFragmentMSL : withGltfHdr(kGltfFragmentGLSL);
+    gltfInstancedSd.fragmentSource = withPageStoreSampling(
+        isMetal ? kGltfFragmentMSL : withGltfHdr(kGltfFragmentGLSL), isMetal);
     impl_->gltfInstancedShader = dev->createShader(gltfInstancedSd);
     if (!impl_->gltfInstancedShader) {
         // Non-fatal on both backends (see gltfShader above): instanced glTF
@@ -4200,8 +4097,9 @@ bool Renderer::initialize() {
     if (!isMetal) {
         ShaderDesc terrainInstancedSd;
         terrainInstancedSd.vertexSource = kTerrainInstancedVertexGLSL;
-        terrainInstancedSd.fragmentSource =
-            withTerrainLight(kTerrainInstancedFragmentGLSL, /*metal=*/false);
+        terrainInstancedSd.fragmentSource = withPageStoreSampling(
+            withTerrainLight(kTerrainInstancedFragmentGLSL, /*metal=*/false),
+            /*metal=*/false);
         impl_->terrainInstancedShader = dev->createShader(terrainInstancedSd);
         if (!impl_->terrainInstancedShader) {
             fprintf(stderr,

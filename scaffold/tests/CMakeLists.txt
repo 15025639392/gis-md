@@ -1187,6 +1187,14 @@ add_test(NAME test_atmosphere_scattering COMMAND test_atmosphere_scattering)
 #   只能靠人读源码。测试通过 ≠ AI_INDEX 是对的。
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+    # 管线特性契约守卫:同一特性在逐瓦/合批/instanced × GLES/Metal 的搬运语句
+    # 是否全数落位(单一治理点 / uniform 表 / apply 写入 / 实例流拷贝 / MSL 镜像
+    # 同序)。历史上两次单管线静默漏配(9043e20fe / 80892aca1)的回归锁。
+    add_test(
+        NAME test_pipeline_feature_contracts
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../tools/check_pipeline_feature_contracts.py
+                --src ${CMAKE_CURRENT_SOURCE_DIR}/../src)
     add_test(
         NAME test_ai_index_refs
         COMMAND ${Python3_EXECUTABLE}
