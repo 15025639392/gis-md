@@ -283,6 +283,13 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
         batch.gltfUniforms.baseColor = first.gltfUniforms.baseColor;
         // 批级 params 只留 enabled;cell 网格逐实例给(见 rec.dispMorph[3])。
         batch.gltfUniforms.pageStoreParams = {1.0f, 0.0f, 0.0f, 0.0f};
+        // 刀2 路网场 uniform 承自首实例,理由同上面几条:资格闸保证整批共享同一
+        // 份纹理状态(u_roadField 已随 batch.textures 承接)。**漏承的代价**:
+        // roadFieldParams.x 停在默认 0 → 实例化 FS 的场分支恒关 → 合批瓦片路网
+        // 消失;而运动中瓦片在「合批↔逐瓦」间随驻留态切换,表现为路网闪烁 ——
+        // 真机"线一瞬出现又消失"的根因正是这里。
+        batch.gltfUniforms.roadFieldParams = first.gltfUniforms.roadFieldParams;
+        batch.gltfUniforms.roadFieldColor = first.gltfUniforms.roadFieldColor;
         batch.hasWorldSortCenter = first.hasWorldSortCenter;
         batch.worldSortCenter = first.worldSortCenter;
         batch.cullFace = first.cullFace;
