@@ -300,6 +300,16 @@ private:
         /// 标签 CPU 侧:顶点流副本(opacity 分量可改写重传)+ 登记表。
         std::vector<float> labelVertsCpu;
         std::vector<LabelEntry> labelEntries;
+        /// 瓦片桶专属:标签烘焙源(rel/锚点/合成 id/文字)。commit 只存源,
+        /// bakeTileBucketLabels 在字体就绪时烘 —— 字体注入晚于瓦片 commit
+        /// 时,store 桶走 rebuildBucket 补标注,瓦片桶没有重镶路径,靠它。
+        struct TileLabelSource {
+            std::array<float, 3> rel{0.0f, 0.0f, 0.0f};
+            Vec3 anchorEcef = Vec3::zero();
+            uint64_t featureId = 0;
+            std::string name;
+        };
+        std::vector<TileLabelSource> tileLabelSources;
         /// P6 stencil 分类贴地(方案 B):面 fill 的水密挤出体(pos-only
         /// 12B,相对桶原点)。P6b 按解析 fill 色分组——每组一对
         /// Volume/Color 命令(组内并集计数,不同色互不污染)。非空 →
@@ -488,12 +498,29 @@ public:
                                  const Feature& feature,
                                  TileMeshCpu& mesh);
 
+    /// **渲染线程**:单条文字 → glyph quads(32B 布局)+ LabelEntry 登记。
+    /// store 镶嵌与瓦片准入定型共用 —— 标签顶点布局/碰撞盒契约只此一份。
+    static void appendLabelTextQuads(GlyphAtlas& atlas,
+                                     const FeatureRenderStyle& style,
+                                     FeatureId featureId,
+                                     const Vec3& anchorEcef,
+                                     const std::array<float, 3>& rel,
+                                     const std::string& text,
+                                     std::vector<float>& labelVerts,
+                                     std::vector<uint32_t>& labelIndices,
+                                     std::vector<LabelEntry>& labelEntries);
+
     /// **渲染线程**:上传并整瓦原子替换。mesh 为空 → 等价 dropTileMesh。
     /// 上传失败 → 丢弃该瓦(下次 provide 重试),不留半张。
     void commitTileMesh(const TileKey& key, TileMeshCpu&& mesh);
 
     /// **渲染线程**:移除一块瓦片的 GPU 资源。
     void dropTileMesh(const TileKey& key);
+
+    /// **渲染线程**:瓦片桶标签烘焙(符号刀B)。桶有标签源且字体就绪且
+    /// 尚未烘过 → 生成 glyph quads + LabelEntry + GPU buffer。commit 时
+    /// 与字体就绪翻转时都会调,幂等。
+    void bakeTileBucketLabels(BucketGpu& gpu);
 
     /// 当前驻留的瓦片桶数(诊断)。
     size_t tileMeshCount() const { return tileBuckets_.size(); }

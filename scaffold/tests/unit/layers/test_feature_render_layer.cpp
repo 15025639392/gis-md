@@ -483,6 +483,76 @@ TEST(GlyphAtlasTest, RasterizesAndPacksGlyphs) {
     EXPECT_EQ(a, atlas.ensureGlyph('A'));
 }
 
+// 符号刀B:瓦片实例带 name → 准入烘出标签 quads(32B 布局),与点命令
+// 并行发出;placement 登记(labelEntries)一并生效。
+TEST_F(FeatureRenderLayerTest, TileSymbolLabelsRenderWhenFontReady) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();  // 让 layer 缓存图集指针(commit 依赖 glyphAtlas_)
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    mesh.hasOrigin = true;
+    TileSymbolCpu s;
+    s.lonRad = 6.0 * kDeg;
+    s.latRad = 29.0 * kDeg;
+    s.colorPacked = 1.0f;
+    s.name = "AB";
+    mesh.symbols.push_back(s);
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    RenderCommandList commands = build();
+    const RenderCommand* label = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorLabel) label = &cmd;
+    }
+    ASSERT_NE(nullptr, label) << "瓦片符号标签未出命令";
+    EXPECT_EQ(32, label->vertexStride);
+    EXPECT_EQ(12, label->indexCount);  // "AB" 2 字形 × 6
+}
+
+// 字体注入晚于瓦片 commit:标签先缺,字体就绪翻转后由烘焙源补烘 ——
+// store 桶的等价物是 rebuildBucket,瓦片桶没有重镶路径,这条钉住补烘钩子。
+TEST_F(FeatureRenderLayerTest, TileSymbolLabelsBakeAfterLateFont) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    mesh.hasOrigin = true;
+    TileSymbolCpu s;
+    s.lonRad = 6.0 * kDeg;
+    s.latRad = 29.0 * kDeg;
+    s.colorPacked = 1.0f;
+    s.name = "AB";
+    mesh.symbols.push_back(s);
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    RenderCommandList before = build();
+    for (const auto& cmd : before) {
+        EXPECT_NE(RenderCommandKind::VectorLabel, cmd.kind)
+            << "无字体不该有标签命令";
+    }
+
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    RenderCommandList after = build();  // 翻转帧:补烘
+    const RenderCommand* label = nullptr;
+    for (const auto& cmd : after) {
+        if (cmd.kind == RenderCommandKind::VectorLabel) label = &cmd;
+    }
+    ASSERT_NE(nullptr, label) << "字体就绪翻转未补烘瓦片标签";
+    EXPECT_EQ(12, label->indexCount);
+}
+
 TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
     std::vector<uint8_t> font = loadHostFont();
     if (font.empty()) GTEST_SKIP() << "no host font available";

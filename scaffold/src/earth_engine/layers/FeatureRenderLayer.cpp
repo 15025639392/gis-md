@@ -658,68 +658,79 @@ void FeatureRenderLayer::tessellateFeatureInto(
         const float ay = static_cast<float>(rel.y());
         const float az = static_cast<float>(rel.z());
 
-        // 布局:单行 LTR advance,水平居中,基线抬 labelOffsetPx。
-        const float s =
-            ctx.style.labelSizePx /
-            static_cast<float>(GlyphAtlas::kGlyphPixelHeight);
-        const std::vector<uint32_t> codepoints =
-            GlyphAtlas::decodeUtf8(propIt->second);
-        float totalAdvance = 0.0f;
-        for (uint32_t cp : codepoints) {
-            if (const GlyphAtlas::Glyph* g = ctx.glyphAtlas->ensureGlyph(cp)) {
-                totalAdvance += g->advance * s;
+        appendLabelTextQuads(*ctx.glyphAtlas, ctx.style, feature.id, anchor,
+                             {ax, ay, az}, propIt->second, labelVerts,
+                             labelIndices, labelEntries);
+    }
+}
+
+void FeatureRenderLayer::appendLabelTextQuads(
+    GlyphAtlas& atlas,
+    const FeatureRenderStyle& style,
+    FeatureId featureId,
+    const Vec3& anchorEcef,
+    const std::array<float, 3>& rel,
+    const std::string& text,
+    std::vector<float>& labelVerts,
+    std::vector<uint32_t>& labelIndices,
+    std::vector<LabelEntry>& labelEntries) {
+    // 布局:单行 LTR advance,水平居中,基线抬 labelOffsetPx。
+    const float s = style.labelSizePx /
+                    static_cast<float>(GlyphAtlas::kGlyphPixelHeight);
+    const std::vector<uint32_t> codepoints = GlyphAtlas::decodeUtf8(text);
+    float totalAdvance = 0.0f;
+    for (uint32_t cp : codepoints) {
+        if (const GlyphAtlas::Glyph* g = atlas.ensureGlyph(cp)) {
+            totalAdvance += g->advance * s;
+        }
+    }
+    float penX = -totalAdvance * 0.5f;
+    const float baseY = style.labelOffsetPx;
+    const size_t entryVertexStart = labelVerts.size();
+    for (uint32_t cp : codepoints) {
+        const GlyphAtlas::Glyph* g = atlas.ensureGlyph(cp);
+        if (!g) continue;
+        if (g->hasBitmap) {
+            const float x0 = penX + g->offsetX * s;
+            const float x1 = x0 + g->width * s;
+            const float yTop = baseY + g->offsetY * s;
+            const float yBot = yTop - g->height * s;
+            const uint32_t base =
+                static_cast<uint32_t>(labelVerts.size() / 8);
+            const float corners[4][4] = {
+                {x0, yBot, g->u0, g->v1},
+                {x1, yBot, g->u1, g->v1},
+                {x1, yTop, g->u1, g->v0},
+                {x0, yTop, g->u0, g->v0}};
+            for (const auto& c : corners) {
+                labelVerts.push_back(rel[0]);
+                labelVerts.push_back(rel[1]);
+                labelVerts.push_back(rel[2]);
+                labelVerts.push_back(c[0]);
+                labelVerts.push_back(c[1]);
+                labelVerts.push_back(0.0f);  // offset.z=opacity(placement 回写)
+                labelVerts.push_back(c[2]);
+                labelVerts.push_back(c[3]);
             }
+            const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
+            for (uint32_t idx : quad) labelIndices.push_back(base + idx);
         }
-        float penX = -totalAdvance * 0.5f;
-        const float baseY = ctx.style.labelOffsetPx;
-        const size_t entryVertexStart = labelVerts.size();
-        for (uint32_t cp : codepoints) {
-            const GlyphAtlas::Glyph* g = ctx.glyphAtlas->ensureGlyph(cp);
-            if (!g) continue;
-            if (g->hasBitmap) {
-                const float x0 = penX + g->offsetX * s;
-                const float x1 = x0 + g->width * s;
-                const float yTop = baseY + g->offsetY * s;
-                const float yBot = yTop - g->height * s;
-                const uint32_t base =
-                    static_cast<uint32_t>(labelVerts.size() / 8);
-                const float corners[4][4] = {
-                    {x0, yBot, g->u0, g->v1},
-                    {x1, yBot, g->u1, g->v1},
-                    {x1, yTop, g->u1, g->v0},
-                    {x0, yTop, g->u0, g->v0}};
-                for (const auto& c : corners) {
-                    labelVerts.push_back(ax);
-                    labelVerts.push_back(ay);
-                    labelVerts.push_back(az);
-                    labelVerts.push_back(c[0]);
-                    labelVerts.push_back(c[1]);
-                    labelVerts.push_back(0.0f);  // offset.z=opacity(placement 回写)
-                    labelVerts.push_back(c[2]);
-                    labelVerts.push_back(c[3]);
-                }
-                const uint32_t quad[6] = {0, 1, 2, 0, 2, 3};
-                for (uint32_t idx : quad) labelIndices.push_back(base + idx);
-            }
-            penX += g->advance * s;
-        }
-        // 登记 placement 候选:碰撞盒 = 整行文字盒(行度量 ascent/descent
-        // 换算标注字号)+ halo 外扩。空文本/字形全缺 → 无顶点不登记。
-        if (labelVerts.size() > entryVertexStart) {
-            LabelEntry entry;
-            entry.featureId = feature.id;
-            entry.anchorEcef = anchor;
-            entry.boxMinXPx = -totalAdvance * 0.5f - ctx.style.labelHaloPx;
-            entry.boxMaxXPx = totalAdvance * 0.5f + ctx.style.labelHaloPx;
-            // descent() 已取正(基线下距离),下缘 = 基线减。
-            entry.boxMinYPx =
-                baseY - ctx.glyphAtlas->descent() * s - ctx.style.labelHaloPx;
-            entry.boxMaxYPx =
-                baseY + ctx.glyphAtlas->ascent() * s + ctx.style.labelHaloPx;
-            entry.vertexFloatStart = entryVertexStart;
-            entry.vertexFloatCount = labelVerts.size() - entryVertexStart;
-            labelEntries.push_back(entry);
-        }
+        penX += g->advance * s;
+    }
+    // 登记 placement 候选:碰撞盒 = 整行文字盒(行度量 ascent/descent
+    // 换算标注字号)+ halo 外扩。空文本/字形全缺 → 无顶点不登记。
+    if (labelVerts.size() > entryVertexStart) {
+        LabelEntry entry;
+        entry.featureId = featureId;
+        entry.anchorEcef = anchorEcef;
+        entry.boxMinXPx = -totalAdvance * 0.5f - style.labelHaloPx;
+        entry.boxMaxXPx = totalAdvance * 0.5f + style.labelHaloPx;
+        // descent() 已取正(基线下距离),下缘 = 基线减。
+        entry.boxMinYPx = baseY - atlas.descent() * s - style.labelHaloPx;
+        entry.boxMaxYPx = baseY + atlas.ascent() * s + style.labelHaloPx;
+        entry.vertexFloatStart = entryVertexStart;
+        entry.vertexFloatCount = labelVerts.size() - entryVertexStart;
+        labelEntries.push_back(entry);
     }
 }
 
@@ -1399,6 +1410,7 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
     // 片元也被钉在「可见瓦数 × 上限」内。截断丢的是数据侧最不重要的尾部。
     std::vector<float> pointVerts;
     std::vector<uint32_t> pointIndices;
+    std::vector<BucketGpu::TileLabelSource> labelSources;
     if (!mesh.symbols.empty()) {
         constexpr size_t kMaxSymbolsPerTile = 128;
         if (mesh.symbols.size() > kMaxSymbolsPerTile) {
@@ -1431,22 +1443,44 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
                 Cartographic(s.lonRad, s.latRad,
                              h + style_.heightOffset));
             const Vec3 rel = anchor - mesh.origin;
+            const std::array<float, 3> relF{static_cast<float>(rel.x()),
+                                            static_cast<float>(rel.y()),
+                                            static_cast<float>(rel.z())};
             const ResolvedSymbol sym =
                 resolveSymbol(s.icon, style_.pointAnchor, iconAtlas_);
-            appendSymbolQuad({static_cast<float>(rel.x()),
-                              static_cast<float>(rel.y()),
-                              static_cast<float>(rel.z())},
-                             sym, s.colorPacked, pointVerts, pointIndices);
+            appendSymbolQuad(relF, sym, s.colorPacked, pointVerts,
+                             pointIndices);
+            // 符号刀B:带 name 的实例记标签源(烘焙推迟到
+            // bakeTileBucketLabels —— 字体可能晚于 commit 就绪)。
+            // featureId 合成:name+锚点量化坐标的 FNV-1a —— 瓦片符号没有
+            // store id,而 placement 的 fade/提权按 id 记账,必须帧间稳定;
+            // 同源坐标逐位一致 → 同一 POI 跨帧同 id(跨 zoom 代际的容差
+            // 匹配归 crossTileID 刀)。
+            if (!s.name.empty()) {
+                uint64_t id = 1469598103934665603ull;
+                auto mix = [&id](uint64_t v) {
+                    id ^= v;
+                    id *= 1099511628211ull;
+                };
+                for (unsigned char c : s.name) mix(c);
+                mix(static_cast<uint64_t>(
+                    llround(s.lonRad * 1e7) + (1ll << 40)));
+                mix(static_cast<uint64_t>(
+                    llround(s.latRad * 1e7) + (1ll << 40)));
+                labelSources.push_back(
+                    BucketGpu::TileLabelSource{relF, anchor, id, s.name});
+            }
         }
     }
 
-    // 符号刀A 诊断:worker→commit 链路的落点计数(排查「数据有点但屏上
-    // 无符号」时,第一眼看这行有没有出现、syms 是否为 0)。
+    // 符号刀A/B 诊断:worker→commit 链路的落点计数(排查「数据有点但屏上
+    // 无符号」时,第一眼看这行有没有出现、syms/labelSrc 是否为 0)。
     if (!mesh.symbols.empty()) {
         platformLog(LogLevel::Info, "TileSymbol",
-                    "commit z=%d x=%d y=%d syms=%zu quads=%zu ground=%d",
+                    "commit z=%d x=%d y=%d syms=%zu quads=%zu labelSrc=%zu "
+                    "ground=%d",
                     key.z, key.x, key.y, mesh.symbols.size(),
-                    pointIndices.size() / 6,
+                    pointIndices.size() / 6, labelSources.size(),
                     style_.altitudeMode == FeatureAltitudeMode::ClampToGround
                         ? 1 : 0);
     }
@@ -1462,7 +1496,36 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
                          mesh.lineVolumeGroups, gpu)) {
         return;
     }
-    tileBuckets_[key] = std::move(gpu);
+    gpu.tileLabelSources = std::move(labelSources);
+    BucketGpu& stored = tileBuckets_[key];
+    stored = std::move(gpu);
+    bakeTileBucketLabels(stored);
+}
+
+void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
+    if (gpu.labelIndexCount > 0 || gpu.tileLabelSources.empty()) return;
+    if (!glyphAtlas_ || !glyphAtlas_->ready() || !renderDevice_) return;
+    std::vector<float> labelVerts;
+    std::vector<uint32_t> labelIndices;
+    std::vector<LabelEntry> labelEntries;
+    for (const BucketGpu::TileLabelSource& src : gpu.tileLabelSources) {
+        appendLabelTextQuads(*glyphAtlas_, style_, src.featureId,
+                             src.anchorEcef, src.rel, src.name, labelVerts,
+                             labelIndices, labelEntries);
+    }
+    if (labelIndices.empty()) return;
+    auto vb = makeBuffer(renderDevice_, labelVerts.data(),
+                         labelVerts.size() * sizeof(float),
+                         BufferDesc::Type::Vertex);
+    auto ib = makeBuffer(renderDevice_, labelIndices.data(),
+                         labelIndices.size() * sizeof(uint32_t),
+                         BufferDesc::Type::Index);
+    if (!vb || !ib) return;  // 上传失败:下次翻转/重 commit 再试
+    gpu.labelVertexBuffer = std::move(vb);
+    gpu.labelIndexBuffer = std::move(ib);
+    gpu.labelIndexCount = static_cast<int>(labelIndices.size());
+    gpu.labelVertsCpu = std::move(labelVerts);
+    gpu.labelEntries = std::move(labelEntries);
 }
 
 void FeatureRenderLayer::dropTileMesh(const TileKey& key) {
@@ -1490,6 +1553,14 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         keys.reserve(buckets_.size());
         for (const auto& entry : buckets_) keys.push_back(entry.first);
         for (BucketKey key : keys) rebuildBucket(key);
+        // 瓦片桶(符号刀B):无重镶路径,标签由烘焙源补烘(幂等,已烘过
+        // 的桶直接早退)。图标晚注入的 uv 补烘不在此列——瓦片符号现用
+        // 内置形状,位图图标接入时须同构处理(明记的债)。
+        if (atlasReady) {
+            for (auto& entry : tileBuckets_) {
+                bakeTileBucketLabels(entry.second);
+            }
+        }
         previewDirty_ = true;
     }
 
@@ -1672,6 +1743,10 @@ void FeatureRenderLayer::updateLabelPlacement(
         auto it = buckets_.find(key);
         if (it != buckets_.end()) collect(it->second);
     }
+    // 瓦片桶(符号刀B):驻留集即渲染集,无空间桶可见性判定(同
+    // buildRenderCommands 的理由),标签候选全量进 placement——地平线/
+    // 视锥剔除由 placement 逐锚点做。
+    for (auto& entry : tileBuckets_) collect(entry.second);
     if (previewGpuValid_) collect(previewGpu_);
 
     const Camera& cam = *frameState.camera;
@@ -1721,6 +1796,7 @@ void FeatureRenderLayer::updateLabelPlacement(
         auto it = buckets_.find(key);
         if (it != buckets_.end()) apply(it->second);
     }
+    for (auto& entry : tileBuckets_) apply(entry.second);
     if (previewGpuValid_) apply(previewGpu_);
 }
 

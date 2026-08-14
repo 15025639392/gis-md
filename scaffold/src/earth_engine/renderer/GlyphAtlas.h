@@ -17,14 +17,17 @@ class Texture;
 /// (SDF 复制四通道,updateTextureRegion 契约为 RGBA),codepoint →
 /// {uv,布局 metrics} 缓存。渲染线程调用(纹理上传需 GL 上下文)。
 ///
-/// 限度(P5b 先无避让全画):单页 1024² 图集无淘汰,48px 栅格约容纳
-/// ~270 个 CJK 字形,demo 规模足够;多页/LRU 淘汰后置。stb_truetype
+/// 限度:单页 2048² 图集无淘汰,32px 栅格约容纳 ~4096 字形。容量按底图
+/// 数据实测定(符号刀B):重庆 POI name 字符集 = 1036 唯一字符,原
+/// 1024²/48px 只容 ~270 必爆,2048²/32px 留 ~4× 余量(32px SDF 对
+/// labelSizePx≈28 无损)。跨城市漫游字形集单调增长,页满看
+/// atlasFullDropCount 报警再上多页/LRU,不预支复杂度。stb_truetype
 /// 只支持 TrueType glyf 轮廓(CFF/OTF PostScript 不支持,Android 的
 /// NotoSansCJK .ttc 是 CFF —— 字体探测归应用层)。
 class GlyphAtlas {
 public:
-    static constexpr int kAtlasSize = 1024;
-    static constexpr int kGlyphPixelHeight = 48;  ///< 栅格化像素高
+    static constexpr int kAtlasSize = 2048;
+    static constexpr int kGlyphPixelHeight = 32;  ///< 栅格化像素高
     static constexpr int kSdfPadding = 6;         ///< SDF 外扩(px)
     static constexpr unsigned char kSdfOnEdge = 180;  ///< 轮廓处 SDF 值
     static constexpr float kSdfDistScale = 24.0f;     ///< SDF 值/px

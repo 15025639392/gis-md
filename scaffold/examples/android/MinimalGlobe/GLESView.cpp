@@ -643,6 +643,33 @@ static bool createEngine() {
                  minimal_globe_demo::kMvtBasemapMaxZoom);
         }
 
+        // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。**不在任何
+        // 图层开关内**:MVT 底图 POI 标签(符号刀B)与 demo 编辑层都消费
+        // 同一 GlyphAtlas,字体注入是共享前置。候选序:Oplus-Serif=本机中文
+        // TrueType;NotoSansCJK.ttc 是 CFF 会被 stbtt 拒(留表验证健壮性);
+        // Roboto 兜底拉丁。
+        {
+            const char* fontCandidates[] = {
+                "/system/fonts/Oplus-Serif.ttf",
+                "/system/fonts/DroidSansFallback.ttf",
+                "/system/fonts/NotoSansCJK-Regular.ttc",
+                "/system/fonts/Roboto-Regular.ttf",
+            };
+            for (const char* path : fontCandidates) {
+                std::ifstream in(path, std::ios::binary);
+                if (!in) continue;
+                std::vector<uint8_t> bytes(
+                    (std::istreambuf_iterator<char>(in)),
+                    std::istreambuf_iterator<char>());
+                if (bytes.empty()) continue;
+                if (gEngine->setLabelFontData(std::move(bytes))) {
+                    LOGI("VectorP5b label font: %s", path);
+                    break;
+                }
+                LOGI("VectorP5b font rejected (CFF/parse): %s", path);
+            }
+        }
+
         // 矢量数据系统 P1 真机验证:demo 相机(重庆)附近挂一面一线。
         // heightOffset 抬离地表(该区地形 ~200-800m)防 depthTest 埋没;
         // 贴地钳制属 P3。
@@ -792,29 +819,6 @@ static bool createEngine() {
                     LOGI("VectorP6c icon injection FAILED");
                 }
             }
-            // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。候选序:
-            // Oplus-Serif=本机中文 TrueType;NotoSansCJK.ttc 是 CFF 会被
-            // stbtt 拒(留在表里做健壮性验证);Roboto 兜底拉丁。
-            const char* fontCandidates[] = {
-                "/system/fonts/Oplus-Serif.ttf",
-                "/system/fonts/DroidSansFallback.ttf",
-                "/system/fonts/NotoSansCJK-Regular.ttc",
-                "/system/fonts/Roboto-Regular.ttf",
-            };
-            for (const char* path : fontCandidates) {
-                std::ifstream in(path, std::ios::binary);
-                if (!in) continue;
-                std::vector<uint8_t> bytes(
-                    (std::istreambuf_iterator<char>(in)),
-                    std::istreambuf_iterator<char>());
-                if (bytes.empty()) continue;
-                if (gEngine->setLabelFontData(std::move(bytes))) {
-                    LOGI("VectorP5b label font: %s", path);
-                    break;
-                }
-                LOGI("VectorP5b font rejected (CFF/parse): %s", path);
-            }
-
             gDemoFeatureLayer = vectorLayer.get();
             gEngine->addFeatureRenderLayer(std::move(vectorLayer));
 
