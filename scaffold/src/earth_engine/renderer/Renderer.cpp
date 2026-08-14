@@ -223,6 +223,7 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 // 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
 uniform highp sampler2DArray u_roadField;
+uniform highp sampler2DArray u_roadFieldIndir;  // 步3 场间接纹理
 uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
@@ -1056,6 +1057,7 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 // 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
 uniform highp sampler2DArray u_roadField;
+uniform highp sampler2DArray u_roadFieldIndir;  // 步3 场间接纹理
 uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
@@ -1459,6 +1461,7 @@ uniform highp sampler2DArray u_heightTexture;
 // 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
 uniform highp sampler2DArray u_roadField;
+uniform highp sampler2DArray u_roadFieldIndir;  // 步3 场间接纹理
 uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
@@ -2862,6 +2865,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d_array<float> u_pageStore [[texture(20)]],
                              texture2d_array<float> u_pageStoreIndir [[texture(21)]],
                              texture2d_array<float> u_roadField [[texture(23)]],
+                             texture2d_array<float> u_roadFieldIndir [[texture(24)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -2955,7 +2959,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
         // 本变体 UV = details 逐顶点 texcoord,轴对齐 origin/span 退化仿射传入。
         base = eePageStoreCompose(
-            u_pageStore, u_pageStoreIndir, u_roadField, u_tileSharedSampler,
+            u_pageStore, u_pageStoreIndir, u_roadField, u_roadFieldIndir,
+            u_tileSharedSampler,
             base, psUv,
             float4(u.pageStoreUv.x, u.pageStoreUv.y, u.pageStoreUv.z, 0.0),
             float2(0.0, u.pageStoreUv.w), psPhase, cells,
@@ -3502,6 +3507,7 @@ fragment float4 terrainFragment(
     // array(64² 每层,层号 u.terrainLayers.y),read() 整数寻址不占 sampler 槽。
     texture2d_array<float> u_pageStoreIndir [[texture(21)]],
                              texture2d_array<float> u_roadField [[texture(23)]],
+                             texture2d_array<float> u_roadFieldIndir [[texture(24)]],
     // Metal argument tables cap samplers at 0-15; terrain imagery all uses the
     // same clamp/linear sampling, so a single shared sampler at slot 0 covers
     // the base color, raster overlay (textures 15-18) and water mask (19)
@@ -3579,7 +3585,8 @@ fragment float4 terrainFragment(
         // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
         // [瓦界对齐] 位移路径 UV = 共享模板几何 UV,传逐瓦仿射 pageGeomA/B。
         base = eePageStoreCompose(
-            u_pageStore, u_pageStoreIndir, u_roadField, u_terrainSampler,
+            u_pageStore, u_pageStoreIndir, u_roadField, u_roadFieldIndir,
+            u_terrainSampler,
             base, psUv, float4(u.pageGeomA),
             float2(u.pageGeomB.x, u.pageGeomB.y), psPhase, cells,
             int(u.terrainLayers.y + 0.5), float(u.roadFieldParams[1]),
@@ -3798,6 +3805,7 @@ fragment float4 terrainInstancedFragment(
     // (无 roadFieldParams),场解算暂缺 —— 与 Metal 侧 depth-only/法线场
     // 同类特性滞后,补齐时机见 GLES 版注释。参数保留占位。
     texture2d_array<float> u_roadField [[texture(23)]],
+                             texture2d_array<float> u_roadFieldIndir [[texture(24)]],
     sampler u_pageSampler [[sampler(0)]]) {
     float2 terrainUv = in.texcoord01.xy;
     if (in.pageParams.z > 0.5 &&
@@ -3835,7 +3843,8 @@ fragment float4 terrainInstancedFragment(
     // 死代码),特性滞后同 depth-only;Metal 补齐时把 roadFieldParams/Color
     // 加进 TerrainInstancedFragUniforms 并改此两参即可。
     base = eePageStoreCompose(
-        u_pageStore, u_pageStoreIndir, u_roadField, u_pageSampler, base, psUv,
+        u_pageStore, u_pageStoreIndir, u_roadField, u_roadFieldIndir,
+        u_pageSampler, base, psUv,
         float4(in.pageUv), float2(in.pageAux.z, in.pageAux.w),
         float2(in.pageAux.x, in.pageAux.y), cells, int(indirLayer),
         0.0, float4(0.0), float4(0.0), float4(0.0));

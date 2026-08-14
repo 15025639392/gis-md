@@ -356,10 +356,12 @@ void Engine::setRoadFieldSource(
                        std::function<void(std::vector<uint8_t>)>)>
         request,
     std::array<float, 4> lineColor,
-    std::array<float, 4> widthRampPx) {
+    std::array<float, 4> widthRampPx,
+    int fieldMaxZoom) {
     roadFieldRequest_ = std::move(request);
     roadFieldColor_ = lineColor;
     roadFieldWidthRampPx_ = widthRampPx;
+    roadFieldMaxZoom_ = fieldMaxZoom;
 }
 
 void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
@@ -532,6 +534,7 @@ bool Engine::render(double deltaSeconds) {
             pageStoreConfig.roadFieldRequest = roadFieldRequest_;
             pageStoreConfig.roadFieldColor = roadFieldColor_;
             pageStoreConfig.roadFieldWidthRamp = roadFieldWidthRampPx_;
+            pageStoreConfig.roadFieldMaxZoom = roadFieldMaxZoom_;
             if (store->initialize(device_, pageStoreConfig)) {
                 terrainPageStore_ = std::move(store);
                 // surface 重建会重建页存储 → 叠画钩子必须重新挂上,否则矢量

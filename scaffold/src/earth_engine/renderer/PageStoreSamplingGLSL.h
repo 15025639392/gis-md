@@ -26,8 +26,10 @@ namespace earth_engine {
 // - per-cell 渐变 LOD(§16.3):d>0 采粗祖先页;祖先子区原点必须在**全局**
 //   源瓦片下标上算(gGlobal = g + phase),否则 d>0 采错子区(块状棋盘格)。
 // - 影像 factor = step(0.3, A):128/255 都显影像(面走快路)。
-// - 刀2 路网 SDF 场:同一次间接查找/同层号再采 R8 场(编码=归一化中心线
-//   距离,1=线心 0=远,失败安全);gate A>0.6(须双就绪)。**像素解算**
+// - 刀2/步3 路网 SDF 场:**独立场间接纹理**(u_roadFieldIndir,同 cell 网格
+//   同 indirLayer 层号;RG=场层 B=场页深度 A=ready)定位 z-封顶场页(场页
+//   key 与影像页脱钩,拉近超封顶零重烘)。场编码=归一化中心线距离,1=线心
+//   0=远,失败安全;gate = 场 indir A>0.5,与影像驻留互不牵连。**像素解算**
 //   (场线宽像素一致专项 2026-08-14):texel/px 比取自 **g(几何→源格
 //   仿射)的屏幕导数**再 ÷span,distPx = (1−fieldV)·band/texPerPx,按
 //   线半宽(px)阈值 + AA —— 页内近端放大/祖先页兜底/页界跳档全被
@@ -101,24 +103,34 @@ vec4 eePageStoreCompose(
     page.a *= clamp(step(0.3, e.a), 0.0, 1.0);
     base.rgb = mix(base.rgb, page.rgb, page.a);
     base.a = max(base.a, page.a);
-    if (roadFieldParams.x > 0.5 && e.a > 0.6) {
-        float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
-        vec2 tPx = dFdx(g) * roadFieldParams.z;
-        vec2 tPy = dFdy(g) * roadFieldParams.z;
-        float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))), 1e-6);
-        float texPerPx = max(rms / span.x, 1e-4);
-        float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
-        float zoomLocal = cellZoom - log2(rms);
-        float t = clamp((zoomLocal - roadFieldWidth.x) /
-                            max(roadFieldWidth.z - roadFieldWidth.x, 1e-3),
-                        0.0, 1.0);
-        float texelPx = 1.0 / texPerPx;
-        float wEff = max(mix(roadFieldWidth.y, roadFieldWidth.w, t),
-                         0.6 * texelPx);
-        float aa = max(0.5, 0.35 * texelPx);
-        float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
-                        e.a * roadFieldColor.a;
-        base.rgb = mix(base.rgb, roadFieldColor.rgb, roadCov);
+    if (roadFieldParams.x > 0.5) {
+        vec4 fe = texelFetch(u_roadFieldIndir,
+                             ivec3(ivec2(cell), indirLayer), 0);
+        if (fe.a > 0.5) {
+            float fLayer = floor(fe.r * 255.0 + 0.5) +
+                           floor(fe.g * 255.0 + 0.5) * 256.0;
+            vec2 spanF = vec2(exp2(floor(fe.b * 255.0 + 0.5)));
+            vec2 fUv = (gGlobal - floor(gGlobal / spanF) * spanF) / spanF;
+            float fieldV = texture(u_roadField, vec3(fUv, fLayer)).r;
+            vec2 tPx = dFdx(g) * roadFieldParams.z;
+            vec2 tPy = dFdy(g) * roadFieldParams.z;
+            float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))),
+                            1e-6);
+            float texPerPx = max(rms / spanF.x, 1e-4);
+            float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
+            float zoomLocal = cellZoom - log2(rms);
+            float t = clamp((zoomLocal - roadFieldWidth.x) /
+                                max(roadFieldWidth.z - roadFieldWidth.x,
+                                    1e-3),
+                            0.0, 1.0);
+            float texelPx = 1.0 / texPerPx;
+            float wEff = max(mix(roadFieldWidth.y, roadFieldWidth.w, t),
+                             0.6 * texelPx);
+            float aa = max(0.5, 0.35 * texelPx);
+            float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
+                            roadFieldColor.a;
+            base.rgb = mix(base.rgb, roadFieldColor.rgb, roadCov);
+        }
     }
     return base;
 }
@@ -129,6 +141,7 @@ static float4 eePageStoreCompose(
     texture2d_array<float> pageStore,
     texture2d_array<float> pageIndir,
     texture2d_array<float> roadField,
+    texture2d_array<float> roadFieldIndir,
     sampler pageSampler,
     float4 base, float2 uvIn, float4 geomA, float2 geomB, float2 phase,
     float2 cells, int indirLayer, float cellZoom,
@@ -148,24 +161,35 @@ static float4 eePageStoreCompose(
     page.a *= clamp(step(0.3, e.a), 0.0, 1.0);
     base.rgb = mix(base.rgb, page.rgb, page.a);
     base.a = max(base.a, page.a);
-    if (roadFieldParams.x > 0.5 && e.a > 0.6) {
-        float fieldV = roadField.sample(pageSampler, sampleUv, uint(layer)).r;
-        float2 tPx = dfdx(g) * roadFieldParams.z;
-        float2 tPy = dfdy(g) * roadFieldParams.z;
-        float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))), 1e-6);
-        float texPerPx = max(rms / span.x, 1e-4);
-        float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
-        float zoomLocal = cellZoom - log2(rms);
-        float t = clamp((zoomLocal - roadFieldWidth.x) /
-                            max(roadFieldWidth.z - roadFieldWidth.x, 1e-3),
-                        0.0, 1.0);
-        float texelPx = 1.0 / texPerPx;
-        float wEff = max(mix(roadFieldWidth.y, roadFieldWidth.w, t),
-                         0.6 * texelPx);
-        float aa = max(0.5, 0.35 * texelPx);
-        float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
-                        e.a * float4(roadFieldColor).w;
-        base.rgb = mix(base.rgb, float3(float4(roadFieldColor).xyz), roadCov);
+    if (roadFieldParams.x > 0.5) {
+        float4 fe = roadFieldIndir.read(uint2(cell), uint(indirLayer), 0);
+        if (fe.a > 0.5) {
+            float fLayer = floor(fe.r * 255.0 + 0.5) +
+                           floor(fe.g * 255.0 + 0.5) * 256.0;
+            float2 spanF = float2(exp2(floor(fe.b * 255.0 + 0.5)));
+            float2 fUv = (gGlobal - floor(gGlobal / spanF) * spanF) / spanF;
+            float fieldV =
+                roadField.sample(pageSampler, fUv, uint(fLayer)).r;
+            float2 tPx = dfdx(g) * roadFieldParams.z;
+            float2 tPy = dfdy(g) * roadFieldParams.z;
+            float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))),
+                            1e-6);
+            float texPerPx = max(rms / spanF.x, 1e-4);
+            float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
+            float zoomLocal = cellZoom - log2(rms);
+            float t = clamp((zoomLocal - roadFieldWidth.x) /
+                                max(roadFieldWidth.z - roadFieldWidth.x,
+                                    1e-3),
+                            0.0, 1.0);
+            float texelPx = 1.0 / texPerPx;
+            float wEff = max(mix(roadFieldWidth.y, roadFieldWidth.w, t),
+                             0.6 * texelPx);
+            float aa = max(0.5, 0.35 * texelPx);
+            float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
+                            float4(roadFieldColor).w;
+            base.rgb =
+                mix(base.rgb, float3(float4(roadFieldColor).xyz), roadCov);
+        }
     }
     return base;
 }

@@ -293,12 +293,15 @@ public:
     /// (z0, halfPx0, z1, halfPx1;线半宽设备px,FS 在局部 zoom 上线性插值,
     /// 语义见 Config::roadFieldWidthRamp)。**须在首帧渲染前调用**
     /// (页存储 lazy 初始化时快照 Config,之后注入不生效)。
+    /// fieldMaxZoom:场页 zoom 封顶,= max(场数据 maxZoom, 样式最后一个
+    /// zoom 分级档)(语义详见 TerrainPageStore::Config::roadFieldMaxZoom)。
     void setRoadFieldSource(
         std::function<void(const TileKey&, CancellationToken,
                            std::function<void(std::vector<uint8_t>)>)>
             request,
         std::array<float, 4> lineColor,
-        std::array<float, 4> widthRampPx);
+        std::array<float, 4> widthRampPx,
+        int fieldMaxZoom);
 
 private:
     RenderDevice* device_;
@@ -380,6 +383,7 @@ private:
         roadFieldRequest_;
     std::array<float, 4> roadFieldColor_{0.96f, 0.96f, 0.94f, 0.86f};
     std::array<float, 4> roadFieldWidthRampPx_{12.0f, 1.05f, 16.0f, 3.15f};
+    int roadFieldMaxZoom_ = 15;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
     bool offscreenPassActive_ = false;
     int surfaceWidthPixels_ = 0;

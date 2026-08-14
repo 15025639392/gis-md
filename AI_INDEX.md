@@ -1196,7 +1196,7 @@ The 32-byte `TerrainGpuVertex` async upload path is end-to-end (2026-07-01): pro
 | `useTerrainVertexFormat` (32 vs 120 selector) | TileRenderContentState.h:111 | set in coordinator (.h:176) |
 | Async push/upload/drain | TilesetContentLifecycleCoordinator.h:143-261 | upload side done |
 | DRAW side wired (2026-07-01) | `GltfDrawCommandBuilder.cpp:71` branches on `useTerrainVertexFormat` → `renderer.makeTerrainPrimitiveCommand` (stride 32, `kind=GltfPrimitive`, `shader=terrainShader`) | **done** (compiles + unit-tested both backends; pixel-verify pending a reachable QM terrain server) |
-| `Renderer::terrainShader()` defined + terrain shaders added | `kTerrainVertex/FragmentGLSL` (Renderer.cpp:4333-...), `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23), `terrainShader()` getter + `makeTerrainPrimitiveCommand` | **done** |
+| `Renderer::terrainShader()` defined + terrain shaders added | `kTerrainVertex/FragmentGLSL` (Renderer.cpp:4342-...), `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23), `terrainShader()` getter + `makeTerrainPrimitiveCommand` | **done** |
 
 Files read and verified: all listed content-lifecycle files under `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/tiling/`, plus `content/GltfModel.h` and `renderer/Renderer.h`. Line numbers above are current as read.
 
@@ -2577,16 +2577,16 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 | Method | Lines | Notes |
 | --- | --- | --- |
 | `initialize()` (no-arg) | .h:34, .cpp:4123-4296 | Compiles **13** shaders: gltf (.cpp:4121), terrain (.cpp:4138), terrainDepth (.cpp:4151), gltfInstanced (.cpp:4163), terrainInstanced (.cpp:4179), terrainDepthInstanced (.cpp:4191), color (.cpp:4210), and 6 vector shaders (fill/pageMesh/line/lineStencil/point/label, .cpp:4219-4296). Builds a 1×1 neutral placeholder tex {174,184,170,255} (.cpp:4123-4114). Treats gltf/gltfInstanced link failure as **non-fatal on both backends** (.cpp:4121-4137, :4163-4178) — a PBR link failure must not blank the globe; terrain still renders via `terrainShader`. |
-| `submit` | .cpp:4232-4228 | Forwards to `device->submit` if initialized. |
-| `dispose` | .cpp:4237-4248 | Resets the shader/texture resources. |
-| Shared-resource getters | .cpp:4289-4253 | `terrainDepthShader`/`terrainDepthInstancedShader` (.cpp:4289-4284), `colorShader` (:4083), 6 vector getters (:4084-4102), `glyphAtlas`/`iconAtlas` (:4103, :4105), `tileIndexBuffer`/`tileIndexCount` (:4276-4277), `surfacePlaceholderTexture` (:4106), `gltfShader`/`gltfInstancedShader` (:4109-4113), `terrainShader` (:4115-4117), `terrainInstancedShader` (:4219-4221). The `globeShader`/`globeVertexBuffer`/`globeIndexBuffer`/`globeIndexCount` getters are **removed**. |
-| `terrainShader()` | .h:105 / **.cpp:4333 defined** | 32-byte terrain vertex, no PBR extensions. DRAW side wired: `GltfDrawCommandBuilder.cpp:134` calls `makeTerrainPrimitiveCommand` (.cpp:4333). ⚠️ This row previously read "declared, NO definition, linking would fail" — false since at least 2026-07-01; corrected 2026-08-06. |
-| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4307-4324 | `GltfPrimitive`, **`vertexStride`=120** POSITION/NORMAL + TEXCOORD_0..7 + COLOR_0(16) + TANGENT(16) (.cpp:4307), sets `hasGltfUniforms`. ⚠️ It no longer seeds the PBR uniforms inline (the old row described ~130 lines of factor/tex-transform defaults): those defaults now live in `GltfUniformBlock` member initializers and are ready at construction. The factory carries an explicit contract — **must not write the `uniforms` string-map** (hot-path zero-heap-allocation, .cpp:4307-4324). |
-| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4333-4353 | The live QM-terrain draw command. **Kind stays `GltfPrimitive`** — backends disambiguate on `vertexStride`: GLES keys the vertex layout on it, Metal keys the PSO on the `terrainVertex`/`terrainFragment` entry points. **`vertexStride`=32** = POSITION f32(12) + NORMAL snorm16+pad(8) + TEXCOORD_0/1 unorm16(8) + geomorph heightDelta f32(4) (.cpp:4333). `shader=terrainShader`, `hasGltfUniforms` (terrain shader consumes the subset it declares). Called from `GltfDrawCommandBuilder.cpp:134`. |
-| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4362-4374 | glTF **model** instancing (EXT_mesh_gpu_instancing). Delegates to `makeGltfPrimitiveCommand`, then sets `GltfPrimitiveInstanced`, `gltfInstancedShader`, `instanceBuffer`/`instanceCount`, **`instanceStride`=`kGltfInstanceMatrixStride`=100** (mat4 relative model 64B + mat3 normal 36B) (.cpp:4362). Live, called from `GltfDrawCommandBuilder.cpp:121`. ⚠️ This row previously carried "Current-branch WIP: surface instancing GPU batch path" — **misattributed**: that is the terrain batcher below, a different function with a different stride. Corrected 2026-08-06. |
-| `makeTerrainInstancedCommand(...)` | .cpp:4383-4217 | **Terrain batching** (the 合批 path, live since 1c913d68b). Delegates to `makeTerrainPrimitiveCommand` (32B shared displacement template), then swaps kind/shader/instance stream: `terrainInstancedShader`, UInt32 indices (template IBO is always uint32), **`instanceStride`=`kTerrainInstanceStride`=128** (RenderCommand.h:38) = 8×vec4 — rel×3, dispMorph, clipUv, layers, pageUv(页 cell 定位,单位=源瓦片), pageAux(祖先寻址相位). Shares `RenderCommandKind::GltfPrimitiveInstanced` with the row above; backends disambiguate on `vertexStride==32 && instanceStride==kTerrainInstanceStride` (RenderDeviceGLES.cpp:1073-1051). |
-| `earthModelMatrix()` (static) | .cpp:4409-4410 | Scale by **`kEarthRadius`** = 6378137.0f (.cpp:4410); unit sphere → ECEF meters. |
-| `attachRasterInMainThread` / `detachRasterInMainThread` | .cpp:4419-4421 / :4252-4256 | No-op notification hooks; raster ownership stays in `RasterMappedToTilesetTile` / `SurfaceRasterBinding`. |
+| `submit` | .cpp:4241-4228 | Forwards to `device->submit` if initialized. |
+| `dispose` | .cpp:4246-4248 | Resets the shader/texture resources. |
+| Shared-resource getters | .cpp:4298-4253 | `terrainDepthShader`/`terrainDepthInstancedShader` (.cpp:4298-4284), `colorShader` (:4083), 6 vector getters (:4084-4102), `glyphAtlas`/`iconAtlas` (:4103, :4105), `tileIndexBuffer`/`tileIndexCount` (:4276-4277), `surfacePlaceholderTexture` (:4106), `gltfShader`/`gltfInstancedShader` (:4109-4113), `terrainShader` (:4115-4117), `terrainInstancedShader` (:4219-4221). The `globeShader`/`globeVertexBuffer`/`globeIndexBuffer`/`globeIndexCount` getters are **removed**. |
+| `terrainShader()` | .h:105 / **.cpp:4342 defined** | 32-byte terrain vertex, no PBR extensions. DRAW side wired: `GltfDrawCommandBuilder.cpp:134` calls `makeTerrainPrimitiveCommand` (.cpp:4342). ⚠️ This row previously read "declared, NO definition, linking would fail" — false since at least 2026-07-01; corrected 2026-08-06. |
+| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4316-4324 | `GltfPrimitive`, **`vertexStride`=120** POSITION/NORMAL + TEXCOORD_0..7 + COLOR_0(16) + TANGENT(16) (.cpp:4316), sets `hasGltfUniforms`. ⚠️ It no longer seeds the PBR uniforms inline (the old row described ~130 lines of factor/tex-transform defaults): those defaults now live in `GltfUniformBlock` member initializers and are ready at construction. The factory carries an explicit contract — **must not write the `uniforms` string-map** (hot-path zero-heap-allocation, .cpp:4316-4324). |
+| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4342-4353 | The live QM-terrain draw command. **Kind stays `GltfPrimitive`** — backends disambiguate on `vertexStride`: GLES keys the vertex layout on it, Metal keys the PSO on the `terrainVertex`/`terrainFragment` entry points. **`vertexStride`=32** = POSITION f32(12) + NORMAL snorm16+pad(8) + TEXCOORD_0/1 unorm16(8) + geomorph heightDelta f32(4) (.cpp:4342). `shader=terrainShader`, `hasGltfUniforms` (terrain shader consumes the subset it declares). Called from `GltfDrawCommandBuilder.cpp:134`. |
+| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4371-4374 | glTF **model** instancing (EXT_mesh_gpu_instancing). Delegates to `makeGltfPrimitiveCommand`, then sets `GltfPrimitiveInstanced`, `gltfInstancedShader`, `instanceBuffer`/`instanceCount`, **`instanceStride`=`kGltfInstanceMatrixStride`=100** (mat4 relative model 64B + mat3 normal 36B) (.cpp:4371). Live, called from `GltfDrawCommandBuilder.cpp:121`. ⚠️ This row previously carried "Current-branch WIP: surface instancing GPU batch path" — **misattributed**: that is the terrain batcher below, a different function with a different stride. Corrected 2026-08-06. |
+| `makeTerrainInstancedCommand(...)` | .cpp:4392-4217 | **Terrain batching** (the 合批 path, live since 1c913d68b). Delegates to `makeTerrainPrimitiveCommand` (32B shared displacement template), then swaps kind/shader/instance stream: `terrainInstancedShader`, UInt32 indices (template IBO is always uint32), **`instanceStride`=`kTerrainInstanceStride`=128** (RenderCommand.h:38) = 8×vec4 — rel×3, dispMorph, clipUv, layers, pageUv(页 cell 定位,单位=源瓦片), pageAux(祖先寻址相位). Shares `RenderCommandKind::GltfPrimitiveInstanced` with the row above; backends disambiguate on `vertexStride==32 && instanceStride==kTerrainInstanceStride` (RenderDeviceGLES.cpp:1073-1051). |
+| `earthModelMatrix()` (static) | .cpp:4418-4419 | Scale by **`kEarthRadius`** = 6378137.0f (.cpp:4419); unit sphere → ECEF meters. |
+| `attachRasterInMainThread` / `detachRasterInMainThread` | .cpp:4428-4421 / :4252-4256 | No-op notification hooks; raster ownership stays in `RasterMappedToTilesetTile` / `SurfaceRasterBinding`. |
 
 `makeTileGeometry` (.cpp:3892-3873) builds a UV-only grid VBO (`TileVertex{{u,v}}`) + `uint32_t` index buffer.
 
@@ -2606,13 +2606,13 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:1136-1030 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
+| `initialize(device, Config)` | .cpp:1155-1030 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
 | `updateVisiblePages(view, ...)` | .cpp:566-954 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1226-1080 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1302-1139 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1337-1226 / :1104-1142 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1493-1368 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1193-1045 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1253-1080 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1346-1139 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1457-1226 / :1381-1142 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1541-1368 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1238-1045 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:283-329 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:546-379 / :477-496 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:406-476 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
@@ -3177,7 +3177,7 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 
 ### LineFieldRasterizer.h / .cpp
 
-路网线 SDF 场烘焙(刀2 CPU 端):MVT 线要素 → 256² R8 **归一化中心线距离场**(场线宽像素一致专项 2026-08-14:value = 1 − dist/kLineFieldBandTexels(8 texel),宽度不再烘进场;FS 以采样 UV 屏幕导数求 texel/px 比,distPx = (1−fieldV)·band/texPerPx 解算到屏幕像素后按线半宽 uniform(roadFieldParams.y,设备px)阈值 + 0.5px AA(分母禁用 fwidth(fieldV):线心是场脊、导数→0 会沿线心挖洞) → 线宽真屏幕像素恒定,近端放大/祖先页兜底/页界跳档全被 fwidth 补偿)。**反向量化**(0=远/1=线心):0 是失败安全值(GLES 未绑定采样恒 0=无线,不是全屏线色)。逐段 scatter(段 bbox 内写 min)而非逐 texel gather,z14 城区瓦亚毫秒/页。坐标语义与 rasterizeMvtRect 同构(unit-mercator 矩形+多瓦仿射,overzoom/拼接/GCJ 由调用方做);只消费 VectorRasterStyle 的 line 通道(lineWidthPixels 不再消费)。纯函数,worker 可并发。
+路网线 SDF 场烘焙(刀2 CPU 端):MVT 线要素 → 256² R8 **归一化中心线距离场**(场线宽像素一致专项 2026-08-14:value = 1 − dist/kLineFieldBandTexels(8 texel),宽度不再烘进场;FS 以采样 UV 屏幕导数求 texel/px 比,distPx = (1−fieldV)·band/texPerPx 解算到屏幕像素后按线半宽阈值 + AA;线半宽 = 宽度 ramp(u_roadFieldWidth)在局部 zoom(cellZoom−log2(rms))上连续插值,半宽/AA 各设纹素下限兜深放大(分母禁用 fwidth(fieldV):线心是场脊、导数→0 会沿线心挖洞;也禁用 dFdx(sampleUv):span 边界回绕爆导数,详见 PageStoreSamplingGLSL.h) → 线宽真屏幕像素恒定,近端放大/祖先页兜底/页界跳档全被 fwidth 补偿)。**反向量化**(0=远/1=线心):0 是失败安全值(GLES 未绑定采样恒 0=无线,不是全屏线色)。逐段 scatter(段 bbox 内写 min)而非逐 texel gather,z14 城区瓦亚毫秒/页。坐标语义与 rasterizeMvtRect 同构(unit-mercator 矩形+多瓦仿射,overzoom/拼接/GCJ 由调用方做);只消费 VectorRasterStyle 的 line 通道(lineWidthPixels 不再消费)。纯函数,worker 可并发。
 
 | Item | Lines | Description |
 |---|---|---|
@@ -3513,20 +3513,20 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:59-64 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:70-71 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:77-109 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:411-972 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:411). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:411-972). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:411-972). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:566-567). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:985-976 | Forward to `scene_->onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:417-978 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:417). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:417-978). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:417-978). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:572-573). |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:991-982 | Forward to `scene_->onInputEvent`. |
 | `onDragStart/Move/End` | .h:65-67, .cpp:989-985 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1056-1047 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1064-1055 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1062-1053 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1070-1061 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1085-1078 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1091-1084 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1137-1132 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1145-1136 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:1014-1005, 1141-1145 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:1143-1138 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1151-1142 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:1020-1011, 1147-1151 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:692-740 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
@@ -3663,7 +3663,7 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 
 ### IPrepareRendererResources boundary
 
-`IPrepareRendererResources` (renderer/IPrepareRendererResources.h) is the renderer-decoupling interface (cesium-native `IPrepareRendererResources` equivalent) threaded through scene/tiling as `pPrepRenderer` (SceneTilesetCoordinator.cpp:55, SceneFrameRuntime.cpp:33, drain finalize `.h:247-250`). Renderer implements the notification hooks but **stores no imagery state**: `Renderer::attachRasterInMainThread` / `detachRasterInMainThread` are intentional no-ops (Renderer.cpp:4430-4428) — surface raster ownership lives in `RasterMappedToTilesetTile`/`SurfaceRasterBinding` (cesium-native `RasterMappedTo3DTile` equivalent). Raster attach happens on the **main thread** at upload-finalize time.
+`IPrepareRendererResources` (renderer/IPrepareRendererResources.h) is the renderer-decoupling interface (cesium-native `IPrepareRendererResources` equivalent) threaded through scene/tiling as `pPrepRenderer` (SceneTilesetCoordinator.cpp:55, SceneFrameRuntime.cpp:33, drain finalize `.h:247-250`). Renderer implements the notification hooks but **stores no imagery state**: `Renderer::attachRasterInMainThread` / `detachRasterInMainThread` are intentional no-ops (Renderer.cpp:4439-4428) — surface raster ownership lives in `RasterMappedToTilesetTile`/`SurfaceRasterBinding` (cesium-native `RasterMappedTo3DTile` equivalent). Raster attach happens on the **main thread** at upload-finalize time.
 
 ### Two-phase update/render FrameState contract
 

@@ -36,6 +36,10 @@ static constexpr int kGltfHeightTextureSlot =
 // 随本常量自动)、RenderDeviceGLES 的 currentTextures 容量与 setSampler 登记、
 // Metal 绑定循环上限 —— 漏任何一处该纹理永不绑定,texelFetch 恒 0。
 static constexpr int kGltfRoadFieldTextureSlot = kGltfHeightTextureSlot + 1;
+// 步3 场平面 overzoom 解耦:场间接纹理(RGBA8,RG=场层号 B=场页深度 A=ready)。
+// 场页 z 封顶后与影像页 key 脱钩,片元经它独立定位场层/深度(23→24)。
+static constexpr int kGltfRoadFieldIndirTextureSlot =
+    kGltfRoadFieldTextureSlot + 1;
 static constexpr int kGltfInstanceMatrixStride = 100;
 // 地形合批(Step 3)实例流步长:6× vec4 = 96B。rel 帧 3 行(相对批参考帧
 // frame0)+ dispMorph(minH·fade,range·fade,morphFactor,gridN)+ clipUv +
@@ -51,7 +55,7 @@ static constexpr int kTerrainInstanceStride = 128;
 class RenderCommandTextureList {
 public:
     static constexpr size_t kCapacity =
-        static_cast<size_t>(kGltfRoadFieldTextureSlot) + 1u;
+        static_cast<size_t>(kGltfRoadFieldIndirTextureSlot) + 1u;
 
     RenderCommandTextureList() = default;
     RenderCommandTextureList(std::initializer_list<Texture*> init) {

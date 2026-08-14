@@ -96,6 +96,9 @@ constexpr std::array<float, 4> kMvtRoadFieldColor{0.95f, 0.95f, 0.90f,
 // 13→17,见 PageStoreSamplingGLSL.h),停点 12→16 让分级落在可见区间。
 constexpr std::array<float, 4> kMvtRoadFieldWidthRampPx{12.0f, 1.05f,
                                                         16.0f, 3.15f};
+// 场页 zoom 封顶 = max(MVT 数据 maxZoom=14, 样式最后一个 zoom 分级档=15
+// (z>=15 catch-all 放开末梢路))。封小了末梢路整体消失(真机踩过封 14)。
+constexpr int kMvtRoadFieldMaxZoom = 15;
 constexpr const char* kMvtBasemapUrlTemplate =
     "http://127.0.0.1:8092/{z}/{x}/{y}.pbf";
 constexpr int kMvtBasemapMinZoom = 0;

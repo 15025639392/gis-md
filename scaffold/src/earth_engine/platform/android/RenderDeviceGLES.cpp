@@ -1088,7 +1088,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     // → 新纹理永不绑定(真机踩过的孪生 bug:高度纹理槽 22 加入时此处未同步扩容,
     // 导致 GPU 位移瓦片高度纹理永不绑定 → texelFetch 恒 0 → 地形平抬无起伏),故
     // **每新增最高纹理槽都必须同步扩容此数组**。
-    std::array<GLuint, kGltfRoadFieldTextureSlot + 1> currentTextures{};
+    std::array<GLuint, kGltfRoadFieldIndirTextureSlot + 1> currentTextures{};
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool alphaToCoverageEnabled = false;
@@ -1389,6 +1389,9 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // 刀2 路网 SDF 场"第二平面"(slot23 经压缩成 unit 13,≤16 底线)。
             setSampler("u_roadField",
                        glesGltfTextureUnit(kGltfRoadFieldTextureSlot));
+            // 步3 场间接纹理(slot24 经压缩成 unit 14,≤16 底线)。
+            setSampler("u_roadFieldIndir",
+                       glesGltfTextureUnit(kGltfRoadFieldIndirTextureSlot));
             setSampler("u_waterMask", 5);
             for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
                 std::string name = "u_overlayTexture" + std::to_string(i);
