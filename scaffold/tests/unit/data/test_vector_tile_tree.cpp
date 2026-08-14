@@ -146,15 +146,31 @@ TEST(VectorTileTree, AncestorFallbackWhileChildrenLoad) {
         EXPECT_EQ(key.z, 1);
     }
 
-    // 灌一块细瓦片:渲染列表粗+细并存,粗在前
+    // R* 全有全无:灌一块细瓦不够凑齐它所在的 quad → 渲染列表**保持纯粗**
+    // (旧行为是粗+细并存 = 祖先与子瓦重影,已判死)
     TileKey child = fine.requestTiles[0];
     tree.provide(child, emptyTile());
     auto mixed = tree.update(rectDeg(1, 1, 40, 40), heightForZoom(4));
-    ASSERT_GE(mixed.renderTiles.size(), 2u);
-    EXPECT_TRUE(std::find(mixed.renderTiles.begin(), mixed.renderTiles.end(),
-                          child) != mixed.renderTiles.end());
-    for (size_t i = 1; i < mixed.renderTiles.size(); ++i) {
-        EXPECT_LE(mixed.renderTiles[i - 1].z, mixed.renderTiles[i].z);
+    ASSERT_FALSE(mixed.renderTiles.empty());
+    for (const TileKey& key : mixed.renderTiles) {
+        EXPECT_EQ(key.z, 1) << "quad 未凑齐时不得混入细瓦(重影)";
+    }
+
+    // 凑齐 child 所在 quad 的全部在视口兄弟 → 细瓦上屏,且其祖先退场
+    // (注意:pending 的瓦不会再出现在 requestTiles,须从首轮列表取兄弟)
+    const TileKey parent = child.parent();
+    for (const TileKey& key : fine.requestTiles) {
+        if (key.parent() == parent) tree.provide(key, emptyTile());
+    }
+    auto swapped = tree.update(rectDeg(1, 1, 40, 40), heightForZoom(4));
+    EXPECT_TRUE(std::find(swapped.renderTiles.begin(),
+                          swapped.renderTiles.end(),
+                          child) != swapped.renderTiles.end());
+    for (const TileKey& key : swapped.renderTiles) {
+        EXPECT_FALSE(key == parent) << "子瓦上屏后祖先必须退场(否则重影)";
+    }
+    for (size_t i = 1; i < swapped.renderTiles.size(); ++i) {
+        EXPECT_LE(swapped.renderTiles[i - 1].z, swapped.renderTiles[i].z);
     }
 }
 
@@ -243,13 +259,14 @@ TEST(VectorTileTree, ProvideUnrequestedKeyAccepted) {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// V24 排查:换代抖动(2026-08-15)
+// V24:换代抖动(2026-08-15 排查,同日 R* 根修)
 //
-// 这三条**钉的是当前行为,不是期望行为**——它们现在绿,是因为缺陷还在。
-// 修好抖动后它们会红,那时改判据、别改测试来迁就实现。
+// 排查期这里钉的是缺陷行为(②③⑤);R* 落地后已翻转为钉正确行为。
+// 缺陷① zoom 无迟滞仍保留原样 —— R* 之后翻档不再产生空窗(存货直接顶),
+// 迟滞从"必需"降为"省重算",暂不做。
 // ---------------------------------------------------------------------------
 
-/// 缺陷①:zoom 选择无迟滞。视高在整数 zoom 边界上下抖 ±0.5% 就来回翻档。
+/// 缺陷①(仍在,已降级):zoom 选择无迟滞,视高抖 ±0.5% 就来回翻档。
 TEST(VectorTileTree, ZoomHasNoHysteresisAtBoundary) {
     VectorTileTree::Options opt;
     // z14 的边界高度:log2(4e7/h) == 14 → h = 4e7/2^14
@@ -267,9 +284,10 @@ TEST(VectorTileTree, ZoomHasNoHysteresisAtBoundary) {
     EXPECT_EQ(flips, 20);
 }
 
-/// 缺陷②:拉远只有祖先回退,没有后代回退。粗瓦未加载时整片空,
-/// 哪怕细瓦还在缓存里、几何完全够覆盖。
-TEST(VectorTileTree, ZoomOutHasNoDescendantFallback) {
+/// R* 消缺陷②:拉远跳档(z14→z11,级差 3)时,粗瓦没到,已加载的细瓦
+/// 后代整片顶住 —— renderTiles 非空、全 z14、且粗理想瓦照常请求(过渡态
+/// 必须收敛到目标层,否则 4^3 倍 draw 白付)。
+TEST(VectorTileTree, ZoomOutFallsBackToLoadedDescendants) {
     VectorTileTree::Options opt;
     opt.minZoom = 0;
     opt.maxZoom = 14;
@@ -283,16 +301,58 @@ TEST(VectorTileTree, ZoomOutHasNoDescendantFallback) {
     fine = tree.update(view, heightForZoom(14));
     EXPECT_FALSE(fine.renderTiles.empty());
 
-    // 拉远到 z11:粗瓦没加载过 → 渲染集**空**,细瓦一块也不顶
+    // 拉远到 z11:粗瓦没加载过,细瓦后代顶住,不空窗
     VectorTileTree::UpdateResult coarse =
         tree.update(view, heightForZoom(11));
-    EXPECT_TRUE(coarse.renderTiles.empty())
-        << "若这条红了 = 已加了后代回退,请更新 V24 判据";
-    EXPECT_FALSE(coarse.requestTiles.empty());
+    ASSERT_FALSE(coarse.renderTiles.empty()) << "后代回退失效 = 空窗回归";
+    for (const TileKey& k : coarse.renderTiles) {
+        EXPECT_EQ(k.z, 14);
+    }
+    ASSERT_FALSE(coarse.requestTiles.empty());
+    for (const TileKey& k : coarse.requestTiles) {
+        EXPECT_EQ(k.z, 11) << "理想层缺瓦必须照常请求(收敛义务)";
+    }
+
+    // 粗理想瓦到齐 → 换代为 z11,细瓦退场(全有全无,无重叠)
+    for (const TileKey& k : coarse.requestTiles) tree.provide(k, emptyTile());
+    VectorTileTree::UpdateResult settled =
+        tree.update(view, heightForZoom(11));
+    ASSERT_FALSE(settled.renderTiles.empty());
+    for (const TileKey& k : settled.renderTiles) {
+        EXPECT_EQ(k.z, 11);
+    }
 }
 
-/// 缺陷③:出渲染集的瓦片一帧未用即成淘汰候选。zoom 抖回来时数据已没,
-/// 必须重新请求 —— 这就是"闪"同时也是"浪费"的那一份。
+/// R* 消缺陷③的验证配对:**视口内**的存货(等 quad 凑齐的细瓦、顶班的
+/// 后代)在 resolve 沿途被 touch 保活,预算压力下不被淘汰。
+TEST(VectorTileTree, StandinTilesAreRetainedUnderBudgetPressure) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 0;
+    opt.maxZoom = 14;
+    opt.maxCachedTiles = 2;   // 预算远小于存货量
+    VectorTileTree tree(opt);
+    const Rectangle view = rectDeg(106.50, 29.50, 106.53, 29.53);
+
+    // z14 喂满后拉远到 z11:细瓦是唯一存货,正在顶班
+    VectorTileTree::UpdateResult fine = tree.update(view, heightForZoom(14));
+    for (const TileKey& k : fine.requestTiles) tree.provide(k, emptyTile());
+    tree.update(view, heightForZoom(14));
+    VectorTileTree::UpdateResult coarse =
+        tree.update(view, heightForZoom(11));
+    ASSERT_FALSE(coarse.renderTiles.empty());
+
+    // 连续多帧更新(不喂粗瓦):顶班细瓦必须一直活着,不然空窗+重拉
+    for (int i = 0; i < 3; ++i) {
+        VectorTileTree::UpdateResult r = tree.update(view, heightForZoom(11));
+        ASSERT_FALSE(r.renderTiles.empty()) << "第 " << i << " 帧空窗";
+        for (const TileKey& k : r.renderTiles) {
+            EXPECT_NE(tree.loadedTile(k), nullptr);
+        }
+    }
+}
+
+/// 出视口的瓦片仍走正常 LRU 淘汰(这是**期望行为**,不是缺陷③——
+/// ③指的是视口内存货被淘汰,由上一条守卫)。
 TEST(VectorTileTree, TilesLeavingRenderSetAreImmediatelyEvictable) {
     VectorTileTree::Options opt;
     opt.minZoom = 0;
@@ -318,14 +378,13 @@ TEST(VectorTileTree, TilesLeavingRenderSetAreImmediatelyEvictable) {
         tree.update(v, h);
     }
     EXPECT_EQ(tree.loadedTile(wasRendering), nullptr)
-        << "若这条红了 = 已给出集瓦片加了保活,请更新 V24 判据";
+        << "若这条红了 = 出视口瓦也被保活了,LRU 失效会撑爆预算";
 }
 
-/// 缺陷⑤(**先于 R 就存在**,R 会让它更频繁):祖先回退是逐瓦独立决定的,
-/// 兄弟瓦已加载时,祖先仍会被拉进渲染集 —— 祖先覆盖全部四个象限,
-/// 于是同一块地被画两遍。我们不做逐瓦裁剪(世界空间渲染),没有 stencil
-/// 掩掉重叠,所以这不是"多画一点"而是"要素重影"。
-TEST(VectorTileTree, AncestorFallbackOverlapsLoadedSiblings) {
+/// R* 消缺陷⑤:renderTiles 是**精确覆盖** —— 部分到达的过渡态下,
+/// 任意两瓦无祖先/后代关系(无重影),且视口内每个理想格恰被一瓦覆盖
+/// (无空洞)。这是 R* 的核心不变量,任何后续改动不得破坏。
+TEST(VectorTileTree, RenderTilesAreExactCoverDuringTransition) {
     VectorTileTree::Options opt;
     opt.minZoom = 0;
     opt.maxZoom = 14;
@@ -338,23 +397,42 @@ TEST(VectorTileTree, AncestorFallbackOverlapsLoadedSiblings) {
     for (const TileKey& k : coarse.requestTiles) tree.provide(k, emptyTile());
     tree.update(view, heightForZoom(12));
 
-    // 到 z13:请求子瓦,但**只喂一半**(模拟部分到达)
+    // 到 z13:请求子瓦,只喂一半(模拟部分到达),连续三个过渡态都要满足
     VectorTileTree::UpdateResult fine = tree.update(view, heightForZoom(13));
-    ASSERT_GE(fine.requestTiles.size(), 2u)
-        << "renderTiles=" << fine.renderTiles.size()
-        << " 首个 z=" << (fine.renderTiles.empty() ? -1
-                                                  : fine.renderTiles[0].z);
-    for (size_t i = 0; i < fine.requestTiles.size() / 2; ++i) {
-        tree.provide(fine.requestTiles[i], emptyTile());
+    ASSERT_GE(fine.requestTiles.size(), 2u);
+    const std::vector<TileKey> all = fine.requestTiles;
+    auto isAncestorOf = [](const TileKey& a, const TileKey& b) {
+        if (a.z >= b.z) return false;
+        const int d = b.z - a.z;
+        return (b.x >> d) == a.x && (b.y >> d) == a.y;
+    };
+    auto checkInvariant = [&](const std::vector<TileKey>& rt,
+                              const std::vector<TileKey>& idealCells) {
+        for (size_t i = 0; i < rt.size(); ++i) {
+            for (size_t j = 0; j < rt.size(); ++j) {
+                if (i == j) continue;
+                EXPECT_FALSE(isAncestorOf(rt[i], rt[j]))
+                    << rt[i] << " 与 " << rt[j] << " 重叠(重影)";
+            }
+        }
+        for (const TileKey& cell : idealCells) {
+            int covers = 0;
+            for (const TileKey& r : rt) {
+                if (r == cell || isAncestorOf(r, cell) ||
+                    isAncestorOf(cell, r)) {
+                    ++covers;
+                }
+            }
+            EXPECT_EQ(covers, 1) << cell << " 覆盖数 " << covers
+                                 << "(0=空洞,≥2=重影)";
+        }
+    };
+    for (size_t feed = 0; feed < 3; ++feed) {
+        const size_t lo = feed * all.size() / 3;
+        const size_t hi = (feed + 1) * all.size() / 3;
+        for (size_t i = lo; i < hi; ++i) tree.provide(all[i], emptyTile());
+        VectorTileTree::UpdateResult r = tree.update(view, heightForZoom(13));
+        ASSERT_FALSE(r.renderTiles.empty());
+        checkInvariant(r.renderTiles, all);
     }
-    fine = tree.update(view, heightForZoom(13));
-
-    // 渲染集里同时有 z13 子瓦和 z12 祖先 → 祖先覆盖子瓦所在象限 = 重叠
-    bool hasChild = false, hasAncestor = false;
-    for (const TileKey& k : fine.renderTiles) {
-        if (k.z == 13) hasChild = true;
-        if (k.z == 12) hasAncestor = true;
-    }
-    EXPECT_TRUE(hasChild && hasAncestor)
-        << "若这条红了 = 已按象限抑制重叠,请更新 V24 判据";
 }

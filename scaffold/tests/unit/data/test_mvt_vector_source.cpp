@@ -306,3 +306,66 @@ TEST(MvtVectorSource, IncludeLayersFilters) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// R* 换手原子性(2026-08-15,V24 缺陷④根修)
+// ---------------------------------------------------------------------------
+
+/// LOD 换代全程(粗→细→粗)逐 update 校验两条不变量:
+///   1. 无空窗:占位者在替换内容全部就绪前决不退场,active 集不空;
+///   2. 无重影:active 集内任意两瓦无祖先/后代关系 —— 细瓦不提前上屏,
+///      commit 替换者与 drop 占位者发生在同一次 update。
+TEST(MvtVectorSource, LodSwapIsAtomicNoHoleNoOverlap) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
+    // 视口跨 z4 的 2×2 子瓦、落在同一张 z3 父瓦内(22.5° 界在 22.5°)
+    const Rectangle view = rectDeg(20, 20, 25, 25);
+
+    std::unordered_set<TileKey> act;
+    auto pumpAndCheck = [&](int zoom) {
+        const size_t c0 = sinks.committed.size();
+        const size_t d0 = sinks.dropped.size();
+        source.update(view, heightForZoom(zoom));
+        for (size_t i = c0; i < sinks.committed.size(); ++i) {
+            act.insert(sinks.committed[i]);
+        }
+        for (size_t i = d0; i < sinks.dropped.size(); ++i) {
+            act.erase(sinks.dropped[i]);
+        }
+        // 不变量 2:无重影
+        for (const TileKey& a : act) {
+            for (const TileKey& b : act) {
+                if (a == b || a.z >= b.z) continue;
+                const int d = b.z - a.z;
+                EXPECT_FALSE((b.x >> d) == a.x && (b.y >> d) == a.y)
+                    << a << " 与 " << b << " 同框(重影)";
+            }
+        }
+    };
+
+    // 阶段 1:z3 粗瓦上屏
+    for (int i = 0; i < 6 && act.empty(); ++i) pumpAndCheck(3);
+    ASSERT_FALSE(act.empty());
+    for (const TileKey& k : act) ASSERT_EQ(k.z, 3);
+
+    // 阶段 2:拉近到 z4 —— 换手全程不空窗
+    for (int i = 0; i < 8; ++i) {
+        pumpAndCheck(4);
+        ASSERT_FALSE(act.empty()) << "细化换手第 " << i << " 次 update 空窗";
+    }
+    ASSERT_GE(act.size(), 2u) << "视口应跨多张 z4 子瓦";
+    for (const TileKey& k : act) {
+        EXPECT_EQ(k.z, 4) << "换手应已收敛到 z4";
+    }
+
+    // 阶段 3:拉回 z3(细换粗,网格已 drop 需重镶嵌)—— 同样不空窗
+    for (int i = 0; i < 8; ++i) {
+        pumpAndCheck(3);
+        ASSERT_FALSE(act.empty()) << "粗化换手第 " << i << " 次 update 空窗";
+    }
+    for (const TileKey& k : act) {
+        EXPECT_EQ(k.z, 3) << "换手应已收敛回 z3";
+    }
+}

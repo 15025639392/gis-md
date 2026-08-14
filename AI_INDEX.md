@@ -3034,10 +3034,10 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `buildRenderCommands` | .cpp:1566-1683 | 出命令总入口 |
 | `visibleBucketKeys` | .cpp:1684-1753 | 可见桶筛选 |
 | `updateLabelPlacement` | .cpp:1754-1838 | 标签避让 + fade + 地平线剔除(P5c) |
-| `appendTerrainOcclusion` | .cpp:1839-1850 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:1851-2139 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2140-2155 / :2156-2162 / :2163-2188 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
-| `pick` | .cpp:2232-2450 | 要素拾取 |
+| `appendTerrainOcclusion` | .cpp:1874-1885 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:1886-2174 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2175-2190 / :2191-2197 / :2198-2223 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
+| `pick` | .cpp:2267-2485 | 要素拾取 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
@@ -3164,7 +3164,7 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 |---|---|---|
 | `LabelCandidate` / `LabelPlacementStats` | .h:15-23 / :25-50 | 候选与统计 |
 | `update` | .cpp:77 | **主入口**:碰撞消解 → 每个 id 的目标 opacity |
-| `opacity` | .cpp:214 | 查询当前 opacity(供桶回写) |
+| `opacity` | .cpp:231-236 | 查询当前 opacity(供桶回写) |
 
 ⚠️ 根因教训:桶重镶后 **opacity 永不回写** —— fade 收敛的"变化位"早退把它吞了,
 `subdata` 是无辜的。地平线 fade 用缩放空间 margin 公式。
@@ -3226,8 +3226,8 @@ MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDr
 | `StyleFilter` (169) | `compare` (StyleFilter.cpp:31/:41)、`in` (StyleFilter.cpp:54)、`zoomCompare` (StyleFilter.cpp:63)、`SourceLayerRule` (.h:80) | 运行期过滤 —— 分级取舍搬回样式侧,瓦片不再靠切图时 `-j` 预筛 |
 | `GeoJsonParser` (230) | `parseRing` (GeoJsonParser.cpp:44)、`parseGeometry` (GeoJsonParser.cpp:61)、`parseFeature` (GeoJsonParser.cpp:167)、`parseFeatureCollection` (GeoJsonParser.cpp:195)、`parse` (GeoJsonParser.cpp:219) | GeoJSON 解析 |
 | `GeoJsonImporter` (39) | `mapType` (GeoJsonImporter.cpp:9)、`importInto` (GeoJsonImporter.cpp:20) | 解析结果 → `FeatureStore` |
-| `MvtVectorSource` (225) | `horizonViewRectangle` (MvtVectorSource.cpp:21)、`update` (MvtVectorSource.cpp:61)、`setLayerRules` (MvtVectorSource.cpp:185)、`ingestInbox` (MvtVectorSource.cpp:201) | MVT 源:按视口拉瓦片 |
-| `VectorTileTree` (209) | `splitAntimeridian` (VectorTileTree.cpp:11)、`zoomForCameraHeight` (VectorTileTree.cpp:31)、`update` (VectorTileTree.cpp:39)、`provide` (VectorTileTree.cpp:149)、`provideShared` (VectorTileTree.cpp:153)、`markFailed` (VectorTileTree.cpp:166) | 瓦片树。⚠️ 必须缓存 `MvtTile` 而非网格,否则"重入零重拉取"会丢 |
+| `MvtVectorSource` (291) | `horizonViewRectangle` (MvtVectorSource.cpp:22)、`update` (MvtVectorSource.cpp:62)、`setLayerRules` (MvtVectorSource.cpp:251)、`ingestInbox` (MvtVectorSource.cpp:267) | MVT 源:按视口拉瓦片;R* 置换单元原子换手(占位者与替换内容同帧换手,无空窗无重影) |
+| `VectorTileTree` (305) | `splitAntimeridian` (VectorTileTree.cpp:11)、`zoomForCameraHeight` (VectorTileTree.cpp:40)、`update` (VectorTileTree.cpp:48)、`provide` (VectorTileTree.cpp:227)、`provideShared` (VectorTileTree.cpp:231)、`markFailed` (VectorTileTree.cpp:248) | 瓦片树,R* 置换式细化(全有全无回退,renderTiles=精确覆盖)。⚠️ 必须缓存 `MvtTile` 而非网格,否则"重入零重拉取"会丢 |
 | `MvtFeatureConverter` (89) | `mvtToCartographic` (MvtFeatureConverter.cpp:13)、`mvtLayerToFeatures` (MvtFeatureConverter.cpp:34)、`mvtTileRectangle` (MvtFeatureConverter.cpp:26,瓦片地理矩形,贴地高度范围按块取局部值用) | MVT → `Feature` |
 | `VectorTileMeshBuilder` (207) | `pushVertex` (VectorTileMeshBuilder.cpp:23)、`pushQuad` (VectorTileMeshBuilder.cpp:37)、`appendPolygonFill` (VectorTileMeshBuilder.cpp:50)、`appendStrokedPath` (VectorTileMeshBuilder.cpp:101)、`buildVectorTileMesh` (VectorTileMeshBuilder.cpp:139) | 瓦片网格镶嵌(**在 worker 上跑**,E1) |
 

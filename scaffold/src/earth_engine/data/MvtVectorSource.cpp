@@ -141,15 +141,39 @@ void MvtVectorSource::update(const Rectangle& viewRect,
         else work();
     }
 
-    // 渲染集差分:进集 commit,出集 drop。镶嵌已在 worker 做完,这里只剩
-    // 上传;闸拦的是上传成本,不再是镶嵌(见 Options 注释)。
+    // ---- R* 换手(2026-08-15,V24 根修消缺陷④)----
+    //
+    // renderTiles 是树给出的精确覆盖。旧差分"出集即 drop、进集限速 commit"
+    // 会造成旧的瞬间没、新的慢慢来 —— 整片换代最坏 16 帧空窗。改为
+    // **置换单元原子换手**:被替换的旧瓦(占位者)只在其替换内容全部
+    // 就绪的那一次 update 里,与替换内容的 commit 同帧退场。过渡期宁可
+    // 旧内容多留几帧,决不出现空窗;同理,替换内容不提前上屏(占位者
+    // 还在时提前 commit = 祖先/子瓦同框重影)。
     std::unordered_set<TileKey> renderSet(result.renderTiles.begin(),
                                           result.renderTiles.end());
+    auto isAncestorOf = [](const TileKey& a, const TileKey& b) {
+        if (a.schemeId != b.schemeId || a.z >= b.z) return false;
+        const int d = b.z - a.z;
+        return (b.x >> d) == a.x && (b.y >> d) == a.y;
+    };
+    auto overlaps = [&](const TileKey& a, const TileKey& b) {
+        return isAncestorOf(a, b) || isAncestorOf(b, a);
+    };
+
+    // 1) 出集分类:整片离开视口(渲染集里没有任何覆盖它的替换者)→ 立即
+    //    drop;有替换者 → 占位者,等单元完备再换手。
     std::vector<TileKey> toDrop;
+    std::vector<TileKey> occupants;
     for (const TileKey& key : activeTiles_) {
-        if (!renderSet.count(key)) {
-            toDrop.push_back(key);
+        if (renderSet.count(key)) continue;
+        bool hasReplacement = false;
+        for (const TileKey& r : result.renderTiles) {
+            if (overlaps(r, key)) {
+                hasReplacement = true;
+                break;
+            }
         }
+        (hasReplacement ? occupants : toDrop).push_back(key);
     }
     for (const TileKey& key : toDrop) {
         if (sinks_.drop) sinks_.drop(key);
@@ -161,15 +185,62 @@ void MvtVectorSource::update(const Rectangle& viewRect,
                                         : readyMeshes_.erase(it);
     }
 
+    // 2) 置换单元换手:单元 = 占位者 + 渲染集中与其重叠的全部瓦。单元内
+    //    所有瓦 active 或网格就绪才动手:commit 缺席者 + drop 占位者,
+    //    同一次 update 完成。预算(maxTileCommitsPerUpdate)拦上传尖刺,
+    //    但单元不可拆 —— 每帧至少放行一个完备单元,宁可单帧超预算
+    //    (最坏 4^kMaxDescendantStandinLevels 块)也不把换手劈成两帧重影。
+    const size_t budget = options_.maxTileCommitsPerUpdate;
     size_t commits = 0;
+    std::sort(occupants.begin(), occupants.end(),
+              [](const TileKey& a, const TileKey& b) {
+                  if (a.z != b.z) return a.z < b.z;
+                  if (a.y != b.y) return a.y < b.y;
+                  return a.x < b.x;
+              });
+    for (const TileKey& occ : occupants) {
+        if (budget != 0 && commits >= budget) break;
+        std::vector<TileKey> unit;
+        bool ready = true;
+        for (const TileKey& r : result.renderTiles) {
+            if (!overlaps(r, occ)) continue;
+            if (activeTiles_.count(r)) continue;  // 已上屏(共享占位者)
+            if (!readyMeshes_.count(r)) {
+                ready = false;
+                break;
+            }
+            unit.push_back(r);
+        }
+        if (!ready) continue;  // 占位者继续顶着,不空窗
+        for (const TileKey& r : unit) {
+            auto it = readyMeshes_.find(r);
+            if (it == readyMeshes_.end()) continue;  // 同帧被前一单元提走
+            if (sinks_.commit) sinks_.commit(r, std::move(it->second));
+            readyMeshes_.erase(it);
+            activeTiles_.insert(r);
+            ++commits;
+        }
+        if (sinks_.drop) sinks_.drop(occ);
+        activeTiles_.erase(occ);
+    }
+
+    // 3) 无占位者区域的新上屏(初次进入/离开后返回),原节流语义。
+    //    与仍在场的占位者重叠的瓦不得提前上屏(重影),由其单元统一换手。
     for (const TileKey& key : result.renderTiles) {
         if (activeTiles_.count(key)) continue;
         auto it = readyMeshes_.find(key);
         if (it == readyMeshes_.end()) continue;  // 还没镶好
-        if (options_.maxTileCommitsPerUpdate != 0 &&
-            commits >= options_.maxTileCommitsPerUpdate) {
+        if (budget != 0 && commits >= budget) {
             break;  // 余下的留到下帧,renderTiles 稳定时差分是幂等的
         }
+        bool blocked = false;
+        for (const TileKey& occ : activeTiles_) {
+            if (!renderSet.count(occ) && overlaps(occ, key)) {
+                blocked = true;
+                break;
+            }
+        }
+        if (blocked) continue;
         if (sinks_.commit) sinks_.commit(key, std::move(it->second));
         readyMeshes_.erase(it);
         activeTiles_.insert(key);

@@ -5,6 +5,7 @@
 #include "../tiling/TileKey.h"
 #include "../tiling/TileScheme.h"
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
@@ -17,8 +18,12 @@ namespace earth_engine {
 ///
 /// 与地形 Tileset 刻意分离(独立实例、独立 zoom 范围/缓存,LOD 语义
 /// 不互污;TileContentLoadResult 是 glTF/地形耦合的,矢量内容不塞进去)。
-/// 选择模型对拍 maplibre vector_tile_source:视高定目标 zoom → 视口
-/// 覆盖枚举 → 缺瓦片请求 + 已加载祖先回退,不做地形式逐瓦片 SSE 细分。
+/// 选择模型(R*,2026-08-15 V24 根修):视高定目标 zoom → **置换式细化**
+/// —— 全有全无的祖先/后代回退,renderTiles 恒为视口内**精确覆盖**
+/// (无重叠、有存货即无空洞)。语义对拍地形 Tileset 的 replacement
+/// refinement 与 maplibre _updateRetainedTiles,但比 maplibre 多"无重叠"
+/// 保证:我们是世界空间渲染、无逐瓦 stencil,祖先与子瓦同框即要素重影。
+/// 不做地形式逐瓦片 SSE 细分。
 ///
 /// overzoom 与 maplibre 的差异(刻意):maplibre 在瓦片裁剪空间逐瓦片
 /// 渲染,超 maxZoom 必须把父瓦片几何 scale+offset+clip 切片;本引擎把
@@ -100,6 +105,9 @@ private:
     SchemeId schemeId_;
 
     std::unordered_map<TileKey, CachedTile> loaded_;
+    /// 每层已加载瓦计数(R* 后代回退的早退闸:更深层无存货就不下探)。
+    /// 与 loaded_ 同步维护(insert/erase 两处),32 层覆盖 WebMercator 全域。
+    std::array<int, 32> loadedPerZ_{};
     std::unordered_set<TileKey> pending_;
     std::unordered_set<TileKey> failed_;
     uint64_t frame_ = 0;

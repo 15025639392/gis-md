@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 
 namespace earth_engine {
 
@@ -18,6 +19,14 @@ std::vector<Rectangle> splitAntimeridian(const Rectangle& rect) {
         Rectangle(-kPi, rect.south(), rect.east(), rect.north()),
     };
 }
+
+/// 理想瓦缺失时向上找已加载祖先顶替的最大级差(对拍 maplibre
+/// TileManager.maxUnderzooming=10;更粗就糊到没有信息量了)。
+constexpr int kMaxAncestorStandinLevels = 10;
+
+/// 拉远时向下找已加载后代顶替的最大级差。3 级 = 4^3=64 倍瓦数上限,
+/// 覆盖"z14 看完直接跳 z11"的真实跳档;更深的后代拼贴 draw 数不划算。
+constexpr int kMaxDescendantStandinLevels = 3;
 
 } // namespace
 
@@ -74,41 +83,110 @@ VectorTileTree::UpdateResult VectorTileTree::update(
     double centerLat = (viewRect.south() + viewRect.north()) * 0.5;
     TileKey centerKey = scheme_->positionToTile(centerLng, centerLat, zoom);
 
-    std::unordered_set<TileKey> renderSet;
+    // ---- R*:置换式细化选择(2026-08-15,V24 根修)----
+    //
+    // 对拍本仓库地形 Tileset 的 replacement refinement 与 maplibre
+    // _updateRetainedTiles,但取"全有全无"语义消灭重叠:节点的子树在视口
+    // 内凑不齐完整覆盖时,回退画节点自身(已加载才行);凑得齐才画子树。
+    // 我们是世界空间渲染、无逐瓦 stencil 裁剪 —— 祖先与子瓦同框不是
+    // "多画一点"而是要素重影,所以 renderTiles 必须是**精确覆盖**:
+    // 视口内无重叠,且只要沿途有任何存货就无空洞。
+    //
+    // 成本上界:理想层之上的金字塔 ≈ 1.33×理想瓦数次哈希;理想层之下
+    // 只在"квad 不完整且更深层确有存货"时才下探(loadedPerZ_ 早退),
+    // 最坏(跳档拉远的过渡帧)~5k 次哈希,微秒级,收敛后归零。
+
+    // 每层视口瓦范围(理想层上下各外延 stand-in 级差)
+    const int zRoot = std::max(options_.minZoom, zoom - kMaxAncestorStandinLevels);
+    const int zDeep = std::min(zoom + kMaxDescendantStandinLevels,
+                               options_.maxZoom);
+    std::vector<std::vector<Range>> rangesByLevel(
+        static_cast<size_t>(zDeep - zRoot + 1));
+    for (int z = zRoot; z <= zDeep; ++z) {
+        for (const Rectangle& span : spans) {
+            Range r{};
+            scheme_->tileRange(span, z, r.minX, r.minY, r.maxX, r.maxY);
+            rangesByLevel[static_cast<size_t>(z - zRoot)].push_back(r);
+        }
+    }
+    auto inView = [&](int z, int x, int y) {
+        if (z < zRoot || z > zDeep) return false;
+        for (const Range& r : rangesByLevel[static_cast<size_t>(z - zRoot)]) {
+            if (x >= r.minX && x <= r.maxX && y >= r.minY && y <= r.maxY) {
+                return true;
+            }
+        }
+        return false;
+    };
+    auto anyLoadedBelow = [&](int z) {
+        for (int q = z + 1; q <= zDeep; ++q) {
+            if (loadedPerZ_[static_cast<size_t>(q)] > 0) return true;
+        }
+        return false;
+    };
+
     struct PendingRequest {
         TileKey key;
         long long distanceSq;
     };
     std::vector<PendingRequest> requests;
+    std::vector<TileKey> emitted;
 
-    for (const Range& r : ranges) {
-        for (int y = r.minY; y <= r.maxY; ++y) {
-            for (int x = r.minX; x <= r.maxX; ++x) {
-                TileKey key{schemeId_, zoom, x, y};
-                if (loaded_.count(key)) {
-                    if (renderSet.insert(key).second) {
-                        touch(key);
-                    }
-                    continue;
-                }
-                // 祖先回退:向上找最近的已加载粗瓦片顶住
-                TileKey ancestor = key;
-                while (ancestor.z > options_.minZoom) {
-                    ancestor = ancestor.parent();
-                    if (loaded_.count(ancestor)) {
-                        if (renderSet.insert(ancestor).second) {
-                            touch(ancestor);
-                        }
-                        break;
-                    }
-                }
-                if (!pending_.count(key) && !failed_.count(key)) {
-                    long long dx = x - centerKey.x;
-                    long long dy = y - centerKey.y;
-                    requests.push_back({key, dx * dx + dy * dy});
-                }
+    // 返回 true = t 的视口内区域已被 emitted 完整覆盖
+    std::function<bool(const TileKey&)> resolve =
+        [&](const TileKey& t) -> bool {
+        const bool isLoaded = loaded_.count(t) != 0;
+        // 沿途所有已加载节点都 touch:未上屏的存货(等 quad 凑齐的细瓦、
+        // 备用的粗瓦)同样是 retain 的一部分,不 touch 会被 LRU 抽走,
+        // 抖回来就得重拉 —— 那正是缺陷③。
+        if (isLoaded) touch(t);
+        if (t.z == zoom && !isLoaded && !pending_.count(t) &&
+            !failed_.count(t)) {
+            // 理想层缺瓦无论回退成不成都要请求:后代顶替只是过渡态,
+            // 不请求理想瓦就永远收敛不到目标层(4^k 倍 draw 白付)。
+            const long long dx = t.x - centerKey.x;
+            const long long dy = t.y - centerKey.y;
+            requests.push_back({t, dx * dx + dy * dy});
+        }
+        if (t.z >= zoom) {
+            if (isLoaded) {
+                emitted.push_back(t);
+                return true;
+            }
+            if (t.z >= zDeep || !anyLoadedBelow(t.z)) return false;
+        }
+        // 子树探查(全有全无)
+        const size_t mark = emitted.size();
+        bool all = true;
+        int considered = 0;
+        for (int cy = 0; cy <= 1; ++cy) {
+            for (int cx = 0; cx <= 1; ++cx) {
+                TileKey c{schemeId_, t.z + 1, t.x * 2 + cx, t.y * 2 + cy};
+                if (!inView(c.z, c.x, c.y)) continue;
+                ++considered;
+                if (!resolve(c)) all = false;
             }
         }
+        if (considered > 0 && all) return true;
+        emitted.resize(mark);  // 凑不齐:整支回滚,决不留半个 quad
+        if (t.z < zoom && isLoaded) {
+            emitted.push_back(t);
+            return true;
+        }
+        return false;
+    };
+
+    // 根:锚在 zRoot 层(跨反经线两段在粗层可能落进同一根,set 去重)
+    std::unordered_set<TileKey> roots;
+    for (const Range& r : rangesByLevel[0]) {
+        for (int y = r.minY; y <= r.maxY; ++y) {
+            for (int x = r.minX; x <= r.maxX; ++x) {
+                roots.insert(TileKey{schemeId_, zRoot, x, y});
+            }
+        }
+    }
+    for (const TileKey& root : roots) {
+        resolve(root);
     }
 
     // 中心优先请求
@@ -130,7 +208,7 @@ VectorTileTree::UpdateResult VectorTileTree::update(
 
     // 渲染列表先粗后细(粗瓦片先画,细瓦片在其上;世界空间渲染下
     // 顺序只影响同深度 blend 的观感,保持确定性即可)
-    result.renderTiles.assign(renderSet.begin(), renderSet.end());
+    result.renderTiles = std::move(emitted);
     std::sort(result.renderTiles.begin(), result.renderTiles.end(),
               [](const TileKey& a, const TileKey& b) {
                   if (a.z != b.z) {
@@ -158,9 +236,13 @@ void VectorTileTree::provideShared(const TileKey& key,
     }
     pending_.erase(key);
     failed_.erase(key);
-    CachedTile& entry = loaded_[key];
-    entry.tile = std::move(tile);
-    entry.lastUsedFrame = frame_;
+    auto [it, inserted] = loaded_.try_emplace(key);
+    if (inserted && key.z >= 0 &&
+        key.z < static_cast<int>(loadedPerZ_.size())) {
+        ++loadedPerZ_[static_cast<size_t>(key.z)];
+    }
+    it->second.tile = std::move(tile);
+    it->second.lastUsedFrame = frame_;
 }
 
 void VectorTileTree::markFailed(const TileKey& key) {
@@ -211,7 +293,12 @@ void VectorTileTree::evictOverBudget() {
               });
     size_t excess = loaded_.size() - options_.maxCachedTiles;
     for (size_t i = 0; i < candidates.size() && excess > 0; ++i, --excess) {
-        loaded_.erase(candidates[i].key);
+        const TileKey& victim = candidates[i].key;
+        if (victim.z >= 0 &&
+            victim.z < static_cast<int>(loadedPerZ_.size())) {
+            --loadedPerZ_[static_cast<size_t>(victim.z)];
+        }
+        loaded_.erase(victim);
     }
 }
 
