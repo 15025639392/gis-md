@@ -1450,23 +1450,13 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
                 resolveSymbol(s.icon, style_.pointAnchor, iconAtlas_);
             appendSymbolQuad(relF, sym, s.colorPacked, pointVerts,
                              pointIndices);
-            // 符号刀B:带 name 的实例记标签源(烘焙推迟到
-            // bakeTileBucketLabels —— 字体可能晚于 commit 就绪)。
-            // featureId 合成:name+锚点量化坐标的 FNV-1a —— 瓦片符号没有
-            // store id,而 placement 的 fade/提权按 id 记账,必须帧间稳定;
-            // 同源坐标逐位一致 → 同一 POI 跨帧同 id(跨 zoom 代际的容差
-            // 匹配归 crossTileID 刀)。
+            // 符号刀B/C:带 name 的实例记标签源(烘焙推迟到
+            // bakeTileBucketLabels —— 字体可能晚于 commit 就绪)。id 经
+            // crossTileIdFor 跨瓦继承 —— 瓦片换代(z13→z14 同一 POI,MVT
+            // 逐瓦量化坐标略异)时 placement 的 fade/避让账本连续,不闪。
             if (!s.name.empty()) {
-                uint64_t id = 1469598103934665603ull;
-                auto mix = [&id](uint64_t v) {
-                    id ^= v;
-                    id *= 1099511628211ull;
-                };
-                for (unsigned char c : s.name) mix(c);
-                mix(static_cast<uint64_t>(
-                    llround(s.lonRad * 1e7) + (1ll << 40)));
-                mix(static_cast<uint64_t>(
-                    llround(s.latRad * 1e7) + (1ll << 40)));
+                const uint64_t id =
+                    crossTileIdFor(s.name, s.lonRad, s.latRad, key.z);
                 labelSources.push_back(
                     BucketGpu::TileLabelSource{relF, anchor, id, s.name});
             }
@@ -1500,6 +1490,47 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
     BucketGpu& stored = tileBuckets_[key];
     stored = std::move(gpu);
     bakeTileBucketLabels(stored);
+}
+
+uint64_t FeatureRenderLayer::crossTileIdFor(const std::string& name,
+                                            double lonRad, double latRad,
+                                            int tileZ) {
+    uint64_t nameHash = 1469598103934665603ull;
+    for (unsigned char c : name) {
+        nameHash ^= c;
+        nameHash *= 1099511628211ull;
+    }
+    // MVT 逐瓦量化:z 级瓦跨 2π/2^z rad,extent 4096 → 量化格
+    // 2π/(2^z·4096)。同一源 POI 在两个 zoom 的坐标差 ≤ 较粗格的一格,
+    // 容差取 1.5 格吸半格误差 + 数值边界(maplibre 的 ~4px 网格同量级)。
+    constexpr double kTwoPi = 6.283185307179586;
+    auto cellRad = [&](int z) { return kTwoPi / (4096.0 * std::exp2(z)); };
+    std::vector<CrossTileEntry>& entries = crossTileIndex_[nameHash];
+    for (CrossTileEntry& e : entries) {
+        const double tol = 1.5 * cellRad(std::min(e.zoom, tileZ));
+        if (std::abs(e.lonRad - lonRad) <= tol &&
+            std::abs(e.latRad - latRad) <= tol) {
+            if (tileZ > e.zoom) {
+                // 细 zoom 坐标更准,升级锚点参考,后续匹配容差收紧。
+                e.lonRad = lonRad;
+                e.latRad = latRad;
+                e.zoom = tileZ;
+            }
+            return e.id;
+        }
+    }
+    entries.push_back(CrossTileEntry{lonRad, latRad, tileZ,
+                                     nextCrossTileId_++});
+    ++crossTileEntryCount_;
+    // 只增不淘汰的容量哨兵:城市级 POI 全量 ~1.4k,项字节级;跨大区域
+    // 漫游把它顶过阈值时打一行,再谈 LRU(先观察,不预支复杂度)。
+    if ((crossTileEntryCount_ & (crossTileEntryCount_ - 1)) == 0 &&
+        crossTileEntryCount_ >= 16384) {
+        platformLog(LogLevel::Warning, "TileSymbol",
+                    "crossTileIndex entries=%zu(只增不淘汰,考虑上 LRU)",
+                    crossTileEntryCount_);
+    }
+    return entries.back().id;
 }
 
 void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {

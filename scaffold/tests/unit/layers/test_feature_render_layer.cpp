@@ -254,6 +254,34 @@ TEST_F(FeatureRenderLayerTest, TileSymbolsCappedByRankAscending) {
     EXPECT_GE(quadCount, 8) << "截断把高重要度符号也丢了";
 }
 
+// 符号刀C:跨瓦稳定 ID。同一 POI 在不同 zoom 瓦片里的 MVT 量化坐标略异,
+// 容差(两代中较粗 zoom 的量化格)内必须继承同一 id —— placement 的
+// fade/避让账本按 id 记,id 断了 = 换代闪烁重淡入。
+TEST_F(FeatureRenderLayerTest, CrossTileIdInheritedAcrossZoomQuantization) {
+    const double lon = 106.55 * kDeg;
+    const double lat = 29.56 * kDeg;
+    const uint64_t idAtZ12 = layer_->crossTileIdFor("解放碑", lon, lat, 12);
+    // z14 版坐标偏 z12 量化格的半格(~1.9e-6 rad):同一 POI 的典型代际差。
+    const double halfCellZ12 = 0.5 * 6.283185307179586 / (4096.0 * 4096.0);
+    const uint64_t idAtZ14 =
+        layer_->crossTileIdFor("解放碑", lon + halfCellZ12, lat, 14);
+    EXPECT_EQ(idAtZ12, idAtZ14) << "代际量化差内未继承 id";
+
+    // 同名但相距远(>> 容差):不同 POI,不得误并。
+    const uint64_t idFar =
+        layer_->crossTileIdFor("解放碑", lon + 0.01, lat, 14);
+    EXPECT_NE(idAtZ12, idFar);
+
+    // 同坐标不同名:不同 id。
+    const uint64_t idOther = layer_->crossTileIdFor("洪崖洞", lon, lat, 14);
+    EXPECT_NE(idAtZ12, idOther);
+
+    // 细 zoom 匹配后锚点参考升级 → 再来一个 z14 精确坐标仍命中。
+    const uint64_t idAgain =
+        layer_->crossTileIdFor("解放碑", lon + halfCellZ12, lat, 14);
+    EXPECT_EQ(idAtZ14, idAgain);
+}
+
 TEST_F(FeatureRenderLayerTest, OutOfHorizonBucketEmitsNoCommands) {
     // 视口桶裁剪:相机(星下点 0°E/0°N,高 ~8.6e6m,地平线角 ~65°)看不到
     // 的桶不出命令。视野内 polygon 出 fill+outline 两条;150°E 的桶被裁。

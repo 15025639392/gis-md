@@ -522,6 +522,15 @@ public:
     /// 与字体就绪翻转时都会调,幂等。
     void bakeTileBucketLabels(BucketGpu& gpu);
 
+    /// **渲染线程**:跨瓦稳定符号 ID(符号刀C,对拍 maplibre
+    /// CrossTileSymbolIndex 语义)。同名符号锚点在「两代中较粗 zoom 的
+    /// MVT 量化格」容差内 → 继承既有 id;miss 分配新 id。placement 的
+    /// fade/避让/提权账本按 id 记 —— 瓦片换代(z13→z14)时 id 连续,
+    /// 标签不闪不重淡入。索引只增不淘汰:城市级 POI 总量 ~1.4k,全量
+    /// 驻留字节级;超容量哨兵打日志再谈 LRU(同 GlyphAtlas 的取向)。
+    uint64_t crossTileIdFor(const std::string& name, double lonRad,
+                            double latRad, int tileZ);
+
     /// 当前驻留的瓦片桶数(诊断)。
     size_t tileMeshCount() const { return tileBuckets_.size(); }
 
@@ -660,6 +669,18 @@ private:
     // 与字体同构:图标可在建桶之后才注入,图集代次变化 → 全桶重镶补 uv。
     IconAtlas* iconAtlas_ = nullptr;
     uint64_t lastIconRevision_ = 0;
+
+    // ---- 跨瓦稳定符号 ID(符号刀C) ----
+    /// name 哈希 → 同名符号锚点表。语义见 crossTileIdFor。
+    struct CrossTileEntry {
+        double lonRad = 0.0;
+        double latRad = 0.0;
+        int zoom = 0;        ///< 锚点来源瓦片 zoom(越大坐标越准)
+        uint64_t id = 0;
+    };
+    std::unordered_map<uint64_t, std::vector<CrossTileEntry>> crossTileIndex_;
+    uint64_t nextCrossTileId_ = 1;
+    size_t crossTileEntryCount_ = 0;
 
     // ---- 标签避让 placement(P5c) ----
     LabelPlacement labelPlacement_;
