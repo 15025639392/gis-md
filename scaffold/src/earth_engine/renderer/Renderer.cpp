@@ -223,7 +223,7 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 // 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
 uniform highp sampler2DArray u_roadField;
-uniform vec4 u_roadFieldParams;  // x=enable y=羽化半带宽(texel) z/w=保留
+uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
 uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
@@ -1054,7 +1054,7 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 // 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
 uniform highp sampler2DArray u_roadField;
-uniform vec4 u_roadFieldParams;  // x=enable y=羽化半带宽(texel) z/w=保留
+uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
 uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
@@ -1455,7 +1455,7 @@ uniform highp sampler2DArray u_heightTexture;
 // 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
 uniform highp sampler2DArray u_roadField;
-uniform vec4 u_roadFieldParams;  // x=enable y=羽化半带宽(texel) z/w=保留
+uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
 uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
@@ -2605,7 +2605,7 @@ struct GltfUniforms {
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
-    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=羽化半带宽(texel)
+    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=线半宽(设备px) z=边长 w=带宽
     packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
     packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留
@@ -3410,7 +3410,7 @@ struct GltfUniforms {
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
-    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=羽化半带宽(texel)
+    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=线半宽(设备px) z=边长 w=带宽
     packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
     packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留

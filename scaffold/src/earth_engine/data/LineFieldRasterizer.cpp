@@ -7,11 +7,11 @@ namespace earth_engine {
 
 namespace {
 
-/// 把一条线段(纹素坐标)按 reach=halfWidth+feather 膨胀的 bbox 内逐纹素
-/// 写 min(有符号边缘距离编码)。scatter 的核心。
-void stampSegment(double x0, double y0, double x1, double y1,
-                  double halfWidth, int size, std::vector<double>& sd) {
-    const double reach = halfWidth + kLineFieldFeatherTexels;
+/// 把一条线段(纹素坐标)按 reach=kLineFieldBandTexels 膨胀的 bbox 内逐
+/// 纹素写 min(到中心线距离)。scatter 的核心。
+void stampSegment(double x0, double y0, double x1, double y1, int size,
+                  std::vector<double>& sd) {
+    const double reach = kLineFieldBandTexels;
     const int bx0 = std::max(0, static_cast<int>(
                                     std::floor(std::min(x0, x1) - reach)));
     const int bx1 = std::min(size - 1, static_cast<int>(std::ceil(
@@ -35,7 +35,7 @@ void stampSegment(double x0, double y0, double x1, double y1,
             }
             const double qx = x0 + t * dx - cx;
             const double qy = y0 + t * dy - cy;
-            const double dist = std::sqrt(qx * qx + qy * qy) - halfWidth;
+            const double dist = std::sqrt(qx * qx + qy * qy);
             double& cell = sd[static_cast<size_t>(py) * size + px];
             cell = std::min(cell, dist);
         }
@@ -54,15 +54,14 @@ LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
     const double rectH = rect.y1 - rect.y0;
     if (!(rectW > 0.0) || !(rectH > 0.0)) return out;
 
-    // 有符号距离缓冲(texel 单位),+∞ 语义用一个足够大的哨兵。
+    // 到中心线距离缓冲(texel 单位),+∞ 语义用一个足够大的哨兵。
     std::vector<double> sd(static_cast<size_t>(size) * size,
-                           kLineFieldFeatherTexels * 4.0);
+                           kLineFieldBandTexels * 4.0);
 
     for (const VectorRasterLayerPaint& paint : style.layers) {
         if (paint.lineColor[3] == 0) continue;  // 只消费 line 通道
         if (styleZoom < paint.minZoom || styleZoom > paint.maxZoom) continue;
-        const double halfWidth = std::max(0.25, paint.lineWidthPixels * 0.5);
-        const double reach = halfWidth + kLineFieldFeatherTexels;
+        const double reach = kLineFieldBandTexels;
 
         for (const MvtTileRef& ref : tiles) {
             if (ref.tile == nullptr || ref.z < 0) continue;
@@ -134,19 +133,19 @@ LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
                         double ax, ay, bx, by;
                         mapPoint(p0.x, p0.y, ax, ay);
                         mapPoint(p1.x, p1.y, bx, by);
-                        stampSegment(ax, ay, bx, by, halfWidth, size, sd);
+                        stampSegment(ax, ay, bx, by, size, sd);
                     }
                 }
             }
         }
     }
 
-    // 量化:0.5 = 线边缘,窗口 ±kFeatherTexels。
+    // 量化:归一化中心线距离,1 = 线心,0 = band 外(失败安全)。
     out.size = size;
     out.r8.resize(sd.size());
-    const double invWindow = 1.0 / (2.0 * kLineFieldFeatherTexels);
+    const double invBand = 1.0 / kLineFieldBandTexels;
     for (size_t i = 0; i < sd.size(); ++i) {
-        const double v = 0.5 - sd[i] * invWindow;
+        const double v = 1.0 - sd[i] * invBand;
         out.r8[i] = static_cast<uint8_t>(
             std::lround(std::clamp(v, 0.0, 1.0) * 255.0));
     }

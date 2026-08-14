@@ -179,10 +179,10 @@ struct alignas(16) GltfUniformBlock {
 
     // 刀2 路网 SDF 场解算(页存储"第二平面",与 pageStore 同一次间接查找):
     //   x = enable(>0.5 采样场并 mix 线色;无场瓦片恒 0 → 零回归)
-    //   y = 羽化半带宽(texel;场编码窗口 = 边缘 ±y,FS 反量化用)
-    //   z/w = 保留
+    //   y = 线半宽(设备px;FS 像素解算的阈值)
+    //   z = 场纹理边长(texel) w = 编码带宽(texel,=kLineFieldBandTexels)
     // 仅 TerrainPageStore::applyToTerrainCommand 写;非地形命令恒 0。
-    std::array<float, 4> roadFieldParams{0.0f, 4.0f, 0.0f, 0.0f};
+    std::array<float, 4> roadFieldParams{0.0f, 0.0f, 0.0f, 0.0f};
     // 线色(RGBA 非预乘):FS smoothstep 解算覆盖率后 mix 进底色。
     std::array<float, 4> roadFieldColor{0.96f, 0.96f, 0.94f, 0.86f};
     // [瓦界对齐] 几何 UV→源格逐瓦仿射(位移模板地形 FS 专用;见

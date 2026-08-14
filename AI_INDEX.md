@@ -3177,12 +3177,12 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 
 ### LineFieldRasterizer.h / .cpp
 
-路网线 SDF 场烘焙(刀2 CPU 端):MVT 线要素 → 256² R8 有符号边缘距离场。半宽烘进场(每段按 highway 档位半宽膨胀,多段 min),FS 端统一 0.5 交叉 smoothstep + fwidth 解析 AA —— 锐度与纹素密度解耦。**反向量化**(0=远/1=线内/0.5=边缘):0 是失败安全值(GLES 未绑定采样恒 0=无线,不是全屏线色)。逐段 scatter(段 bbox 内写 min)而非逐 texel gather,z14 城区瓦亚毫秒/页。坐标语义与 rasterizeMvtRect 同构(unit-mercator 矩形+多瓦仿射,overzoom/拼接/GCJ 由调用方做);只消费 VectorRasterStyle 的 line 通道。纯函数,worker 可并发。
+路网线 SDF 场烘焙(刀2 CPU 端):MVT 线要素 → 256² R8 **归一化中心线距离场**(场线宽像素一致专项 2026-08-14:value = 1 − dist/kLineFieldBandTexels(8 texel),宽度不再烘进场;FS 以采样 UV 屏幕导数求 texel/px 比,distPx = (1−fieldV)·band/texPerPx 解算到屏幕像素后按线半宽 uniform(roadFieldParams.y,设备px)阈值 + 0.5px AA(分母禁用 fwidth(fieldV):线心是场脊、导数→0 会沿线心挖洞) → 线宽真屏幕像素恒定,近端放大/祖先页兜底/页界跳档全被 fwidth 补偿)。**反向量化**(0=远/1=线心):0 是失败安全值(GLES 未绑定采样恒 0=无线,不是全屏线色)。逐段 scatter(段 bbox 内写 min)而非逐 texel gather,z14 城区瓦亚毫秒/页。坐标语义与 rasterizeMvtRect 同构(unit-mercator 矩形+多瓦仿射,overzoom/拼接/GCJ 由调用方做);只消费 VectorRasterStyle 的 line 通道(lineWidthPixels 不再消费)。纯函数,worker 可并发。
 
 | Item | Lines | Description |
 |---|---|---|
-| `stampSegment` (file-local) | .cpp:18-49 | 单段 scatter:膨胀 bbox 内逐纹素点到线段距离−halfWidth,写 min |
-| `rasterizeLineFieldRect` | .cpp:53-145 | 主入口:逐 line 层(zoom 区间+filter)×逐源瓦仿射×逐段 stamp;path bbox 预剔除;末端反向量化进 R8 |
+| `stampSegment` (file-local) | .cpp:12-43 | 单段 scatter:band 膨胀 bbox 内逐纹素点到线段(中心线)距离,写 min |
+| `rasterizeLineFieldRect` | .cpp:47-153 | 主入口:逐 line 层(zoom 区间+filter)×逐源瓦仿射×逐段 stamp;path bbox 预剔除;末端反向量化进 R8 |
 
 ### MvtTileFetchCache.h / .cpp
 

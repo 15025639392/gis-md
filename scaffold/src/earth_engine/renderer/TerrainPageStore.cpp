@@ -1282,7 +1282,14 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     if (fieldArrayTexture_) {
         cmd.textures[kGltfRoadFieldTextureSlot] = fieldArrayTexture_.get();
         cmd.gltfUniforms.roadFieldParams[0] = 1.0f;
-        cmd.gltfUniforms.roadFieldParams[1] = 4.0f;  // kLineFieldFeatherTexels
+        // 线半宽(设备px)。PoC 定值 = 1.0 CSS px × dpr 3.5 / 2(专项步 2
+        // 改为样式驱动的相机 zoom 连续插值,并消掉三档台阶)。
+        cmd.gltfUniforms.roadFieldParams[1] = 1.75f;
+        // z=场纹理边长(texel)、w=编码带宽(= kLineFieldBandTexels):FS
+        // 用 UV 屏幕导数×z 求 texel/px 比,把 (1−field)·w 换算成屏幕像素。
+        cmd.gltfUniforms.roadFieldParams[2] =
+            static_cast<float>(config_.pageSizeTexels);
+        cmd.gltfUniforms.roadFieldParams[3] = 8.0f;
         cmd.gltfUniforms.roadFieldColor = config_.roadFieldColor;
     }
 }

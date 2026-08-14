@@ -26,9 +26,24 @@ namespace earth_engine {
 // - per-cell 渐变 LOD(§16.3):d>0 采粗祖先页;祖先子区原点必须在**全局**
 //   源瓦片下标上算(gGlobal = g + phase),否则 d>0 采错子区(块状棋盘格)。
 // - 影像 factor = step(0.3, A):128/255 都显影像(面走快路)。
-// - 刀2 路网 SDF 场:同一次间接查找/同层号再采 R8 场(反向编码 0=远/1=线内,
-//   失败安全);gate A>0.6(须双就绪);fwidth 解析 AA,锐度与纹素密度解耦,
-//   祖先粗页导数变大 → 线自然羽化淡出。场关闭(params.x=0)整支死代码。
+// - 刀2 路网 SDF 场:同一次间接查找/同层号再采 R8 场(编码=归一化中心线
+//   距离,1=线心 0=远,失败安全);gate A>0.6(须双就绪)。**像素解算**
+//   (场线宽像素一致专项 2026-08-14):texel/px 比取自 **g(几何→源格
+//   仿射)的屏幕导数**再 ÷span,distPx = (1−fieldV)·band/texPerPx,按
+//   线半宽(px)阈值 + 0.5px AA —— 页内近端放大/祖先页兜底/页界跳档全被
+//   导数自动补偿,线宽真屏幕像素恒定。分母的两次真机翻车,勿回头:
+//   ① fwidth(fieldV):场值在中心线是脊,脊上导数→0,eps 兜底把线心解算
+//     成"远"→ 沿线心周期性挖洞;
+//   ② dFdx(sampleUv):sampleUv 在每个 span 边界 1→0 回绕,跨界 quad 导数
+//     爆炸 → distPx→0 → 无条件画白 → 沿 cell 网格的白虚线("瓦片网格线")。
+//   g 是 uv 的仿射,跨 cell 连续无回绕,÷span 完成祖先页纹素换算。
+//   band 外全 0 区:分子饱和为 band px 级 > 任何线宽 → cov=0,退化方向是
+//   "无线"而非脏色。
+//   **深度放大下限(真机翻车③)**:纹素 >> 线宽时,线心脊的纹素采样相位
+//   让 distPx 沿线在阈值两侧振荡(纹素中心恰在线上→亮,偏 0.5 纹素→灭)
+//   → 线碎成点串。半宽/AA 各设纹素下限(0.6/0.35 texel):极端放大时线
+//   随纹素适度变粗+羽化,连续保形;正常 1:1 态两下限恰不生效(0.6<1.75、
+//   0.35<0.5),零影响。场关闭(params.x=0)整支死代码。
 // - 混合式 = alphaOver 语义内联(不依赖各 shader 的同名帮助函数):
 //   overlay.a·=clamp(factor);rgb=mix;a=max —— 与六处旧内联逐字节一致。
 //
@@ -42,8 +57,10 @@ namespace earth_engine {
 //   phase           : 祖先寻址相位(x0/y0 mod 2^kMaxDetDepthLevels)
 //   cells           : cell 网格尺寸(已 max(1))
 //   indirLayer      : 该瓦片的间接纹理 array 层
-//   roadFieldParams : x=场开关 y=羽化半带宽;传 0 → 场支路死代码(MSL
-//                     instanced 的 uniform 精简 struct 尚无场参数,即取此路)
+//   roadFieldParams : x=场开关 y=线半宽(设备px) z=场纹理边长(texel)
+//                     w=编码带宽(texel,=kLineFieldBandTexels);传 0 →
+//                     场支路死代码(MSL instanced 的 uniform 精简 struct
+//                     尚无场参数,即取此路)
 //   roadFieldColor  : 线色(RGBA 非预乘)
 
 // GLSL 变体直接引用三个同名 sampler uniform(u_pageStore / u_pageStoreIndir /
@@ -72,8 +89,15 @@ vec4 eePageStoreCompose(
     base.a = max(base.a, page.a);
     if (roadFieldParams.x > 0.5 && e.a > 0.6) {
         float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
-        float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
-        float roadCov = smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) *
+        vec2 tPx = dFdx(g) * roadFieldParams.z / span.x;
+        vec2 tPy = dFdy(g) * roadFieldParams.z / span.x;
+        float texPerPx = max(
+            sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))), 1e-4);
+        float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
+        float texelPx = 1.0 / texPerPx;
+        float wEff = max(roadFieldParams.y, 0.6 * texelPx);
+        float aa = max(0.5, 0.35 * texelPx);
+        float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
                         e.a * roadFieldColor.a;
         base.rgb = mix(base.rgb, roadFieldColor.rgb, roadCov);
     }
@@ -107,8 +131,15 @@ static float4 eePageStoreCompose(
     base.a = max(base.a, page.a);
     if (roadFieldParams.x > 0.5 && e.a > 0.6) {
         float fieldV = roadField.sample(pageSampler, sampleUv, uint(layer)).r;
-        float fieldAa = max(fwidth(fieldV), 1.0 / 255.0);
-        float roadCov = smoothstep(0.5 - fieldAa, 0.5 + fieldAa, fieldV) *
+        float2 tPx = dfdx(g) * roadFieldParams.z / span.x;
+        float2 tPy = dfdy(g) * roadFieldParams.z / span.x;
+        float texPerPx = max(
+            sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))), 1e-4);
+        float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
+        float texelPx = 1.0 / texPerPx;
+        float wEff = max(roadFieldParams.y, 0.6 * texelPx);
+        float aa = max(0.5, 0.35 * texelPx);
+        float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
                         e.a * float4(roadFieldColor).w;
         base.rgb = mix(base.rgb, float3(float4(roadFieldColor).xyz), roadCov);
     }

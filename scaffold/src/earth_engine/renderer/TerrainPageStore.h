@@ -160,8 +160,8 @@ public:
         /// 非空时页存储维护一张平行的 R8 texture2DArray(fieldArray),与影像
         /// 页**同 key 同层号同生命周期** —— FS 在同一次间接查找下再采一次场,
         /// 祖先回退 scale-bias 数学自动复用。回调契约:r8 尺寸恒为
-        /// pageSizeTexels²;**回调必到**(取消/失败给全 255=无线);可在任意
-        /// 线程回调。页存储对生产者(RoadFieldSource)零依赖,host 测试注入
+        /// pageSizeTexels²;**回调必到**(取消/失败给全 0=无线,失败安全);
+        /// 可在任意线程回调。页存储对生产者(RoadFieldSource)零依赖,host 测试注入
         /// fake。
         using RoadFieldRequestFn = std::function<void(
             const TileKey& pageTileKey, CancellationToken,
