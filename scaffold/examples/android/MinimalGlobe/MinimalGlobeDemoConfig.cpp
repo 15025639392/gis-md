@@ -20,9 +20,27 @@ VectorRasterStyle makeMvtDrapeStyle() {
 
     VectorRasterLayerPaint building;
     building.layer = "building";
-    // 与几何通路的 building.minZoom=13 同门槛:建筑只在近景可辨。
-    // styleZoom 是**页 zoom**(屏幕清晰度),数据钳在 z14 不影响此门槛。
+    // 建筑 zoom+距离分级。距离经**页 zoom**(屏幕清晰度)隐含:远景=低 z 页、
+    // 近景=高 z 页,故按页 z 分档即按相机距离分档。数据只带 `building`(OSM
+    // 类型)与可选 `name` —— 无 render_height/area/levels,无法按物理体量分级,
+    // 改以"是否地标"代理体量,两档:
+    //   • z13-15(中距):仅**命名建筑** 或 **地标类型**(商业/医院/学校/场馆…)
+    //     —— 远景只留可辨认的大体量,generic 民房(building=yes/house)不在此距
+    //     糊成灰斑;
+    //   • z>=15(近景):全部建筑铺满。
+    // minZoom=13 仍是地板(更远整层不烘,零逐要素成本)。styleZoom 可到 z17+,
+    // 数据钳在 z14 不影响这些门槛(门槛比的是页 z,非数据 z)。
     building.minZoom = 13;
+    building.filter = StyleFilter::any({
+        StyleFilter::has("name"),
+        StyleFilter::in("building",
+                        {"commercial", "industrial", "retail", "warehouse",
+                         "hospital", "school", "university", "college",
+                         "stadium", "hotel", "apartments", "church", "temple",
+                         "mosque", "public", "civic", "government",
+                         "train_station", "hangar"}),
+        StyleFilter::zoomCompare(StyleFilter::Compare::GreaterEqual, 15),
+    });
     building.fillColor = {153, 153, 158, 140};
 
     // 顺序 = 绘制顺序:水面在下,建筑在上。
@@ -53,7 +71,19 @@ VectorRasterStyle makeMvtRoadFieldStyle() {
             StyleFilter::zoomCompare(C::Less, 14),
             StyleFilter::in("highway", {"motorway", "trunk", "primary",
                                         "secondary", "tertiary"})}),
-        StyleFilter::zoomCompare(C::GreaterEqual, 14),
+        // 次级路细分:z>=14 的"全收"catch-all 拆成两段距离档,让居民/支路按
+        // 相机距离分级出现,而非在 z14 一次性全糊上来。
+        //   • z14-15(中近):+ residential / unclassified / living_street ——
+        //     成街的次级路网先补齐;
+        //   • z>=15(贴近):再放开 service / track / path / footway / … 等
+        //     最末梢(catch-all,无 highway 约束 = 剩余全收)。
+        StyleFilter::all({
+            StyleFilter::zoomCompare(C::GreaterEqual, 14),
+            StyleFilter::zoomCompare(C::Less, 15),
+            StyleFilter::in("highway", {"motorway", "trunk", "primary",
+                                        "secondary", "tertiary", "residential",
+                                        "unclassified", "living_street"})}),
+        StyleFilter::zoomCompare(C::GreaterEqual, 15),
     });
 
     // 线宽单位=场纹素 ≈ 设备像素(页按屏幕误差选 zoom)。分档沿几何通路

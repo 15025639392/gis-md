@@ -1088,6 +1088,18 @@ target_include_directories(test_minimal_globe_diagnostics PRIVATE
 )
 add_test(NAME test_minimal_globe_diagnostics COMMAND test_minimal_globe_diagnostics)
 
+# 建筑/次级路 zoom+距离分级:测真配置函数(makeMvtDrapeStyle/
+# makeMvtRoadFieldStyle),锁定分级门槛不被改坏。
+add_executable(test_mvt_basemap_grading
+    unit/data/test_mvt_basemap_grading.cpp
+    ../examples/android/MinimalGlobe/MinimalGlobeDemoConfig.cpp
+)
+target_link_libraries(test_mvt_basemap_grading PRIVATE earth_engine_core GTest::gtest_main)
+target_include_directories(test_mvt_basemap_grading PRIVATE
+    ../examples/android/MinimalGlobe
+)
+add_test(NAME test_mvt_basemap_grading COMMAND test_mvt_basemap_grading)
+
 add_executable(test_picking
     unit/interaction/test_picking.cpp
 )
