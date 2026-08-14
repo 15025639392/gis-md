@@ -2606,13 +2606,13 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:1155-1030 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
-| `updateVisiblePages(view, ...)` | .cpp:566-954 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1257-1080 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1351-1139 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1462-1226 / :1386-1142 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1546-1368 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1242-1045 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `initialize(device, Config)` | .cpp:1241-1327 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
+| `updateVisiblePages(view, ...)` | .cpp:560-1240 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1343-1436 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1437-1474 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1551-1634 / :1475-1515 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1635-1735 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1328-1342 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:283-329 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:546-379 / :477-496 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:406-476 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |

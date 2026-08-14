@@ -542,6 +542,11 @@ private:
     double winMaxTickMs_ = 0.0;
     int winInboxItems_ = 0;
     int winFieldUploads_ = 0;  // 刀2 诊断:真场层上传数(证明第二平面在工作)
+    // [V24] 场洞诊断:kept cell 中"精确档 pending 且祖先回退也无存货"的数
+    // (= 该 cell 本帧线不画)。缩放期持续 >0 = 线闪的机制信号;
+    // 回退命中数单列,两数并读可判"回退在扛"还是"池被踢穿"。
+    int winFieldHoleCells_ = 0;
+    int winFieldFallbackCells_ = 0;
 
     // C-1:有序源列表(providers_[0] = 底图,定分块/zoom/最大级)。每帧由
     // determination 刷新;变化时作废全部已合成页(旧页少一层或多一层都是错的)。

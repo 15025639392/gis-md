@@ -978,8 +978,15 @@ void TerrainPageStore::updateVisiblePages(
             // spanF = 2^df ≤ 2^kMaxDetDepthLevels 整除相位模数 → FS 复用
             // gGlobal+phase 的祖先 scale-bias 数学。====
             if (fieldArrayTexture_ && fieldIndirArrayTexture_) {
+                // [V24 线闪根修·粒度统一] 场页恒比影像页粗 2 级(df≥2):
+                // 此前高空 df=0(场页=影像页粒度,可见场页 ≈125-185 张,
+                // 单层即超 64 池两倍 → 换代必踢穿,线波浪闪),低空封顶区
+                // 本就 df≥2。统一到 d=2 档后每级 ~12 页,池容 4 个 zoom 级,
+                // 换代被存货完全吸收;解算质量 = 低空稳态同档(D2 容量模拟:
+                // 该档漏画 0.055-0.35%,不可辨)。深放大锐度(V5)不受影响:
+                // p.zoom≥17 时封顶路径本就给出 df≥2。
                 const int fz = std::max(
-                    std::min(p.zoom, config_.roadFieldMaxZoom),
+                    std::min(p.zoom - 2, config_.roadFieldMaxZoom),
                     p.zoom - kMaxDetDepthLevels);
                 const int df = p.zoom - fz;
                 fieldIndirTexelsScratch_.assign(
@@ -1016,17 +1023,49 @@ void TerrainPageStore::updateVisiblePages(
                     } else {
                         fieldPool_.touch(fPacked, frameId_);
                     }
-                    if (!fit->second.uploaded) {
-                        continue;  // pending 期 A=0:片元不采场(无残留)
+                    // [V24 线闪根修] 场页祖先回退(镜像影像 cell 的"沿祖先链
+                    // 取最细就绪页")。步3 把场解耦出影像页时,刀2 时代的锚页
+                    // 连续性保护没跟过来:精确档 pending → A=0 → 该 cell 线
+                    // 整块灭,烘完再回 —— 封顶(z≥15)以下每过一级 zoom 场页
+                    // key 全换,高空缩放/平移 = 整屏线波浪式闪。回退让粗一档
+                    // 的已上传场顶住(FS 的 df 祖先寻址本就支持,线短暂变粗
+                    // 不消失),精确档上传完成下一次 determination 自然切回。
+                    // 只读已有条目不建页:回退是兜底,不该扰动场池 LRU 结构。
+                    int useLayer = -1;
+                    int useDf = df;
+                    if (fit->second.uploaded) {
+                        useLayer = fit->second.layer;
+                    } else {
+                        for (int fd = 1; df + fd <= kMaxDetDepthLevels &&
+                                         fz - fd >= 0; ++fd) {
+                            TileKey aKey;
+                            aKey.schemeId = p.imgSchemeId;
+                            aKey.z = fz - fd;
+                            aKey.x = fKey.x >> fd;
+                            aKey.y = fKey.y >> fd;
+                            const uint64_t aPacked = packKey(aKey);
+                            const auto ait = fieldPages_.find(aPacked);
+                            if (ait != fieldPages_.end() &&
+                                ait->second.uploaded) {
+                                fieldPool_.touch(aPacked, frameId_);
+                                useLayer = ait->second.layer;
+                                useDf = df + fd;
+                                ++winFieldFallbackCells_;
+                                break;
+                            }
+                        }
+                    }
+                    if (useLayer < 0) {
+                        ++winFieldHoleCells_;
+                        continue;  // 全冷(无任何存货)A=0:片元不采场
                     }
                     uint8_t* ftexel =
                         fieldIndirTexelsScratch_.data() +
                         (static_cast<size_t>(kc.dy) * p.placement.cellsX +
                          kc.dx) * 4u;
-                    const int fl = fit->second.layer;
-                    ftexel[0] = static_cast<uint8_t>(fl & 0xFF);
-                    ftexel[1] = static_cast<uint8_t>((fl >> 8) & 0xFF);
-                    ftexel[2] = static_cast<uint8_t>(df);
+                    ftexel[0] = static_cast<uint8_t>(useLayer & 0xFF);
+                    ftexel[1] = static_cast<uint8_t>((useLayer >> 8) & 0xFF);
+                    ftexel[2] = static_cast<uint8_t>(useDf);
                     ftexel[3] = 255;
                 }
                 device_->updateTextureRegion(
@@ -1034,6 +1073,53 @@ void TerrainPageStore::updateVisiblePages(
                     p.placement.cellsX, p.placement.cellsY,
                     fieldIndirTexelsScratch_.data(),
                     static_cast<size_t>(p.placement.cellsX) * 4u, ind.layer);
+
+                // [V24 线闪根修·下半] 场锚页预暖(镜像影像锚页,同一课的
+                // 步3 补作业):拉远时新档比存货粗,df≥0 寻址不到细存货,
+                // 祖先回退救不了 —— 必须趁细档还在渲染时把 fz-1 的场页
+                // 烘好,换代帧直接命中。整瓦四角的父场页去重后 kick
+                // (瓦内 cell 的父页 ≤4 个)。池近满时跳过:预暖是投机,
+                // 不许挤掉正在显示的场页(imagery 锚页无此虑,其池 512)。
+                if (fz - 1 >= 0 &&
+                    static_cast<int>(fieldPages_.size()) + 4 <=
+                        config_.maxFieldPages) {
+                    uint64_t seen[4] = {0, 0, 0, 0};
+                    int seenN = 0;
+                    for (const DetKeptCell& kc : cache.kept) {
+                        TileKey aKey;
+                        aKey.schemeId = p.imgSchemeId;
+                        aKey.z = fz - 1;
+                        aKey.x = (p.placement.x0 + kc.dx) >> (df + 1);
+                        aKey.y = (p.placement.y0 + kc.dy) >> (df + 1);
+                        const uint64_t aPacked = packKey(aKey);
+                        bool dup = false;
+                        for (int i = 0; i < seenN; ++i) {
+                            if (seen[i] == aPacked) { dup = true; break; }
+                        }
+                        if (dup) continue;
+                        if (seenN < 4) seen[seenN++] = aPacked;
+                        auto ait = fieldPages_.find(aPacked);
+                        if (ait != fieldPages_.end()) {
+                            fieldPool_.touch(aPacked, frameId_);
+                            continue;
+                        }
+                        uint64_t evicted = 0;
+                        const int al =
+                            fieldPool_.acquire(aPacked, frameId_, &evicted);
+                        if (evicted != 0) {
+                            eraseFieldEntry(evicted);
+                        }
+                        if (al < 0) continue;
+                        ait = fieldPages_.try_emplace(aPacked).first;
+                        ait->second.layer = al;
+                        if (al < static_cast<int>(fieldLayerKey_.size()) &&
+                            fieldLayerKey_[al] == aPacked) {
+                            ait->second.uploaded = true;
+                        } else {
+                            kickFieldFetch(aKey, aPacked, al, ait->second);
+                        }
+                    }
+                }
             }
         }
         ind.gridN = p.gridN;
@@ -1372,14 +1458,17 @@ void TerrainPageStore::tick() {
     if (frameId_ % 60u == 0u) {
         platformLog(LogLevel::Info, "PageStore",
                     "tick60 compose=%.1fms upload=%.1fms "
-                    "maxTick=%.1fms items=%d fields=%d",
+                    "maxTick=%.1fms items=%d fields=%d fhole=%d ffall=%d",
                     winComposeMs_, winUploadMs_,
-                    winMaxTickMs_, winInboxItems_, winFieldUploads_);
+                    winMaxTickMs_, winInboxItems_, winFieldUploads_,
+                    winFieldHoleCells_, winFieldFallbackCells_);
         winComposeMs_ = 0.0;
         winUploadMs_ = 0.0;
         winMaxTickMs_ = 0.0;
         winInboxItems_ = 0;
         winFieldUploads_ = 0;
+        winFieldHoleCells_ = 0;
+        winFieldFallbackCells_ = 0;
     }
 }
 
