@@ -241,3 +241,82 @@ TEST(VectorTileTree, ProvideUnrequestedKeyAccepted) {
 }
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// V24 排查:换代抖动(2026-08-15)
+//
+// 这三条**钉的是当前行为,不是期望行为**——它们现在绿,是因为缺陷还在。
+// 修好抖动后它们会红,那时改判据、别改测试来迁就实现。
+// ---------------------------------------------------------------------------
+
+/// 缺陷①:zoom 选择无迟滞。视高在整数 zoom 边界上下抖 ±0.5% 就来回翻档。
+TEST(VectorTileTree, ZoomHasNoHysteresisAtBoundary) {
+    VectorTileTree::Options opt;
+    // z14 的边界高度:log2(4e7/h) == 14 → h = 4e7/2^14
+    const double hBoundary = 4.0e7 / std::pow(2.0, 14.0);
+    int flips = 0;
+    int prev = VectorTileTree::zoomForCameraHeight(hBoundary * 1.005, opt);
+    // 相机在边界附近做 20 次 ±0.5% 的微小起伏(真实缩放/地形起伏都会这样)
+    for (int i = 0; i < 20; ++i) {
+        const double h = hBoundary * ((i % 2 == 0) ? 0.995 : 1.005);
+        const int z = VectorTileTree::zoomForCameraHeight(h, opt);
+        if (z != prev) ++flips;
+        prev = z;
+    }
+    // 1% 的高度抖动 → 20 次全翻档。无死区。
+    EXPECT_EQ(flips, 20);
+}
+
+/// 缺陷②:拉远只有祖先回退,没有后代回退。粗瓦未加载时整片空,
+/// 哪怕细瓦还在缓存里、几何完全够覆盖。
+TEST(VectorTileTree, ZoomOutHasNoDescendantFallback) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 0;
+    opt.maxZoom = 14;
+    VectorTileTree tree(opt);
+    const Rectangle view = rectDeg(106.50, 29.50, 106.53, 29.53);
+
+    // 先在 z14 把细瓦喂满
+    VectorTileTree::UpdateResult fine = tree.update(view, heightForZoom(14));
+    ASSERT_FALSE(fine.requestTiles.empty());
+    for (const TileKey& k : fine.requestTiles) tree.provide(k, emptyTile());
+    fine = tree.update(view, heightForZoom(14));
+    EXPECT_FALSE(fine.renderTiles.empty());
+
+    // 拉远到 z11:粗瓦没加载过 → 渲染集**空**,细瓦一块也不顶
+    VectorTileTree::UpdateResult coarse =
+        tree.update(view, heightForZoom(11));
+    EXPECT_TRUE(coarse.renderTiles.empty())
+        << "若这条红了 = 已加了后代回退,请更新 V24 判据";
+    EXPECT_FALSE(coarse.requestTiles.empty());
+}
+
+/// 缺陷③:出渲染集的瓦片一帧未用即成淘汰候选。zoom 抖回来时数据已没,
+/// 必须重新请求 —— 这就是"闪"同时也是"浪费"的那一份。
+TEST(VectorTileTree, TilesLeavingRenderSetAreImmediatelyEvictable) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 0;
+    opt.maxZoom = 14;
+    opt.maxCachedTiles = 2;   // 压小预算,让淘汰立刻可见
+    VectorTileTree tree(opt);
+
+    const double h = heightForZoom(12);
+    const Rectangle viewA = rectDeg(106.50, 29.50, 106.52, 29.52);
+
+    VectorTileTree::UpdateResult a = tree.update(viewA, h);
+    for (const TileKey& k : a.requestTiles) tree.provide(k, emptyTile());
+    a = tree.update(viewA, h);
+    ASSERT_FALSE(a.renderTiles.empty());
+    const TileKey wasRendering = a.renderTiles.front();
+
+    // 相机连续平移到 6 个互不重叠的位置并喂满 → 必然超预算
+    for (int i = 1; i <= 6; ++i) {
+        const double lng = 106.50 + 0.30 * i;
+        const Rectangle v = rectDeg(lng, 29.50, lng + 0.02, 29.52);
+        VectorTileTree::UpdateResult b = tree.update(v, h);
+        for (const TileKey& k : b.requestTiles) tree.provide(k, emptyTile());
+        tree.update(v, h);
+    }
+    EXPECT_EQ(tree.loadedTile(wasRendering), nullptr)
+        << "若这条红了 = 已给出集瓦片加了保活,请更新 V24 判据";
+}
