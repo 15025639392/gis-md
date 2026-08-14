@@ -526,6 +526,49 @@ static bool createEngine() {
             // 规避「居中锚定被身前地形吃掉下半个」(P6c 明记的深度语义)。
             bs.pointColor = {0.92f, 0.26f, 0.21f, 0.95f};
             bs.pointAnchor = SymbolAnchor::Bottom;
+            // 符号刀E:kind 驱动的分类观感(P6b match 表达式,镶嵌期逐要素
+            // 求值烘进顶点,零每帧成本)。图形/颜色语义:地名=金星、
+            // 车站=蓝方、机场=蓝菱、景点=绿三角、医院=白十字位无 → 星形
+            // 家族按内置形状就近取;未列 kind 落默认暖红圆。
+            bs.pointImageExpr = StyleExpression::match(
+                "kind",
+                {{"place:city", StyleExpression::literalString("star")},
+                 {"place:town", StyleExpression::literalString("star")},
+                 {"place:district", StyleExpression::literalString("star")},
+                 {"place:suburb", StyleExpression::literalString("star")},
+                 {"railway:station", StyleExpression::literalString("square")},
+                 {"aeroway:aerodrome",
+                  StyleExpression::literalString("diamond")},
+                 {"tourism:attraction",
+                  StyleExpression::literalString("triangle")},
+                 {"tourism:museum",
+                  StyleExpression::literalString("triangle")},
+                 {"leisure:park", StyleExpression::literalString("triangle")},
+                 {"amenity:hospital", StyleExpression::literalString("pin")}},
+                StyleExpression::literalString("circle"));
+            bs.pointColorExpr = StyleExpression::match(
+                "kind",
+                {{"place:city",
+                  StyleExpression::literal({1.00f, 0.84f, 0.25f, 0.95f})},
+                 {"place:town",
+                  StyleExpression::literal({1.00f, 0.84f, 0.25f, 0.95f})},
+                 {"place:district",
+                  StyleExpression::literal({1.00f, 0.84f, 0.25f, 0.90f})},
+                 {"place:suburb",
+                  StyleExpression::literal({1.00f, 0.84f, 0.25f, 0.90f})},
+                 {"railway:station",
+                  StyleExpression::literal({0.25f, 0.52f, 0.96f, 0.95f})},
+                 {"aeroway:aerodrome",
+                  StyleExpression::literal({0.25f, 0.52f, 0.96f, 0.95f})},
+                 {"tourism:attraction",
+                  StyleExpression::literal({0.30f, 0.75f, 0.40f, 0.95f})},
+                 {"tourism:museum",
+                  StyleExpression::literal({0.30f, 0.75f, 0.40f, 0.95f})},
+                 {"leisure:park",
+                  StyleExpression::literal({0.30f, 0.75f, 0.40f, 0.95f})},
+                 {"amenity:hospital",
+                  StyleExpression::literal({0.95f, 0.95f, 0.95f, 0.95f})}},
+                StyleExpression::literal({0.92f, 0.26f, 0.21f, 0.95f}));
             basemapLayer->setStyle(bs);
             // 贴地体的高度范围由 SceneRenderPipeline 每帧从可见地形瓦片汇总,
             // demo 侧不再设 —— 两处真相会在相机飞离本区时打架。
