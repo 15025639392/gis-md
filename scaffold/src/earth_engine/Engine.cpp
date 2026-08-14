@@ -355,9 +355,11 @@ void Engine::setRoadFieldSource(
     std::function<void(const TileKey&, CancellationToken,
                        std::function<void(std::vector<uint8_t>)>)>
         request,
-    std::array<float, 4> lineColor) {
+    std::array<float, 4> lineColor,
+    std::array<float, 4> widthRampPx) {
     roadFieldRequest_ = std::move(request);
     roadFieldColor_ = lineColor;
+    roadFieldWidthRampPx_ = widthRampPx;
 }
 
 void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
@@ -529,6 +531,7 @@ bool Engine::render(double deltaSeconds) {
             // 刀2 路网 SDF 场"第二平面"(demo/宿主注入;空=无场,零回归)。
             pageStoreConfig.roadFieldRequest = roadFieldRequest_;
             pageStoreConfig.roadFieldColor = roadFieldColor_;
+            pageStoreConfig.roadFieldWidthRamp = roadFieldWidthRampPx_;
             if (store->initialize(device_, pageStoreConfig)) {
                 terrainPageStore_ = std::move(store);
                 // surface 重建会重建页存储 → 叠画钩子必须重新挂上,否则矢量

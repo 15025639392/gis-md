@@ -973,6 +973,7 @@ void TerrainPageStore::updateVisiblePages(
         // 该瓦片回落 mappedRaster(优雅降级)。层被夺走的离屏瓦片由 evicted
         // 分支置 layer=-1(其 sweep 稍后清除)。
         TileIndir& ind = tileIndirs_[p.tileKeyPacked];
+        ind.cellZoom = p.zoom;
         if (ind.layer < 0 ||
             indirPool_.layerBaseFor(p.tileKeyPacked) != ind.layer) {
             uint64_t evicted = 0;
@@ -1282,15 +1283,17 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     if (fieldArrayTexture_) {
         cmd.textures[kGltfRoadFieldTextureSlot] = fieldArrayTexture_.get();
         cmd.gltfUniforms.roadFieldParams[0] = 1.0f;
-        // 线半宽(设备px)。PoC 定值 = 1.0 CSS px × dpr 3.5 / 2(专项步 2
-        // 改为样式驱动的相机 zoom 连续插值,并消掉三档台阶)。
-        cmd.gltfUniforms.roadFieldParams[1] = 1.75f;
+        // y=cellZoom(FS 分级宽度的局部 zoom 基准;合批实例流另经
+        // pageCellDesc 逐实例携带,批级 uniform 承首实例会造宽度台阶)。
+        cmd.gltfUniforms.roadFieldParams[1] =
+            static_cast<float>(ind.cellZoom);
         // z=场纹理边长(texel)、w=编码带宽(= kLineFieldBandTexels):FS
-        // 用 UV 屏幕导数×z 求 texel/px 比,把 (1−field)·w 换算成屏幕像素。
+        // 用 g 屏幕导数×z 求 texel/px 比,把 (1−field)·w 换算成屏幕像素。
         cmd.gltfUniforms.roadFieldParams[2] =
             static_cast<float>(config_.pageSizeTexels);
         cmd.gltfUniforms.roadFieldParams[3] = 8.0f;
         cmd.gltfUniforms.roadFieldColor = config_.roadFieldColor;
+        cmd.gltfUniforms.roadFieldWidth = config_.roadFieldWidthRamp;
     }
 }
 

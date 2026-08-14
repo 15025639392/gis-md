@@ -61,14 +61,18 @@ public:
     static_assert(sizeof(InstanceRecord) == 128,
                   "matches kTerrainInstanceStride");
 
-    /// 把 (cellsX, cellsY, texCoordSet) 压进一个 float,逐实例只剩一个槽。
-    /// cellsX/cellsY ≤ 64(间接纹理边长上限),texCoordSet ≤ 7 → 最大 122944,
-    /// float32 精确可表示(< 2^24),不丢位。
+    /// 把 (cellsX, cellsY, texCoordSet, cellZoom) 压进一个 float,逐实例只剩
+    /// 一个槽。cellsX/cellsY ≤ 64(间接纹理边长上限),texCoordSet ≤ 7,
+    /// cellZoom ≤ 31 → 最大 131072·31+122944 ≈ 4.19M < 2^24,float32 精确
+    /// 可表示,不丢位。cellZoom 逐实例带是分级宽度的反台阶前提:批级
+    /// uniform 承首实例会让批内异 zoom 瓦片的线宽错档(瓦界宽度跳变)。
     static constexpr float packPageCellDescriptor(int cellsX, int cellsY,
-                                                  int texCoordSet) {
+                                                  int texCoordSet,
+                                                  int cellZoom) {
         return static_cast<float>(cellsX) +
                128.0f * static_cast<float>(cellsY) +
-               16384.0f * static_cast<float>(texCoordSet);
+               16384.0f * static_cast<float>(texCoordSet) +
+               131072.0f * static_cast<float>(cellZoom);
     }
 
     /// 批内位移模板栅格边长(layers[3])是否全部一致。

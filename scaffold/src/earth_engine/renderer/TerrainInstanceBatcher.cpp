@@ -195,7 +195,8 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
             rec.dispMorph[3] = packPageCellDescriptor(
                 static_cast<int>(m.gltfUniforms.pageStoreParams[1] + 0.5f),
                 static_cast<int>(m.gltfUniforms.pageStoreParams[2] + 0.5f),
-                static_cast<int>(m.gltfUniforms.pageStoreParams[3]) % 8);
+                static_cast<int>(m.gltfUniforms.pageStoreParams[3]) % 8,
+                static_cast<int>(m.gltfUniforms.roadFieldParams[1] + 0.5f));
             rec.clipUv[0] = m.gltfUniforms.clipUv[0];
             rec.clipUv[1] = m.gltfUniforms.clipUv[1];
             rec.clipUv[2] = m.gltfUniforms.clipUv[2];
@@ -296,6 +297,9 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
         // 真机"线一瞬出现又消失"的根因正是这里。
         batch.gltfUniforms.roadFieldParams = first.gltfUniforms.roadFieldParams;
         batch.gltfUniforms.roadFieldColor = first.gltfUniforms.roadFieldColor;
+        // 宽度 ramp 是全局样式(批内同值);cellZoom 不承批级——逐实例在
+        // pageCellDesc 里(见 packPageCellDescriptor)。
+        batch.gltfUniforms.roadFieldWidth = first.gltfUniforms.roadFieldWidth;
         batch.hasWorldSortCenter = first.hasWorldSortCenter;
         batch.worldSortCenter = first.worldSortCenter;
         batch.cullFace = first.cullFace;

@@ -170,6 +170,10 @@ public:
         /// 场解算的线色(RGBA,非预乘)——经 applyToTerrainCommand 进
         /// gltfUniforms,FS smoothstep 后 mix。样式快照,换样式换 Config。
         std::array<float, 4> roadFieldColor{0.96f, 0.96f, 0.94f, 0.86f};
+        /// 分级宽度 ramp (z0, halfPx0, z1, halfPx1):FS 在局部 zoom 上线性
+        /// 插值出线半宽(设备px),两端 clamp。zoom 基准=影像页 zoom(见
+        /// PageStoreSamplingGLSL.h 的标定注释)。默认≈0.6→1.8 CSS px@dpr3.5。
+        std::array<float, 4> roadFieldWidthRamp{12.0f, 1.05f, 16.0f, 3.15f};
     };
 
     TerrainPageStore() = default;
@@ -452,6 +456,9 @@ private:
         // 否则就又出现两个「几何格 == 源格」的独立假设。
         SourceTilePlacement placement;
         int texCoordSet = 0;
+        // cell 网格 zoom(determination 的 p.zoom 快照)——FS 分级宽度的局部
+        // zoom 基准,经 roadFieldParams.y / 合批 pageCellDesc 下发。
+        int cellZoom = 0;
         bool fullyResident = false;  // 全 cell 高清页驻留 = 合批资格(丢 mappedRaster)
         uint64_t lastFrame = 0;  // determination 里 touch;sweep 清非本帧可见瓦片
         // [瓦界对齐] 几何 UV → 源格的逐瓦仿射 {c0.x,c0.y,dU.x,dU.y,dV.x,dV.y}

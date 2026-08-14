@@ -30,8 +30,16 @@ namespace earth_engine {
 //   距离,1=线心 0=远,失败安全);gate A>0.6(须双就绪)。**像素解算**
 //   (场线宽像素一致专项 2026-08-14):texel/px 比取自 **g(几何→源格
 //   仿射)的屏幕导数**再 ÷span,distPx = (1−fieldV)·band/texPerPx,按
-//   线半宽(px)阈值 + 0.5px AA —— 页内近端放大/祖先页兜底/页界跳档全被
-//   导数自动补偿,线宽真屏幕像素恒定。分母的两次真机翻车,勿回头:
+//   线半宽(px)阈值 + AA —— 页内近端放大/祖先页兜底/页界跳档全被
+//   导数自动补偿,线宽真屏幕像素恒定。
+//   **分级宽度(步2)**:局部 zoom = cellZoom − log2(rms d0纹素/px),跨页
+//   连续(页界 z 跳变恰被导数项补偿,天然无台阶);线半宽 = 宽度 ramp
+//   (z0,h0)→(z1,h1) 在局部 zoom 上线性插值、两端 clamp。
+//   ⚠️ zoom 基准=**影像页 zoom**(与烘焙 styleZoom 同基准),比"地图直觉
+//   zoom"偏高 ~2-3 档(dpr3.5+屏幕误差选页;30km 俯瞰实测全屏 13→17,
+//   zoomvis 调试染色验证过)——ramp 停点必须按此基准标定,勿按 maplibre
+//   样式 zoom 直觉填。
+//   分母的两次真机翻车,勿回头:
 //   ① fwidth(fieldV):场值在中心线是脊,脊上导数→0,eps 兜底把线心解算
 //     成"远"→ 沿线心周期性挖洞;
 //   ② dFdx(sampleUv):sampleUv 在每个 span 边界 1→0 回绕,跨界 quad 导数
@@ -42,8 +50,8 @@ namespace earth_engine {
 //   **深度放大下限(真机翻车③)**:纹素 >> 线宽时,线心脊的纹素采样相位
 //   让 distPx 沿线在阈值两侧振荡(纹素中心恰在线上→亮,偏 0.5 纹素→灭)
 //   → 线碎成点串。半宽/AA 各设纹素下限(0.6/0.35 texel):极端放大时线
-//   随纹素适度变粗+羽化,连续保形;正常 1:1 态两下限恰不生效(0.6<1.75、
-//   0.35<0.5),零影响。场关闭(params.x=0)整支死代码。
+//   随纹素适度变粗+羽化,连续保形;正常 1:1 态两下限恰不生效(0.6 <
+//   ramp 最小半宽、0.35<0.5),零影响。场关闭(params.x=0)整支死代码。
 // - 混合式 = alphaOver 语义内联(不依赖各 shader 的同名帮助函数):
 //   overlay.a·=clamp(factor);rgb=mix;a=max —— 与六处旧内联逐字节一致。
 //
@@ -57,10 +65,16 @@ namespace earth_engine {
 //   phase           : 祖先寻址相位(x0/y0 mod 2^kMaxDetDepthLevels)
 //   cells           : cell 网格尺寸(已 max(1))
 //   indirLayer      : 该瓦片的间接纹理 array 层
-//   roadFieldParams : x=场开关 y=线半宽(设备px) z=场纹理边长(texel)
-//                     w=编码带宽(texel,=kLineFieldBandTexels);传 0 →
-//                     场支路死代码(MSL instanced 的 uniform 精简 struct
-//                     尚无场参数,即取此路)
+//   cellZoom        : cell 网格 zoom(局部 zoom 基准)。非合批管线 =
+//                     roadFieldParams.y 原样转传;合批实例从 pageCellDesc
+//                     解包逐实例传(批级 uniform 承首实例会在批内异 zoom
+//                     瓦片上重新造出宽度台阶)
+//   roadFieldParams : x=场开关 y=cellZoom(供非合批调用点转传) z=场纹理
+//                     边长(texel) w=编码带宽(texel,=kLineFieldBandTexels);
+//                     传 0 → 场支路死代码(MSL instanced 的 uniform 精简
+//                     struct 尚无场参数,即取此路)
+//   roadFieldWidth  : 宽度 ramp (z0, halfPx0, z1, halfPx1),halfPx=线半宽
+//                     (设备px);z≤z0 取 h0、z≥z1 取 h1、之间线性
 //   roadFieldColor  : 线色(RGBA 非预乘)
 
 // GLSL 变体直接引用三个同名 sampler uniform(u_pageStore / u_pageStoreIndir /
@@ -71,8 +85,8 @@ namespace earth_engine {
 constexpr const char* kPageStoreSamplingGLSL = R"(
 vec4 eePageStoreCompose(
     vec4 base, vec2 uvIn, vec4 geomA, vec2 geomB, vec2 phase,
-    vec2 cells, int indirLayer,
-    vec4 roadFieldParams, vec4 roadFieldColor) {
+    vec2 cells, int indirLayer, float cellZoom,
+    vec4 roadFieldParams, vec4 roadFieldWidth, vec4 roadFieldColor) {
     vec2 uvc = clamp(uvIn, 0.0, 1.0);
     vec2 g = geomA.xy + uvc.x * geomA.zw + uvc.y * geomB;
     vec2 cell = clamp(floor(g), vec2(0.0), cells - vec2(1.0));
@@ -89,13 +103,18 @@ vec4 eePageStoreCompose(
     base.a = max(base.a, page.a);
     if (roadFieldParams.x > 0.5 && e.a > 0.6) {
         float fieldV = texture(u_roadField, vec3(sampleUv, layer)).r;
-        vec2 tPx = dFdx(g) * roadFieldParams.z / span.x;
-        vec2 tPy = dFdy(g) * roadFieldParams.z / span.x;
-        float texPerPx = max(
-            sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))), 1e-4);
+        vec2 tPx = dFdx(g) * roadFieldParams.z;
+        vec2 tPy = dFdy(g) * roadFieldParams.z;
+        float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))), 1e-6);
+        float texPerPx = max(rms / span.x, 1e-4);
         float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
+        float zoomLocal = cellZoom - log2(rms);
+        float t = clamp((zoomLocal - roadFieldWidth.x) /
+                            max(roadFieldWidth.z - roadFieldWidth.x, 1e-3),
+                        0.0, 1.0);
         float texelPx = 1.0 / texPerPx;
-        float wEff = max(roadFieldParams.y, 0.6 * texelPx);
+        float wEff = max(mix(roadFieldWidth.y, roadFieldWidth.w, t),
+                         0.6 * texelPx);
         float aa = max(0.5, 0.35 * texelPx);
         float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
                         e.a * roadFieldColor.a;
@@ -112,8 +131,8 @@ static float4 eePageStoreCompose(
     texture2d_array<float> roadField,
     sampler pageSampler,
     float4 base, float2 uvIn, float4 geomA, float2 geomB, float2 phase,
-    float2 cells, int indirLayer,
-    float4 roadFieldParams, float4 roadFieldColor) {
+    float2 cells, int indirLayer, float cellZoom,
+    float4 roadFieldParams, float4 roadFieldWidth, float4 roadFieldColor) {
     float2 uvc = clamp(uvIn, 0.0, 1.0);
     float2 g = float2(geomA.x, geomA.y) + uvc.x * float2(geomA.z, geomA.w) +
                uvc.y * geomB;
@@ -131,13 +150,18 @@ static float4 eePageStoreCompose(
     base.a = max(base.a, page.a);
     if (roadFieldParams.x > 0.5 && e.a > 0.6) {
         float fieldV = roadField.sample(pageSampler, sampleUv, uint(layer)).r;
-        float2 tPx = dfdx(g) * roadFieldParams.z / span.x;
-        float2 tPy = dfdy(g) * roadFieldParams.z / span.x;
-        float texPerPx = max(
-            sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))), 1e-4);
+        float2 tPx = dfdx(g) * roadFieldParams.z;
+        float2 tPy = dfdy(g) * roadFieldParams.z;
+        float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))), 1e-6);
+        float texPerPx = max(rms / span.x, 1e-4);
         float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
+        float zoomLocal = cellZoom - log2(rms);
+        float t = clamp((zoomLocal - roadFieldWidth.x) /
+                            max(roadFieldWidth.z - roadFieldWidth.x, 1e-3),
+                        0.0, 1.0);
         float texelPx = 1.0 / texPerPx;
-        float wEff = max(roadFieldParams.y, 0.6 * texelPx);
+        float wEff = max(mix(roadFieldWidth.y, roadFieldWidth.w, t),
+                         0.6 * texelPx);
         float aa = max(0.5, 0.35 * texelPx);
         float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
                         e.a * float4(roadFieldColor).w;

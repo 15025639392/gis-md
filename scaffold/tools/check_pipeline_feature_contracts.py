@@ -79,6 +79,8 @@ def check_feature_plumbing(page_store, batcher, uniform_h):
          "rec.pageAux[0]"),  # 场 enable 经批级 uniform 承接(见下一条)
         ('EE_GLTF_ENTRY("u_roadFieldColor"', "roadFieldColor = config_",
          None),
+        ('EE_GLTF_ENTRY("u_roadFieldWidth"', "roadFieldWidth = config_",
+         None),
         ('EE_GLTF_ENTRY("u_pageGeomA"', "pageGeomA = {ind.geomAffine[0]",
          "m.terrainPageGeomAffine[0]"),
         ('EE_GLTF_ENTRY("u_pageGeomB"', "pageGeomB = {ind.geomAffine[4]",
@@ -98,9 +100,12 @@ def check_feature_plumbing(page_store, batcher, uniform_h):
     require(batcher,
             "batch.gltfUniforms.roadFieldColor = first.gltfUniforms.roadFieldColor",
             "TerrainInstanceBatcher.cpp", "批命令漏拷场线色(9043e20fe 回归)")
+    require(batcher,
+            "batch.gltfUniforms.roadFieldWidth = first.gltfUniforms.roadFieldWidth",
+            "TerrainInstanceBatcher.cpp", "批命令漏拷场宽度 ramp(9043e20fe 同型)")
 
 
-def check_phase_packing(page_store, batcher, renderer):
+def check_phase_packing(page_store, batcher, batcher_h, renderer):
     # C 相位打包口径:CPU 打包(8/512)↔ shader/batcher 解包(8/512)
     require(page_store, "8.0f * static_cast<float>(phaseX)",
             "TerrainPageStore.cpp", "params.w 相位打包(×8)丢失")
@@ -114,6 +119,17 @@ def check_phase_packing(page_store, batcher, renderer):
     n = renderer.count("psPack / 8.0") + renderer.count("psPack / 8.0f")
     if n < 2:
         fail(f"[Renderer.cpp] shader 相位解包(÷8)只剩 {n} 处,应 ≥2(GLSL+MSL)")
+    # C2 pageCellDesc 打包口径(cellsX +128·cellsY +16384·texSet +131072·zoom):
+    # 打包端(batcher)↔ 实例化 shader 解包端(GLES+MSL)。texSet 解包必须
+    # fmod 8 —— 不 fmod 会把 zoom 位吞进 texSet(psSet>0.5 恒真,UV 集错选)。
+    require(batcher_h, "131072.0f * static_cast<float>(cellZoom)",
+            "TerrainInstanceBatcher.h", "pageCellDesc 的 cellZoom 打包(×131072)丢失")
+    n = renderer.count("floor(packed / 16384.0), 8.0)")
+    if n != 2:
+        fail(f"[Renderer.cpp] pageCellDesc texSet 解包(fmod 8)应恰 2 处"
+             f"(GLES+MSL instanced),实为 {n}")
+    require(renderer, "floor(packed / 131072.0)", "Renderer.cpp",
+            "GLES instanced 的 cellZoom 解包(÷131072)丢失")
 
 
 def msl_struct_fields(renderer, start_needle):
@@ -178,11 +194,12 @@ def main():
     sampling_h = read(f"{src}/earth_engine/renderer/PageStoreSamplingGLSL.h")
     page_store = read(f"{src}/earth_engine/renderer/TerrainPageStore.cpp")
     batcher = read(f"{src}/earth_engine/renderer/TerrainInstanceBatcher.cpp")
+    batcher_h = read(f"{src}/earth_engine/renderer/TerrainInstanceBatcher.h")
     uniform_h = read(f"{src}/earth_engine/renderer/GltfUniformBlock.h")
 
     check_single_source(renderer, sampling_h)
     check_feature_plumbing(page_store, batcher, uniform_h)
-    check_phase_packing(page_store, batcher, renderer)
+    check_phase_packing(page_store, batcher, batcher_h, renderer)
     check_msl_mirrors(renderer, uniform_h)
 
     if FAILURES:

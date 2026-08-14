@@ -86,31 +86,18 @@ VectorRasterStyle makeMvtRoadFieldStyle() {
         StyleFilter::zoomCompare(C::GreaterEqual, 15),
     });
 
-    // 线宽单位=场纹素 ≈ 设备像素(页按屏幕误差选 zoom)。分档沿几何通路
-    // 退役前的 0.75/1.25/2.5 CSS px × dpr;TODO 同旧注释:dpr 应取自
-    // Android density,现按测试机 3.5 固定。
-    constexpr double kDevicePixelRatio = 3.5;
-    auto roadsAtZoom = [&](StyleFilter::Ptr zoomRange, double cssPixels) {
-        VectorRasterLayerPaint roads;
-        roads.layer = "roads";
-        roads.filter = StyleFilter::all({zoomRange, grading});
-        // lineColor 只用作"该层参与场烘焙"的开关(alpha>0)+ 宽度载体;
-        // 真实线色走 FS uniform(kMvtRoadFieldColor)。
-        roads.lineColor = {255, 255, 255, 255};
-        roads.lineWidthPixels = cssPixels * kDevicePixelRatio;
-        return roads;
-    };
+    // 宽度不再由样式档位承载(场编码只有中心线距离):线宽走 FS 分级
+    // ramp(kMvtRoadFieldWidthRampPx,局部 zoom 连续插值,旧三档台阶的
+    // 连续化)。本样式只剩「哪些路在哪个 zoom 参与烘焙」的 filter 职责。
+    VectorRasterLayerPaint roads;
+    roads.layer = "roads";
+    roads.filter = grading;
+    // lineColor 只用作"该层参与场烘焙"的开关(alpha>0);真实线色走
+    // FS uniform(kMvtRoadFieldColor)。
+    roads.lineColor = {255, 255, 255, 255};
 
     VectorRasterStyle style;
-    // 2026-08-14:0.75/1.25/2.5 → 0.6/1.0/1.8(整体 -25~30%,用户观感
-    // 「太粗」;SDF 解析 AA 下线宽只是 smoothstep 阈值,改档零成本)。
-    style.layers = {
-        roadsAtZoom(StyleFilter::zoomCompare(C::Less, 11), 0.6),
-        roadsAtZoom(StyleFilter::all({
-                        StyleFilter::zoomCompare(C::GreaterEqual, 11),
-                        StyleFilter::zoomCompare(C::Less, 13)}),
-                    1.0),
-        roadsAtZoom(StyleFilter::zoomCompare(C::GreaterEqual, 13), 1.8)};
+    style.layers = {roads};
     return style;
 }
 

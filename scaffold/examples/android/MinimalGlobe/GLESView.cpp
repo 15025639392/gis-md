@@ -484,7 +484,8 @@ static bool createEngine() {
                             std::function<void(std::vector<uint8_t>)> cb) {
                     roadField->requestField(pageKey, token, std::move(cb));
                 },
-                minimal_globe_demo::kMvtRoadFieldColor);
+                minimal_globe_demo::kMvtRoadFieldColor,
+                minimal_globe_demo::kMvtRoadFieldWidthRampPx);
             LOGI("VectorRoadField SDF source installed (data z%d, gcj=%d)",
                  minimal_globe_demo::kMvtBasemapMaxZoom,
                  minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);

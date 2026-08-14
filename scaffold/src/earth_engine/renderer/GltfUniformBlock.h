@@ -179,12 +179,16 @@ struct alignas(16) GltfUniformBlock {
 
     // 刀2 路网 SDF 场解算(页存储"第二平面",与 pageStore 同一次间接查找):
     //   x = enable(>0.5 采样场并 mix 线色;无场瓦片恒 0 → 零回归)
-    //   y = 线半宽(设备px;FS 像素解算的阈值)
+    //   y = cellZoom(cell 网格 zoom,FS 分级宽度的局部 zoom 基准;合批
+    //       实例流另打包进 pageCellDesc 逐实例带,见 batcher)
     //   z = 场纹理边长(texel) w = 编码带宽(texel,=kLineFieldBandTexels)
     // 仅 TerrainPageStore::applyToTerrainCommand 写;非地形命令恒 0。
     std::array<float, 4> roadFieldParams{0.0f, 0.0f, 0.0f, 0.0f};
     // 线色(RGBA 非预乘):FS smoothstep 解算覆盖率后 mix 进底色。
     std::array<float, 4> roadFieldColor{0.96f, 0.96f, 0.94f, 0.86f};
+    // 宽度 ramp (z0, halfPx0, z1, halfPx1):FS 在局部 zoom 上线性插值出
+    // 线半宽(设备px),两端 clamp —— 分级宽度的样式载体(替代烘死三档)。
+    std::array<float, 4> roadFieldWidth{12.0f, 1.05f, 16.0f, 3.15f};
     // [瓦界对齐] 几何 UV→源格逐瓦仿射(位移模板地形 FS 专用;见
     // TerrainPageStore::TileIndir::geomAffine)。位移路径的 psUv 是共享模板的
     // **几何** UV,不能走按 details 逐顶点 texcoord 标定的 pageStoreUv
@@ -241,7 +245,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 97> table = {{
+    static const std::array<GltfUniformTableEntry, 98> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -329,6 +333,7 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_pageStoreUv", pageStoreUv, 4),
         EE_GLTF_ENTRY("u_roadFieldParams", roadFieldParams, 4),
         EE_GLTF_ENTRY("u_roadFieldColor", roadFieldColor, 4),
+        EE_GLTF_ENTRY("u_roadFieldWidth", roadFieldWidth, 4),
         EE_GLTF_ENTRY("u_pageGeomA", pageGeomA, 4),
         EE_GLTF_ENTRY("u_pageGeomB", pageGeomB, 4),
         EE_GLTF_ENTRY("u_heightDisplace", heightDisplace, 4),

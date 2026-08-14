@@ -225,6 +225,7 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 uniform highp sampler2DArray u_roadField;
 uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
+uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
 uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
 
@@ -504,7 +505,8 @@ void main() {
         base = eePageStoreCompose(
             base, psUv, vec4(u_pageStoreUv.xy, u_pageStoreUv.z, 0.0),
             vec2(0.0, u_pageStoreUv.w), psPhase, cells,
-            int(u_terrainLayers.y + 0.5), u_roadFieldParams, u_roadFieldColor);
+            int(u_terrainLayers.y + 0.5), u_roadFieldParams.y,
+            u_roadFieldParams, u_roadFieldWidth, u_roadFieldColor);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     // B2 刀2:HDR 下把 sRGB 反照率解到线性(glTF PBR 本为线性设计),BRDF 随之在
@@ -1056,6 +1058,7 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 uniform highp sampler2DArray u_roadField;
 uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
+uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
 uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
 
@@ -1238,7 +1241,8 @@ void main() {
         // u_pageStoreUv——GCJ 下差出瓦包围矩形翘曲,瓦界错缝 ~30m。
         base = eePageStoreCompose(
             base, psUv, u_pageGeomA, u_pageGeomB.xy, psPhase, cells,
-            int(u_terrainLayers.y + 0.5), u_roadFieldParams, u_roadFieldColor);
+            int(u_terrainLayers.y + 0.5), u_roadFieldParams.y,
+            u_roadFieldParams, u_roadFieldWidth, u_roadFieldColor);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
@@ -1457,6 +1461,7 @@ uniform highp sampler2DArray u_heightTexture;
 uniform highp sampler2DArray u_roadField;
 uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
+uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
 uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
 
@@ -1537,7 +1542,8 @@ void main() {
     float packed = v_pageParams.x;
     vec2 cells = max(vec2(mod(packed, 128.0),
                           mod(floor(packed / 128.0), 128.0)), vec2(1.0));
-    float psSet = floor(packed / 16384.0);
+    float psSet = mod(floor(packed / 16384.0), 8.0);
+    float psCellZoom = floor(packed / 131072.0);
     int indirLayer = int(v_pageParams.y + 0.5);
     // 实例化地形顶点只带 texcoord01 两套;set 0 是地形 scheme 的投影,GCJ 的
     // UV 烘在 set 1。硬编码 set 0 = 该特性静默失效。
@@ -1554,7 +1560,8 @@ void main() {
     // dU=pageUv.zw,dV=pageAux.zw;相位=pageAux.xy)。
     base = eePageStoreCompose(
         base, psUv, v_pageUv, v_pageAux.zw, v_pageAux.xy, cells,
-        int(v_pageParams.y + 0.5), u_roadFieldParams, u_roadFieldColor);
+        int(v_pageParams.y + 0.5), psCellZoom,
+        u_roadFieldParams, u_roadFieldWidth, u_roadFieldColor);
 
     // GE 式半球光照(与 terrainShader 共用 TerrainSurfaceLightGLSL.h 的单一
     // 函数;由 withTerrainLight() 注入)。
@@ -2607,6 +2614,7 @@ struct GltfUniforms {
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
     packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=线半宽(设备px) z=边长 w=带宽
     packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
+    packed_float4 roadFieldWidth;  // 宽度 ramp (z0,halfPx0,z1,halfPx1)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
     packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留
 };
@@ -2951,7 +2959,8 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             base, psUv,
             float4(u.pageStoreUv.x, u.pageStoreUv.y, u.pageStoreUv.z, 0.0),
             float2(0.0, u.pageStoreUv.w), psPhase, cells,
-            int(u.terrainLayers.y + 0.5), float4(u.roadFieldParams),
+            int(u.terrainLayers.y + 0.5), float(u.roadFieldParams[1]),
+            float4(u.roadFieldParams), float4(u.roadFieldWidth),
             float4(u.roadFieldColor));
     }
     base = gltfApplyWaterMask(
@@ -3412,6 +3421,7 @@ struct GltfUniforms {
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
     packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=线半宽(设备px) z=边长 w=带宽
     packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
+    packed_float4 roadFieldWidth;  // 宽度 ramp (z0,halfPx0,z1,halfPx1)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
     packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留
 };
@@ -3572,7 +3582,8 @@ fragment float4 terrainFragment(
             u_pageStore, u_pageStoreIndir, u_roadField, u_terrainSampler,
             base, psUv, float4(u.pageGeomA),
             float2(u.pageGeomB.x, u.pageGeomB.y), psPhase, cells,
-            int(u.terrainLayers.y + 0.5), float4(u.roadFieldParams),
+            int(u.terrainLayers.y + 0.5), float(u.roadFieldParams[1]),
+            float4(u.roadFieldParams), float4(u.roadFieldWidth),
             float4(u.roadFieldColor));
     }
     base = terrainApplyWaterMask(
@@ -3815,7 +3826,7 @@ fragment float4 terrainInstancedFragment(
     float2 cells = max(float2(fmod(packed, 128.0),
                               fmod(floor(packed / 128.0), 128.0)),
                        float2(1.0));
-    float psSet = floor(packed / 16384.0);
+    float psSet = fmod(floor(packed / 16384.0), 8.0);
     uint indirLayer = uint(in.pageParams.y + 0.5);
     float2 psUv = psSet > 0.5 ? in.texcoord01.zw : in.texcoord01.xy;
     // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
@@ -3827,7 +3838,7 @@ fragment float4 terrainInstancedFragment(
         u_pageStore, u_pageStoreIndir, u_roadField, u_pageSampler, base, psUv,
         float4(in.pageUv), float2(in.pageAux.z, in.pageAux.w),
         float2(in.pageAux.x, in.pageAux.y), cells, int(indirLayer),
-        float4(0.0), float4(0.0));
+        0.0, float4(0.0), float4(0.0), float4(0.0));
 
     // GE 式半球光照(与 GLSL 侧共用 TerrainSurfaceLightGLSL.h 的单一函数;由
     // withTerrainLight() 注入 kTerrainLightMSL)。

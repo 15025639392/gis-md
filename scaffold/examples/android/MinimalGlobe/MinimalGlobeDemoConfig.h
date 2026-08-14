@@ -90,6 +90,12 @@ VectorRasterStyle makeMvtRoadFieldStyle();
 /// (0.95,0.95,0.90,0.85),交接观感不变。
 constexpr std::array<float, 4> kMvtRoadFieldColor{0.95f, 0.95f, 0.90f,
                                                   0.85f};
+// 路网场分级宽度 ramp (z0, halfPx0, z1, halfPx1):FS 在局部 zoom 上线性
+// 插值线半宽(设备px),两端 clamp。宽度=0.6→1.8 CSS px × dpr 3.5 ÷ 2。
+// zoom 基准=影像页 zoom(比地图直觉 zoom 高 ~2-3 档,30km 俯瞰全屏约
+// 13→17,见 PageStoreSamplingGLSL.h),停点 12→16 让分级落在可见区间。
+constexpr std::array<float, 4> kMvtRoadFieldWidthRampPx{12.0f, 1.05f,
+                                                        16.0f, 3.15f};
 constexpr const char* kMvtBasemapUrlTemplate =
     "http://127.0.0.1:8092/{z}/{x}/{y}.pbf";
 constexpr int kMvtBasemapMinZoom = 0;
