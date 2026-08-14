@@ -1546,6 +1546,22 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
                              labelIndices, labelEntries);
     }
     if (labelIndices.empty()) return;
+    // [V24 文字硬闪根修] 新桶顶点 opacity 初始 0,而回写只在 300ms 节流的
+    // placement 或"有 fade 在推进"时发生 —— 稳态手势期换桶(瓦片 LOD 微跨
+    // 级的原子换手)落在两个时机之间,同名标签(crossTileID 连续、fade 早已
+    // 收敛在 1)黑到下一个节流窗才被一次性写亮 = 硬闪、只打文字(图标无
+    // opacity)。建 buffer 前直接烘入 placement 当前 opacity:老 id 同帧
+    // 恢复原亮度,新 id 仍从 0 按既有 fade-in 走,且省一次回写上传。
+    for (LabelEntry& e : labelEntries) {
+        const float op = labelPlacement_.opacity(e.featureId);
+        if (op != 0.0f) {
+            for (size_t i = e.vertexFloatStart + 5;
+                 i < e.vertexFloatStart + e.vertexFloatCount; i += 8) {
+                labelVerts[i] = op;
+            }
+        }
+        e.appliedOpacity = op;
+    }
     auto vb = makeBuffer(renderDevice_, labelVerts.data(),
                          labelVerts.size() * sizeof(float),
                          BufferDesc::Type::Vertex);
