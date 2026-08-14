@@ -9,6 +9,7 @@
 #include "../scene/FrameState.h"
 #include "../scene/Camera.h"
 #include "../core/geodesy/Ellipsoid.h"
+#include "../debug/PerfTimer.h"
 #include "../core/math/Mat4.h"
 #include "../core/math/Ray.h"
 #include "../debug/PlatformLog.h"
@@ -1754,6 +1755,25 @@ std::vector<BucketKey> FeatureRenderLayer::visibleBucketKeys(
 void FeatureRenderLayer::updateLabelPlacement(
     const FrameState& frameState,
     const std::vector<BucketKey>& visibleKeys) {
+    // 符号刀D:碰撞判定节流 ~300ms(maplibre stillRecent 同款)——贵的
+    // 是全量锚点投影 + 网格碰撞,而结果(谁显谁隐)在亚秒尺度本就稳定;
+    // 渐变收敛必须逐帧平滑,节流间隙走 advanceFades + apply 回写。
+    // 提权要素变更(编辑联动)即时重跑,交互不等节流窗。
+    placementCooldownSeconds_ -= frameState.deltaSeconds;
+    const bool priorityChanged =
+        labelPlacement_.priorityFeature() != lastPlacementPriority_;
+    const bool runFull = placementCooldownSeconds_ <= 0.0 || priorityChanged;
+    if (!runFull) {
+        if (labelPlacement_.advanceFades(frameState.deltaSeconds)) {
+            applyLabelOpacity(visibleKeys);
+        }
+        return;
+    }
+    constexpr double kPlacementIntervalSeconds = 0.3;
+    placementCooldownSeconds_ = kPlacementIntervalSeconds;
+    lastPlacementPriority_ = labelPlacement_.priorityFeature();
+    const double placeStartMs = perf::nowMs();
+
     // collect:可见桶 + 预览的 LabelEntry → 候选。视野外桶不进候选:
     // 它们的 fade 状态由 placement 状态机按"消失要素"清扫,重入视野按
     // 新候选淡入;其顶点 opacity 停留旧值无妨——桶本身不出命令。
@@ -1793,7 +1813,22 @@ void FeatureRenderLayer::updateLabelPlacement(
     // 候选为空也要跑:fade 状态机清扫已消失要素。
     labelPlacement_.update(in, candidates);
 
-    // commit 回写:每帧按 appliedOpacity vs 当前值的偏差同步,**不依赖
+    // 容量哨兵:单次全量 placement 超 4ms = 候选规模逼近"单帧一口气跑"
+    // 的边界,该上 maplibre 式时间片增量(getBucketParts/可暂停推进)了。
+    // 节流下 4ms 尖刺每 300ms 一次尚可接受,先报数再决定。
+    const double placeMs = perf::nowMs() - placeStartMs;
+    if (placeMs > 4.0) {
+        platformLog(LogLevel::Warning, "TileSymbol",
+                    "placement 全量 %.2fms cand=%zu(超 4ms,考虑时间片增量)",
+                    placeMs, candidates.size());
+    }
+
+    applyLabelOpacity(visibleKeys);
+}
+
+void FeatureRenderLayer::applyLabelOpacity(
+    const std::vector<BucketKey>& visibleKeys) {
+    // commit 回写:按 appliedOpacity vs 当前值的偏差同步,**不依赖
     // update() 的变化位** —— 桶重镶(贴地 revision/字体翻转/编辑)会把顶点
     // 流 opacity 重置 0,而 fade 状态可能早已收敛"无变化",若以变化位做
     // 早退,重镶后的桶永远不再回写(真机曾表现为标签 10s 后集体隐形)。

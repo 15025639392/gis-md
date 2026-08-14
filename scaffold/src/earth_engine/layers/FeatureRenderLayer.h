@@ -614,6 +614,10 @@ private:
     /// 反经线跨界拆两段查询。返回按 key 排序去重。
     std::vector<BucketKey> visibleBucketKeys(
         const FrameState& frameState) const;
+    /// fade 后 opacity 回写顶点流(可见 store 桶 + 全部瓦片桶 + 预览)。
+    /// 全量 placement 帧与节流间隙的 advanceFades 帧共用。
+    void applyLabelOpacity(const std::vector<BucketKey>& visibleKeys);
+
     void updateLabelPlacement(const FrameState& frameState,
                               const std::vector<BucketKey>& visibleKeys);
 
@@ -681,6 +685,11 @@ private:
     std::unordered_map<uint64_t, std::vector<CrossTileEntry>> crossTileIndex_;
     uint64_t nextCrossTileId_ = 1;
     size_t crossTileEntryCount_ = 0;
+
+    // ---- placement 节流(符号刀D) ----
+    /// ≤0 时下一帧跑全量 placement;初值 0 = 首帧即跑(标签不等节流窗)。
+    double placementCooldownSeconds_ = 0.0;
+    FeatureId lastPlacementPriority_ = kInvalidFeatureId;
 
     // ---- 标签避让 placement(P5c) ----
     LabelPlacement labelPlacement_;

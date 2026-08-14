@@ -581,6 +581,50 @@ TEST_F(FeatureRenderLayerTest, TileSymbolLabelsBakeAfterLateFont) {
     EXPECT_EQ(12, label->indexCount);
 }
 
+// 符号刀D:placement 碰撞判定 ~300ms 节流 —— 节流窗内新候选不触发重算
+// (stats 不变),窗到期才重跑;渐变靠 advanceFades 逐帧平滑(fade 语义
+// 由既有 FadeIsGradual 测试钉住)。
+TEST_F(FeatureRenderLayerTest, PlacementThrottledBetweenIntervals) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();  // 缓存图集指针
+
+    auto commitNamed = [&](int x, const char* name, double lonDeg) {
+        FeatureTileMesh mesh;
+        mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic(lonDeg * kDeg, 29.0 * kDeg));
+        mesh.hasOrigin = true;
+        TileSymbolCpu s;
+        s.lonRad = lonDeg * kDeg;
+        s.latRad = 29.0 * kDeg;
+        s.colorPacked = 1.0f;
+        s.name = name;
+        mesh.symbols.push_back(s);
+        layer_->commitTileMesh(
+            TileKey{SchemeId("XYZ-WebMercator"), 10, x, 200},
+            std::move(mesh));
+    };
+
+    commitNamed(100, "AB", 6.0);
+    frame_.deltaSeconds = 0.35;  // 图集缓存帧已消耗初始冷却,先越窗
+    build();
+    ASSERT_EQ(1, layer_->labelPlacementStats().candidates);
+
+    commitNamed(101, "CD", 6.3);
+    frame_.deltaSeconds = 0.016;
+    build();  // 节流窗内:新候选不触发重算
+    EXPECT_EQ(1, layer_->labelPlacementStats().candidates)
+        << "节流窗内不该重跑全量 placement";
+
+    frame_.deltaSeconds = 0.35;  // 越过 300ms 窗
+    build();
+    EXPECT_EQ(2, layer_->labelPlacementStats().candidates)
+        << "节流窗到期应重跑并纳入新候选";
+}
+
 TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
     std::vector<uint8_t> font = loadHostFont();
     if (font.empty()) GTEST_SKIP() << "no host font available";

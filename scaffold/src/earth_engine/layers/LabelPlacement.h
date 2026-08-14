@@ -71,10 +71,18 @@ public:
     void setPriorityFeature(FeatureId id) { priorityFeature_ = id; }
     FeatureId priorityFeature() const { return priorityFeature_; }
 
-    /// 每帧 place+commit。返回 true = 任一标签 opacity 有变化
-    /// (调用方据此决定是否回写顶点流重传)。
+    /// 全量 place+commit(投影→剔除→碰撞→定 target + fade 步进)。
+    /// 返回 true = 任一标签 opacity 有变化(调用方据此决定是否回写顶点
+    /// 流重传)。**符号刀D 起按 ~300ms 节流调用**(见调用方),两次之间
+    /// 每帧只走 advanceFades —— maplibre 同款拆分:碰撞判定贵在全量
+    /// 投影,渐变收敛必须逐帧平滑,二者节奏本就不同。
     bool update(const FrameInput& in,
                 const std::vector<LabelCandidate>& candidates);
+
+    /// 只推进 fade(current → 既有 target),不投影不碰撞不改 target、
+    /// 不清扫消失要素。节流间隙每帧调用,保 ~300ms 渐变逐帧平滑。
+    /// 返回 true = 任一 opacity 有变化。
+    bool advanceFades(double deltaSeconds);
 
     /// 当前渐变后透明度(0 = 隐藏或未知要素)。
     float opacity(FeatureId id) const;

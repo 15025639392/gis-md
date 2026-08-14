@@ -211,6 +211,23 @@ bool LabelPlacement::update(const FrameInput& in,
     return changed;
 }
 
+bool LabelPlacement::advanceFades(double deltaSeconds) {
+    bool changed = false;
+    const float step = kFadeSeconds > 0.0
+        ? static_cast<float>(deltaSeconds / kFadeSeconds)
+        : 1.0f;
+    for (auto& [id, fade] : fades_) {
+        if (fade.current == fade.target) continue;
+        const float delta = fade.target - fade.current;
+        const float move = std::min(std::abs(delta), step);
+        if (move > 0.0f) {
+            fade.current += delta > 0.0f ? move : -move;
+            changed = true;
+        }
+    }
+    return changed;
+}
+
 float LabelPlacement::opacity(FeatureId id) const {
     const auto it = fades_.find(id);
     return it != fades_.end() ? it->second.current : 0.0f;
