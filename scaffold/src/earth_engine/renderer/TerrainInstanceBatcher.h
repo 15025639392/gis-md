@@ -47,10 +47,11 @@ public:
         float dispMorph[4]; // minH·fade, range·fade, morphFactor, pageCellDesc
         float clipUv[4];    // clip 窗口(x,y,w,h)
         float layers[4];    // heightLayer, indirLayer, clipEnabled, 模板 gridN
-        // 页存储 cell 定位(单位:源瓦片)。标准 overlay 恒为 (0,0,gridN,gridN),
-        // 片元表达式退化成改造前的 uv*gridN = 零回归判据。
-        float pageUv[4];    // originU, originV, spanU, spanV
-        // 祖先寻址相位(x0/y0 mod 2^kMaxDetDepthLevels)+ 2 个保留。
+        // [瓦界对齐] 几何 UV→源格仿射的前 4 系数(单位:源瓦片)。实例化片元的
+        // psUv 是共享模板几何 UV,g = c0 + u·dU + v·dV(dV 在 pageAux.zw)。
+        // 标准 overlay 下 dU=(gridN,0)、dV=(0,gridN) → 退化为旧 uv*span 语义。
+        float pageUv[4];    // c0.x, c0.y, dU.x, dU.y
+        // 祖先寻址相位(x0/y0 mod 2^kMaxDetDepthLevels)+ zw=几何仿射 dV。
         // 单独占一个 vec4 而不是继续往 dispMorph[3] 里挤:那个 float 已经装了
         // cellsX+128·cellsY+16384·texSet(上限 122944),再乘 131072 进相位会越过
         // float32 的精确整数上限 2^24,静默丢位 —— 而丢位的表现是屏幕块状错乱,

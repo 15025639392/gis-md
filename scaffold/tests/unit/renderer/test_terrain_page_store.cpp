@@ -840,3 +840,51 @@ TEST(TerrainPageStoreInFlight, FrameCounterResetIsTreatedAsProgress) {
     // surface 重建把 frameId_ 归零。保守侧:当作刚有进度,宁可多画一帧。
     EXPECT_TRUE(TerrainPageStore::pageCountsAsInFlight(false, 0, 5000));
 }
+
+// ===== [瓦界对齐] computeGeomAffine:几何 UV → 源格逐瓦仿射 =====
+// 背景:instanced 管线的 psUv 是共享模板几何 UV,GCJ 下喂给 details-UV 标定的
+// origin/span 会差出瓦包围矩形翘曲量(真机瓦界错缝 ~30m,肇事瓦对
+// 12/3259/1694↔1695 实测重叠 29.6m)。仿射四角逐点投影,共享角点保证瓦界连续。
+
+// 标准投影:mercator 均匀网格下仿射精确退化为轴对齐 (base 差, 2^dz)。
+TEST(TerrainPageStoreGeomAffine, StandardProjectionDegeneratesToAxisAligned) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const int z = 12, x = 3259, y = 1695, sourceZoom = 17;
+    const int gridN = 1 << (sourceZoom - z);
+    float a[6];
+    TerrainPageStore::computeGeomAffine(
+        *scheme, RasterOverlayProjection::WebMercator,
+        TileKey{scheme->id(), z, x, y}, sourceZoom,
+        x * gridN, y * gridN, a);
+    EXPECT_NEAR(a[0], 0.0f, 1e-3f) << "c0.x";
+    EXPECT_NEAR(a[1], 0.0f, 1e-3f) << "c0.y";
+    EXPECT_NEAR(a[2], static_cast<float>(gridN), 1e-3f) << "dU.x";
+    EXPECT_NEAR(a[3], 0.0f, 1e-3f) << "dU.y(标准投影无交叉项)";
+    EXPECT_NEAR(a[4], 0.0f, 1e-3f) << "dV.x";
+    EXPECT_NEAR(a[5], static_cast<float>(gridN), 1e-3f) << "dV.y";
+}
+
+// GCJ:真机肇事瓦对的共享边——B(北瓦)南缘角点 == A(南瓦)北缘角点
+// (同一地理点 → 同一投影值 → 瓦界按构造连续;这正是修错缝的判据)。
+TEST(TerrainPageStoreGeomAffine, GcjSharedEdgeCornersAgreeAcrossTiles) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    const int z = 12, x = 3259, sourceZoom = 17;
+    const int gridN = 1 << (sourceZoom - z);
+    const int baseX = x * gridN, baseY = 1694 * gridN;  // 统一基准便于比较
+    float A[6], B[6];
+    TerrainPageStore::computeGeomAffine(
+        *scheme, RasterOverlayProjection::Gcj02WebMercator,
+        TileKey{scheme->id(), z, x, 1695}, sourceZoom, baseX, baseY, A);
+    TerrainPageStore::computeGeomAffine(
+        *scheme, RasterOverlayProjection::Gcj02WebMercator,
+        TileKey{scheme->id(), z, x, 1694}, sourceZoom, baseX, baseY, B);
+    // A 的 NW 角 == B 的 SW 角(B: c0+dV);容差含被弃的扭曲项(~7e-5 cell)。
+    EXPECT_NEAR(A[0], B[0] + B[4], 1e-3f) << "共享边西端 x";
+    EXPECT_NEAR(A[1], B[1] + B[5], 1e-3f) << "共享边西端 y";
+    // A 的 NE 角(c0+dU)== B 的 SE 角(c0+dU+dV)。
+    EXPECT_NEAR(A[0] + A[2], B[0] + B[2] + B[4], 2e-3f) << "共享边东端 x";
+    EXPECT_NEAR(A[1] + A[3], B[1] + B[3] + B[5], 2e-3f) << "共享边东端 y";
+    // GCJ 交叉项非零(重庆区 ~30m/305m ≈ 0.1 cell)——证明修复真的生效,
+    // 而不是静默退化成轴对齐。
+    EXPECT_GT(std::abs(A[3]), 0.01f) << "dU.y 交叉项(沿边 GCJ-y 变化)";
+}

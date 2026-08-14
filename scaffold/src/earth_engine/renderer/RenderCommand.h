@@ -233,6 +233,13 @@ struct RenderCommand {
     // fallback 必不被采样 → 该命令可进实例化批(批 shader 丢 mappedRaster)。
     // 由 TerrainPageStore::applyToTerrainCommand 设,TerrainInstanceBatcher 读。
     bool terrainPageStoreFullyResident = false;
+    // [瓦界对齐] instanced 管线专用:几何 UV(共享模板边到边 0..1)→ 源格的逐瓦
+    // 仿射 {c0.x,c0.y,dU.x,dU.y,dV.x,dV.y}(见 TerrainPageStore::TileIndir::
+    // geomAffine)。逐瓦 shader 不消费(其 psUv 是 details 逐顶点 texcoord,走
+    // gltfUniforms.pageStoreUv 的 origin/span);TerrainInstanceBatcher 打包进
+    // 实例记录 pageUv + pageAux.zw。
+    std::array<float, 6> terrainPageGeomAffine{0.0f, 0.0f, 1.0f,
+                                               0.0f, 0.0f, 1.0f};
 
     // 地表(地形)命令的固定存储 uniform。放在定长字段里而不是 uniforms 字符串
     // 表,是为了避免每瓦片一次 unordered_map/string/vector 分配。

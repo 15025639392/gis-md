@@ -224,6 +224,8 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 uniform highp sampler2DArray u_roadField;
 uniform vec4 u_roadFieldParams;  // x=enable y=羽化半带宽(texel) z/w=保留
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
+uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
+uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
 
 out vec4 fragColor;
 
@@ -1073,6 +1075,8 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 uniform highp sampler2DArray u_roadField;
 uniform vec4 u_roadFieldParams;  // x=enable y=羽化半带宽(texel) z/w=保留
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
+uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
+uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
 
 out vec4 fragColor;
 
@@ -1247,7 +1251,11 @@ void main() {
             psUv = u_clipUV.xy + psUv * u_clipUV.zw;
         }
         vec2 cells = max(u_pageStoreParams.yz, vec2(1.0));
-        vec2 g = u_pageStoreUv.xy + clamp(psUv, 0.0, 1.0) * u_pageStoreUv.zw;
+        // [瓦界对齐] 位移路径的 psUv 是共享模板**几何** UV,须走逐瓦几何仿射
+        // (u_pageGeomA/B,与 instanced 同源),不能走 details-UV 标定的
+        // u_pageStoreUv——GCJ 下差出瓦包围矩形翘曲,瓦界错缝 ~30m。
+        vec2 uvc = clamp(psUv, 0.0, 1.0);
+        vec2 g = u_pageGeomA.xy + uvc.x * u_pageGeomA.zw + uvc.y * u_pageGeomB.xy;
         vec2 cell = clamp(floor(g), vec2(0.0), cells - vec2(1.0));
         // Step B1:经间接纹理单次 fetch 定位层(替代闭式 layerBase+…)。
         // RGBA8 解码 R+G*256(floor(x*255+0.5) 从 unorm 取回整数字节)。
@@ -1311,8 +1319,8 @@ layout(location = 6) in vec4 i_relRow2;
 layout(location = 7) in vec4 i_dispMorph;  // minH·fade, range·fade, morph, gridN
 layout(location = 8) in vec4 i_clipUv;
 layout(location = 9) in vec4 i_layers;     // heightLayer, indirLayer, clipEn, gridN
-layout(location = 10) in vec4 i_pageUv;    // 页 cell 定位:originU,V,spanU,V
-layout(location = 11) in vec4 i_pageAux;   // 祖先寻址相位:phaseX, phaseY, _, _
+layout(location = 10) in vec4 i_pageUv;    // 几何仿射:c0.xy, dU.xy(瓦界对齐)
+layout(location = 11) in vec4 i_pageAux;   // 相位 phase.xy + 几何仿射 dV.zw
 
 uniform mat4 u_modelViewProjection;  // = viewProj · frame0
 uniform highp sampler2DArray u_heightTexture;
@@ -1494,6 +1502,8 @@ uniform highp sampler2DArray u_heightTexture;
 uniform highp sampler2DArray u_roadField;
 uniform vec4 u_roadFieldParams;  // x=enable y=羽化半带宽(texel) z/w=保留
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
+uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
+uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
 
 out vec4 fragColor;
 
@@ -1584,7 +1594,12 @@ void main() {
     if (psSet > 0.5 && v_pageParams.z > 1.5) {
         psUv = v_clipUv.xy + psUv * v_clipUv.zw;
     }
-    vec2 g = v_pageUv.xy + clamp(psUv, 0.0, 1.0) * v_pageUv.zw;
+    // [瓦界对齐] psUv 是共享模板的**几何** UV(边到边 0..1),映射到源格须用逐瓦
+    // 几何仿射(c0=pageUv.xy,dU=pageUv.zw,dV=pageAux.zw;含交叉项)——GCJ 下
+    // 旧的轴对齐 origin/span 按 details-UV 标定,喂几何 UV 会差出瓦包围矩形的
+    // 翘曲量(瓦界错缝 ~30m)。相邻瓦共享角点 → 瓦界按构造连续。
+    vec2 uvc = clamp(psUv, 0.0, 1.0);
+    vec2 g = v_pageUv.xy + uvc.x * v_pageUv.zw + uvc.y * v_pageAux.zw;
     vec2 cell = clamp(floor(g), vec2(0.0), cells - vec2(1.0));
     vec4 e = texelFetch(u_pageStoreIndir, ivec3(ivec2(cell), indirLayer), 0);
     float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;
@@ -2657,6 +2672,8 @@ struct GltfUniforms {
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
     packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=羽化半带宽(texel)
     packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
+    packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
+    packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留
 };
 
 float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
@@ -3482,6 +3499,8 @@ struct GltfUniforms {
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
     packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=羽化半带宽(texel)
     packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
+    packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
+    packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留
 };
 
 // TerrainVertexOut is provided by the vertex MSL (the backend concatenates the
@@ -3634,9 +3653,11 @@ fragment float4 terrainFragment(
         }
         float2 cells = max(float2(u.pageStoreParams.y, u.pageStoreParams.z),
                            float2(1.0));
-        float2 g = float2(u.pageStoreUv.x, u.pageStoreUv.y) +
-                   clamp(psUv, 0.0, 1.0) *
-                       float2(u.pageStoreUv.z, u.pageStoreUv.w);
+        // [瓦界对齐] 位移路径几何 UV → 逐瓦仿射(镜像 GLSL 位移变体)。
+        float2 uvc2 = clamp(psUv, 0.0, 1.0);
+        float2 g = float2(u.pageGeomA.x, u.pageGeomA.y) +
+                   uvc2.x * float2(u.pageGeomA.z, u.pageGeomA.w) +
+                   uvc2.y * float2(u.pageGeomB.x, u.pageGeomB.y);
         float2 cell = clamp(floor(g), float2(0.0), cells - float2(1.0));
         // Step B1(镜像 GLSL):经间接纹理单次 fetch 定位层;RGBA8 解码 R+G*256。
         // 合批 Step 2:read() 整数寻址 array 层(texel 在左上 gridN² 区)。
@@ -3774,8 +3795,8 @@ struct TerrainInstancedVertexIn {
     float4 dispMorph  [[attribute(7)]];  // minH·fade, range·fade, morph, pageCellDesc
     float4 clipUv     [[attribute(8)]];
     float4 layers     [[attribute(9)]];  // heightLayer, indirLayer, clipEn, 模板 gridN
-    float4 pageUv     [[attribute(10)]]; // 页 cell 定位:originU,V,spanU,V
-    float4 pageAux    [[attribute(11)]]; // 祖先寻址相位:phaseX, phaseY
+    float4 pageUv     [[attribute(10)]]; // 几何仿射:c0.xy, dU.xy(瓦界对齐)
+    float4 pageAux    [[attribute(11)]]; // 相位 phase.xy + 几何仿射 dV.zw
 };
 
 struct TerrainInstancedVertexOut {
@@ -3911,8 +3932,12 @@ fragment float4 terrainInstancedFragment(
     float psSet = floor(packed / 16384.0);
     uint indirLayer = uint(in.pageParams.y + 0.5);
     float2 psUv = psSet > 0.5 ? in.texcoord01.zw : in.texcoord01.xy;
+    // [瓦界对齐] 几何 UV → 源格逐瓦仿射(镜像 GLSL 实例化变体,c0/dU/dV 语义
+    // 见 TerrainInstanceBatcher::InstanceRecord 注释)。
+    float2 uvc = clamp(psUv, 0.0, 1.0);
     float2 g = float2(in.pageUv.x, in.pageUv.y) +
-               clamp(psUv, 0.0, 1.0) * float2(in.pageUv.z, in.pageUv.w);
+               uvc.x * float2(in.pageUv.z, in.pageUv.w) +
+               uvc.y * float2(in.pageAux.z, in.pageAux.w);
     float2 cell = clamp(floor(g), float2(0.0), cells - float2(1.0));
     float4 e = u_pageStoreIndir.read(uint2(cell), indirLayer, 0);
     float layer = floor(e.r * 255.0 + 0.5) + floor(e.g * 255.0 + 0.5) * 256.0;

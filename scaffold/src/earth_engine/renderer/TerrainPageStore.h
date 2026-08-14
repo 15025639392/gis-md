@@ -255,6 +255,20 @@ public:
         int sourceZoom,
         int gridN);
 
+    /// [瓦界对齐] 求瓦片**几何** UV(scheme 矩形边到边 0..1,NW 原点)到源格
+    /// 连续坐标的仿射(见 TileIndir::geomAffine 注释)。角点经
+    /// projectWorldPositionForRasterOverlay 逐点投影——与逐顶点 texcoord 生成
+    /// 同一投影入口,单一事实源。out = {c0.x,c0.y,dU.x,dU.y,dV.x,dV.y},
+    /// 相对 (baseX, baseY)。
+    static void computeGeomAffine(
+        const TileScheme& scheme,
+        RasterOverlayProjection projection,
+        const TileKey& key,
+        int sourceZoom,
+        int baseX,
+        int baseY,
+        float out[6]);
+
     /// 对本帧可见瓦片跑门② determination + 插桩(见类顶注释)。overlay 为空 /
     /// provider 为空 / 无可见瓦片 → no-op。在 Engine tick() 之前、每帧调一次。
     ///
@@ -440,6 +454,15 @@ private:
         int texCoordSet = 0;
         bool fullyResident = false;  // 全 cell 高清页驻留 = 合批资格(丢 mappedRaster)
         uint64_t lastFrame = 0;  // determination 里 touch;sweep 清非本帧可见瓦片
+        // [瓦界对齐] 几何 UV → 源格的逐瓦仿射 {c0.x,c0.y,dU.x,dU.y,dV.x,dV.y}
+        // (单位=源瓦片,相对 placement.x0/y0;c0=NW 角)。instanced 管线的 psUv
+        // 是共享模板的**几何** UV(边到边 0..1),不能喂给按「details 逐顶点
+        // texcoord」标定的 origin/span——GCJ 下二者差出该瓦包围矩形的翘曲量,
+        // 表现为瓦界影像/矢量错缝(实测 ~30m)。改为四角逐点投影拟合仿射(交叉
+        // 项保留,扭曲项 ~2cm 可弃):相邻瓦共享角点值相同 → 瓦界按构造连续;
+        // 残差=瓦内二阶弯曲(~2m,亚纹素级)。标准投影下 dU/dV 轴对齐,逐片元
+        // 表达式与旧 origin/span 等价。逐瓦(非合批)管线不消费此仿射。
+        float geomAffine[6] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
     };
 
     static uint64_t packKey(const TileKey& key);

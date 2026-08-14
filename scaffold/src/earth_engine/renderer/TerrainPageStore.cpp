@@ -9,6 +9,8 @@
 
 #include "../core/async/AsyncSystem.h"
 #include "../core/geodesy/Gcj02CoordinateTransform.h"
+#include "../core/geodesy/WebMercatorProjection.h"
+#include "../tiling/RasterOverlayProjection.h"
 #include "../core/math/OrientedBoundingBox.h"
 #include "../debug/Contracts.h"
 #include "../debug/PerfTimer.h"
@@ -499,6 +501,48 @@ TerrainPageStore::placeTileInSourceGrid(
     return placement;
 }
 
+void TerrainPageStore::computeGeomAffine(const TileScheme& scheme,
+                                         RasterOverlayProjection projection,
+                                         const TileKey& key,
+                                         int sourceZoom,
+                                         int baseX,
+                                         int baseY,
+                                         float out[6]) {
+    // 源格在 overlay 采样空间(mercator)均匀分布(placeTileInSourceGrid 的
+    // range 映射即按此),故连续格坐标 = 全幅 mercator 线性。角点经
+    // projectWorldPositionForRasterOverlay 投影 —— 与逐顶点 texcoord 同入口,
+    // GCJ 逐点 fromWgs84,不做整瓦近似。
+    const Rectangle full =
+        WebMercatorProjection::computeMaximumProjectedRectangle(
+            Ellipsoid::WGS84());
+    const double tilesX =
+        static_cast<double>(std::max(1, scheme.tileCountX(sourceZoom)));
+    const double tilesY =
+        static_cast<double>(std::max(1, scheme.tileCountY(sourceZoom)));
+    const Rectangle rect = scheme.tileToRectangle(key);
+    const double fullWidth = full.width();
+    const double fullHeight = full.computeHeight();
+    const auto grid = [&](double lng, double lat, double& gx, double& gy) {
+        const Vec3 m = projectWorldPositionForRasterOverlay(
+            Cartographic::fromRadians(lng, lat), projection);
+        gx = (m.x() - full.west()) / fullWidth * tilesX -
+             static_cast<double>(baseX);
+        gy = (full.north() - m.y()) / fullHeight * tilesY -
+             static_cast<double>(baseY);  // NW 约定:y 随南增
+    };
+    double nwX = 0.0, nwY = 0.0, neX = 0.0, neY = 0.0, swX = 0.0, swY = 0.0;
+    grid(rect.west(), rect.north(), nwX, nwY);
+    grid(rect.east(), rect.north(), neX, neY);
+    grid(rect.west(), rect.south(), swX, swY);
+    // 扭曲项(第 4 角独立度)~2cm,弃;交叉项保留(沿边线性变化 ~30m 是主项)。
+    out[0] = static_cast<float>(nwX);
+    out[1] = static_cast<float>(nwY);
+    out[2] = static_cast<float>(neX - nwX);
+    out[3] = static_cast<float>(neY - nwY);
+    out[4] = static_cast<float>(swX - nwX);
+    out[5] = static_cast<float>(swY - nwY);
+}
+
 void TerrainPageStore::enumerateSubtileKeys(const TileKey& tileKey,
                                             int sourceZoom,
                                             std::vector<TileKey>& out) {
@@ -959,6 +1003,11 @@ void TerrainPageStore::updateVisiblePages(
         ind.gridN = p.gridN;
         ind.placement = p.placement;
         ind.texCoordSet = p.texCoordSet;
+        // [瓦界对齐] instanced 管线的几何 UV→源格仿射(每帧重算:zoom/placement
+        // 随相机变,3 次角点投影/瓦 ≈ 微秒级,缓存守卫不值得引入失效面)。
+        computeGeomAffine(scheme, provider->getProjection(), p.tile->key,
+                          p.zoom, p.placement.x0, p.placement.y0,
+                          ind.geomAffine);
         // 全 cell 驻留(含被 frustum/SSE 剔除的 cell 未 kept → 不计 → 达不到
         // gridN²,该瓦片留逐 draw = 保守但安全,决不丢影像)= 合批资格。
         // 合批资格 = 「**所有会产生片元的 cell 都有页**」。
@@ -1217,6 +1266,14 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
         static_cast<float>(ind.placement.spanV)};
     cmd.gltfUniforms.terrainLayers[1] = static_cast<float>(ind.layer);
     cmd.terrainPageStoreFullyResident = ind.fullyResident;
+    // [瓦界对齐] 几何 UV→源格仿射:batcher(实例记录)与逐瓦位移地形 FS
+    // (u_pageGeomA/B)共用同一套 → 合批态翻转零视觉差。真实网格 glTF FS 不消费。
+    std::copy(ind.geomAffine, ind.geomAffine + 6,
+              cmd.terrainPageGeomAffine.begin());
+    cmd.gltfUniforms.pageGeomA = {ind.geomAffine[0], ind.geomAffine[1],
+                                  ind.geomAffine[2], ind.geomAffine[3]};
+    cmd.gltfUniforms.pageGeomB = {ind.geomAffine[4], ind.geomAffine[5], 0.0f,
+                                  0.0f};
 
     // 刀2 场"第二平面":与影像页同一次间接查找(同 layer/sampleUv/祖先
     // scale-bias),FS 只多一次采样 + smoothstep。占位清场保证层复用时旧

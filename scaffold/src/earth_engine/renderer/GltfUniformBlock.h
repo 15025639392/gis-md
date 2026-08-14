@@ -185,6 +185,14 @@ struct alignas(16) GltfUniformBlock {
     std::array<float, 4> roadFieldParams{0.0f, 4.0f, 0.0f, 0.0f};
     // 线色(RGBA 非预乘):FS smoothstep 解算覆盖率后 mix 进底色。
     std::array<float, 4> roadFieldColor{0.96f, 0.96f, 0.94f, 0.86f};
+    // [瓦界对齐] 几何 UV→源格逐瓦仿射(位移模板地形 FS 专用;见
+    // TerrainPageStore::TileIndir::geomAffine)。位移路径的 psUv 是共享模板的
+    // **几何** UV,不能走按 details 逐顶点 texcoord 标定的 pageStoreUv
+    // origin/span(GCJ 下瓦界错缝 ~30m);与 instanced 路径同一套仿射 →
+    // 合批态翻转零视觉差。A=(c0.x,c0.y,dU.x,dU.y) B=(dV.x,dV.y,保留,保留)。
+    // 真实网格 glTF 地形 FS 不消费(其 psUv 是逐顶点精确 texcoord)。
+    std::array<float, 4> pageGeomA{0.0f, 0.0f, 1.0f, 0.0f};
+    std::array<float, 4> pageGeomB{0.0f, 1.0f, 0.0f, 0.0f};
 };
 
 static_assert(alignof(GltfUniformBlock) == 16,
@@ -233,7 +241,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 95> table = {{
+    static const std::array<GltfUniformTableEntry, 97> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -321,6 +329,8 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_pageStoreUv", pageStoreUv, 4),
         EE_GLTF_ENTRY("u_roadFieldParams", roadFieldParams, 4),
         EE_GLTF_ENTRY("u_roadFieldColor", roadFieldColor, 4),
+        EE_GLTF_ENTRY("u_pageGeomA", pageGeomA, 4),
+        EE_GLTF_ENTRY("u_pageGeomB", pageGeomB, 4),
         EE_GLTF_ENTRY("u_heightDisplace", heightDisplace, 4),
         EE_GLTF_ENTRY("u_terrainLayers", terrainLayers, 4),
         EE_GLTF_ENTRY("u_sunTint", sunTint, 3),

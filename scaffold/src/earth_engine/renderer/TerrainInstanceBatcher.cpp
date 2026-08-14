@@ -205,13 +205,19 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
                 const float packed = m.gltfUniforms.pageStoreParams[3];
                 rec.pageAux[0] = std::fmod(std::floor(packed / 8.0f), 64.0f);
                 rec.pageAux[1] = std::floor(packed / 512.0f);
-                rec.pageAux[2] = 0.0f;
-                rec.pageAux[3] = 0.0f;
+                // [瓦界对齐] zw = 几何仿射 dV(见 pageUv 注释)。
+                rec.pageAux[2] = m.terrainPageGeomAffine[4];
+                rec.pageAux[3] = m.terrainPageGeomAffine[5];
             }
-            rec.pageUv[0] = m.gltfUniforms.pageStoreUv[0];   // originU
-            rec.pageUv[1] = m.gltfUniforms.pageStoreUv[1];   // originV
-            rec.pageUv[2] = m.gltfUniforms.pageStoreUv[2];   // spanU
-            rec.pageUv[3] = m.gltfUniforms.pageStoreUv[3];   // spanV
+            // [瓦界对齐] 实例化片元的 psUv 是共享模板的**几何** UV(边到边 0..1),
+            // 不是 details 逐顶点 texcoord —— 不能复用 gltfUniforms.pageStoreUv 的
+            // origin/span(那是按 details-UV 标定的;GCJ 下差出瓦包围矩形翘曲量,
+            // 瓦界错缝 ~30m)。改用 applyToTerrainCommand 给的几何仿射:
+            // g = c0 + u·dU + v·dV,相邻瓦共享角点 → 瓦界按构造连续。
+            rec.pageUv[0] = m.terrainPageGeomAffine[0];  // c0.x(NW 角)
+            rec.pageUv[1] = m.terrainPageGeomAffine[1];  // c0.y
+            rec.pageUv[2] = m.terrainPageGeomAffine[2];  // dU.x
+            rec.pageUv[3] = m.terrainPageGeomAffine[3];  // dU.y
             rec.layers[0] = m.gltfUniforms.terrainLayers[0];  // heightLayer
             rec.layers[1] = m.gltfUniforms.terrainLayers[1];  // indirLayer
             // clipMode(0/1/2)与边吸附打包共存:z = clipMode + 4·snapPacked
