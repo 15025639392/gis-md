@@ -1206,8 +1206,12 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
     // 复用 tile 的 ind.layer)。任一创建失败只禁用场平面,影像页不受影响。
     if (config_.roadFieldRequest) {
         config_.maxFieldPages = std::max(1, config_.maxFieldPages);
+        // D2 线段纹素:RGBA8(编码见 LineFieldRasterizer.h),FS texelFetch
+        // 整数寻址(无插值),滤波参数仅防御。
         TextureDesc fieldDesc = desc;
-        fieldDesc.format = TextureDesc::Format::R8;
+        fieldDesc.format = TextureDesc::Format::RGBA8;
+        fieldDesc.minFilter = TextureDesc::Filter::Nearest;
+        fieldDesc.magFilter = TextureDesc::Filter::Nearest;
         fieldDesc.arrayLayers = config_.maxFieldPages;
         fieldArrayTexture_ = device_->createTexture(fieldDesc);
         TextureDesc fieldIndirDesc = indirDesc;
@@ -1219,7 +1223,7 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
                                   kInvalidFieldKey);
             fieldPool_.configure(config_.maxFieldPages, /*blockLayers=*/1);
             platformLog(LogLevel::Info, "PageStore",
-                        "roadField plane ready (R8 %dx%d x%d layers, "
+                        "roadField plane ready (RGBA8 D2 %dx%d x%d layers, "
                         "zoom cap %d)",
                         config_.pageSizeTexels, config_.pageSizeTexels,
                         config_.maxFieldPages, config_.roadFieldMaxZoom);
@@ -1337,7 +1341,8 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
         // 用 g 屏幕导数×z 求 texel/px 比,把 (1−field)·w 换算成屏幕像素。
         cmd.gltfUniforms.roadFieldParams[2] =
             static_cast<float>(config_.pageSizeTexels);
-        cmd.gltfUniforms.roadFieldParams[3] = 8.0f;
+        // w = D2 偏移编码范围(texel,= kLineFieldOffsetRangeTexels)。
+        cmd.gltfUniforms.roadFieldParams[3] = 4.0f;
         cmd.gltfUniforms.roadFieldColor = config_.roadFieldColor;
         cmd.gltfUniforms.roadFieldWidth = config_.roadFieldWidthRamp;
     }
@@ -1433,8 +1438,8 @@ void TerrainPageStore::kickFieldFetch(const TileKey& fieldKey,
     config_.roadFieldRequest(
         fieldKey, entry.token,
         [fieldInbox, fieldPacked, layer, side](std::vector<uint8_t> r8) {
-            if (r8.size() !=
-                static_cast<size_t>(side) * static_cast<size_t>(side)) {
+            if (r8.size() != static_cast<size_t>(side) *
+                                 static_cast<size_t>(side) * 4u) {
                 return;  // 尺寸不符:丢弃(防生产者配置漂移写坏层)
             }
             // 回调只捕 inbox shared_ptr —— 页存储先亡不悬垂,迟到结果
@@ -1568,7 +1573,7 @@ void TerrainPageStore::drainReadyUploads() {
             const double uploadStartMs = perf::nowMs();
             device_->updateTextureRegion(
                 fieldArrayTexture_.get(), 0, 0, side, side, item.r8.data(),
-                static_cast<size_t>(side), item.layer);
+                static_cast<size_t>(side) * 4u, item.layer);
             winUploadMs_ += perf::nowMs() - uploadStartMs;
             // 记住该场层现装的是这个 key 的真场 → 同 key 淘汰重建可跳烘不闪。
             if (item.layer >= 0 &&

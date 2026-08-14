@@ -5,57 +5,58 @@
 
 #include "MvtDecoder.h"
 #include "VectorRasterStyle.h"
-#include "VectorTileRasterizer.h"  // MvtTileRef / MercatorRect
+#include "VectorTileRasterizer.h"  // MvtTileRef / MercatorRect / UnitTransform
 
 namespace earth_engine {
 
-/// 路网线 SDF 场烘焙(刀2「线 SDF 场 + 地形 FS 解算」的 CPU 端)。
+/// 路网线「线段纹素」场烘焙(D2,场线宽像素一致专项定稿编码)。
 ///
-/// **为什么是场而不是几何/位图**:线对栅格模糊极敏感(E4 死因),直接把线
-/// 画进位图会在放大时糊成栅格块;SDF 场的边缘由**场的梯度**在片元里重建
-/// (smoothstep + fwidth 解析 AA),锐度与纹素密度解耦 —— S3 PoC 实测
-/// 4.4m/texel 下近场+掠视全程平滑无块状。
+/// **为什么不是距离场**:标量/向量距离场都靠双线性插值重建,插值本身就是
+/// 伪影之源(标量跨线心尖点必高估 → 漏画;向量跨双线中轴必过零 → 幽灵;
+/// 真实路网实测标量漏画 63%)。D2 每纹素存**最近线段的局部线段参数**,
+/// FS 取 2×2 邻域 4 条线段各自解析算胶囊距离取 min ——**全程无插值**。
+/// MVT 路网是折线、段内即直线 → 局部线性模型精确;端点余量让胶囊在真实
+/// 端点收口,拐角两胶囊圆帽相接 = 天然圆角。**重建 = 精确,仅剩量化误差**
+/// (真实路网模拟:texelPx=4 下漏画 0.28%、有害幽灵 0、误差 0.025px)。
 ///
-/// **编码:归一化中心线距离(宽度不进场)**。
-/// value = clamp(1 − distToCenterline/kLineFieldBandTexels, 0, 1),多段取
-/// min(dist) = max(编码值)(编码反单调)。1=线心,**0=远离一切线** ——
-/// 0 是失败安全值:GLES 未绑定 sampler 采样返回 0、占位清场 memset 0、
-/// 任何垃圾 0 都表现为"无线"而不是"全屏线色"。
-/// 宽度**不再烘进场**:FS 端用采样 UV 的屏幕导数求 texel/px 比,
-///   distPx = (1 − fieldV) · kLineFieldBandTexels / texPerPx
-/// 再按"线半宽(设备px)"阈值 + AA —— 页内近端放大/祖先页兜底/页界跳档
-/// 全被导数自动补偿,线宽真屏幕像素恒定(场线宽像素一致专项,
-/// 2026-08-14;分母取几何导数而非 fwidth(fieldV) 的原因见
-/// PageStoreSamplingGLSL.h)。分档宽度语义在 FS uniform 侧表达,不在场里。
+/// **RGBA8 编码(每纹素一条线段)**:
+///   R,G = 最近点偏移 (ox,oy),范围 ±kLineFieldOffsetRangeTexels,
+///         各 8bit。⚠️ 保持双分量冗余:偏移⊥方向,理论可压成"有符号距离
+///         +角度"省 1 字节,但模拟证伪(误差 0.025→0.048px、幽灵回潮)——
+///         θ 量化误差会旋转锚点,(ox,oy) 的冗余实为误差解耦,勿"优化"。
+///   B   = 线段方向角 θ ∈ [0,π),8bit。方向经规范化(uy>0 或 uy==0&&ux>0),
+///         fwd/back 在规范化方向下定义。
+///   A   = fwd(高 4bit)| back(低 4bit):最近点到线段两端的剩余长度,
+///         各 0..kLineFieldClampMaxTexels 按 kLineFieldClampStepTexels 量化。
+///         **A==0 是空哨兵**(该纹素 kOffsetRange 内无线);合法编码若恰为 0
+///         (退化微段)提升为 1。全 0 纹素 = 失败安全(未绑定采样/memset 0
+///         都表现为"无线")。FS 靠"像素可被线覆盖 ⇒ 所在纹素必有记录"做
+///         单 fetch 早退(线覆盖半径 + √2/2 < 编码范围)。
 ///
-/// **烘焙算法:逐段 scatter,不是逐 texel gather**。每段只写自己
-/// kLineFieldBandTexels 膨胀 bbox 内的 texel(点到线段距离取 min)。
-/// 复杂度 O(段数 × 段bbox纹素),z14 城区瓦几百段 × ~2 百 texel ≈ 亚毫秒/页;
-/// PoC 的"2048² 全场暴力"印象不适用于此结构。
+/// **烘焙算法:逐段 scatter**(与旧编码同构):每段写自己膨胀 bbox 内纹素的
+/// min-dist 记录(距离胜者的段参数整套落纹素)。复杂度不变,亚毫秒/页。
 ///
-/// 坐标/矩形语义与 rasterizeMvtRect 完全同构(unit Web-Mercator 目标矩形 +
-/// 多源瓦仿射,overzoom 子矩形现画、跨瓦拼接、GCJ 平移由调用方做)。
-///
-/// 样式:复用 VectorRasterStyle,但**只消费 line 通道**(lineColor.a>0 的
-/// 层;fillColor 忽略,lineWidthPixels 不再消费——宽度归 FS uniform)——
-/// 线色不进场(场只有距离),颜色在 FS 端以 uniform 统一给出,首版单色。
-///
-/// 线程契约:纯函数、无全局状态 → worker 可并发。
+/// 坐标/矩形语义与 rasterizeMvtRect 同构(unit-mercator 目标矩形 + 多源瓦
+/// 仿射,overzoom 子矩形现画、GCJ 逐顶点变换由调用方给)。样式只消费 line
+/// 通道(lineColor.a>0 的层做 zoom/filter 闸;lineWidthPixels 不消费——宽度
+/// 语义整体在 FS uniform 侧)。纯函数,worker 可并发。
 struct LineFieldImage {
     int size = 0;
-    std::vector<uint8_t> r8;  // 行主序;0=无线,255=线心
-    bool empty() const { return r8.empty(); }
+    std::vector<uint8_t> rgba8;  // 行主序,4B/texel;全 0 = 无线(失败安全)
+    bool empty() const { return rgba8.empty(); }
 };
 
-/// 编码带宽(texel):中心线 0 → band 处衰减到 0。上限:须 ≥ 最大线半宽
-/// (设备px)×(texel/px 最小放大比),否则宽线被 clamp 截断;下限:R8
-/// 量化步进 = band/255 texel/级,会被 FS 的 ÷fwidth 放大(8 倍放大页下
-/// 8/255 ≈ 0.03 texel/级 → ~0.25px 抖动,PoC 真机验收此项)。
-constexpr double kLineFieldBandTexels = 8.0;
+/// 偏移编码范围(texel)。上限约束:线覆盖半径(最大线半宽 px→texel)+
+/// 像素到纹素中心 √2/2 必须 ≤ 此值,否则宽线边缘像素的所在纹素无记录、
+/// 被哨兵早退误杀(d=0 时 ramp 顶 3.15px = 3.15 texel → 3.86 < 4 ✓)。
+/// 量化步进 = 2×4/255 ≈ 0.031 texel。
+constexpr double kLineFieldOffsetRangeTexels = 4.0;
+/// 端点余量上限(texel)与量化步进(4bit,15 级)。下限约束:相邻纹素记录
+/// 点沿线间距 ≤ √2,胶囊半长 1.5 保证拼接无缝。
+constexpr double kLineFieldClampMaxTexels = 1.5;
+constexpr double kLineFieldClampStepTexels = 0.1;
 
-/// @param toTargetUnit 逐顶点变换(见 VectorTileRasterizer.h 的 UnitTransform);
-///        GCJ 底图必传(fromWgs84),否则大页/祖先页边缘错位。rect 是目标采样
-///        空间矩形。nullptr = 标准 overlay 线性映射。
+/// @param toTargetUnit 逐顶点变换(GCJ 底图必传 fromWgs84);nullptr = 线性。
 LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
                                       const MercatorRect& rect, int styleZoom,
                                       const VectorRasterStyle& style, int size,

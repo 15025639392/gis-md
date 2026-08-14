@@ -26,34 +26,27 @@ namespace earth_engine {
 // - per-cell 渐变 LOD(§16.3):d>0 采粗祖先页;祖先子区原点必须在**全局**
 //   源瓦片下标上算(gGlobal = g + phase),否则 d>0 采错子区(块状棋盘格)。
 // - 影像 factor = step(0.3, A):128/255 都显影像(面走快路)。
-// - 刀2/步3 路网 SDF 场:**独立场间接纹理**(u_roadFieldIndir,同 cell 网格
+// - 刀2/步3/D2 路网线场:**独立场间接纹理**(u_roadFieldIndir,同 cell 网格
 //   同 indirLayer 层号;RG=场层 B=场页深度 A=ready)定位 z-封顶场页(场页
-//   key 与影像页脱钩,拉近超封顶零重烘)。场编码=归一化中心线距离,1=线心
-//   0=远,失败安全;gate = 场 indir A>0.5,与影像驻留互不牵连。**像素解算**
-//   (场线宽像素一致专项 2026-08-14):texel/px 比取自 **g(几何→源格
-//   仿射)的屏幕导数**再 ÷span,distPx = (1−fieldV)·band/texPerPx,按
-//   线半宽(px)阈值 + AA —— 页内近端放大/祖先页兜底/页界跳档全被
-//   导数自动补偿,线宽真屏幕像素恒定。
-//   **分级宽度(步2)**:局部 zoom = cellZoom − log2(rms d0纹素/px),跨页
-//   连续(页界 z 跳变恰被导数项补偿,天然无台阶);线半宽 = 宽度 ramp
-//   (z0,h0)→(z1,h1) 在局部 zoom 上线性插值、两端 clamp。
-//   ⚠️ zoom 基准=**影像页 zoom**(与烘焙 styleZoom 同基准),比"地图直觉
-//   zoom"偏高 ~2-3 档(dpr3.5+屏幕误差选页;30km 俯瞰实测全屏 13→17,
-//   zoomvis 调试染色验证过)——ramp 停点必须按此基准标定,勿按 maplibre
-//   样式 zoom 直觉填。
-//   分母的两次真机翻车,勿回头:
-//   ① fwidth(fieldV):场值在中心线是脊,脊上导数→0,eps 兜底把线心解算
-//     成"远"→ 沿线心周期性挖洞;
-//   ② dFdx(sampleUv):sampleUv 在每个 span 边界 1→0 回绕,跨界 quad 导数
-//     爆炸 → distPx→0 → 无条件画白 → 沿 cell 网格的白虚线("瓦片网格线")。
-//   g 是 uv 的仿射,跨 cell 连续无回绕,÷span 完成祖先页纹素换算。
-//   band 外全 0 区:分子饱和为 band px 级 > 任何线宽 → cov=0,退化方向是
-//   "无线"而非脏色。
-//   **深度放大下限(真机翻车③)**:纹素 >> 线宽时,线心脊的纹素采样相位
-//   让 distPx 沿线在阈值两侧振荡(纹素中心恰在线上→亮,偏 0.5 纹素→灭)
-//   → 线碎成点串。半宽/AA 各设纹素下限(0.6/0.35 texel):极端放大时线
-//   随纹素适度变粗+羽化,连续保形;正常 1:1 态两下限恰不生效(0.6 <
-//   ramp 最小半宽、0.35<0.5),零影响。场关闭(params.x=0)整支死代码。
+//   key 与影像页脱钩,拉近超封顶零重烘)。
+//   **D2 线段纹素解算**(编码见 LineFieldRasterizer.h):每纹素一条局部
+//   线段(偏移+方向角+端点余量),FS 取 2×2 邻域 4 条线段**各自解析算
+//   胶囊距离取 min ——全程无插值**;MVT 折线段内即直线 → 重建精确,仅剩
+//   量化误差(真实路网模拟 texelPx=4:漏画 0.28%/有害幽灵 0/误差 0.025px)。
+//   全 0 纹素 = 空哨兵(失败安全);own-texel 单 fetch 早退(像素可被线
+//   覆盖 ⇒ 所在纹素必有记录)。texel/px 比取 **g 的屏幕导数**÷spanF,
+//   distPx = 胶囊距离(texel)/texPerPx → 线宽真屏幕像素。
+//   **分级宽度**:局部 zoom = cellZoom − log2(rms),跨页连续无台阶;线半宽
+//   = ramp 线性插值,**无纹素下限**(D2 精确重建后 ramp 即最终宽度;E3 元
+//   规则:主路径必须真在走)。⚠️ zoom 基准=影像页 zoom,比"地图直觉 zoom"
+//   高 ~2-3 档(30km 俯瞰实测 13→17),ramp 停点按此标定。
+//   **历史翻车账,勿回头**(全部真机/模拟复现过):
+//   ① fwidth(fieldV) 当分母:线心=场脊导数→0 → 沿线心挖洞;
+//   ② dFdx(sampleUv) 当分母:span 边界回绕爆导数 → cell 网格白虚线;
+//   ③ 标量距离场 + 双线性插值:跨线心尖点必高估 → 真实路网漏画 63%;
+//   ④ 向量距离场:双线中轴插值过零 → 双向车道中缝幽灵;
+//   ⑤ d+θ 紧凑编码(省 1 字节):θ 量化误差旋转锚点,(ox,oy) 冗余实为
+//     误差解耦,勿"优化"。场关闭(params.x=0)整支死代码。
 // - 混合式 = alphaOver 语义内联(不依赖各 shader 的同名帮助函数):
 //   overlay.a·=clamp(factor);rgb=mix;a=max —— 与六处旧内联逐字节一致。
 //
@@ -72,9 +65,9 @@ namespace earth_engine {
 //                     解包逐实例传(批级 uniform 承首实例会在批内异 zoom
 //                     瓦片上重新造出宽度台阶)
 //   roadFieldParams : x=场开关 y=cellZoom(供非合批调用点转传) z=场纹理
-//                     边长(texel) w=编码带宽(texel,=kLineFieldBandTexels);
-//                     传 0 → 场支路死代码(MSL instanced 的 uniform 精简
-//                     struct 尚无场参数,即取此路)
+//                     边长(texel) w=D2 偏移编码范围(texel,
+//                     =kLineFieldOffsetRangeTexels);传 0 → 场支路死代码
+//                     (MSL instanced 的 uniform 精简 struct 尚无场参数)
 //   roadFieldWidth  : 宽度 ramp (z0, halfPx0, z1, halfPx1),halfPx=线半宽
 //                     (设备px);z≤z0 取 h0、z≥z1 取 h1、之间线性
 //   roadFieldColor  : 线色(RGBA 非预乘)
@@ -107,29 +100,58 @@ vec4 eePageStoreCompose(
         vec4 fe = texelFetch(u_roadFieldIndir,
                              ivec3(ivec2(cell), indirLayer), 0);
         if (fe.a > 0.5) {
-            float fLayer = floor(fe.r * 255.0 + 0.5) +
-                           floor(fe.g * 255.0 + 0.5) * 256.0;
+            int fL = int(floor(fe.r * 255.0 + 0.5) +
+                         floor(fe.g * 255.0 + 0.5) * 256.0);
             vec2 spanF = vec2(exp2(floor(fe.b * 255.0 + 0.5)));
             vec2 fUv = (gGlobal - floor(gGlobal / spanF) * spanF) / spanF;
-            float fieldV = texture(u_roadField, vec3(fUv, fLayer)).r;
-            vec2 tPx = dFdx(g) * roadFieldParams.z;
-            vec2 tPy = dFdy(g) * roadFieldParams.z;
-            float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))),
-                            1e-6);
-            float texPerPx = max(rms / spanF.x, 1e-4);
-            float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
-            float zoomLocal = cellZoom - log2(rms);
-            float t = clamp((zoomLocal - roadFieldWidth.x) /
-                                max(roadFieldWidth.z - roadFieldWidth.x,
-                                    1e-3),
-                            0.0, 1.0);
-            float texelPx = 1.0 / texPerPx;
-            float wEff = max(mix(roadFieldWidth.y, roadFieldWidth.w, t),
-                             0.6 * texelPx);
-            float aa = max(0.5, 0.35 * texelPx);
-            float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
-                            roadFieldColor.a;
-            base.rgb = mix(base.rgb, roadFieldColor.rgb, roadCov);
+            float FT = roadFieldParams.z;
+            vec2 pTex = fUv * FT;
+            ivec2 own = ivec2(clamp(pTex, vec2(0.0), vec2(FT - 1.0)));
+            // 哨兵早退:像素可被线覆盖 ⇒ 所在纹素必有记录(线距纹素中心
+            // ≤ 覆盖半径 + √2/2 < 偏移编码范围),空纹素全 0(A=0)。
+            if (texelFetch(u_roadField, ivec3(own, fL), 0).a > 0.001) {
+                vec2 tPx = dFdx(g) * FT;
+                vec2 tPy = dFdy(g) * FT;
+                float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))),
+                                1e-6);
+                float texPerPx = max(rms / spanF.x, 1e-4);
+                // D2 gather-min:2×2 邻域各解一条线段的胶囊距离,取 min。
+                // 无插值 → 无标量场尖点高估 / 无向量场中轴过零。
+                ivec2 g0 = ivec2(floor(pTex - 0.5));
+                float dTex = 1e9;
+                for (int j = 0; j < 2; ++j)
+                for (int i = 0; i < 2; ++i) {
+                    ivec2 tc = clamp(g0 + ivec2(i, j), ivec2(0),
+                                     ivec2(int(FT) - 1));
+                    vec4 ft = texelFetch(u_roadField, ivec3(tc, fL), 0);
+                    if (ft.a > 0.001) {
+                        vec2 q = vec2(tc) + 0.5 +
+                                 (ft.rg * 2.0 - 1.0) * roadFieldParams.w;
+                        float th = ft.b * 3.14159265;
+                        vec2 dir = vec2(cos(th), sin(th));
+                        float packedA = floor(ft.a * 255.0 + 0.5);
+                        float fwd = floor(packedA / 16.0) * 0.1;
+                        float bck = mod(packedA, 16.0) * 0.1;
+                        vec2 pq = pTex - q;
+                        float dTan = dot(dir, pq);
+                        float dNrm = dot(vec2(-dir.y, dir.x), pq);
+                        float ex = max(max(dTan - fwd, -dTan - bck), 0.0);
+                        dTex = min(dTex, length(vec2(dNrm, ex)));
+                    }
+                }
+                float distPx = dTex / texPerPx;
+                float zoomLocal = cellZoom - log2(rms);
+                float wT = clamp((zoomLocal - roadFieldWidth.x) /
+                                     max(roadFieldWidth.z - roadFieldWidth.x,
+                                         1e-3),
+                                 0.0, 1.0);
+                // 无纹素下限:D2 重建精确到量化噪声,ramp 即最终宽度
+                // (E3 元规则:主路径必须真在走,不再有兜底可躲)。
+                float wEff = mix(roadFieldWidth.y, roadFieldWidth.w, wT);
+                float roadCov = smoothstep(wEff + 0.5, wEff - 0.5, distPx) *
+                                roadFieldColor.a;
+                base.rgb = mix(base.rgb, roadFieldColor.rgb, roadCov);
+            }
         }
     }
     return base;
@@ -164,31 +186,54 @@ static float4 eePageStoreCompose(
     if (roadFieldParams.x > 0.5) {
         float4 fe = roadFieldIndir.read(uint2(cell), uint(indirLayer), 0);
         if (fe.a > 0.5) {
-            float fLayer = floor(fe.r * 255.0 + 0.5) +
-                           floor(fe.g * 255.0 + 0.5) * 256.0;
+            uint fL = uint(floor(fe.r * 255.0 + 0.5) +
+                           floor(fe.g * 255.0 + 0.5) * 256.0);
             float2 spanF = float2(exp2(floor(fe.b * 255.0 + 0.5)));
             float2 fUv = (gGlobal - floor(gGlobal / spanF) * spanF) / spanF;
-            float fieldV =
-                roadField.sample(pageSampler, fUv, uint(fLayer)).r;
-            float2 tPx = dfdx(g) * roadFieldParams.z;
-            float2 tPy = dfdy(g) * roadFieldParams.z;
-            float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))),
-                            1e-6);
-            float texPerPx = max(rms / spanF.x, 1e-4);
-            float distPx = (1.0 - fieldV) * roadFieldParams.w / texPerPx;
-            float zoomLocal = cellZoom - log2(rms);
-            float t = clamp((zoomLocal - roadFieldWidth.x) /
-                                max(roadFieldWidth.z - roadFieldWidth.x,
-                                    1e-3),
-                            0.0, 1.0);
-            float texelPx = 1.0 / texPerPx;
-            float wEff = max(mix(roadFieldWidth.y, roadFieldWidth.w, t),
-                             0.6 * texelPx);
-            float aa = max(0.5, 0.35 * texelPx);
-            float roadCov = smoothstep(wEff + aa, wEff - aa, distPx) *
-                            float4(roadFieldColor).w;
-            base.rgb =
-                mix(base.rgb, float3(float4(roadFieldColor).xyz), roadCov);
+            float FT = roadFieldParams.z;
+            float2 pTex = fUv * FT;
+            uint2 own = uint2(clamp(pTex, float2(0.0), float2(FT - 1.0)));
+            if (roadField.read(own, fL, 0).a > 0.001) {
+                float2 tPx = dfdx(g) * FT;
+                float2 tPy = dfdy(g) * FT;
+                float rms = max(sqrt(0.5 * (dot(tPx, tPx) + dot(tPy, tPy))),
+                                1e-6);
+                float texPerPx = max(rms / spanF.x, 1e-4);
+                int2 g0 = int2(floor(pTex - 0.5));
+                float dTex = 1e9;
+                for (int j = 0; j < 2; ++j)
+                for (int i = 0; i < 2; ++i) {
+                    int2 tc = clamp(g0 + int2(i, j), int2(0),
+                                    int2(int(FT) - 1));
+                    float4 ft = roadField.read(uint2(tc), fL, 0);
+                    if (ft.a > 0.001) {
+                        float2 q = float2(tc) + 0.5 +
+                                   (float2(ft.r, ft.g) * 2.0 - 1.0) *
+                                       roadFieldParams.w;
+                        float th = ft.b * 3.14159265;
+                        float2 dir = float2(cos(th), sin(th));
+                        float packedA = floor(ft.a * 255.0 + 0.5);
+                        float fwd = floor(packedA / 16.0) * 0.1;
+                        float bck = fmod(packedA, 16.0) * 0.1;
+                        float2 pq = pTex - q;
+                        float dTan = dot(dir, pq);
+                        float dNrm = dot(float2(-dir.y, dir.x), pq);
+                        float ex = max(max(dTan - fwd, -dTan - bck), 0.0);
+                        dTex = min(dTex, length(float2(dNrm, ex)));
+                    }
+                }
+                float distPx = dTex / texPerPx;
+                float zoomLocal = cellZoom - log2(rms);
+                float wT = clamp((zoomLocal - roadFieldWidth.x) /
+                                     max(roadFieldWidth.z - roadFieldWidth.x,
+                                         1e-3),
+                                 0.0, 1.0);
+                float wEff = mix(roadFieldWidth.y, roadFieldWidth.w, wT);
+                float roadCov = smoothstep(wEff + 0.5, wEff - 0.5, distPx) *
+                                float4(roadFieldColor).w;
+                base.rgb = mix(base.rgb, float3(float4(roadFieldColor).xyz),
+                               roadCov);
+            }
         }
     }
     return base;

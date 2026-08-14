@@ -2608,11 +2608,11 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 |---|---|---|
 | `initialize(device, Config)` | .cpp:1155-1030 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
 | `updateVisiblePages(view, ...)` | .cpp:566-954 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1253-1080 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1346-1139 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1457-1226 / :1381-1142 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1541-1368 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1238-1045 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1257-1080 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1351-1139 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1462-1226 / :1386-1142 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1546-1368 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1242-1045 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:283-329 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:546-379 / :477-496 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:406-476 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
@@ -3177,12 +3177,12 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 
 ### LineFieldRasterizer.h / .cpp
 
-路网线 SDF 场烘焙(刀2 CPU 端):MVT 线要素 → 256² R8 **归一化中心线距离场**(场线宽像素一致专项 2026-08-14:value = 1 − dist/kLineFieldBandTexels(8 texel),宽度不再烘进场;FS 以采样 UV 屏幕导数求 texel/px 比,distPx = (1−fieldV)·band/texPerPx 解算到屏幕像素后按线半宽阈值 + AA;线半宽 = 宽度 ramp(u_roadFieldWidth)在局部 zoom(cellZoom−log2(rms))上连续插值,半宽/AA 各设纹素下限兜深放大(分母禁用 fwidth(fieldV):线心是场脊、导数→0 会沿线心挖洞;也禁用 dFdx(sampleUv):span 边界回绕爆导数,详见 PageStoreSamplingGLSL.h) → 线宽真屏幕像素恒定,近端放大/祖先页兜底/页界跳档全被 fwidth 补偿)。**反向量化**(0=远/1=线心):0 是失败安全值(GLES 未绑定采样恒 0=无线,不是全屏线色)。逐段 scatter(段 bbox 内写 min)而非逐 texel gather,z14 城区瓦亚毫秒/页。坐标语义与 rasterizeMvtRect 同构(unit-mercator 矩形+多瓦仿射,overzoom/拼接/GCJ 由调用方做);只消费 VectorRasterStyle 的 line 通道(lineWidthPixels 不再消费)。纯函数,worker 可并发。
+路网线「线段纹素」场烘焙(D2 定稿,场线宽像素一致专项):MVT 线要素 → 256² **RGBA8 线段纹素**(R,G=最近点偏移 ±kLineFieldOffsetRangeTexels(4)、B=方向角 [0,π)、A=fwd|back 端点余量 4bit×2,A==0=空哨兵/失败安全)。FS 取 2×2 邻域 4 条线段各自解析算胶囊距离取 min(PageStoreSamplingGLSL.h),**全程无插值** → 折线数据精确重建仅剩量化误差(真实路网模拟 texelPx=4:漏画 0.28%/有害幽灵 0/误差 0.025px)。勿回头:标量距离场(插值跨线心尖点→漏画 63%)/向量场(中轴过零→幽灵)/d+θ 紧凑编码(θ 误差旋转锚点)。逐段 scatter,亚毫秒/页;坐标语义与 rasterizeMvtRect 同构;只消费 line 通道(lineWidthPixels 不消费)。纯函数,worker 可并发。
 
 | Item | Lines | Description |
 |---|---|---|
-| `stampSegment` (file-local) | .cpp:12-43 | 单段 scatter:band 膨胀 bbox 内逐纹素点到线段(中心线)距离,写 min |
-| `rasterizeLineFieldRect` | .cpp:47-153 | 主入口:逐 line 层(zoom 区间+filter)×逐源瓦仿射×逐段 stamp;path bbox 预剔除;末端反向量化进 R8 |
+| `stampSegment` (file-local) | .cpp:20-43 | 单段 scatter:band 膨胀 bbox 内逐纹素点到线段(中心线)距离,写 min |
+| `rasterizeLineFieldRect` | .cpp:71-153 | 主入口:逐 line 层(zoom 区间+filter)×逐源瓦仿射×逐段 stamp;path bbox 预剔除;末端反向量化进 R8 |
 
 ### MvtTileFetchCache.h / .cpp
 

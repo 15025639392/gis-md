@@ -157,12 +157,10 @@ public:
         ThreadPool* composeWorkers = nullptr;
 
         /// ==== 刀2 路网 SDF 场"第二平面"(可选)====
-        /// 非空时页存储维护一张平行的 R8 texture2DArray(fieldArray),与影像
-        /// 页**同 key 同层号同生命周期** —— FS 在同一次间接查找下再采一次场,
-        /// 祖先回退 scale-bias 数学自动复用。回调契约:r8 尺寸恒为
-        /// pageSizeTexels²;**回调必到**(取消/失败给全 0=无线,失败安全);
-        /// 可在任意线程回调。页存储对生产者(RoadFieldSource)零依赖,host 测试注入
-        /// fake。
+        /// 非空时页存储维护场"第二平面"(D2 线段纹素,RGBA8,编码见
+        /// LineFieldRasterizer.h)。回调契约:缓冲尺寸恒为 pageSizeTexels²×4;
+        /// **回调必到**(取消/失败给全 0=空哨兵,失败安全);可在任意线程
+        /// 回调。页存储对生产者(RoadFieldSource)零依赖,host 测试注入 fake。
         using RoadFieldRequestFn = std::function<void(
             const TileKey& pageTileKey, CancellationToken,
             std::function<void(std::vector<uint8_t>)>)>;
@@ -181,9 +179,9 @@ public:
         /// key = 影像页 key 的 z-封顶祖先,SDF 像素解算放大优雅(纹素下限
         /// 兜底)。拉近超封顶后场零重烘零上传、换代瞬态消失。
         int roadFieldMaxZoom = 15;
-        /// 场页独立 LRU 容量(z 封顶后可见场页数远小于影像页;
-        /// 160×256²×1B ≈ 10MB,对照耦合态 512 层 32MB)。
-        int maxFieldPages = 160;
+        /// 场页独立 LRU 容量。实测默认视角稳态驻留 ~25 页,64 层留 2.5×
+        /// 余量;64×256²×4B(D2 RGBA8)= 16MB 封顶。
+        int maxFieldPages = 64;
     };
 
     TerrainPageStore() = default;

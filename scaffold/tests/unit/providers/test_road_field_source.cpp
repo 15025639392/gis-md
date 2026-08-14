@@ -86,7 +86,7 @@ RoadFieldSource::Options fieldOptions() {
 
 } // namespace
 
-// 基本产出:z≤dataMax 单瓦,场中线深在线内、远处 255。
+// 基本产出:z≤dataMax 单瓦,中线纹素有线段记录(A>0)、远处空哨兵。
 TEST(RoadFieldSourceTest, ProducesFieldForRoadTile) {
     FakeFetch fetch;
     fetch.body = makeMidlineRoad("roads");
@@ -97,12 +97,12 @@ TEST(RoadFieldSourceTest, ProducesFieldForRoadTile) {
     source.requestField(TileKey{"XYZ-WebMercator", 12, 1, 1},
                         CancellationToken(),
                         [&](std::vector<uint8_t> r8) { got = std::move(r8); });
-    ASSERT_EQ(got.size(), 64u * 64u);
-    EXPECT_GT(got[32u * 64u + 32u], 223) << "中线在线内";
-    EXPECT_EQ(got[8u * 64u + 32u], 0) << "远处无线";
+    ASSERT_EQ(got.size(), 64u * 64u * 4u);
+    EXPECT_NE(got[(32u * 64u + 32u) * 4u + 3u], 0) << "中线纹素 A>0";
+    EXPECT_EQ(got[(8u * 64u + 32u) * 4u + 3u], 0) << "远处空哨兵";
 }
 
-// fetch 失败 → 全 0 场(反向编码=无线,失败安全),回调必到。
+// fetch 失败 → 全 0 场(空哨兵=无线,失败安全),回调必到。
 TEST(RoadFieldSourceTest, FetchFailureYieldsFarField) {
     FakeFetch fetch;
     fetch.statusCode = 404;
@@ -118,7 +118,7 @@ TEST(RoadFieldSourceTest, FetchFailureYieldsFarField) {
                             got = std::move(r8);
                         });
     ASSERT_TRUE(called);
-    ASSERT_EQ(got.size(), 64u * 64u);
+    ASSERT_EQ(got.size(), 64u * 64u * 4u);
     for (uint8_t v : got) EXPECT_EQ(v, 0);
 }
 
@@ -172,7 +172,7 @@ TEST(RoadFieldSourceTest, CancelledStillInvokesCallback) {
     source.requestField(TileKey{"XYZ-WebMercator", 12, 1, 1}, token,
                         [&](std::vector<uint8_t> r8) {
                             called = true;
-                            EXPECT_EQ(r8.size(), 64u * 64u);
+                            EXPECT_EQ(r8.size(), 64u * 64u * 4u);
                         });
     EXPECT_TRUE(called);
 }

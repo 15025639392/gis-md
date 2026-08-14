@@ -39,7 +39,8 @@ void RoadFieldSource::runAssembly(
     // 取消仍回调(空场):页存储按「回调必到」记账,账本校验丢迟到结果。
     if (assembly->token.isCancelled()) {
         assembly->callback(std::vector<uint8_t>(
-            static_cast<size_t>(assembly->fieldSize) * assembly->fieldSize,
+            static_cast<size_t>(assembly->fieldSize) * assembly->fieldSize *
+                4u,
             0));
         return;
     }
@@ -55,11 +56,12 @@ void RoadFieldSource::runAssembly(
         assembly->fieldSize, xf);
     if (field.empty()) {
         field.size = assembly->fieldSize;
-        field.r8.assign(
-            static_cast<size_t>(assembly->fieldSize) * assembly->fieldSize,
+        field.rgba8.assign(
+            static_cast<size_t>(assembly->fieldSize) * assembly->fieldSize *
+                4u,
             0);
     }
-    assembly->callback(std::move(field.r8));
+    assembly->callback(std::move(field.rgba8));
 }
 
 void RoadFieldSource::completeIfReady(
@@ -80,7 +82,8 @@ void RoadFieldSource::requestField(const TileKey& pageKey,
     if (!callback) return;
     const int size = options_.fieldSize;
     if (!tileCache_) {
-        callback(std::vector<uint8_t>(static_cast<size_t>(size) * size, 0));
+        callback(std::vector<uint8_t>(
+            static_cast<size_t>(size) * size * 4u, 0));
         return;
     }
 

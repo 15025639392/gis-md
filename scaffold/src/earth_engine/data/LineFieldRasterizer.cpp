@@ -7,11 +7,19 @@ namespace earth_engine {
 
 namespace {
 
-/// 把一条线段(纹素坐标)按 reach=kLineFieldBandTexels 膨胀的 bbox 内逐
-/// 纹素写 min(到中心线距离)。scatter 的核心。
+/// 每纹素的"最近线段"scatter 记录(编码前的全精度中间态)。
+struct TexelRecord {
+    double dist = 1e18;  // 到最近线段的距离(texel)
+    double ox = 0.0, oy = 0.0;    // 最近点 − 纹素中心
+    double ux = 0.0, uy = 0.0;    // 线段方向(已规范化:uy>0 或 uy==0&&ux>0)
+    double fwd = 0.0, back = 0.0; // 最近点到段两端的剩余长度(沿规范化方向)
+};
+
+/// 把一条线段按 kLineFieldOffsetRangeTexels 膨胀的 bbox 内逐纹素写
+/// min-dist 记录(距离胜者的段参数整套落纹素)。scatter 的核心。
 void stampSegment(double x0, double y0, double x1, double y1, int size,
-                  std::vector<double>& sd) {
-    const double reach = kLineFieldBandTexels;
+                  std::vector<TexelRecord>& recs) {
+    const double reach = kLineFieldOffsetRangeTexels;
     const int bx0 = std::max(0, static_cast<int>(
                                     std::floor(std::min(x0, x1) - reach)));
     const int bx1 = std::min(size - 1, static_cast<int>(std::ceil(
@@ -21,23 +29,39 @@ void stampSegment(double x0, double y0, double x1, double y1, int size,
     const int by1 = std::min(size - 1, static_cast<int>(std::ceil(
                                            std::max(y0, y1) + reach)));
     if (bx0 > bx1 || by0 > by1) return;
-    const double dx = x1 - x0;
-    const double dy = y1 - y0;
-    const double len2 = dx * dx + dy * dy;
+    double dx = x1 - x0;
+    double dy = y1 - y0;
+    const double len = std::sqrt(dx * dx + dy * dy);
+    if (len < 1e-9) return;  // 退化微段:无方向可言,跳过
+    double ux = dx / len, uy = dy / len;
+    // 方向规范化(θ∈[0,π));fwd/back 在规范化方向下定义,翻转须同步换端。
+    if (uy < 0.0 || (uy == 0.0 && ux < 0.0)) {
+        std::swap(x0, x1);
+        std::swap(y0, y1);
+        ux = -ux;
+        uy = -uy;
+    }
     for (int py = by0; py <= by1; ++py) {
         const double cy = py + 0.5;
         for (int px = bx0; px <= bx1; ++px) {
             const double cx = px + 0.5;
-            double t = 0.0;
-            if (len2 > 1e-12) {
-                t = ((cx - x0) * dx + (cy - y0) * dy) / len2;
-                t = std::clamp(t, 0.0, 1.0);
+            double t = ((cx - x0) * ux + (cy - y0) * uy);
+            t = std::clamp(t, 0.0, len);
+            const double qx = x0 + t * ux;
+            const double qy = y0 + t * uy;
+            const double ddx = qx - cx;
+            const double ddy = qy - cy;
+            const double dist = std::sqrt(ddx * ddx + ddy * ddy);
+            TexelRecord& rec = recs[static_cast<size_t>(py) * size + px];
+            if (dist < rec.dist) {
+                rec.dist = dist;
+                rec.ox = ddx;
+                rec.oy = ddy;
+                rec.ux = ux;
+                rec.uy = uy;
+                rec.fwd = len - t;
+                rec.back = t;
             }
-            const double qx = x0 + t * dx - cx;
-            const double qy = y0 + t * dy - cy;
-            const double dist = std::sqrt(qx * qx + qy * qy);
-            double& cell = sd[static_cast<size_t>(py) * size + px];
-            cell = std::min(cell, dist);
         }
     }
 }
@@ -54,14 +78,12 @@ LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
     const double rectH = rect.y1 - rect.y0;
     if (!(rectW > 0.0) || !(rectH > 0.0)) return out;
 
-    // 到中心线距离缓冲(texel 单位),+∞ 语义用一个足够大的哨兵。
-    std::vector<double> sd(static_cast<size_t>(size) * size,
-                           kLineFieldBandTexels * 4.0);
+    std::vector<TexelRecord> recs(static_cast<size_t>(size) * size);
 
     for (const VectorRasterLayerPaint& paint : style.layers) {
         if (paint.lineColor[3] == 0) continue;  // 只消费 line 通道
         if (styleZoom < paint.minZoom || styleZoom > paint.maxZoom) continue;
-        const double reach = kLineFieldBandTexels;
+        const double reach = kLineFieldOffsetRangeTexels;
 
         for (const MvtTileRef& ref : tiles) {
             if (ref.tile == nullptr || ref.z < 0) continue;
@@ -133,21 +155,40 @@ LineFieldImage rasterizeLineFieldRect(const std::vector<MvtTileRef>& tiles,
                         double ax, ay, bx, by;
                         mapPoint(p0.x, p0.y, ax, ay);
                         mapPoint(p1.x, p1.y, bx, by);
-                        stampSegment(ax, ay, bx, by, size, sd);
+                        stampSegment(ax, ay, bx, by, size, recs);
                     }
                 }
             }
         }
     }
 
-    // 量化:归一化中心线距离,1 = 线心,0 = band 外(失败安全)。
+    // 编码(语义见头文件):全 0 = 空哨兵/失败安全。
     out.size = size;
-    out.r8.resize(sd.size());
-    const double invBand = 1.0 / kLineFieldBandTexels;
-    for (size_t i = 0; i < sd.size(); ++i) {
-        const double v = 1.0 - sd[i] * invBand;
-        out.r8[i] = static_cast<uint8_t>(
-            std::lround(std::clamp(v, 0.0, 1.0) * 255.0));
+    out.rgba8.assign(recs.size() * 4u, 0);
+    constexpr double kOff = kLineFieldOffsetRangeTexels;
+    constexpr double kCla = kLineFieldClampMaxTexels;
+    constexpr double kStep = kLineFieldClampStepTexels;
+    for (size_t i = 0; i < recs.size(); ++i) {
+        const TexelRecord& rec = recs[i];
+        if (rec.dist > kOff) continue;
+        uint8_t* px = out.rgba8.data() + i * 4u;
+        px[0] = static_cast<uint8_t>(
+            std::lround((std::clamp(rec.ox, -kOff, kOff) / kOff * 0.5 + 0.5) *
+                        255.0));
+        px[1] = static_cast<uint8_t>(
+            std::lround((std::clamp(rec.oy, -kOff, kOff) / kOff * 0.5 + 0.5) *
+                        255.0));
+        const double theta = std::atan2(rec.uy, rec.ux);  // 规范化 → [0,π)
+        px[2] = static_cast<uint8_t>(
+            std::clamp<long>(std::lround(theta / 3.14159265358979 * 255.0),
+                             0, 255));
+        const int fl = static_cast<int>(std::clamp<long>(
+            std::lround(std::min(rec.fwd, kCla) / kStep), 0, 15));
+        const int bl = static_cast<int>(std::clamp<long>(
+            std::lround(std::min(rec.back, kCla) / kStep), 0, 15));
+        int packed = (fl << 4) | bl;
+        if (packed == 0) packed = 1;  // A==0 是空哨兵;退化微段提升 1 级
+        px[3] = static_cast<uint8_t>(packed);
     }
     return out;
 }

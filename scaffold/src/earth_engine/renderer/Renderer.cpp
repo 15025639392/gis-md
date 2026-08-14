@@ -224,7 +224,7 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
 uniform highp sampler2DArray u_roadField;
 uniform highp sampler2DArray u_roadFieldIndir;  // 步3 场间接纹理
-uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
+uniform vec4 u_roadFieldParams;  // x=enable y=cellZoom z=场纹素边长 w=D2 偏移编码范围
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
@@ -1058,7 +1058,7 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(�
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
 uniform highp sampler2DArray u_roadField;
 uniform highp sampler2DArray u_roadFieldIndir;  // 步3 场间接纹理
-uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
+uniform vec4 u_roadFieldParams;  // x=enable y=cellZoom z=场纹素边长 w=D2 偏移编码范围
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
@@ -1462,7 +1462,7 @@ uniform highp sampler2DArray u_heightTexture;
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
 uniform highp sampler2DArray u_roadField;
 uniform highp sampler2DArray u_roadFieldIndir;  // 步3 场间接纹理
-uniform vec4 u_roadFieldParams;  // x=enable y=线半宽(设备px) z=场纹素边长 w=编码带宽
+uniform vec4 u_roadFieldParams;  // x=enable y=cellZoom z=场纹素边长 w=D2 偏移编码范围
 uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
 uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
@@ -2615,7 +2615,7 @@ struct GltfUniforms {
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
-    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=线半宽(设备px) z=边长 w=带宽
+    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=cellZoom z=边长 w=偏移范围
     packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
     packed_float4 roadFieldWidth;  // 宽度 ramp (z0,halfPx0,z1,halfPx1)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
@@ -3424,7 +3424,7 @@ struct GltfUniforms {
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
-    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=线半宽(设备px) z=边长 w=带宽
+    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=cellZoom z=边长 w=偏移范围
     packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
     packed_float4 roadFieldWidth;  // 宽度 ramp (z0,halfPx0,z1,halfPx1)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
