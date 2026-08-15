@@ -81,7 +81,7 @@
 - Engine 四阶段严格串行 + 逐阶段计时,诊断"帧预算花在哪"时归属明确。
 
 ### ⚠️ 短板 / 已知债
-- **WorkLedger 尚未真正接管 gating**:实际 gating 仍读旧 `hasConvergingWork`,WorkLedger 目前零行为影响只做审计对拍——此前"四判据各自为政"的风险敞口在 gating 层面尚未消除,只多了一层不影响行为的校验网。
+- **WorkLedger 尚未真正接管 gating**(已核实,当前 HEAD 仍是过渡态):实际 gating 仍读旧 `hasConvergingWork`([Engine.cpp:279](../../scaffold/src/earth_engine/Engine.cpp)),WorkLedger 目前零行为影响只做审计对拍(`Scene::auditWorkLedger`)——此前"四判据各自为政"的风险敞口在 gating 层面尚未消除,只多了一层不影响行为的校验网。**这不是 bug 而是原作者铺好、停在并行验证期的未完成迁移;还债路线见下节**。
 - **`PersistentCache::ensureDir` 是空函数体**,不真正创建目录——若调用方没预建缓存目录,磁盘落地会**静默全部失败**,无任何日志。
 - **`PersistentCache::filePath` 用非加密、进程加盐哈希**做文件名,存在跨进程/跨平台不稳定与碰撞风险,不适合作长期稳定缓存键。
 - **`PersistentCache::prewarm` 是纯占位符**(函数体空),只支持按需加载。
@@ -91,6 +91,50 @@
 - **`Diagnostics.h` 有一段"部分废弃"的 quadtree/surface 计数块**(旧 TileQuadTree/SurfaceTileMesh 遗留,仍声明但不再被填充)。
 - **SDK facade 多处初始化阻塞调用方线程**(capabilities 抓取、GoogleMapTiles 建 session),默认超时 20s——设计选择的直接代价,未见异步版本入口。
 - **缓存收敛策略与 cesium 存在结构性差距**(未验证是否已解决):缺请求侧护栏(cesium `RequestScheduler` 按屏幕优先级每帧重排 + 相机移走主动 cancel;我们 600 帧龄只是兜底),且我们是硬顶淘汰、cesium 是引用计数软预算——源头(HttpCache 淘汰策略)在 core/cache/。
+
+---
+
+## 还债路线:让 WorkLedger 接管 gating
+
+> 背景见上节"⚠️ 短板"首条。这不是修 bug——是把原作者停在并行验证期的迁移走完。机制(Ticket/审计/`consumeLanded` 语义)已就位,工作量几乎全在 Phase A 的"枚举异步源"。
+
+**账本现状:全仓只登记两个源**(仅两处 `WorkLedger::shared().acquire`):
+
+| ledger label | Kind | 覆盖旧判据哪条 |
+|---|---|---|
+| `tileContentLoad` | Landing | ② 瓦片内容加载(`TilesetTile`,12 处状态迁移都接了) |
+| `terrainPageUpload` | Pumped | ④ 页存储在途(`TerrainPageStore`) |
+
+对照 `hasConvergingWork` 的四判据,缺口:① 相机自演进**故意不进账本**(持续生产者非"在途");③ **raster overlay `hasPendingWork` 无 ticket**;旧判据没列但在跑的异步(MVT 矢量 fetch/镶嵌、解码池)也没接。
+
+### Phase A —— 补齐账本覆盖,把审计打到静默(最花功夫)
+`Scene::auditWorkLedger` 已是**找缺口的工具**:账本漏源时打 `verdict DIVERGE ledger=idle old=busy` + `audit MISMATCH`。
+1. 开着审计跑齐场景:冷启动 / churn / 飞行 / pan 惯性 / 慢网挂下载。
+2. 每条 DIVERGE 点名一个漏源。**已知至少要补**:raster overlay 异步(加 `Landing` ticket);逐一确认 MVT 矢量、worker 解码池。
+3. 迭代到全场景审计静默——**这就是可验证的"达成信号"**(不是"感觉接全了",是"所有回放场景零 DIVERGE")。
+   - ⚠️ 真风险:只在罕见场景出现的漏源(正是旧判据脆弱的同一原因)。审计只覆盖你真跑到的场景,场景清单要诚实列全。
+
+### Phase B —— 把 gating 翻转成读账本
+改 `Engine.cpp:279` 的判断为账本语义,注意**不是**纯 `anyOutstanding()`(相机自演进在账本外):
+```
+Pumped 有在途        → 必须继续出帧
+consumeLanded 命中   → 出一帧消费落地产物
+否则 camera 自演进   → 继续出帧(相机作为显式 gating 输入保留)
+都不满足             → 休眠
+```
+⚠️ 翻转前必须钉死一个口径:旧判据 ② 用 `pendingRequests()`,审计对拍用 `countTilesLoadingContent()`/`tileContentLoad` ticket——**先确认三者数的是同一批**,否则会在略微不同的口径上翻转 gating,引入新的边缘漏判。
+
+### Phase C —— 反转审计方向,再删旧判据
+翻转后让 `hasConvergingWork` 反过来当影子校验(账本权威、旧判据检查),soak 确认不再 DIVERGE,再删 ①②③④ 四段手写 if(相机那条抽成独立 gating 输入保留)。
+
+### 消除后的收益(按价值排序)
+1. **省电(真正的 payoff)**:今天四判据把 Landing/Pumped 一视同仁当 Pumped,一个在飞网络请求就把满帧率按住其整个生命周期;翻转后 Landing 类挂着下载时可休眠、落地才醒一帧。慢网 + churn 的空转帧直接消掉。
+2. **整类"静默冻屏"bug 被结构性关掉**(不只当前四源):今后新增任何异步生产者忘 gating,最坏与今天相同(不更差),而 RAII 让持有 ticket 成为默认、危险方向(永不入睡)是响的(awake reason 报 label)。失效方向从"默认坏"变成"要故意才坏"。
+3. **单一事实源**:新异步工作 = 领一张 ticket,不再往手写四路判据加分支且指望每个 reviewer 记得更新。
+4. **可诊断性(release 也能用)**:"引擎为什么醒着" 用 `outstandingByLabel()` 按 label 回答,而非一个粗糙 reason 字符串。
+
+### 优先级判断
+收益大头是省电 + 关掉一整类未来的坑,**不是修当前可见故障**(旧判据现在能工作)。优先级取决于:多在意移动端功耗,以及未来是否频繁新增异步源(新 provider/overlay/矢量源越多,收益 2 越大)。
 
 ---
 
