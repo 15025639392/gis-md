@@ -99,7 +99,7 @@ GPU 侧同时补上 no-data 角剔除重归一化。CPU/GPU 两份逐条对应,�
 2. **量级落差未解释**:修前边界法线错 82°,屏上却只有 6 个亮度单位的对比。合理解释是
    高空大气/雾把地表对比整体压掉,**未证**。
 3. **GPU 那份改动没有执行级守卫**:host 无 GL 上下文,只做了语法编译校验;它的正确性
-   证据就是这一次肉眼判定。CPU 孪生实现的守卫替不了它。
+   证据就是这一次肉眼判定。CPU 孪生实现的守卫替不了它。**已立为 T-P6**。
 
 **工具**:`tools/seam_line_detect.py` —— 沿线方向平均的检测器(逐像素阈值必然失败)。
 已标定:`docs/assets/tv10/vline_repro_1p69Mm.png` → x=363,超出 6.68,**6.1σ**。
@@ -160,6 +160,7 @@ zoom 维度**,判定却留在旧维度 —— 这是 T-V7 此前失效的成因,
 | **T-P3** | fill 代理构建同步且无帧预算封顶:`TileUpdateSelectionWorkRunner.h:237` 对每个可见瓦片循环调用 `ensureFillProxy`,`fillStartMs` 仅事后计时,无 break/budget | **未量化** —— 有签名早退(稳态命中,不是每帧重建),真实开销只在首见帧/祖先换页帧密集时(飞行、大跳变)暴露,那条帧时曲线没测过 |
 | **T-P5** | 谁和谁撞了同一个模板键**未定位**:`std::hash<SchemeId>` 哈希的是 interned 指针,本该区分两套 scheme —— 所以要么两者被 intern 成同一 handle,要么某调用点用 A 的 key 配了 B 的 bounds。T-V9 的修法是结构性兜底(键含跨度),**没修元凶** | 需再加一处日志打印请求方/建模方的 schemeId 字符串,一次真机复现即可定位 |
 | **T-P4** | HDR 变体常数是 provisional:`TerrainSurfaceLightGLSL.h:52` 的 `shadowFloor=0.15`/`ambientScale=0.6` 明标未定,真正调参在 T2 对着 tonemap 输出做 | 有主(T2),flag 默认关 |
+| **T-P6**<br>(验证债,非性能) | **shader 在 host 上没有执行级守卫**:测试进程里没有任何真 GL 设备,GLSL 只能靠肉眼在真机上验。后果已兑现一次 —— GPU 烘焙 `sampleH` 漏移植 CPU 的 no-data 角剔除,两份实现静默分叉很久无人发现(T-V10 根因①)。**注意这不是"CPU 那份多余"**:GPU 烘焙是帧内路径(`SceneRenderPipeline.cpp:236` 每帧 flush,靠 RTT + `setFramebufferColorLayer`),没有 device/没有帧的场合根本不可达,删掉 CPU 等于把仅有的可执行实现也删掉 | **未量化**。解法排序:①host 离屏 GL(EGL/OSMesa 无窗口 context)跑真实 bake pass 与 CPU 版逐 texel 对拍 —— 一次性投入,之后所有 shader 改动都受益,**我押这个**;②黄金向量对拍(CPU 存 golden,真机诊断开关跑 GPU bake 比对)—— 便宜但要真机在手,进不了 ctest。<br>"只留 GPU 一条路"的前置条件是三件事同时成立:MSL/SPIR-V 补齐 + 真 Metal 设备验过(均属 T-V8 欠账)+ 本条解决 |
 
 ---
 
