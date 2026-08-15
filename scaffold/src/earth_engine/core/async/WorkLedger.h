@@ -130,4 +130,37 @@ private:
     }
 };
 
+/// 一个源"我此刻忙不忙"→ 账本令牌的**幂等对账槽**。
+///
+/// 把 `if (active && !ticket.valid()) acquire; else if (!active && valid) release;`
+/// 这段(`TilesetTile::syncContentLoadWorkTicket` / `TerrainPageStore::syncWorkTicket`
+/// 手写过两遍的同款)收成一处:源每帧(或每次状态变化)拿当前 busy 谓词调一次
+/// `reconcile`,令牌自动跟随。相比手写配对 acquire/release,漏放的可能被消除
+/// —— 每次 reconcile 两个方向都处理,不存在"某条出错路径忘了 release"。
+///
+/// 线程约定:非线程安全,单个 slot 只能由一个线程(通常是渲染线程,或持有
+/// 源自身锁的线程)驱动。label 必须静态存活(见 WorkLedger::acquire)。
+class WorkTicketSlot {
+public:
+    WorkTicketSlot() = default;
+    WorkTicketSlot(const WorkTicketSlot&) = delete;
+    WorkTicketSlot& operator=(const WorkTicketSlot&) = delete;
+    WorkTicketSlot(WorkTicketSlot&&) noexcept = default;
+    WorkTicketSlot& operator=(WorkTicketSlot&&) noexcept = default;
+
+    /// active=true 确保持有一张 (kind,label) 令牌;false 确保已释放。幂等。
+    void reconcile(WorkLedger::Kind kind, const char* label, bool active) {
+        if (active && !ticket_.valid()) {
+            ticket_ = WorkLedger::shared().acquire(kind, label);
+        } else if (!active && ticket_.valid()) {
+            ticket_.release();
+        }
+    }
+
+    bool held() const { return ticket_.valid(); }
+
+private:
+    WorkLedger::Ticket ticket_;
+};
+
 } // namespace earth_engine

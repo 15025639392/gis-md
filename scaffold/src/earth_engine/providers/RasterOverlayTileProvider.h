@@ -9,6 +9,7 @@
 #include "../tiling/TileScheme.h"
 #include "../tiling/SurfaceTile.h"
 #include "../core/math/Rectangle.h"
+#include "../core/async/WorkLedger.h"
 
 #include <memory>
 #include <optional>
@@ -301,7 +302,12 @@ public:
 
     /// Set the current frame number (called BEFORE tile access each frame).
     /// Subsequent getTile() calls will stamp tiles with this frame number.
-    void setFrameNumber(uint64_t frame) { frameNumber_ = frame; }
+    void setFrameNumber(uint64_t frame) {
+        frameNumber_ = frame;
+        // 每帧每 overlay 无条件调(TileRenderFrameBuilder)——用作账本对账的
+        // 稳定每帧钩子:把本 provider 的在途状态同步进 WorkLedger 供 gating 审计。
+        syncWorkTickets();
+    }
 
     /// Mark a tile as used in the current frame (updates lastUsedFrame).
     void markUsed(const std::string& cacheKey);
@@ -324,6 +330,11 @@ public:
 private:
     friend class RasterOverlayTile;
     using TileCache = std::unordered_map<std::string, TilePtr>;
+
+    /// 把本 provider 的在途状态对账进 WorkLedger(setFrameNumber 每帧调)。
+    /// 在 asyncState_->mutex 下读两个布尔谓词后释放锁再 reconcile,避免
+    /// 账本锁与 provider 锁嵌套(WorkLedger 从不回调本类,单向即可)。
+    void syncWorkTickets();
 
     struct QuadtreeSourcePlan {
         int sourceZoom = 0;
@@ -611,6 +622,12 @@ private:
     /// Monotonic frame counter, updated by trimUnusedTiles.
     /// Used to stamp lastUsedFrame on tiles in getTile().
     uint64_t frameNumber_ = 0;
+
+    /// gating 账本对账槽(见 syncWorkTickets)。hasPendingWork 的 8 个子信号
+    /// 按语义拆两票:除 pendingUploads(帧内 drain=Pumped)外全为 Landing
+    /// (网络/worker 合成在别的线程自走完)。仅喂审计,当前零行为影响。
+    WorkTicketSlot loadSlot_;    ///< Landing: inFlight/compose/source/depot/...
+    WorkTicketSlot uploadSlot_;  ///< Pumped: pendingUploads(每帧限量 drain)
     uint64_t mappedRasterTileEpoch_ = 0;
     uint64_t mappingRevision_ = 0;
     double maximumScreenSpaceError_ = 2.0;

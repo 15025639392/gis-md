@@ -275,6 +275,18 @@ bool Scene::hasConvergingWork(const char** outReason) const {
     return false;
 }
 
+bool Scene::hasContinuousProducerWork(const char** outReason) const {
+    // 账本外的连续生产者(见头文件)。与 hasConvergingWork 的判据①同源:相机
+    // 自演进是"每帧改画面"而非"在途工作",故不发令牌,ledger 模式仍需它出帧。
+    // TODO(N):动态时钟/太阳同属此类,产品若支持运行时钟须在此并入。
+    if (cameraSystem_ && cameraSystem_->isSelfAnimating()) {
+        if (outReason) *outReason = "cameraAnimating";
+        return true;
+    }
+    if (outReason) *outReason = "idle";
+    return false;
+}
+
 void Scene::auditWorkLedger() const {
     // **并行验证期**:gating 仍读 hasConvergingWork,本函数零行为影响。
     // 目的是回答一个只能靠实测回答的问题 —— 那条判据到底漏了几个源。

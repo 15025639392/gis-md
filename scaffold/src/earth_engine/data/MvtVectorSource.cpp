@@ -265,6 +265,20 @@ void MvtVectorSource::update(const Rectangle& viewRect,
     }
     lastStats_.commits = static_cast<int>(commits);
     lastStats_.commitMs = ms(tCommit, Clock::now());
+
+    syncWorkTickets();
+}
+
+void MvtVectorSource::syncWorkTickets() {
+    // Landing:fetch/decode 在途(tree_ 选中未到 = pending_)或 worker 镶嵌在途。
+    // tree_.pendingCount 覆盖 request 派发→decode 回来这段窗口(此时 tessellating_
+    // 与 readyMeshes_ 都空);ingest 与 dispatch 在同一次 update 内串行,无跨帧缝。
+    const bool landing =
+        tree_.pendingCount() > 0 || !tessellating_.empty();
+    // Pumped:已镶好、等渲染线程 commit 的网格。停帧 = 永不 commit,故须出帧。
+    const bool pumped = !readyMeshes_.empty();
+    loadSlot_.reconcile(WorkLedger::Kind::Landing, "mvtVectorLoad", landing);
+    commitSlot_.reconcile(WorkLedger::Kind::Pumped, "mvtVectorCommit", pumped);
 }
 
 void MvtVectorSource::setLayerRules(std::vector<SourceLayerRule> rules) {

@@ -310,6 +310,10 @@ public:
         int fieldMaxZoom);
 
 private:
+    /// Phase B(WorkLedger 接管 gating)的活性判据。仅当 kEnableWorkLedgerGating
+    /// 翻转为 true 时被 needsFrame 调用;默认关,当前为死代码骨架(见其定义处注释)。
+    bool ledgerGatingNeedsFrame(const char** reason);
+
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
     std::unique_ptr<OffscreenPostProcess> offscreenPostProcess_;

@@ -86,6 +86,12 @@ public:
     /// outReason 非空时写入首个命中的原因(机制信号用,勿据此做逻辑分支)。
     bool hasConvergingWork(const char** outReason) const;
 
+    /// Phase B(WorkLedger 接管 gating)用:账本**外**的连续生产者是否要求出帧。
+    /// "连续生产者"= 每帧改画面但不是"在途工作"、故不发令牌的东西 —— 当前仅
+    /// 相机自演进(惯性/飞行/脚本平移)。TODO(N):动态时钟/太阳待并入。
+    /// ledger 模式下 gating = 账本 Pumped/Landed ∪ 本方法;非 ledger 模式不调用。
+    bool hasContinuousProducerWork(const char** outReason) const;
+
     /// 并行验证期的对拍(见实现注释)。零行为影响,只在不一致时打 ERROR。
     void auditWorkLedger() const;
 

@@ -4678,6 +4678,30 @@ bool RasterOverlayTileProvider::hasPendingWork() const {
                std::memory_order_relaxed) > 0;
 }
 
+void RasterOverlayTileProvider::syncWorkTickets() {
+    // hasPendingWork 的 8 个子信号按 gating 语义拆两票。在锁下只读两个布尔,
+    // 释放锁后再 reconcile(不在 provider 锁内嵌套账本锁)。
+    bool landing = false;
+    bool pumped = false;
+    {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        pumped = !asyncState_->pendingUploads.empty();
+        landing =
+            !asyncState_->inFlightRequests.empty() ||
+            !asyncState_->activeMappedSourceSets.empty() ||
+            !asyncState_->pendingSourceFallbacks.empty() ||
+            !asyncState_->sourceTileDepotInFlight.empty() ||
+            asyncState_->activeRasterComposeTasks.load(
+                std::memory_order_relaxed) > 0 ||
+            asyncState_->activeDeferredUploadReleases.load(
+                std::memory_order_relaxed) > 0 ||
+            asyncState_->activeRasterSourceRequests.load(
+                std::memory_order_relaxed) > 0;
+    }
+    loadSlot_.reconcile(WorkLedger::Kind::Landing, "rasterOverlayLoad", landing);
+    uploadSlot_.reconcile(WorkLedger::Kind::Pumped, "rasterOverlayUpload", pumped);
+}
+
 void RasterOverlayTileProvider::markUsed(const std::string& cacheKey) {
     touchCachedTile(cacheKey);
 }

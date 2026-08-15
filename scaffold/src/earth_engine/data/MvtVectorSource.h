@@ -6,6 +6,7 @@
 #include "MvtTileFetchCache.h"
 #include "StyleFilter.h"
 #include "VectorTileTree.h"
+#include "../core/async/WorkLedger.h"
 #include "../tiling/TileKey.h"
 
 #include <cstdint>
@@ -156,6 +157,11 @@ private:
 
     void ingestInbox();
 
+    /// 把矢量链的在途状态对账进 WorkLedger(每帧 update 末尾调,喂 gating 审计)。
+    /// Landing = fetch/decode 在途(tree_.pendingCount)或 worker 镶嵌在途;
+    /// Pumped  = 已镶好、等渲染线程 commit 的网格(readyMeshes_)。
+    void syncWorkTickets();
+
     Options options_;
     Sinks sinks_;
     std::shared_ptr<MvtTileFetchCache> tileCache_;
@@ -174,6 +180,10 @@ private:
     uint64_t rulesEpoch_ = 0;
 
     std::shared_ptr<Inbox> inbox_;
+
+    /// gating 账本对账槽(见 syncWorkTickets)。仅喂审计,当前零行为影响。
+    WorkTicketSlot loadSlot_;    ///< Landing: fetch/decode + worker 镶嵌在途
+    WorkTicketSlot commitSlot_;  ///< Pumped: 已镶好待 commit
 };
 
 } // namespace earth_engine

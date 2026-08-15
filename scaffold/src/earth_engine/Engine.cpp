@@ -15,6 +15,7 @@
 #include "layers/VectorLayer.h"
 #include "layers/ActivatedRasterOverlay.h"  // B2a 门②:overlays.front()->getTileProvider()
 #include "core/cache/HttpCache.h"
+#include "core/async/WorkLedger.h"
 #include "debug/Contracts.h"
 #include "debug/Policies.h"
 #include "debug/PlatformLog.h"
@@ -248,7 +249,25 @@ namespace {
 /// 自检窗口帧数。20 帧 ≈ 0.33s @60fps:够长到能等到"刚落地但慢一步"的产物,
 /// 又短到不会把设备按在满帧率上。
 constexpr int kShadowVerifySampleFrames = 20;
+
+/// Phase B(WorkLedger 接管 gating)总开关。默认关,尚未真机验证。
+/// 翻转前必做项(平台级唤醒钩子/audit soak/时钟太阳并入/上传尾实测)与
+/// 收益详见 docs/architecture/core-scene.md「还债路线」及 ledgerGatingNeedsFrame。
+/// constexpr false 时 ledger 分支被死代码消除,对现有行为零影响。
+constexpr bool kEnableWorkLedgerGating = false;
 }  // namespace
+
+bool Engine::ledgerGatingNeedsFrame(const char** reason) {
+    // Phase B ledger 模式的活性判据(见 kEnableWorkLedgerGating 注释)。
+    // 与旧 hasConvergingWork 的差别正是 Landing/Pumped 分治:Landing 持有期
+    // 不出帧、落地才消费一帧(省电 payoff),而非全程按住帧率。
+    WorkLedger& ledger = WorkLedger::shared();
+    if (ledger.consumeLanded(reason)) return true;   // 有产物落地 → 消费一帧
+    if (ledger.hasPumpedWork(reason)) return true;   // Pumped → 必须持续出帧
+    // 账本外的连续生产者(相机自演进;TODO N:时钟/太阳待并入)。
+    if (scene_ && scene_->hasContinuousProducerWork(reason)) return true;
+    return false;
+}
 
 bool Engine::needsFrame() {
     // 并行验证期:每帧对拍令牌账与旧判据(见 Scene::auditWorkLedger)。
@@ -276,7 +295,11 @@ bool Engine::needsFrame() {
         // 它永远停在原地,hold 从"暂态"变成"永久黑屏"。
         reason = "held";
         settleFrames_ = kSettleFrames;
-    } else if (scene_ && scene_->hasConvergingWork(&convergingReason)) {
+    } else if (kEnableWorkLedgerGating
+                   ? ledgerGatingNeedsFrame(&convergingReason)
+                   : (scene_ && scene_->hasConvergingWork(&convergingReason))) {
+        // 默认走 hasConvergingWork(旧四判据);flag 翻转后走账本(Phase B)。
+        // constexpr false 时 ledger 分支被死代码消除,零行为影响。
         reason = convergingReason;
         settleFrames_ = kSettleFrames;
     } else if (settleFrames_ > 0) {

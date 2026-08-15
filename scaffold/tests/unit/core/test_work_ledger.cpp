@@ -135,4 +135,55 @@ TEST_F(WorkLedgerTest, ConcurrentAcquireReleaseIsBalanced) {
     EXPECT_TRUE(ledger.outstandingByLabel().empty());
 }
 
+// ── WorkTicketSlot:每帧从 busy 谓词对账的幂等槽 ──
+// 新异步源(矢量链、raster overlay)用它把在途状态喂进账本。它的价值就在于
+// "每次 reconcile 两个方向都处理" —— 手写配对 acquire/release 的漏放风险被消除。
+// 这几条钉死的正是 Phase A 最怕的 bug:reconcile 逻辑写错 → Phase B 翻转后
+// 永不入睡(泄漏)或冻屏(误放)。
+
+using earth_engine::WorkTicketSlot;
+
+// active 上升沿 acquire、持续 active 幂等不重复计数、下降沿 release。
+TEST_F(WorkLedgerTest, SlotReconcileTracksPredicate) {
+    WorkLedger& ledger = WorkLedger::shared();
+    WorkTicketSlot slot;
+    EXPECT_FALSE(slot.held());
+
+    slot.reconcile(Kind::Landing, "vec", true);          // 上升沿
+    EXPECT_TRUE(slot.held());
+    EXPECT_EQ(ledger.outstanding(Kind::Landing), 1);
+
+    slot.reconcile(Kind::Landing, "vec", true);          // 持续忙:幂等
+    EXPECT_EQ(ledger.outstanding(Kind::Landing), 1);
+
+    slot.reconcile(Kind::Landing, "vec", false);         // 下降沿
+    EXPECT_FALSE(slot.held());
+    EXPECT_EQ(ledger.outstanding(Kind::Landing), 0);
+
+    slot.reconcile(Kind::Landing, "vec", false);         // 持续闲:幂等
+    EXPECT_EQ(ledger.outstanding(Kind::Landing), 0);
+}
+
+// 反复 busy/idle 抖动不得泄漏 —— 这是"每帧对账"最常见的输入形态。
+TEST_F(WorkLedgerTest, SlotToggleDoesNotLeak) {
+    WorkLedger& ledger = WorkLedger::shared();
+    WorkTicketSlot slot;
+    for (int i = 0; i < 100; ++i) {
+        slot.reconcile(Kind::Pumped, "upload", i % 2 == 0);
+    }
+    slot.reconcile(Kind::Pumped, "upload", false);       // 收尾到 idle
+    EXPECT_EQ(ledger.outstanding(Kind::Pumped), 0);
+}
+
+// slot 析构(源被销毁)必须释放它持有的令牌,否则源没了令牌还在 = 永不入睡。
+TEST_F(WorkLedgerTest, SlotDestructionReleases) {
+    WorkLedger& ledger = WorkLedger::shared();
+    {
+        WorkTicketSlot slot;
+        slot.reconcile(Kind::Landing, "overlay", true);
+        EXPECT_EQ(ledger.outstanding(Kind::Landing), 1);
+    }
+    EXPECT_EQ(ledger.outstanding(Kind::Landing), 0);
+}
+
 } // namespace
