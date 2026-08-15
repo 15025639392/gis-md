@@ -482,7 +482,12 @@ private:
         // 表现为瓦界影像/矢量错缝(实测 ~30m)。改为四角逐点投影拟合仿射(交叉
         // 项保留,扭曲项 ~2cm 可弃):相邻瓦共享角点值相同 → 瓦界按构造连续;
         // 残差=瓦内二阶弯曲(~2m,亚纹素级)。标准投影下 dU/dV 轴对齐,逐片元
-        // 表达式与旧 origin/span 等价。逐瓦(非合批)管线不消费此仿射。
+        // 表达式与旧 origin/span 等价。消费方=合批实例流 + 逐瓦位移地形 FS
+        // (u_pageGeomA/B,见 applyToTerrainCommand);真实网格 glTF FS 不消费
+        // (烘焙 texcoord 逐顶点精确,走 origin/span)。附带效果:模板/祖先回退
+        // 态(clipMode=2)的 psUv 经 clipUv 窗口(WGS84-merc 空间)喂进本仿射,
+        // GCJ δ 从构造上被吸收 —— 缩放过渡期瓦片错位与此同修(数值上界见
+        // test_computed_imagery_uv_risk)。
         float geomAffine[6] = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
     };
 
