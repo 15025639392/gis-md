@@ -305,3 +305,66 @@ TEST(TerrainEdgeNormalSeamTest, InteriorNormalsMatchAnalyticGradient) {
     // 容差覆盖 8bit 法线量化(~0.45°/LSB)与栅格差分对解析梯度的离散误差。
     EXPECT_LT(maxAngle, 3.0) << "内部法线与解析梯度最大夹角 " << maxAngle << "°";
 }
+
+// 生产 NASA 514 源实测:抽样 19 片有 14 片的**西环或北环整列 code=0**(切瓦时
+// 重叠环没填出来)。此前烘焙把 no-data 当海平面 0m 送进边界差分,而边界臂只有
+// reach×瓦片跨度(z7 ≈266m)—— 900m 地表对 0m 的假落差把整条边界的法线打到近
+// 水平(修前本测试场实测 nz 0.999→0.05,夹角 >70°)。修法:no-data 邻居 → 丢掉
+// 那条臂,退化成另一侧单边差分。
+//
+// 判据用**解析梯度**而非"有环 vs 无环两次烘焙相等":丢臂后走的是单边差分,与
+// 三点不等臂本就有 O(d·f'') 的差(那正是当初加重叠环要消的东西),两次烘焙比
+// 只会得到一个没有意义的松阈值。故用光滑场(roughAmplitude=0)对解析真值,
+// 与 InteriorNormalsMatchAnalyticGradient 同款容差 3°。
+TEST(TerrainEdgeNormalSeamTest, NoDataOverlapRingDoesNotWreckEdgeNormals) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const Rectangle bounds =
+        scheme->tileToRectangle(TileKey{"Geographic-TMS", 8, 100, 60});
+    HeightField field;
+    field.kx = 2.0 * kPi / (4.0 * bounds.width());
+    field.ky = 2.0 * kPi / (4.0 * bounds.height());
+    field.roughAmplitude = 0.0;
+
+    // 西环(px 0)整列打成 no-data,复刻生产源的缺陷形态。
+    DecodedHeightmap hm = makeRingHeightmap(bounds, field);
+    constexpr int kTileSize = 514;
+    for (int py = 0; py < kTileSize; ++py) {
+        hm.stagedHeights[static_cast<size_t>(py) * kTileSize] =
+            DecodedHeightmap::kNoDataHeight;
+    }
+    hm.assignHeights();
+
+    constexpr int kGridSize = 64;
+    const int n = kGridSize + 1;
+    const std::vector<uint8_t> tex = bakeTerrainHeightNormalTexels(
+        hm, bounds, kGridSize, hm.minHeight, hm.maxHeight - hm.minHeight);
+
+    constexpr double kEarthRadiusMeters = 6378137.0;
+    const double centerLat = 0.5 * (bounds.north() + bounds.south());
+    const double widthMeters =
+        bounds.width() * std::cos(centerLat) * kEarthRadiusMeters;
+    const double heightSpanMeters = bounds.height() * kEarthRadiusMeters;
+
+    double maxAngle = 0.0;
+    int worstJ = -1;
+    for (int j = 8; j < n - 8; j += 8) {
+        const double v = static_cast<double>(j) / kGridSize;
+        const double lon = bounds.west();          // i = 0:受损的西边界
+        const double lat = bounds.north() - v * bounds.height();
+        const double dLon = bounds.width() * 1e-4;
+        const double dLat = bounds.height() * 1e-4;
+        const double gradU = (field(lon + dLon, lat) - field(lon - dLon, lat)) /
+                             (2.0 * dLon / bounds.width() * widthMeters);
+        const double gradV = (field(lon, lat - dLat) - field(lon, lat + dLat)) /
+                             (2.0 * dLat / bounds.height() * heightSpanMeters);
+        const double inv = 1.0 / std::sqrt(gradU * gradU + gradV * gradV + 1.0);
+        Normal expected;
+        expected.x = -gradU * inv;
+        expected.y = -gradV * inv;
+        expected.z = inv;
+        const double a = angleBetweenDegrees(decodeNormal(tex, n, 0, j), expected);
+        if (a > maxAngle) { maxAngle = a; worstJ = j; }
+    }
+    EXPECT_LT(maxAngle, 3.0)
+        << "西边界法线与解析梯度最大夹角 " << maxAngle << "°(j=" << worstJ << ")";
+}

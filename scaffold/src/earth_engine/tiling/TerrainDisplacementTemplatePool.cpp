@@ -234,6 +234,11 @@ std::vector<uint8_t> bakeTerrainHeightNormalTexels(
     axis[static_cast<size_t>(ns - 1)] = 1.0 + reach;
 
     std::vector<float> nodeH(static_cast<size_t>(ns) * ns);
+    // nodeValid:该 scratch 节点是否有真实数据。**差分必须知道这件事** —— 落 0
+    // 的 nodata 节点当成"海平面"参与差分,会在 nodata 边界造一道假悬崖;边界节点
+    // 的臂长只有 reach×瓦片跨度(514 源 z7 下 ≈266m),900m 地表对 0m 的假落差
+    // 直接把法线打到近水平。生产源实测有整列/整行重叠环 nodata(见下方 arm 注释)。
+    std::vector<uint8_t> nodeValid(static_cast<size_t>(ns) * ns, 1);
     for (int j = 0; j < ns; ++j) {
         const float v = static_cast<float>(axis[static_cast<size_t>(j)]);
         for (int i = 0; i < ns; ++i) {
@@ -242,8 +247,9 @@ std::vector<uint8_t> bakeTerrainHeightNormalTexels(
             // 四角全 nodata 时 sampleBilinear 原样回传哨兵(保留"此处无数据"
             // 信号);烘焙侧落 0(海平面,Mapbox 缺数据语义),不能让哨兵进高度
             // 量化与法线差分。
-            nodeH[static_cast<size_t>(j) * ns + i] =
-                heightmap.isNoData(sampled) ? 0.0f : sampled;
+            const bool noData = heightmap.isNoData(sampled);
+            nodeH[static_cast<size_t>(j) * ns + i] = noData ? 0.0f : sampled;
+            nodeValid[static_cast<size_t>(j) * ns + i] = noData ? 0u : 1u;
         }
     }
     // ---- B/A 通道 = 切空间法线(解"竖条"= 逐三角面平法线)----
@@ -288,18 +294,35 @@ std::vector<uint8_t> bakeTerrainHeightNormalTexels(
             bytes[idx + 1] = static_cast<uint8_t>(v16 & 0xFF);
 
             // 臂长按 scratch 轴的真实间距换算成米(边界臂 = reach × 瓦片跨度)。
+            // ⚠️ nodata 邻居 → 臂长置 0 = **丢掉这条臂**,让三点公式退化成另一侧
+            // 的单边差分,而不是拿"海平面 0m"去和真实地表求斜率。生产 NASA 514 源
+            // 抽样 19 片里 14 片的西环或北环整列 code=0(重叠环没切出来),不丢臂
+            // 的话那些瓦片的整条西/北边界法线被打到近水平(实测 nz 0.999→0.05)。
+            // 两臂都无效 → 公式返回 0 = 平法线,是此处唯一安全的默认。
+            const auto valid = [&](int gi, int gj) {
+                return nodeValid[static_cast<size_t>(gj) * ns + gi] != 0u;
+            };
+            const bool centerValid = valid(si, sj);
             const double dLu =
-                (axis[static_cast<size_t>(si)] -
-                 axis[static_cast<size_t>(si - 1)]) * widthMeters;
+                (centerValid && valid(si - 1, sj))
+                    ? (axis[static_cast<size_t>(si)] -
+                       axis[static_cast<size_t>(si - 1)]) * widthMeters
+                    : 0.0;
             const double dRu =
-                (axis[static_cast<size_t>(si + 1)] -
-                 axis[static_cast<size_t>(si)]) * widthMeters;
+                (centerValid && valid(si + 1, sj))
+                    ? (axis[static_cast<size_t>(si + 1)] -
+                       axis[static_cast<size_t>(si)]) * widthMeters
+                    : 0.0;
             const double dLv =
-                (axis[static_cast<size_t>(sj)] -
-                 axis[static_cast<size_t>(sj - 1)]) * heightSpanMeters;
+                (centerValid && valid(si, sj - 1))
+                    ? (axis[static_cast<size_t>(sj)] -
+                       axis[static_cast<size_t>(sj - 1)]) * heightSpanMeters
+                    : 0.0;
             const double dRv =
-                (axis[static_cast<size_t>(sj + 1)] -
-                 axis[static_cast<size_t>(sj)]) * heightSpanMeters;
+                (centerValid && valid(si, sj + 1))
+                    ? (axis[static_cast<size_t>(sj + 1)] -
+                       axis[static_cast<size_t>(sj)]) * heightSpanMeters
+                    : 0.0;
             const double gradU = derivative3pt(at(si - 1, sj), at(si, sj),
                                                at(si + 1, sj), dLu, dRu);
             const double gradV = derivative3pt(at(si, sj - 1), at(si, sj),

@@ -1923,12 +1923,12 @@ geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDe
 | `acquire` | .cpp:52-115 | 取(或建)一份模板几何 |
 | `heightCacheKey` | .cpp:160-128 | 高度纹理缓存键 |
 | `findHeightArray` / `ensureHeightArray` | .cpp:173-134 / :136-162 | 按 gridSize 取/建高度 texture array |
-| `bakeTerrainHeightNormalTexels` | .cpp:208-274 | 烘高度 + **切空间法线到 B/A 通道** |
-| `acquireHeightTexture` | .cpp:321-388 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
-| `ensureBakeResources` | .cpp:437-408 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
-| `flushHeightBakes` | .cpp:454-488 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer),然后清空。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
-| `updateEdgeLutRows` | .cpp:534-503 | 写本帧边吸附的邻居高度差表(①-1)。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
-| `touchHeightTexture` | .cpp:550- | LRU 触碰 |
+| `bakeTerrainHeightNormalTexels` | .cpp:208-341 | 烘高度 + **切空间法线到 B/A 通道** |
+| `acquireHeightTexture` | .cpp:344-459 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
+| `ensureBakeResources` | .cpp:460-476 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
+| `flushHeightBakes` | .cpp:477-556 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer),然后清空。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
+| `updateEdgeLutRows` | .cpp:557-572 | 写本帧边吸附的邻居高度差表(①-1)。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
+| `touchHeightTexture` | .cpp:573-582 | LRU 触碰 |
 
 ### HeightmapTerrainContentProvider.h / .cpp
 

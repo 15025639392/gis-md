@@ -8,7 +8,7 @@
 // 手动双线性(源是 uint16 拆 hi/lo 打进 RG8,硬件双线性会破坏打包),照抄
 // Renderer.cpp:1069-1096 的高度纹理读取约定。
 //
-// 输出布局与 CPU 版逐位对齐(TerrainDisplacementTemplatePool.cpp:229-272):
+// 输出布局与 CPU 版逐位对齐(TerrainDisplacementTemplatePool.cpp:278-337):
 //   RG = 16bit 归一化高度 t=(h-minH)/range,R=高字节 G=低字节
 //   BA = 切空间法线 (-gradU·inv, -gradV·inv) 编码到 [0,1]
 //
@@ -64,28 +64,49 @@ uniform float u_heightM;
 uniform float u_reach;
 out vec4 fragColor;
 
-// 单点 NEAREST 取码 → 反量化成米。码 0 = no-data 哨兵 → 海平面 0。
+// no-data 哨兵:sampleH 四角全 no-data 时的返回值(调用方用 isNoData 判)。
+// 取 -1e9(远低于任何真实高程,也远离 Mapbox 的 -10000m 下限)。
+const float kBakeNoData = -1.0e9;
+bool isNoData(float h) { return h < -1.0e8; }
+
+// 单点 NEAREST 取码 → 反量化成米。码 0 = no-data 哨兵 → 返回哨兵,**不是 0m**。
 float decodeAt(ivec2 px) {
     px = clamp(px, ivec2(0), ivec2(int(u_srcSize) - 1));
     vec4 t = texelFetch(u_tileTexture, px, 0);
     float code = floor(t.r * 255.0 + 0.5) * 256.0 + floor(t.g * 255.0 + 0.5);
-    if (code < 0.5) return 0.0;  // no-data → 0m(Mapbox 缺数据语义)
+    if (code < 0.5) return kBakeNoData;  // no-data
     return (u_quantBase + code) * u_quantStep;
 }
 
 // 归一化 (u,v) → 源像素 → 手动双线性(unclamped:±reach 内读重叠环真实邻瓦值)。
 // 反量化后再插值(与 CPU sampleBilinearUnclamped 对齐:对米值双线性,非对码)。
+//
+// ⚠️ no-data 角**剔除后重归一化**(与 CPU sampleBilinearUnclamped 同款,那边的
+// 注释解释了为什么:哨兵直接参与 mix 会得到一个"中间值",既不是真高度也不再被
+// isNoData 认出来)。此前 GPU 版把 no-data 当 0m 混进去 —— 生产 514 源上整列
+// nodata 的重叠环于是把瓦片边界高度砍掉一半(实测 908m→454m),与 CPU 路径行为
+// 分叉。四角全 no-data → 返回哨兵,由调用方决定语义。
 float sampleH(float u, float v) {
     float span = u_srcSize - 1.0 - 2.0 * u_srcInset;
     float fx = u * span + u_srcInset;
     float fy = v * span + u_srcInset;
     float x0 = floor(fx), y0 = floor(fy);
     float tx = fx - x0, ty = fy - y0;
-    float a = decodeAt(ivec2(int(x0),       int(y0)));
-    float b = decodeAt(ivec2(int(x0) + 1,   int(y0)));
-    float c = decodeAt(ivec2(int(x0),       int(y0) + 1));
-    float d = decodeAt(ivec2(int(x0) + 1,   int(y0) + 1));
-    return mix(mix(a, b, tx), mix(c, d, tx), ty);
+    float h[4];
+    h[0] = decodeAt(ivec2(int(x0),     int(y0)));
+    h[1] = decodeAt(ivec2(int(x0) + 1, int(y0)));
+    h[2] = decodeAt(ivec2(int(x0),     int(y0) + 1));
+    h[3] = decodeAt(ivec2(int(x0) + 1, int(y0) + 1));
+    float w[4];
+    w[0] = (1.0 - tx) * (1.0 - ty);
+    w[1] = tx * (1.0 - ty);
+    w[2] = (1.0 - tx) * ty;
+    w[3] = tx * ty;
+    float sum = 0.0, wsum = 0.0;
+    for (int k = 0; k < 4; ++k) {
+        if (!isNoData(h[k])) { sum += h[k] * w[k]; wsum += w[k]; }
+    }
+    return wsum > 0.0 ? sum / wsum : kBakeNoData;
 }
 
 // 三点不等臂一阶导(逐字移植 CPU derivative3pt,臂相等时退化为标准中心差分)。
@@ -113,10 +134,19 @@ void main() {
     float hC = sampleH(uC, vC);
     float hL = sampleH(uL, vC), hR = sampleH(uR, vC);
     float hT = sampleH(uC, vT), hB = sampleH(uC, vB);
+    bool cOk = !isNoData(hC);
+    if (!cOk) { hC = 0.0; }  // 无数据处落海平面(Mapbox 缺数据语义)
 
     // 臂长(米):节点间距 × 真实地面跨度。
-    float dLu = (uC - uL) * u_widthM,  dRu = (uR - uC) * u_widthM;
-    float dLv = (vC - vT) * u_heightM, dRv = (vB - vC) * u_heightM;
+    // ⚠️ no-data 邻居 → 臂长置 0 = 丢掉这条臂,deriv3 退化为另一侧单边差分。
+    // 拿海平面 0m 去和真实地表求斜率会在 nodata 边界造假悬崖:边界臂只有
+    // reach×跨度(514 源 z7 ≈266m),900m 假落差直接把法线打到近水平。生产源
+    // 抽样 19 片有 14 片的西/北重叠环整列 code=0,故这是常态不是边角。
+    // (与 CPU bakeTerrainHeightNormalTexels 的 nodeValid 分支逐条对应。)
+    float dLu = (cOk && !isNoData(hL)) ? (uC - uL) * u_widthM  : 0.0;
+    float dRu = (cOk && !isNoData(hR)) ? (uR - uC) * u_widthM  : 0.0;
+    float dLv = (cOk && !isNoData(hT)) ? (vC - vT) * u_heightM : 0.0;
+    float dRv = (cOk && !isNoData(hB)) ? (vB - vC) * u_heightM : 0.0;
     float gradU = deriv3(hL, hC, hR, dLu, dRu);
     float gradV = deriv3(hT, hC, hB, dLv, dRv);
     float inv = inversesqrt(gradU * gradU + gradV * gradV + 1.0);
