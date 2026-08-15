@@ -394,6 +394,12 @@ private:
     void touchCachedTile(const std::string& cacheKey);
     void touchCachedTile(RasterOverlayTile& tile);
     TileCache::iterator eraseCachedTile(TileCache::iterator it);
+    // 按谓词批量清除已缓存瓦:命中 predicate 的条目在 eraseCachedTile 之前先跑
+    // beforeErase(如置败)。四路失效与 setCoverageRectangle 共用,消除三处重复循环。
+    void eraseCachedTilesMatching(
+        const std::function<bool(const std::string&, const TilePtr&)>&
+            predicate,
+        const std::function<void(const TilePtr&)>& beforeErase = {});
     void clearCachedTiles();
     std::shared_ptr<RasterTextureByteLedger> textureByteLedgerForTiles() const {
         return textureByteLedger_;
@@ -560,6 +566,12 @@ private:
     };
     static void enforceSourceDepotBudgetLocked(
         ProviderAsyncState& state,
+        RetiredAsyncResources& retired);
+    // 按谓词从 pendingUploads 清除条目(释放字节→retired→末尾 enforce budget)。
+    // 调用方须已持 state.mutex。invalidateMapped 与 discardPending... 共用。
+    static void erasePendingUploadsMatchingLocked(
+        ProviderAsyncState& state,
+        const std::function<bool(const PendingUpload&)>& predicate,
         RetiredAsyncResources& retired);
     static void clearSourceDepotInFlightLocked(
         ProviderAsyncState& state,

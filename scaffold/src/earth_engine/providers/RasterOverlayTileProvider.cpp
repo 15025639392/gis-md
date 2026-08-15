@@ -3028,26 +3028,20 @@ void RasterOverlayTileProvider::setCoverageRectangle(
     const Rectangle effectiveCoverage =
         effectiveCoverageRectangle(scheme_, sourceCoverageRectangle_);
     invalidateSourceAssetDepotCache();
-    for (auto it = tiles_.begin(); it != tiles_.end();) {
-        if (it->first.rfind("mapped-raster/", 0) == 0 || !it->second) {
-            ++it;
-            continue;
-        }
-        const Rectangle tileGeographicBounds =
-            unprojectProviderToGeographic(
-                it->second->getRectangle(),
-                projection_);
-        const bool stillCovered =
-            tileGeographicBounds.computeIntersection(effectiveCoverage)
-                .has_value();
-        const bool loading =
-            it->second->getState() == RasterOverlayTile::LoadState::Loading;
-        if (!stillCovered && !loading) {
-            it = eraseCachedTile(it);
-        } else {
-            ++it;
-        }
-    }
+    eraseCachedTilesMatching(
+        [&](const std::string& cacheKey, const TilePtr& tile) {
+            if (isMappedRasterCacheKey(cacheKey)) {
+                return false;
+            }
+            const Rectangle tileGeographicBounds =
+                unprojectProviderToGeographic(tile->getRectangle(), projection_);
+            const bool stillCovered =
+                tileGeographicBounds.computeIntersection(effectiveCoverage)
+                    .has_value();
+            const bool loading =
+                tile->getState() == RasterOverlayTile::LoadState::Loading;
+            return !stillCovered && !loading;
+        });
     discardPendingUploadsForMissingTiles();
     invalidateMappedRasterTileCache();
 }
@@ -3116,6 +3110,38 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
         getMaximumLevel());
 }
 
+void RasterOverlayTileProvider::eraseCachedTilesMatching(
+    const std::function<bool(const std::string&, const TilePtr&)>& predicate,
+    const std::function<void(const TilePtr&)>& beforeErase) {
+    for (auto it = tiles_.begin(); it != tiles_.end();) {
+        if (it->second && predicate(it->first, it->second)) {
+            if (beforeErase) {
+                beforeErase(it->second);
+            }
+            it = eraseCachedTile(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+void RasterOverlayTileProvider::erasePendingUploadsMatchingLocked(
+    ProviderAsyncState& state,
+    const std::function<bool(const PendingUpload&)>& predicate,
+    RetiredAsyncResources& retired) {
+    auto& pendingUploads = state.pendingUploads;
+    for (auto it = pendingUploads.begin(); it != pendingUploads.end();) {
+        if (!predicate(*it)) {
+            ++it;
+            continue;
+        }
+        releasePendingUploadImageBytesLocked(state, *it);
+        retired.pendingUploads.push_back(std::move(*it));
+        it = pendingUploads.erase(it);
+    }
+    enforceSourceDepotBudgetLocked(state, retired);
+}
+
 void RasterOverlayTileProvider::invalidateMappedRasterTileCache() {
     ++mappedRasterTileEpoch_;
     ++mappingRevision_;
@@ -3123,40 +3149,31 @@ void RasterOverlayTileProvider::invalidateMappedRasterTileCache() {
     RetiredAsyncResources retired;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        auto& pendingUploads = asyncState_->pendingUploads;
-        for (auto it = pendingUploads.begin(); it != pendingUploads.end();) {
-            if (!isMappedRasterCacheKey(it->cacheKey)) {
-                ++it;
-                continue;
-            }
-            releasePendingUploadImageBytesLocked(*asyncState_, *it);
-            retired.pendingUploads.push_back(std::move(*it));
-            it = pendingUploads.erase(it);
-        }
-        enforceSourceDepotBudgetLocked(*asyncState_, retired);
+        erasePendingUploadsMatchingLocked(
+            *asyncState_,
+            [](const PendingUpload& upload) {
+                return isMappedRasterCacheKey(upload.cacheKey);
+            },
+            retired);
     }
-    for (auto it = tiles_.begin(); it != tiles_.end();) {
-        if (isMappedRasterCacheKey(it->first) && it->second) {
-            it = eraseCachedTile(it);
-        } else {
-            ++it;
-        }
-    }
+    eraseCachedTilesMatching(
+        [](const std::string& cacheKey, const TilePtr&) {
+            return isMappedRasterCacheKey(cacheKey);
+        });
     asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
 }
 
 void RasterOverlayTileProvider::invalidateDirectRasterTileCache() {
     ++mappingRevision_;
-    for (auto it = tiles_.begin(); it != tiles_.end();) {
-        if (!isMappedRasterCacheKey(it->first) && it->second) {
-            it->second->setMoreDetailAvailable(
+    eraseCachedTilesMatching(
+        [](const std::string& cacheKey, const TilePtr&) {
+            return !isMappedRasterCacheKey(cacheKey);
+        },
+        [](const TilePtr& tile) {
+            tile->setMoreDetailAvailable(
                 RasterOverlayTile::MoreDetailAvailable::No);
-            it->second->setState(RasterOverlayTile::LoadState::Failed);
-            it = eraseCachedTile(it);
-        } else {
-            ++it;
-        }
-    }
+            tile->setState(RasterOverlayTile::LoadState::Failed);
+        });
     discardPendingUploadsForMissingTiles();
     asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
 }
@@ -3279,17 +3296,12 @@ void RasterOverlayTileProvider::abandonActiveSourceSets(bool mappedOnly) {
 void RasterOverlayTileProvider::discardPendingUploadsForMissingTiles() {
     RetiredAsyncResources retired;
     std::lock_guard<std::mutex> lock(asyncState_->mutex);
-    auto& pendingUploads = asyncState_->pendingUploads;
-    for (auto it = pendingUploads.begin(); it != pendingUploads.end();) {
-        if (tiles_.find(it->cacheKey) != tiles_.end()) {
-            ++it;
-            continue;
-        }
-        releasePendingUploadImageBytesLocked(*asyncState_, *it);
-        retired.pendingUploads.push_back(std::move(*it));
-        it = pendingUploads.erase(it);
-    }
-    enforceSourceDepotBudgetLocked(*asyncState_, retired);
+    erasePendingUploadsMatchingLocked(
+        *asyncState_,
+        [this](const PendingUpload& upload) {
+            return tiles_.find(upload.cacheKey) == tiles_.end();
+        },
+        retired);
 }
 
 int RasterOverlayTileProvider::getMaximumLevel() const {

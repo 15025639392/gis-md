@@ -81,7 +81,7 @@
 | **P1** | `HttpCache` 无过期 / 无 ETag 重验 | 影像一旦缓存永不刷新;源端更新用户看不到 | 未做。**TTL 口径是跨会话共享约定,须你先拍**再实现 |
 | **P2** | `FrameResourceBudget::canIssue` 忽略 `FrameResourcePriority` | 预算紧张的那一帧,urgent 可能被 preload 占满名额而 Blocked | 未做。影响被 HTTP 层动态优先级 cell 部分兜底(下一帧重试时排在前面),**是帧级延迟不是持续饥饿** |
 | **P3** | 空洞瓦每帧重走完整 `update()`(state 非 `Attached`,`hasStableUpdateState()` false) | 洞区瓦片的 per-frame CPU;无网络无合成 | **未量化**。洞区通常少,但没测过 |
-| **P4** | `RasterOverlayTileProvider.cpp` 4764 行,四路失效逻辑互调 | 可维护性,不是运行期成本 | 未拆 |
+| **P4** | `RasterOverlayTileProvider.cpp` 4785 行,四路失效逻辑互调 | 可维护性,不是运行期成本 | ⚠️ 互调重复已解耦:提 `eraseCachedTilesMatching`(谓词+beforeErase)/ `erasePendingUploadsMatchingLocked`(谓词,持锁清 pendingUpload→enforce budget)两工具函数,四路失效 + `setCoverageRectangle` 五处重复循环收敛为组合调用(行为等价,3 个 raster ctest 全绿)。**剩物理拆文件(嵌套 struct 挪 TU)未做**——那是「4785 行长度」这条独立症状,风险/收益另判,单独立债 |
 
 ---
 
