@@ -22,6 +22,7 @@
 """
 import argparse
 import gzip
+import os
 import math
 import sqlite3
 import sys
@@ -430,8 +431,15 @@ def score(dist_true, dist_rec, half_texel, tol=0.0):
 
 def main():
     ap = argparse.ArgumentParser()
+    # 默认路径按**仓库根**解析,不跟 cwd 走 —— 曾有两份同名 mbtiles
+    # (仓库根 tmp/ 含 poi 层的那份 vs scaffold/tmp/ 的旧版),相对默认值
+    # 会随 cwd 静默切换数据源,量出来的数就不可比了。旧版已删,此处钉死
+    # 真源以免再生歧义。
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(
+        os.path.abspath(__file__))))
     ap.add_argument('mbtiles', nargs='?',
-                    default='tmp/osm/chongqing/chongqing.mbtiles')
+                    default=os.path.join(repo_root, 'tmp', 'osm', 'chongqing',
+                                         'chongqing.mbtiles'))
     ap.add_argument('--tiles', type=int, default=3, help='取最密的前 N 个 z14 瓦')
     ap.add_argument('--texel-px', type=int, default=4,
                     help='一个场纹素占多少屏幕像素(=2^d,真机 92% 画面 d=2)')
