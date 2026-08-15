@@ -98,6 +98,11 @@
 
 > 背景见上节"⚠️ 短板"首条。这不是修 bug——是把原作者停在并行验证期的迁移走完。机制(Ticket/审计/`consumeLanded` 语义)已就位,工作量几乎全在 Phase A 的"枚举异步源"。
 
+**进度(2026-08-16,commit `69b52412a`)**:
+- ✅ **Phase A 已落地**:`WorkTicketSlot` 幂等对账槽 + 矢量链两票(`mvtVectorLoad`/`mvtVectorCommit`)+ raster overlay 两票(`rasterOverlayLoad`/`rasterOverlayUpload`),`test_work_ledger` 加 3 条守卫,ctest 189/189。纯增量、零行为风险(ticket 仅喂审计)。
+- ⏳ **Phase B 骨架已落地但默认关**:`kEnableWorkLedgerGating=false`(constexpr,死代码消除)+ `Engine::ledgerGatingNeedsFrame` + `Scene::hasContinuousProducerWork`。翻转前四项 TODO(下方)未做,**均需真机**,故未启用。
+- ❌ **未做**:H 影像 provider 解码逸出实测;下方 Phase B 四项 TODO;真机 audit soak。
+
 **账本现状:全仓只登记两个源**(仅两处 `WorkLedger::shared().acquire`):
 
 | ledger label | Kind | 覆盖旧判据哪条 |
