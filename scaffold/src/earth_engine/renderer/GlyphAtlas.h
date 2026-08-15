@@ -66,6 +66,10 @@ public:
     /// >0 = 屏幕上有字渲染不出来。静默丢字不可接受:首次溢出打 Warning
     /// 日志,消费方(诊断面板/测试)据此报警。多页/LRU 落地前的可观测兜底。
     int atlasFullDropCount() const;
+    /// shelf 已用高度(px)。/ kAtlasSize 即填充率 —— 图集满不是内存问题
+    /// (纹理定长 16MB),是**永久丢字**:ensureGlyph 返回 nullptr 且无淘汰。
+    /// 故水位必须能被观测,不能只等 atlasFullDropCount 报第一次。
+    int shelfUsedHeightPx() const;
 
     /// 字体行度量(px,kGlyphPixelHeight 尺度)。
     float ascent() const;

@@ -22,6 +22,8 @@
 #include <thread>
 #include <unordered_map>
 
+#include "earth_engine/renderer/Renderer.h"
+#include "earth_engine/renderer/GlyphAtlas.h"
 #include "earth_engine/Engine.h"
 #include "earth_engine/camera/CameraSystem.h"
 #include "earth_engine/camera/CameraPose.h"
@@ -1247,6 +1249,18 @@ static void renderFrame() {
     const uint64_t frameId = gEngine->presentationTrace().camera.frameId;
     // P5c 标签避让诊断(节流):cand=候选 placed=显示 col=碰撞落选
     // horiz=地平线剔除 proj=视锥外/相机背后。
+    // P3 水位:图集满 = 永久丢字(无淘汰),必须能看见逼近过程。
+    if (frameId % 600 == 0) {
+        const GlyphAtlas* ga = gEngine ? gEngine->renderer()->glyphAtlas()
+                                       : nullptr;
+        if (ga) {
+            LOGI("GlyphAtlas glyphs=%zu shelf=%d/%d (%.0f%%) drops=%d",
+                 ga->residentGlyphCount(), ga->shelfUsedHeightPx(),
+                 GlyphAtlas::kAtlasSize,
+                 100.0 * ga->shelfUsedHeightPx() / GlyphAtlas::kAtlasSize,
+                 ga->atlasFullDropCount());
+        }
+    }
     if (gDemoFeatureLayer && frameId % 120 == 0) {
         const auto& ls = gDemoFeatureLayer->labelPlacementStats();
         if (ls.candidates > 0) {

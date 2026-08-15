@@ -35,6 +35,7 @@ struct GlyphAtlas::Impl {
     std::unordered_map<uint32_t, Glyph> glyphs;
     // 页满丢字计数(见 GlyphAtlas::atlasFullDropCount)。
     int atlasFullDrops = 0;
+    bool nearFullWarned = false;
 };
 
 GlyphAtlas::GlyphAtlas(RenderDevice* device)
@@ -97,6 +98,10 @@ Texture* GlyphAtlas::texture() const { return impl_->texture.get(); }
 
 size_t GlyphAtlas::residentGlyphCount() const { return impl_->glyphs.size(); }
 
+int GlyphAtlas::shelfUsedHeightPx() const {
+    return impl_->cursorY + impl_->rowHeight;
+}
+
 bool GlyphAtlas::hasGlyph(uint32_t codepoint) const {
     return impl_->glyphs.find(codepoint) != impl_->glyphs.end();
 }
@@ -148,6 +153,18 @@ const GlyphAtlas::Glyph* GlyphAtlas::ensureGlyph(uint32_t codepoint) {
     const int py = impl_->cursorY;
     impl_->cursorX += w;
     if (h > impl_->rowHeight) impl_->rowHeight = h;
+    // 逼近告警:满了之后是**永久丢字**(无淘汰,且 appendLabelTextQuads 对
+    // 缺字形 `continue` —— 表现是"幸福广场"变"幸广场",比丢整条标签更难
+    // 察觉)。只等 atlasFullDropCount 报第一次已经晚了,故在 80% 先喊一声。
+    if (!impl_->nearFullWarned &&
+        impl_->cursorY + impl_->rowHeight > kAtlasSize * 4 / 5) {
+        impl_->nearFullWarned = true;
+        platformLog(LogLevel::Warning, "GlyphAtlas",
+                    "shelf %d/%d (80%%) with %zu glyphs — 满后新字形永久不"
+                    "渲染(缺字非缺标签)。该上多页/LRU 了",
+                    impl_->cursorY + impl_->rowHeight, kAtlasSize,
+                    impl_->glyphs.size());
+    }
 
     // SDF 复制四通道上传(region 契约 RGBA)。
     std::vector<uint8_t> rgba(static_cast<size_t>(w) * h * 4);
