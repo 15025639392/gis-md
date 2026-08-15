@@ -46,6 +46,7 @@
 - 坐标系统：`earth-coordinate-systems.md`
 - 瓦片、地形、LOD：`tiles-terrain-lod.md`
 - 多瓦片体系与无偏移叠加：`multi-tile-schemes.md`
+- 偏移瓦片坐标系接入(GCJ-02 实战沉淀)：`offset-tile-crs-integration.md`
 - 底图瓦片渲染编排：`basemap-tile-rendering.md`
 - 矢量瓦片地图展示与样式设计：`vector-tile-map.md`
 - SurfaceTile 正式主链路：`surface-tile-mainline.md`
