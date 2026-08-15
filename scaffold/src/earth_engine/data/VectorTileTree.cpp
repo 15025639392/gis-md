@@ -83,35 +83,36 @@ VectorTileTree::UpdateResult VectorTileTree::update(
     double centerLat = (viewRect.south() + viewRect.north()) * 0.5;
     TileKey centerKey = scheme_->positionToTile(centerLng, centerLat, zoom);
 
-    // ---- R*:置换式细化选择(2026-08-15,V24 根修)----
+    // ---- 逐理想瓦独立回退(2026-08-15;R* 的"全有全无"已回退,见下)----
     //
-    // 对拍本仓库地形 Tileset 的 replacement refinement 与 maplibre
-    // _updateRetainedTiles,但取"全有全无"语义消灭重叠:节点的子树在视口
-    // 内凑不齐完整覆盖时,回退画节点自身(已加载才行);凑得齐才画子树。
-    // 我们是世界空间渲染、无逐瓦 stencil 裁剪 —— 祖先与子瓦同框不是
-    // "多画一点"而是要素重影,所以 renderTiles 必须是**精确覆盖**:
-    // 视口内无重叠,且只要沿途有任何存货就无空洞。
+    // ⚠️ **本树只喂 POI 符号**(demo `GLESView.cpp` 里 `includeLayers={"poi"}`;
+    // 面走 drape 页存储、线走 SDF 场,都不经这里)。这决定了重叠的代价:
+    // 祖先与已加载兄弟同框 = **同一个 POI 画两遍**(标签还有 crossTileID +
+    // 碰撞去重兜着),是可忍受的轻伪影;而"全有全无"为消这点重叠付出的是
+    // **整支回滚** —— quad 里缺一块,已加载的兄弟全部作废,且因为中间层
+    // 从不被请求(只请求理想层),回滚会一路级联到某个碰巧还在缓存里的很粗
+    // 祖先。真机实测:z11 缺一块 → 退到 z8,42 个 POI 顶替 312 个 = 用户
+    // 看到"点全部消失"。**对符号,这个交换是亏的**,故只保留后代回退与
+    // 存货保活,重叠回到可忍受清单。判据见 docs/northstar/vector.md B.5。
     //
-    // 成本上界:理想层之上的金字塔 ≈ 1.33×理想瓦数次哈希;理想层之下
-    // 只在"квad 不完整且更深层确有存货"时才下探(loadedPerZ_ 早退),
-    // 最坏(跳档拉远的过渡帧)~5k 次哈希,微秒级,收敛后归零。
+    // 后代回退**仍要求完整覆盖**:它是拉远时的整块顶替(细瓦几何天然覆盖
+    // 粗区域),半个 quad 顶上去会在理想瓦内部留洞,那不是"少画几个点"
+    // 而是硬边界,比重叠难看。
 
-    // 每层视口瓦范围(理想层上下各外延 stand-in 级差)
-    const int zRoot = std::max(options_.minZoom, zoom - kMaxAncestorStandinLevels);
     const int zDeep = std::min(zoom + kMaxDescendantStandinLevels,
                                options_.maxZoom);
     std::vector<std::vector<Range>> rangesByLevel(
-        static_cast<size_t>(zDeep - zRoot + 1));
-    for (int z = zRoot; z <= zDeep; ++z) {
+        static_cast<size_t>(zDeep - zoom + 1));
+    for (int z = zoom; z <= zDeep; ++z) {
         for (const Rectangle& span : spans) {
             Range r{};
             scheme_->tileRange(span, z, r.minX, r.minY, r.maxX, r.maxY);
-            rangesByLevel[static_cast<size_t>(z - zRoot)].push_back(r);
+            rangesByLevel[static_cast<size_t>(z - zoom)].push_back(r);
         }
     }
     auto inView = [&](int z, int x, int y) {
-        if (z < zRoot || z > zDeep) return false;
-        for (const Range& r : rangesByLevel[static_cast<size_t>(z - zRoot)]) {
+        if (z < zoom || z > zDeep) return false;
+        for (const Range& r : rangesByLevel[static_cast<size_t>(z - zoom)]) {
             if (x >= r.minX && x <= r.maxX && y >= r.minY && y <= r.maxY) {
                 return true;
             }
@@ -132,62 +133,68 @@ VectorTileTree::UpdateResult VectorTileTree::update(
     std::vector<PendingRequest> requests;
     std::vector<TileKey> emitted;
 
-    // 返回 true = t 的视口内区域已被 emitted 完整覆盖
-    std::function<bool(const TileKey&)> resolve =
+    // 后代顶替:t 的视口内区域能否被**已加载的后代完整覆盖**。
+    // 沿途 touch:等着凑齐的细瓦也是 retain 的一部分,不 touch 会被 LRU
+    // 抽走,抖回来就得重拉(缺陷③)。
+    std::function<bool(const TileKey&)> coverByDescendants =
         [&](const TileKey& t) -> bool {
-        const bool isLoaded = loaded_.count(t) != 0;
-        // 沿途所有已加载节点都 touch:未上屏的存货(等 quad 凑齐的细瓦、
-        // 备用的粗瓦)同样是 retain 的一部分,不 touch 会被 LRU 抽走,
-        // 抖回来就得重拉 —— 那正是缺陷③。
-        if (isLoaded) touch(t);
-        if (t.z == zoom && !isLoaded && !pending_.count(t) &&
-            !failed_.count(t)) {
-            // 理想层缺瓦无论回退成不成都要请求:后代顶替只是过渡态,
-            // 不请求理想瓦就永远收敛不到目标层(4^k 倍 draw 白付)。
-            const long long dx = t.x - centerKey.x;
-            const long long dy = t.y - centerKey.y;
-            requests.push_back({t, dx * dx + dy * dy});
-        }
-        if (t.z >= zoom) {
-            if (isLoaded) {
-                emitted.push_back(t);
-                return true;
-            }
-            if (t.z >= zDeep || !anyLoadedBelow(t.z)) return false;
-        }
-        // 子树探查(全有全无)
-        const size_t mark = emitted.size();
-        bool all = true;
-        int considered = 0;
-        for (int cy = 0; cy <= 1; ++cy) {
-            for (int cx = 0; cx <= 1; ++cx) {
-                TileKey c{schemeId_, t.z + 1, t.x * 2 + cx, t.y * 2 + cy};
-                if (!inView(c.z, c.x, c.y)) continue;
-                ++considered;
-                if (!resolve(c)) all = false;
-            }
-        }
-        if (considered > 0 && all) return true;
-        emitted.resize(mark);  // 凑不齐:整支回滚,决不留半个 quad
-        if (t.z < zoom && isLoaded) {
+        if (loaded_.count(t)) {
+            touch(t);
             emitted.push_back(t);
             return true;
         }
+        if (t.z >= zDeep || !anyLoadedBelow(t.z)) return false;
+        const size_t mark = emitted.size();
+        bool all = true;
+        int considered = 0;
+        for (int cy = 0; cy <= 1 && all; ++cy) {
+            for (int cx = 0; cx <= 1 && all; ++cx) {
+                TileKey c{schemeId_, t.z + 1, t.x * 2 + cx, t.y * 2 + cy};
+                if (!inView(c.z, c.x, c.y)) continue;
+                ++considered;
+                if (!coverByDescendants(c)) all = false;
+            }
+        }
+        if (considered > 0 && all) return true;
+        emitted.resize(mark);  // 半个 quad 会在理想瓦内留硬边界,不要
         return false;
     };
 
-    // 根:锚在 zRoot 层(跨反经线两段在粗层可能落进同一根,set 去重)
-    std::unordered_set<TileKey> roots;
     for (const Range& r : rangesByLevel[0]) {
         for (int y = r.minY; y <= r.maxY; ++y) {
             for (int x = r.minX; x <= r.maxX; ++x) {
-                roots.insert(TileKey{schemeId_, zRoot, x, y});
+                const TileKey ideal{schemeId_, zoom, x, y};
+                if (!coverByDescendants(ideal)) {
+                    // 祖先回退:向上找最近的已加载粗瓦顶住(可能与别的理想
+                    // 瓦已 emit 的细瓦重叠 —— 对符号是可忍受的轻伪影)
+                    TileKey ancestor = ideal;
+                    while (ancestor.z > options_.minZoom) {
+                        ancestor = ancestor.parent();
+                        if (loaded_.count(ancestor)) {
+                            touch(ancestor);
+                            emitted.push_back(ancestor);
+                            break;
+                        }
+                    }
+                }
+                if (!loaded_.count(ideal) && !pending_.count(ideal) &&
+                    !failed_.count(ideal)) {
+                    // 理想瓦无论回退成不成都要请求:顶替只是过渡态
+                    const long long dx = x - centerKey.x;
+                    const long long dy = y - centerKey.y;
+                    requests.push_back({ideal, dx * dx + dy * dy});
+                }
             }
         }
     }
-    for (const TileKey& root : roots) {
-        resolve(root);
-    }
+    // 祖先可能被多个理想瓦共同选中 → 去重
+    std::sort(emitted.begin(), emitted.end(),
+              [](const TileKey& a, const TileKey& b) {
+                  if (a.z != b.z) return a.z < b.z;
+                  if (a.y != b.y) return a.y < b.y;
+                  return a.x < b.x;
+              });
+    emitted.erase(std::unique(emitted.begin(), emitted.end()), emitted.end());
 
     // 中心优先请求
     std::sort(requests.begin(), requests.end(),

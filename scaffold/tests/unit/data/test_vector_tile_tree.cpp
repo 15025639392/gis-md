@@ -146,32 +146,30 @@ TEST(VectorTileTree, AncestorFallbackWhileChildrenLoad) {
         EXPECT_EQ(key.z, 1);
     }
 
-    // R* 全有全无:灌一块细瓦不够凑齐它所在的 quad → 渲染列表**保持纯粗**
-    // (旧行为是粗+细并存 = 祖先与子瓦重影,已判死)
+    // 逐理想瓦独立回退:灌一块细瓦 → 它自己上屏(内容最大化),其余理想瓦
+    // 继续由粗祖先顶住。粗细并存 = 同一 POI 画两遍,对**只喂符号**的这棵树
+    // 是可忍受轻伪影;换成"全有全无"消重叠会整支回滚到很粗祖先,内容量掉
+    // 一个数量级(真机 z11→z8,42 顶 312)。取舍记在 B.5,别再翻回去。
     TileKey child = fine.requestTiles[0];
     tree.provide(child, emptyTile());
     auto mixed = tree.update(rectDeg(1, 1, 40, 40), heightForZoom(4));
     ASSERT_FALSE(mixed.renderTiles.empty());
-    for (const TileKey& key : mixed.renderTiles) {
-        EXPECT_EQ(key.z, 1) << "quad 未凑齐时不得混入细瓦(重影)";
+    EXPECT_TRUE(std::find(mixed.renderTiles.begin(), mixed.renderTiles.end(),
+                          child) != mixed.renderTiles.end())
+        << "已加载的细瓦必须上屏,不得因兄弟未到而作废";
+    // 先粗后细的确定性顺序
+    for (size_t i = 1; i < mixed.renderTiles.size(); ++i) {
+        EXPECT_LE(mixed.renderTiles[i - 1].z, mixed.renderTiles[i].z);
     }
-
-    // 凑齐 child 所在 quad 的全部在视口兄弟 → 细瓦上屏,且其祖先退场
-    // (注意:pending 的瓦不会再出现在 requestTiles,须从首轮列表取兄弟)
-    const TileKey parent = child.parent();
-    for (const TileKey& key : fine.requestTiles) {
-        if (key.parent() == parent) tree.provide(key, emptyTile());
-    }
-    auto swapped = tree.update(rectDeg(1, 1, 40, 40), heightForZoom(4));
-    EXPECT_TRUE(std::find(swapped.renderTiles.begin(),
-                          swapped.renderTiles.end(),
-                          child) != swapped.renderTiles.end());
-    for (const TileKey& key : swapped.renderTiles) {
-        EXPECT_FALSE(key == parent) << "子瓦上屏后祖先必须退场(否则重影)";
-    }
-    for (size_t i = 1; i < swapped.renderTiles.size(); ++i) {
-        EXPECT_LE(swapped.renderTiles[i - 1].z, swapped.renderTiles[i].z);
-    }
+    // 祖先去重:多个理想瓦共享同一祖先时只出现一次
+    std::vector<TileKey> uniq = mixed.renderTiles;
+    std::sort(uniq.begin(), uniq.end(), [](const TileKey& a, const TileKey& b) {
+        if (a.z != b.z) return a.z < b.z;
+        if (a.y != b.y) return a.y < b.y;
+        return a.x < b.x;
+    });
+    EXPECT_EQ(std::unique(uniq.begin(), uniq.end()) - uniq.begin(),
+              static_cast<long>(mixed.renderTiles.size()));
 }
 
 // ---------------------------------------------------------------------------
@@ -381,58 +379,82 @@ TEST(VectorTileTree, TilesLeavingRenderSetAreImmediatelyEvictable) {
         << "若这条红了 = 出视口瓦也被保活了,LRU 失效会撑爆预算";
 }
 
-/// R* 消缺陷⑤:renderTiles 是**精确覆盖** —— 部分到达的过渡态下,
-/// 任意两瓦无祖先/后代关系(无重影),且视口内每个理想格恰被一瓦覆盖
-/// (无空洞)。这是 R* 的核心不变量,任何后续改动不得破坏。
-TEST(VectorTileTree, RenderTilesAreExactCoverDuringTransition) {
+/// 过渡态不变量(2026-08-15 修订):**无空洞**且**已加载的细瓦必上屏**。
+/// 不再要求无重叠 —— 本树只喂 POI 符号,祖先与细瓦同框 = 同一点画两遍
+/// (轻伪影),而消重叠要付"整支回滚到很粗祖先"的代价(见 B.5)。
+TEST(VectorTileTree, RenderTilesCoverWithoutHolesAndKeepLoadedFine) {
     VectorTileTree::Options opt;
     opt.minZoom = 0;
     opt.maxZoom = 14;
     VectorTileTree tree(opt);
-    // 视口跨多张 z13 瓦,保证同一父瓦下有多个子瓦
     const Rectangle view = rectDeg(106.45, 29.45, 106.55, 29.55);
 
-    // 先在 z12 喂满(父辈)
+    // 先在 z12 喂满(父辈),保证祖先回退有存货
     VectorTileTree::UpdateResult coarse = tree.update(view, heightForZoom(12));
     for (const TileKey& k : coarse.requestTiles) tree.provide(k, emptyTile());
     tree.update(view, heightForZoom(12));
 
-    // 到 z13:请求子瓦,只喂一半(模拟部分到达),连续三个过渡态都要满足
-    VectorTileTree::UpdateResult fine = tree.update(view, heightForZoom(13));
-    ASSERT_GE(fine.requestTiles.size(), 2u);
-    const std::vector<TileKey> all = fine.requestTiles;
+    VectorTileTree::UpdateResult f13 = tree.update(view, heightForZoom(13));
+    ASSERT_GE(f13.requestTiles.size(), 2u);
+    const std::vector<TileKey> ideal = f13.requestTiles;
     auto isAncestorOf = [](const TileKey& a, const TileKey& b) {
         if (a.z >= b.z) return false;
         const int d = b.z - a.z;
         return (b.x >> d) == a.x && (b.y >> d) == a.y;
     };
-    auto checkInvariant = [&](const std::vector<TileKey>& rt,
-                              const std::vector<TileKey>& idealCells) {
-        for (size_t i = 0; i < rt.size(); ++i) {
-            for (size_t j = 0; j < rt.size(); ++j) {
-                if (i == j) continue;
-                EXPECT_FALSE(isAncestorOf(rt[i], rt[j]))
-                    << rt[i] << " 与 " << rt[j] << " 重叠(重影)";
-            }
-        }
-        for (const TileKey& cell : idealCells) {
-            int covers = 0;
-            for (const TileKey& r : rt) {
-                if (r == cell || isAncestorOf(r, cell) ||
-                    isAncestorOf(cell, r)) {
-                    ++covers;
-                }
-            }
-            EXPECT_EQ(covers, 1) << cell << " 覆盖数 " << covers
-                                 << "(0=空洞,≥2=重影)";
-        }
-    };
+    std::vector<TileKey> fed;
     for (size_t feed = 0; feed < 3; ++feed) {
-        const size_t lo = feed * all.size() / 3;
-        const size_t hi = (feed + 1) * all.size() / 3;
-        for (size_t i = lo; i < hi; ++i) tree.provide(all[i], emptyTile());
+        const size_t lo = feed * ideal.size() / 3;
+        const size_t hi = (feed + 1) * ideal.size() / 3;
+        for (size_t i = lo; i < hi; ++i) {
+            tree.provide(ideal[i], emptyTile());
+            fed.push_back(ideal[i]);
+        }
         VectorTileTree::UpdateResult r = tree.update(view, heightForZoom(13));
         ASSERT_FALSE(r.renderTiles.empty());
-        checkInvariant(r.renderTiles, all);
+        // 无空洞:每个理想格都被某瓦覆盖(自身/祖先/后代)
+        for (const TileKey& cell : ideal) {
+            bool covered = false;
+            for (const TileKey& t : r.renderTiles) {
+                if (t == cell || isAncestorOf(t, cell) ||
+                    isAncestorOf(cell, t)) { covered = true; break; }
+            }
+            EXPECT_TRUE(covered) << cell << " 无覆盖(空洞)";
+        }
+        // 已加载的细瓦一块都不许丢
+        for (const TileKey& k : fed) {
+            EXPECT_TRUE(std::find(r.renderTiles.begin(), r.renderTiles.end(),
+                                  k) != r.renderTiles.end())
+                << k << " 已加载却未上屏(内容损失)";
+        }
     }
+}
+
+/// 回归守卫(2026-08-15,用户报"点全部消失"的那条):quad 里缺一块时,
+/// **已加载的兄弟必须全部上屏**,不得整支回滚到粗祖先。
+TEST(VectorTileTree, IncompleteQuadKeepsLoadedSiblings) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 0;
+    opt.maxZoom = 14;
+    VectorTileTree tree(opt);
+    const Rectangle view = rectDeg(106.45, 29.45, 106.55, 29.55);
+
+    VectorTileTree::UpdateResult a11 = tree.update(view, heightForZoom(11));
+    for (const TileKey& k : a11.requestTiles) tree.provide(k, emptyTile());
+    tree.update(view, heightForZoom(11));
+
+    VectorTileTree::UpdateResult f13 = tree.update(view, heightForZoom(13));
+    ASSERT_GE(f13.requestTiles.size(), 4u);
+    for (size_t i = 0; i + 1 < f13.requestTiles.size(); ++i) {
+        tree.provide(f13.requestTiles[i], emptyTile());
+    }
+    VectorTileTree::UpdateResult r = tree.update(view, heightForZoom(13));
+
+    size_t fine = 0;
+    for (const TileKey& k : r.renderTiles) {
+        if (k.z == 13) ++fine;
+    }
+    EXPECT_EQ(fine, f13.requestTiles.size() - 1)
+        << "已加载细瓦 " << (f13.requestTiles.size() - 1)
+        << " 块,上屏 " << fine << " 块 —— 整支回滚回归了";
 }
