@@ -36,6 +36,7 @@ void RasterOverlayTile::setTexture(std::unique_ptr<Texture> tex) {
         texture_ ? static_cast<int64_t>(texture_->sizeBytes()) : 0;
     updateTextureByteAccounting(textureBytes);
     if (texture_) {
+        emptyComposition_ = false;
         state_ = LoadState::Loaded;
     }
 }
@@ -44,6 +45,7 @@ void RasterOverlayTile::markLoadedWithoutTexture() {
     texture_.reset();
     updateTextureByteAccounting(0);
     rendererResources_ = nullptr;
+    emptyComposition_ = true;
     state_ = LoadState::Loaded;
 }
 

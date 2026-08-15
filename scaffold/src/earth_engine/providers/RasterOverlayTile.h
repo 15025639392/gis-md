@@ -105,6 +105,14 @@ public:
     /// for lifecycle purposes but has no renderer resources to attach.
     void markLoadedWithoutTexture();
 
+    /// 这张瓦是"合成成功但内容为空"——祖先-only 回退时 compose 刻意返回 0×0
+    /// 空图,由本瓦的消费方改用祖先纹理 + UV 窗口顶上(省一次上传和一份显存)。
+    ///
+    /// 必须靠显式标记而不是「Loaded 且无纹理」来判定:setState() 是通用 setter,
+    /// 调用方(尤其测试夹具)可以在不设纹理的情况下把瓦置成 Loaded,那种瓦不是
+    /// 空合成,不该被当成空洞去走祖先回退。
+    bool isEmptyComposition() const { return emptyComposition_; }
+
     /// cesium-native: opaque renderer resources handle.
     /// Points to the owned GPU Texture.
     void* getRendererResources() const { return rendererResources_; }
@@ -203,6 +211,7 @@ private:
     std::shared_ptr<RasterTextureByteLedger> textureByteLedger_;
     int64_t accountedTextureBytes_ = 0;
     void* rendererResources_ = nullptr;
+    bool emptyComposition_ = false;
     int maxZoom_ = 22;
     MoreDetailAvailable moreDetailAvailable_ = MoreDetailAvailable::Unknown;
     std::vector<std::string> loadDiagnostics_;

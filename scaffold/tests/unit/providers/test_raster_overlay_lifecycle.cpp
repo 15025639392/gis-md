@@ -8386,8 +8386,13 @@ TEST(RasterOverlayLifecycleTest, TemporaryAncestorDoesNotReportMoreDetailLikeCes
     EXPECT_EQ(parentReady->getTexture(), recorder.lastTexture);
 }
 
+// 祖先-only 合成的空瓦(Loaded 且无渲染资源)不是可用替身。
+//
+// 旧契约认下它:空瓦自己的 mapping 停在空瓦上永不替换,子瓦的父链遍历也 break
+// 在它身上,于是明明祖父有纹理可画,父与整条子孙链全是空洞。本测试钉死新契约
+// —— 空瓦被跳过,父与子都落到能画的祖父上。
 TEST(RasterOverlayLifecycleTest,
-     TemporaryAncestorFallbackAcceptsNoTextureParentBeforeDrawableGrandparent) {
+     BlankAncestorOnlyRasterFallsThroughToDrawableGrandparentForSelfAndChild) {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -8474,8 +8479,12 @@ TEST(RasterOverlayLifecycleTest,
         missing,
         &grandparentTile,
         0);
-    ASSERT_EQ(parentReady, parentMapping.getReadyTile());
+    // D2:空瓦自己的 mapping 不再停在空瓦上,换成能画的祖父。
     ASSERT_EQ(nullptr, parentReady->getTexture());
+    EXPECT_NE(parentReady, parentMapping.getReadyTile());
+    EXPECT_EQ(grandparentReady, parentMapping.getReadyTile());
+    EXPECT_EQ(RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+              parentMapping.getReadyTileSource());
 
     RasterMappedToTilesetTile childMapping;
     childMapping.update(
@@ -8503,15 +8512,15 @@ TEST(RasterOverlayLifecycleTest,
             &parentTile,
             0);
 
+    // D1:子瓦的父链遍历跳过空的父,走到能画的祖父,并且真的贴上去。
     EXPECT_EQ(RasterMappedToTilesetTile::MoreDetail::Unknown, fallback);
-    EXPECT_EQ(parentReady, childMapping.getReadyTile());
-    EXPECT_NE(grandparentReady, childMapping.getReadyTile());
-    EXPECT_EQ(RasterMappedToTilesetTile::State::Unattached,
-              childMapping.getState());
-    EXPECT_EQ(0, recorder.attachCount);
-    EXPECT_EQ(nullptr, recorder.lastRasterTile.get());
-    EXPECT_EQ(nullptr, recorder.lastTexture);
-    EXPECT_EQ(SurfaceRasterBindingKind::None,
+    EXPECT_NE(parentReady, childMapping.getReadyTile());
+    EXPECT_EQ(grandparentReady, childMapping.getReadyTile());
+    EXPECT_EQ(RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+              childMapping.getReadyTileSource());
+    EXPECT_EQ(1, recorder.attachCount);
+    EXPECT_EQ(grandparentReady->getTexture(), recorder.lastTexture);
+    EXPECT_NE(SurfaceRasterBindingKind::None,
               chooseSurfaceRasterBinding(&childMapping).kind);
 }
 

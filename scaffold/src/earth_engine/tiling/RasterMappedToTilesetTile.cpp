@@ -58,6 +58,21 @@ bool hasSameOverlayOwner(const RasterOverlayTile& candidate,
     return &candidate.getTileProvider() == &provider;
 }
 
+/// 加载已经定终身(不会再变)的影像瓦。
+bool isSettledOverlayTile(const RasterOverlayTile& tile) {
+    const RasterOverlayTile::LoadState state = tile.getState();
+    return state == RasterOverlayTile::LoadState::Loaded ||
+           state == RasterOverlayTile::LoadState::Done;
+}
+
+/// 这张瓦自己永远画不出内容 —— 加载失败,或合成出的是祖先-only 空图
+/// (见 RasterOverlayTile::isEmptyComposition)。两者都必须走父链回退,
+/// 否则该瓦及其整条子孙链都是空洞。
+bool overlayTileCannotRenderItself(const RasterOverlayTile& tile) {
+    return tile.getState() == RasterOverlayTile::LoadState::Failed ||
+           tile.isEmptyComposition();
+}
+
 std::shared_ptr<RasterOverlayTile> findLoadedTileOverlay(
     const TilesetTile& tile,
     const RasterOverlayTileProvider& provider) {
@@ -73,9 +88,11 @@ std::shared_ptr<RasterOverlayTile> findLoadedTileOverlay(
         }
         if (!candidate || !hasSameOverlayOwner(*candidate, provider)) return;
 
-        const RasterOverlayTile::LoadState state = candidate->getState();
-        if (state == RasterOverlayTile::LoadState::Loaded ||
-            state == RasterOverlayTile::LoadState::Done) {
+        // 空合成瓦不是可用替身。认下它会 break 掉调用方的父链遍历,结果是明明
+        // 存在可画的更高层祖先,却整条子孙链都不画 —— 一个空洞瓦毒化全部后代。
+        // 跳过它,让调用方继续往上走。
+        if (isSettledOverlayTile(*candidate) &&
+            !candidate->isEmptyComposition()) {
             result = candidate;
         }
     });
@@ -202,10 +219,12 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     }
 
     // ── Step 2: Failure fallback — walk parent geometry tile chain ──
-    // cesium-native: if loading tile has Failed state, find a sibling mapped
-    // raster on an ancestor geometry tile.
+    // 加载失败、以及"合成成功但是祖先-only 空图"两种结局都走这里找父链替身。
+    // 后者若不并进来,会被 Step 3 当成正常 Loaded 提升为 ready 并清空
+    // _pLoadingTile,而 Step 4 的祖先替换只在 _pLoadingTile != nullptr 时才跑
+    // —— 于是这张瓦再也拿不到祖先纹理,永久空白且不可恢复。
     if (_pLoadingTile != nullptr &&
-        _pLoadingTile->getState() == RasterOverlayTile::LoadState::Failed) {
+        overlayTileCannotRenderItself(*_pLoadingTile)) {
         originalFailed_ = true;
     }
     if (_pLoadingTile != nullptr &&
@@ -219,7 +238,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
 
     const TilesetTile* pGeomTile = parentTile;
     while (_pLoadingTile != nullptr &&
-           _pLoadingTile->getState() == RasterOverlayTile::LoadState::Failed &&
+           overlayTileCannotRenderItself(*_pLoadingTile) &&
            pGeomTile != nullptr) {
         originalFailed_ = true;
         std::shared_ptr<RasterOverlayTile> overlayTile =

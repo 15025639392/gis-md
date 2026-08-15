@@ -1270,24 +1270,25 @@ cesium-native `RasterMappedTo3DTile` equivalent — links one geometry tile to o
 | `enum ReadyTileSource` | .h:57-61 | `None / Real / Ancestor` — provenance of `_pReadyTile` |
 | `struct SourceTileList` | .h:63-73 | Source imagery tile grid: `sourceZoom`, `sourceBounds`, `sourceKeys`, `minX/minY/maxX/maxY` |
 | Invariants | .h:35-40 | `_pLoadingTile`=desired (may be Loading/Failed); `_pReadyTile`=rendered (Loaded/Done); both-null=Unattached, both-set=TemporarilyAttached, ready-only=Attached; `originalFailed_` set-once |
-| `update()` | .h:89-100 / .cpp:139-469 | 7-step flow; params: geometryKey, overlayDetails, targetScreenPixels x/y, provider, prepRenderer, missingProjections, parentTile, overlayIndex, hasRenderContentDetails, boundingVolumeRectangle |
-| — stale-handle drop | .cpp:160-179 | If ready/loading tile no longer owned by provider (option/coverage change) → releaseTileReferences or drop loading handle + recompute state |
-| — Step 1 attached fast path | .cpp:181-202 | If `Attached`: revert to Unattached if renderer resources gone; else markUsed + return MoreDetail from `_pReadyTile->isMoreDetailAvailable()` |
-| — Step 2 failure fallback | .cpp:204-237 | On loading-tile `Failed`, set `originalFailed_`, walk parent geometry chain via `findParentTileOverlayPreferLoading`, adopt ancestor's loading/ready tile |
-| — projection/rectangle lookup | .cpp:106-127 | `findRectangleForProjection` reads `textureCoordinateID` + invertedV; falls back to boundingVolumeRectangle when no render-content details |
-| — placeholder retry | .cpp:257-267 | Placeholder loading tile cleared once `provider.isReady()` |
-| — map-to-geometry | .cpp:273-338 | If no loading tile: provider-not-ready→placeholder (texCoordID=-1); render-content+geometryRectangle→`provider.mapRasterTilesToGeometryTile`; missing projection→record in `missingProjections` at index-after-list + placeholder; else boundingVolume path |
-| — Step 3 loading→ready promote | .cpp:346-380 | On `Loaded`/`Done`: detach old ready, `_pReadyTile=_pLoadingTile`, cache texture, `computeTranslationAndScale`. Gated by `canPromoteReadyRaster` (needs prepRenderer OR Unattached OR no ready) |
-| — Step 4 ancestor substitution | .cpp:61-83 | While loading, walk parent chain via `findLoadedTileOverlay` for a ready ancestor tile; adopt as `_pReadyTile` (source=Ancestor), recompute UV for CURRENT child bounds |
-| — Step 5 failed-no-fallback valve | .cpp:421-434 | Failed loading tile + no ancestor + no ready → mark ready (texture null) `Attached` so raster failure never blocks geometry |
-| — Step 6 attach | .cpp:437-452 | `_pReadyTile->loadInMainThread()`; if prepRenderer + renderer resources → `attachRasterInMainThread(geometryKey, overlaySlot, tile, tex, offset/scaleUV)`; state=Temporarily/Attached |
-| — Step 7 return MoreDetail | .cpp:454-468 | loading→Unknown; else MoreDetail from ready tile unless `originalFailed_` |
-| `isMoreDetailAvailable()` | .cpp:471-479 | `!loading && !originalFailed && ready && ready.moreDetail==Yes` |
-| `hasPendingNonPlaceholderLoadingTile()` | .cpp:474-478 | Loading tile present and not Placeholder |
-| `detachFromTile()` | .cpp:562-575 | `detachRasterInMainThread(geometryKey, overlaySlot)` (skips Failed tiles / z<0), state→Unattached |
-| `releaseTileReferences()` / `clearTileOwnershipState()` | .cpp:577-581 | Detach + drop both handles, reset UV/flags/texCoordID/slot |
-| `loadThrottled()` | .cpp:627-639 | markUsed + `provider.loadTileThrottled(loadingTile, budget)`; no-op for null/placeholder |
-| `computeTranslationAndScale()` | .h:122-124 / .cpp:641-665 | Delegates to `TileSurface::computeTranslationAndScale`; non-inverted V passes through `textureWindowForNorthWestUv`. Pure rectangle-ratio, no tile-size assumption (edge bleed handled by GL CLAMP_TO_EDGE) |
+| `update()` | .h:89-100 / .cpp:156-481 | 7-step flow; params: geometryKey, overlayDetails, targetScreenPixels x/y, provider, prepRenderer, missingProjections, parentTile, overlayIndex, hasRenderContentDetails, boundingVolumeRectangle |
+| — stale-handle drop | .cpp:173-196 | If ready/loading tile no longer owned by provider (option/coverage change) → releaseTileReferences or drop loading handle + recompute state |
+| — Step 1 attached fast path | .cpp:198-219 | If `Attached`: revert to Unattached if renderer resources gone; else markUsed + return MoreDetail from `_pReadyTile->isMoreDetailAvailable()` |
+| — Step 2 failure fallback | .cpp:221-256 | On `overlayTileCannotRenderItself` (loading-tile `Failed` **or** empty composition), set `originalFailed_`, walk parent geometry chain via `findParentTileOverlayPreferLoading`, adopt ancestor's loading/ready tile |
+| — projection/rectangle lookup | .cpp:123-145 | `findRectangleForProjection` reads `textureCoordinateID` + invertedV; falls back to boundingVolumeRectangle when no render-content details |
+| — placeholder retry | .cpp:282-292 | Placeholder loading tile cleared once `provider.isReady()` |
+| — map-to-geometry | .cpp:294-369 | If no loading tile: provider-not-ready→placeholder (texCoordID=-1); render-content+geometryRectangle→`provider.mapRasterTilesToGeometryTile`; missing projection→record in `missingProjections` at index-after-list + placeholder; else boundingVolume path |
+| — Step 3 loading→ready promote | .cpp:371-405 | On `Loaded`/`Done`: detach old ready, `_pReadyTile=_pLoadingTile`, cache texture, `computeTranslationAndScale`. Gated by `canPromoteReadyRaster` (needs prepRenderer OR Unattached OR no ready) |
+| — Step 4 ancestor substitution | .cpp:76-98 | While loading, walk parent chain via `findLoadedTileOverlay` for a ready ancestor tile; adopt as `_pReadyTile` (source=Ancestor), recompute UV for CURRENT child bounds. Empty-composition candidates are **skipped** so the walk reaches a drawable ancestor instead of stopping at a blank one |
+| `overlayTileCannotRenderItself()` | .cpp:69-73 | `Failed` **or** `RasterOverlayTile::isEmptyComposition()` — the two endings that must fall back to the parent chain, else the tile and its whole descendant chain render blank |
+| — Step 5 failed-no-fallback valve | .cpp:446-460 | Failed loading tile + no ancestor + no ready → mark ready (texture null) `Attached` so raster failure never blocks geometry |
+| — Step 6 attach | .cpp:462-465 | `_pReadyTile->loadInMainThread()`; if prepRenderer + renderer resources → `attachRasterInMainThread(geometryKey, overlaySlot, tile, tex, offset/scaleUV)`; state=Temporarily/Attached |
+| — Step 7 return MoreDetail | .cpp:466-480 | loading→Unknown; else MoreDetail from ready tile unless `originalFailed_` |
+| `isMoreDetailAvailable()` | .cpp:483-492 | `!loading && !originalFailed && ready && ready.moreDetail==Yes` |
+| `hasPendingNonPlaceholderLoadingTile()` | .cpp:493-498 | Loading tile present and not Placeholder |
+| `detachFromTile()` | .cpp:581-595 | `detachRasterInMainThread(geometryKey, overlaySlot)` (skips Failed tiles / z<0), state→Unattached |
+| `releaseTileReferences()` / `clearTileOwnershipState()` | .cpp:596-601 | Detach + drop both handles, reset UV/flags/texCoordID/slot |
+| `loadThrottled()` | .cpp:646-659 | markUsed + `provider.loadTileThrottled(loadingTile, budget)`; no-op for null/placeholder |
+| `computeTranslationAndScale()` | .h:122-124 / .cpp:660-685 | Delegates to `TileSurface::computeTranslationAndScale`; non-inverted V passes through `textureWindowForNorthWestUv`. Pure rectangle-ratio, no tile-size assumption (edge bleed handled by GL CLAMP_TO_EDGE) |
 | UV fields | .h:189-191 | `rasterUV = geometryUV * scale + offset`; `offsetU/V_`, `scaleU/V_` |
 | `textureCoordinateID_` / `overlaySlot_` | .h:204,208 | Per-projection texcoord index (cesium `_textureCoordinateID`) vs. resource-notification layer slot — distinct identities |
 

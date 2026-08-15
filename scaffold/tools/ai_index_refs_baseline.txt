@@ -22,8 +22,8 @@ CameraController.cpp:27:-  # 常量块内的说明注释(Everest 8849m)—— �
 CurlMultiRequestScheduler.cpp:117:-  # 函数体内语句 const size_t total —— 已回读,正确
 EarthEngineSdkFacade.cpp:402:-  # 函数体内语句 bingOptions.subdomains —— 已回读,正确
 Engine.cpp:210:-  # 函数体内 if (enabled) 分支 —— 已回读,正确
-RasterMappedToTilesetTile.cpp:204:-  # 指向 `// Step 2:` 分段注释,非函数定义 —— 已回读,正确
-RasterMappedToTilesetTile.cpp:346:-  # 同上,指向分段注释 —— 已回读,正确
+RasterMappedToTilesetTile.cpp:221:-  # 指向 `// Step 2:` 分段注释,非函数定义 —— 已回读,正确
+RasterMappedToTilesetTile.cpp:371:-  # 同上,指向分段注释 —— 已回读,正确
 Renderer.cpp:1061:-  # shader 字符串内的中文注释行 —— 已回读,正确
 Renderer.cpp:3998:-  # makeTileGeometry 定义首行(静态自由函数)—— 已回读,正确
 Renderer.cpp:4126:-  # Renderer::initialize 定义首行 —— 已回读,正确
