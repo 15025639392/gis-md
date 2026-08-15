@@ -1131,7 +1131,18 @@ vec4 applyMappedRaster(
     float texCoordSet,
     vec4 tileUV,
     float opacity) {
-    vec2 overlayUv = tileUV.xy + uvFromSet(texCoordSet) * tileUV.zw;
+    vec2 uv = uvFromSet(texCoordSet);
+    // set 0 在 VS 里已被祖先模板的 scale-bias 重映射(clipMode>1.5 那支),
+    // 其余 set 是原始子瓦局部 UV —— 必须补同一 scale-bias(镜像下方 pageStore
+    // psUv 的处理)。aa99a4ac5 只修了 pageStore 路,mappedRaster 这条**回落路**
+    // 漏了:过渡期页未驻留时画面正是它,GCJ(set 1)错整一个 LOD 窗口,页到齐
+    // 被 alphaOver 盖掉 = "瞬间异常,稳态自愈"(imagery.md V11 真机复现)。
+    // 标准底图 texCoordSet=0 不进此分支,行为逐位不变。glTF 变体不加:mode 2
+    // 只发给位移模板路径,真实网格两套 texcoord 都是烘焙祖先 UV,无需补。
+    if (texCoordSet > 0.5 && u_clipEnabled > 1.5) {
+        uv = u_clipUV.xy + uv * u_clipUV.zw;
+    }
+    vec2 overlayUv = tileUV.xy + uv * tileUV.zw;
     return alphaOver(base, texture(rasterTexture, overlayUv), opacity);
 }
 
@@ -3455,9 +3466,17 @@ float4 terrainApplyMappedRaster(float4 base,
                                 sampler rasterSampler,
                                 float texCoordSet,
                                 float4 tileUV,
-                                float opacity) {
-    float2 overlayUv =
-        tileUV.xy + terrainUvFromSet(in, texCoordSet) * tileUV.zw;
+                                float opacity,
+                                float4 clipUv,
+                                float clipEnabled) {
+    float2 uv = terrainUvFromSet(in, texCoordSet);
+    // 镜像 GLSL applyMappedRaster:set 0 在 VS 已被祖先模板 remap,其余 set
+    // 须在此补同一 scale-bias —— mappedRaster 是页未驻留时的回落路,漏补则
+    // GCJ 过渡瞬间错一个 LOD 窗口(imagery.md V11)。
+    if (texCoordSet > 0.5 && clipEnabled > 1.5) {
+        uv = float2(clipUv.x, clipUv.y) + uv * float2(clipUv.z, clipUv.w);
+    }
+    float2 overlayUv = tileUV.xy + uv * tileUV.zw;
     return terrainAlphaOver(
         base,
         rasterTexture.sample(rasterSampler, overlayUv),
@@ -3546,25 +3565,29 @@ fragment float4 terrainFragment(
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture0, u_terrainSampler,
             u.mappedRasterTexCoordSet[0],
-            float4(u.mappedRasterTileUV[0]), u.mappedRasterOpacity[0]);
+            float4(u.mappedRasterTileUV[0]), u.mappedRasterOpacity[0],
+            u.clipUv, u.clipEnabled);
     }
     if (u.mappedRasterTextureCount > 1.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture1, u_terrainSampler,
             u.mappedRasterTexCoordSet[1],
-            float4(u.mappedRasterTileUV[1]), u.mappedRasterOpacity[1]);
+            float4(u.mappedRasterTileUV[1]), u.mappedRasterOpacity[1],
+            u.clipUv, u.clipEnabled);
     }
     if (u.mappedRasterTextureCount > 2.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture2, u_terrainSampler,
             u.mappedRasterTexCoordSet[2],
-            float4(u.mappedRasterTileUV[2]), u.mappedRasterOpacity[2]);
+            float4(u.mappedRasterTileUV[2]), u.mappedRasterOpacity[2],
+            u.clipUv, u.clipEnabled);
     }
     if (u.mappedRasterTextureCount > 3.5) {
         base = terrainApplyMappedRaster(
             base, in, u_mappedRasterTexture3, u_terrainSampler,
             u.mappedRasterTexCoordSet[3],
-            float4(u.mappedRasterTileUV[3]), u.mappedRasterOpacity[3]);
+            float4(u.mappedRasterTileUV[3]), u.mappedRasterOpacity[3],
+            u.clipUv, u.clipEnabled);
     }
     // 合成方案页存储(Step 3,镜像 GLSL 侧):目标 capped 瓦片改采页存储,
     // 覆盖上采样 mappedRaster → 真实高清影像。enabled=0 恒不进,零回归。
