@@ -1664,9 +1664,9 @@ Standard XYZ/`{z}{x}{y}{s}` provider; base class for TMS/WMS/WMTS/Bing/Google. H
 | `substituteUrlTemplateParameters` | .cpp:197-230 | `{...}` scan, case-insensitive names, `[UNKNOWN PLACEHOLDER]` on miss |
 | scheme tile counts | .cpp:74-85 | `Geographic-TMS` x = `2^(z+1)`; else `2^z`; y = `2^z` |
 | degrees/projected rects | .cpp:124-187 | Per-scheme (Geographic-TMS / TMS-WebMercator / default WebMercator) rectangle math; **`kWgs84MaximumRadius`** = 6378137.0 (.cpp:117,173) |
-| `requestTile` | .cpp:371-507 | Bridge path (.cpp:382-445) and CurlMulti path (.cpp:447-506); decode dispatched via `AsyncSystem::run` |
-| `decodeTile` | .cpp:544-571 | Prefers `PlatformBridge::decodeImage`, else `stbi_load_from_memory(...,4)` → RGBA |
-| `requestDiagnostics` | .cpp:529-543 | Atomics started/completed + transport max active |
+| `tryServeFromHttpCache` / `requestTile` | .cpp:371-395 / :396-566 | **P1**:先查 `HttpCache`(影像此前完全没接,地形早就接了 —— 真机同轮对照:地形 0 重复、影像 14.9%),命中则**下沉 worker 解码**(同步 decode 会成分发尖刺,地形侧踩过)。未命中走 Bridge(.cpp:407-490)或 CurlMulti(.cpp:492-565),200 体入缓存;decode 经 `AsyncSystem::run` |
+| `decodeTile` | .cpp:582-609 | Prefers `PlatformBridge::decodeImage`, else `stbi_load_from_memory(...,4)` → RGBA |
+| `requestDiagnostics` | .cpp:567-581 | Atomics started/completed + transport max active |
 | Android failure log cap | .cpp:42 | **`kMaxAndroidFailureLogs`** = 24 |
 
 ### TileMapServiceImageryProvider.h / .cpp
@@ -2606,13 +2606,13 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:1241-1327 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
-| `updateVisiblePages(view, ...)` | .cpp:560-1240 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1343-1436 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1437-1474 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1551-1634 / :1475-1515 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1635-1735 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1328-1342 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `initialize(device, Config)` | .cpp:1249-1335 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
+| `updateVisiblePages(view, ...)` | .cpp:560-1248 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1351-1444 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1445-1486 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1563-1646 / :1487-1527 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1647-1747 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1336-1350 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:283-329 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:546-379 / :477-496 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:406-476 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |

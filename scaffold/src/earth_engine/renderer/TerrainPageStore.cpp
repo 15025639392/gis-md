@@ -856,6 +856,10 @@ void TerrainPageStore::updateVisiblePages(
                 auto [it, inserted] = pages_.try_emplace(anchorPageKey);
                 PageEntry& pe = it->second;
                 if (inserted) {
+                    ++winPagesCreated_;
+                    if (!everCreatedPages_.insert(anchorPageKey).second) {
+                        ++winPagesRecreated_;  // 建过又建 = 白干一整套
+                    }
                     pe.layer = anchorLayer;
                     pe.compose = std::make_shared<PageComposeState>();
                     pe.compose->assembler.configure(
@@ -894,6 +898,10 @@ void TerrainPageStore::updateVisiblePages(
                 auto [it, inserted] = pages_.try_emplace(kc.pageKey);
                 PageEntry& pe = it->second;
                 if (inserted) {
+                    ++winPagesCreated_;
+                    if (!everCreatedPages_.insert(kc.pageKey).second) {
+                        ++winPagesRecreated_;  // 建过又建 = 白干一整套
+                    }
                     pe.layer = layer;
                     pe.compose = std::make_shared<PageComposeState>();
                     pe.compose->assembler.configure(
@@ -1458,10 +1466,12 @@ void TerrainPageStore::tick() {
     if (frameId_ % 60u == 0u) {
         platformLog(LogLevel::Info, "PageStore",
                     "tick60 compose=%.1fms upload=%.1fms "
-                    "maxTick=%.1fms items=%d fields=%d fhole=%d ffall=%d",
+                    "maxTick=%.1fms items=%d fields=%d fhole=%d ffall=%d "
+                    "pages=%d/%d(re)",
                     winComposeMs_, winUploadMs_,
                     winMaxTickMs_, winInboxItems_, winFieldUploads_,
-                    winFieldHoleCells_, winFieldFallbackCells_);
+                    winFieldHoleCells_, winFieldFallbackCells_,
+                    winPagesCreated_, winPagesRecreated_);
         winComposeMs_ = 0.0;
         winUploadMs_ = 0.0;
         winMaxTickMs_ = 0.0;
@@ -1469,6 +1479,8 @@ void TerrainPageStore::tick() {
         winFieldUploads_ = 0;
         winFieldHoleCells_ = 0;
         winFieldFallbackCells_ = 0;
+        winPagesCreated_ = 0;
+        winPagesRecreated_ = 0;
     }
 }
 

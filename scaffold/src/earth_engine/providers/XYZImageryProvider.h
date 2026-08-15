@@ -53,6 +53,13 @@ public:
                      HttpRequestPriority priority =
                          HttpRequestPriority::Normal) override;
 
+    /// HTTP 缓存命中则直接回调(下沉 worker 解码)并返回 true;
+    /// 未命中/坏体返回 false,调用方继续走网络。语义见 .cpp 注释。
+    bool tryServeFromHttpCache(const TileKey& key,
+                               const CancellationToken& token,
+                               const TileCallback& callback,
+                               const std::string& url);
+
     ProviderRequestDiagnostics requestDiagnostics() const override;
 
     std::unique_ptr<DecodedImage> decodeTile(

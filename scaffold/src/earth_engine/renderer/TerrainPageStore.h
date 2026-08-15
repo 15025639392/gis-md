@@ -545,6 +545,13 @@ private:
     // [V24] 场洞诊断:kept cell 中"精确档 pending 且祖先回退也无存货"的数
     // (= 该 cell 本帧线不画)。缩放期持续 >0 = 线闪的机制信号;
     // 回退命中数单列,两数并读可判"回退在扛"还是"池被踢穿"。
+    // [P1] 无谓重合成的直接判据:**同一页 key 被建过一次以上**
+    // (= churn 中被淘汰又要回来 → 重拉 + 重解码 + 重合成全套重来)。
+    // tick60 的 items 只数"合成了几次",分不出首次与重来 —— 那正是
+    // P1 一直无法判定的原因。everCreated 只存 key(8B/页),诊断可接受。
+    std::unordered_set<uint64_t> everCreatedPages_;
+    int winPagesCreated_ = 0;
+    int winPagesRecreated_ = 0;
     int winFieldHoleCells_ = 0;
     int winFieldFallbackCells_ = 0;
 

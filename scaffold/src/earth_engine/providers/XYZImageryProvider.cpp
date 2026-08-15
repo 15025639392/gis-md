@@ -1,4 +1,5 @@
 #include "XYZImageryProvider.h"
+#include "../core/cache/HttpCache.h"
 #include "ImageTileBodyCheck.h"
 #include "../core/async/AsyncSystem.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
@@ -359,6 +360,39 @@ std::string XYZImageryProvider::buildUrl(const TileKey& key) const {
     return substituteUrlTemplateParameters(urlTemplate_, placeholders);
 }
 
+/// [P1] HTTP 缓存命中路径。**影像此前完全没接 HttpCache**(8 个影像
+/// provider 引用数全 0),而地形早就接了 —— 真机同一轮里天然对照:
+/// 地形 33 请求 0 重复,影像 1235 请求 **184 重复(14.9%)**。页存储 LRU
+/// 淘汰后重访(走远再回来)要把影像整批重拉,这就是 P1「churn 期无谓
+/// 重合成」真正的代价所在(重建 338 页 → 184 次 CDN 往返)。
+///
+/// ⚠️ 命中也必须下沉 worker —— 与地形侧同一个坑:此处同步 decode+callback
+/// 会让"重访已缓存区域"变成分发尖刺(地形侧实测帧 14-24ms)。
+bool XYZImageryProvider::tryServeFromHttpCache(const TileKey& key,
+                                               const CancellationToken& token,
+                                               const TileCallback& callback,
+                                               const std::string& url) {
+    auto cached = HttpCache::shared().get(url);
+    if (cached.empty()) return false;
+    if (!looksLikeImageTileBody(cached)) {
+        // 历史坏体自愈(CDN 负缓存的 XML 错误体),清掉按未命中走网络。
+        HttpCache::shared().remove(url);
+        return false;
+    }
+    auto bodyPtr = std::make_shared<std::vector<uint8_t>>(std::move(cached));
+    auto tokenPtr = std::make_shared<CancellationToken>(token);
+    auto callbackPtr = std::make_shared<TileCallback>(callback);
+    AsyncSystem::pool().enqueue([this, key, tokenPtr, callbackPtr, bodyPtr]() {
+        noteRequestCompleted(requestsCompleted_);
+        if (tokenPtr->isCancelled()) {
+            (*callbackPtr)(key, nullptr);
+            return;
+        }
+        (*callbackPtr)(key, decodeTile(bodyPtr->data(), bodyPtr->size()));
+    });
+    return true;
+}
+
 void XYZImageryProvider::requestTile(const TileKey& key,
                                       CancellationToken token,
                                       TileCallback callback,
@@ -377,6 +411,7 @@ void XYZImageryProvider::requestTile(const TileKey& key,
             callback(key, nullptr);
             return;
         }
+        if (tryServeFromHttpCache(key, token, callback, url)) return;
 
         auto requestHandle =
             std::make_shared<std::unique_ptr<HttpRequest>>();
@@ -433,6 +468,7 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                             (*callbackPtr)(key, nullptr);
                             return;
                         }
+                        HttpCache::shared().put(url, *bodyPtr);
                         auto image =
                             decodeTile(bodyPtr->data(), bodyPtr->size());
                         if (!image) {
@@ -456,6 +492,7 @@ void XYZImageryProvider::requestTile(const TileKey& key,
         callback(key, nullptr);
         return;
     }
+    if (tryServeFromHttpCache(key, token, callback, url)) return;
 
     auto requestHandle =
         std::make_shared<std::unique_ptr<HttpRequest>>();
@@ -511,6 +548,7 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                         (*callbackPtr)(key, nullptr);
                         return;
                     }
+                    HttpCache::shared().put(url, *bodyPtr);
                     auto image = decodeTile(bodyPtr->data(), bodyPtr->size());
                     if (!image) {
                         logAndroidXyzFailure(

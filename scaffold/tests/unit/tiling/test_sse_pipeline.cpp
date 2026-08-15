@@ -1,4 +1,5 @@
 #include "earth_engine/content/EllipsoidTerrainContentProvider.h"
+#include "earth_engine/core/cache/HttpCache.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/HeightmapTerrainProvider.h"
 #include "earth_engine/providers/ProviderRequestDiagnosticsAggregator.h"
@@ -1875,6 +1876,11 @@ void testRasterOverlayProviderRetention() {
           "RasterOverlayTileProvider: stale tile is eventually trimmed");
 }
 void testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
+    // ⚠️ HttpCache 是**全局单例**,而本文件多条用例共用同一个
+    // https://example.invalid/{z}/{x}/{y}.png —— 影像接入 HttpCache 后
+    // (P1),先跑的用例会把响应体喂进缓存,后跑的用例直接命中、根本不
+    // 走 bridge,bridge 断言遂全灭。测 bridge 就必须先清掉这层。
+    HttpCache::shared().clear();
     XYZImageryProvider provider("https://example.invalid/{z}/{x}/{y}.png");
     BlockingPlatformBridge bridge;
     provider.setPlatformBridge(&bridge);
@@ -1915,6 +1921,11 @@ void testXYZImageryProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
           "XYZImageryProvider: diagnostics complete async bridge request after cancellation");
 }
 void testXYZImageryProviderBridgeCompletionDoesNotRunDecodeInline() {
+    // ⚠️ HttpCache 是**全局单例**,而本文件多条用例共用同一个
+    // https://example.invalid/{z}/{x}/{y}.png —— 影像接入 HttpCache 后
+    // (P1),先跑的用例会把响应体喂进缓存,后跑的用例直接命中、根本不
+    // 走 bridge,bridge 断言遂全灭。测 bridge 就必须先清掉这层。
+    HttpCache::shared().clear();
     BlockingDecodeXYZImageryProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png");
     BlockingPlatformBridge bridge;
@@ -2054,6 +2065,11 @@ void testXYZImageryProviderUrlTemplateUnknownAndCaseInsensitivePlaceholders() {
           "XYZImageryProvider: URL template substitution is case-insensitive and handles unknown placeholders like cesium-native");
 }
 void testHeightmapTerrainProviderUsesAsyncBridgeWithoutWorkerBlockingWait() {
+    // ⚠️ HttpCache 是**全局单例**,而本文件多条用例共用同一个
+    // https://example.invalid/{z}/{x}/{y}.png —— 影像接入 HttpCache 后
+    // (P1),先跑的用例会把响应体喂进缓存,后跑的用例直接命中、根本不
+    // 走 bridge,bridge 断言遂全灭。测 bridge 就必须先清掉这层。
+    HttpCache::shared().clear();
     HeightmapTerrainProvider provider(
         "https://example.invalid/{z}/{x}/{y}.png");
     BlockingPlatformBridge bridge;
