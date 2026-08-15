@@ -1,0 +1,108 @@
+# 架构沉淀:基础设施与场景装配 (core + scene)
+
+> **架构/方案**文档,覆盖引擎的"地基与骨架"。行号看 `AI_INDEX.md` §1/§2/§3/§4/§12/§18;行号随重构漂移,以符号名为准。标"未验证"处为 AI_INDEX 既有断言、本文未逐行复核。
+
+**规模**:`core/` 7.3k 行(数学/大地测量/异步/缓存/网络)+ `scene/` 7k 行(场景协调器)+ `sdk/`(facade)+ `Engine.h/.cpp`(帧循环)。
+
+---
+
+## 职责边界
+
+- **core/**:平台无关地基层——数学(`Vec3`/`Mat4`/包围体/裁剪/相交,`core/math/`)、大地测量(椭球/投影/GCJ-02/S2,`core/geodesy/`)、异步原语(`AsyncSystem`/`WorkLedger`,`core/async/`)、缓存(`HttpCache`/`PersistentCache`,`core/cache/`)。**不知道"瓦片""场景""相机"**,只提供被上层复用的纯值类型与线程原语。
+- **scene/**:场景装配与帧编排层。`Scene` 是"cesium-native 无直接对应物"的引擎自研组合根,owns Camera/CameraSystem/Renderer/渲染管线,把工作全部委派给 5 个 Coordinator + 1 个渲染管线,自己不做算法只做装配与阶段编排。**不实现**瓦片选择算法(在 `tiling/`)、具体渲染 API 调用(在 `renderer/`/`platform/`)。
+- **sdk/**:`EarthEngineSdkFacade` 是面向调用方的一次性装配入口,把声明式 `EarthSceneConfig` 翻译成 provider/overlay/tileset 对象图,注入调用方已建好的 `Engine`。facade 不拥有 Engine/RenderDevice/PlatformBridge("Caller owns")。
+- **Engine**:平台面向的生命周期外壳 + 输入路由,owns 唯一一个 `Scene`,几乎每个公开方法都是薄转发。
+
+---
+
+## 核心设计决策 + 理由
+
+### 1. 大地测量以 cesium-native 为规格 + 对照测试即行为规格 ★
+`core/geodesy/` 每个类型在 AI_INDEX 都标注对应的 cesium-native 类型;这不是巧合命名而是**移植**:算法步骤(Newton 迭代 `tryScaleToGeodeticSurface`、Vincenty 正反算、Web Mercator Gudermannian 公式)与 cesium 逐行对应,连容差常量命名都沿用(`kEpsilon12`=1e-12)。
+- **对照测试即行为规格**:`tests/unit/geodesy/*` 中测试名直接写 `...MatchesCesiumNative`,注释写明"cesium 对应字段/语义是什么、这里是否一致"。改动大地测量代码时,这些测试名本身就是规格文档。
+- **理由**:大地测量的坑集中在数值边界(极点、反经线、退化),cesium 已踩过一遍并稳定多年,重新发明成本远高于对照移植。`cesium-alignment-audit-2026-07-04` 独立审计印证:"core 数学/QM 解析/上采样/瓦片选择/scene 全部算法级对齐",真实差距不在算法而在异步契约。
+
+### 2. WorkLedger:异步在途的单一账本 ★
+存在理由:此前"还有活没干完吗"由 `Scene::hasConvergingWork` 在外部**重新推导**——同时问四个各自为政的判据(tileset/overlay/pageStore/相机),正确性=四者同时正确,漏一个的症状是**画面冻住且零报错**,其中两个已因此被修过。`WorkLedger` 把判据收敛到单一入口。
+- **两种令牌语义相反**:`Landing`(别线程会自己走完,持有期不出帧、释放时才需一帧消费)与 `Pumped`(必须在渲染帧里推进,持有期必须持续出帧)。混用会让设计失去意义。
+- `Ticket` 是 move-only RAII,析构即释放,`release()` 幂等;`consumeLanded` 是 exchange 语义、恰好消费一次——否则一次到货让循环永远跑下去(`Engine::requestRender` 踩过)。
+- 接入是"对账式" `sync*WorkTicket` 而非配对 acquire/release(配对要求每条出错路径都记得放手,漏掉正是某次事故 `6028adcdf` 的形状)。
+- **当前状态(有意的过渡态,非债)**:gating 仍读旧 `hasConvergingWork`,WorkLedger 零行为影响,只做审计对拍(`Scene::auditWorkLedger` 每帧比对令牌数 vs `Tileset::countTilesLoadingContent`,不等即 ERROR)。尚未真正接管 gating。
+
+### 3. 缓存分层:HttpCache(内存 LRU)+ PersistentCache(磁盘)
+`HttpCache` 是线程安全内存 LRU(cesium `CachingAssetAccessor` 对应物,`maxEntries` 默认 2000),达上限先 `evictOne` 再在锁外 `persistAsync` 落盘。`PersistentCache` 是纯静态文件级落地,按 URL 哈希生成文件名。分层理由:内存层处理会话内高频命中,磁盘层处理跨会话持久化,写入丢到后台线程不阻塞主/网络线程。
+
+### 4. Scene 用 Coordinator 族分解职责
+`Scene` 自身只 own 5 个协调器(Layer/Tileset/Interaction/Environment/Telemetry)+ `SceneRenderPipeline` + `SceneFrameRuntime`。与 tiling "极端分解"哲学一致但目的不同:tiling 是为忠实移植 cesium 算法而拆,scene 是为让每个横切关注点(瓦片/图层/交互/环境/遥测)拥有独立可测边界、能各自 mock/替换。`Scene::update`/`render` 本身极薄,只做"构造 context struct → 转发给静态编排器"。`SceneFrameUpdateCoordinator` 是无状态静态编排器,按固定顺序:reset+framerate → camera update → build FrameState → tileset update。
+
+### 5. SDK facade:一次性装配,不是持续管理
+`installScene(EarthSceneConfig)` 按 `ImagerySourceKind`/`TerrainSourceKind` 分派构造 provider,最终构造统一 `Tileset` 塞进 `engine_.setTileset`。facade 不做后续每帧管理——一旦返回,帧循环完全由 `Engine::render` 驱动。**代价**:部分 provider 初始化路径是**阻塞式**的(TileMapService/WebMapService/BingMaps 的 GetCapabilities、GoogleMapTiles 建 session 用阻塞 POST,默认超时 20s)——是"一次性装配、调用方线程同步等待"设计选择的必然成本,不是 bug。
+
+### 6. Engine 四阶段帧循环:beginFrame → update → render → endFrame
+每阶段单独计时进 `Diagnostics`:
+1. `device->beginFrame()` —— 渲染目标 + reverse-Z 深度清屏(near=150, far=1e12)。
+2. `scene->update(dt)` —— 推进相机/控制器、更新环境(时间→太阳方向→天空渐变)、驱动 `Tileset::update()`。
+3. `scene->render()` —— `SceneRenderPipeline` 按固定顺序建 RenderCommand 列表 → `renderer.submit` → `releaseRenderReferences()`(引用计数让瓦片存活到 GPU 消费完)。
+4. `device->endFrame()` —— 呈现 drawable;`finishEngineFrame()` 记录总 CPU 帧耗时。
+- **理由**:四阶段严格串行、职责单向(**update 不渲染、render 不做选择**),使每阶段可独立计时/测试,让"哪个阶段占用多少帧预算"有明确归属。
+
+---
+
+## 数据流(关键路径)
+
+**Engine::render 四阶段**:`beginFrame`(device)→`update`(Scene→SceneFrameUpdateCoordinator→camera/environment/tileset)→`render`(Scene→SceneRenderPipeline→RenderCommand list→submit)→`endFrame`(device)。
+
+**SDK 装配路径**:`installScene` → 按 config 各字段构造 provider/overlay → 构造统一 `Tileset` → `engine_.setTileset` → `Scene::setTileset` → `SceneTilesetCoordinator::setPrimary`。可选 glTF 内容走 `engine_.addTileset`。
+
+**Scene::update 驱动各 coordinator**:`SceneFrameRuntime::makeFrameUpdateInput` 把 frameState/diagnostics/camera/controller/tilesets/timeController/skyGradient(按引用)打包成 `SceneFrameUpdateInput`,交给静态 `SceneFrameUpdateCoordinator::update`:①resetPerFrame+updateFrameRate ②cameraController.update ③build FrameState(含视锥构造、交互焦点 TTL、太阳方向/天空色) ④tilesets.update(primary + content tilesets 各自计时)。
+
+---
+
+## 关键契约与不变量
+
+| 契约 | 说明 |
+|---|---|
+| WorkLedger `consumeLanded` 恰好消费一次 | exchange 语义;否则一次到货导致循环永认为"有活",出帧不停 |
+| WorkLedger `Ticket` 双重释放让计数变负 | 判据从此恒说"空闲"=退回无 gating 冻屏——move-only + move 后源置空的设计原因 |
+| Landing 与 Pumped 语义相反不可混用 | Landing 持有期不出帧、释放时才需一帧;Pumped 持有期必须持续出帧 |
+| 对照测试即行为规格 | `tests/unit/geodesy/*` 中 `*MatchesCesiumNative` 用例定义的是"必须与 cesium 一致",改大地测量代码时是规格文档 |
+| 异步回调只带按值/弱引用自持数据 | 全仓两起真实事故(裸引用悬空、裸指针)总结的通用法则;回调不能假设宿主还活着 |
+| Scene 两阶段流分离 | `update(dt)` 只 mutate FrameState + 跑选择,`render()` 只读同一份 FrameState 建命令提交 |
+| 审计对拍 | `Scene::auditWorkLedger` 每帧比对令牌数与真值,不等即 ERROR——防漏接入新迁移点的静默失效 |
+
+---
+
+## 诚实得失
+
+### ✅ 强项
+- 大地测量/数学有系统性 cesium-native 对照测试守卫,独立审计结论"全部算法级对齐"。
+- WorkLedger 把此前分散四处的在途判据收敛成单一账本 + 恰一次消费 + 每帧真值审计,解决了"画面冻住零报错"这个类别(已修过两次)。
+- Scene 5-Coordinator 分解让横切关注点各自独立可测,`Scene::update`/`render` 足够薄。
+- Engine 四阶段严格串行 + 逐阶段计时,诊断"帧预算花在哪"时归属明确。
+
+### ⚠️ 短板 / 已知债
+- **WorkLedger 尚未真正接管 gating**:实际 gating 仍读旧 `hasConvergingWork`,WorkLedger 目前零行为影响只做审计对拍——此前"四判据各自为政"的风险敞口在 gating 层面尚未消除,只多了一层不影响行为的校验网。
+- **`PersistentCache::ensureDir` 是空函数体**,不真正创建目录——若调用方没预建缓存目录,磁盘落地会**静默全部失败**,无任何日志。
+- **`PersistentCache::filePath` 用非加密、进程加盐哈希**做文件名,存在跨进程/跨平台不稳定与碰撞风险,不适合作长期稳定缓存键。
+- **`PersistentCache::prewarm` 是纯占位符**(函数体空),只支持按需加载。
+- **`AsyncSystem::Future::then` 每次起一个 detached 线程**(不经线程池),链式/扇出场景线程数不受控;审计记载全工程 0 调用(死代码,footgun 但无实际影响,建议删)。
+- **`Uri::percentDecode` 末 2 字节 off-by-one**,`%XX` 落在字符串最后两位内不会被解码。
+- **两段已确认死代码**:`SceneRenderCommandUniformUpdater` 里跳过 `owner=="globe"` 命令的分支与 `RenderCommandKind::SurfaceTile` 分支(globe fallback / SurfaceTileMesh 移除后残留,无生产者)。
+- **`Diagnostics.h` 有一段"部分废弃"的 quadtree/surface 计数块**(旧 TileQuadTree/SurfaceTileMesh 遗留,仍声明但不再被填充)。
+- **SDK facade 多处初始化阻塞调用方线程**(capabilities 抓取、GoogleMapTiles 建 session),默认超时 20s——设计选择的直接代价,未见异步版本入口。
+- **缓存收敛策略与 cesium 存在结构性差距**(未验证是否已解决):缺请求侧护栏(cesium `RequestScheduler` 按屏幕优先级每帧重排 + 相机移走主动 cancel;我们 600 帧龄只是兜底),且我们是硬顶淘汰、cesium 是引用计数软预算——源头(HttpCache 淘汰策略)在 core/cache/。
+
+---
+
+## 扩展点
+- **加新投影/CRS**:在 `Projection = std::variant<GeographicProjection, WebMercatorProjection>` 里新增成员类型,实现 `project`/`unproject`/`maximumGlobeRectangle`/`computeMaximumProjectedRectangle`,`Projection.cpp` 自由函数 visitor 会自动 `std::visit` 分派,不需改调用方。非投影类 CRS 变换(如国测局偏转)参照 `Gcj02CoordinateTransform` 的"独立显式转换点"路径。
+- **加新缓存后端**(SQLite/LevelDB):改动点是 `PersistentCache` 的 `load`/`save`/`filePath`——但扩展前应先修 `ensureDir` 空实现与 `filePath` 哈希两个已知债,否则新后端继承同样的静默失败与碰撞风险。
+- **加新 Coordinator**:定义 Coordinator 类 + 对应 Input/Context struct → 在 `Scene` own 实例 → 按需接入 `SceneFrameUpdateCoordinator`(update 阶段)或 `SceneRenderPipeline::Context`(render 阶段);`SceneFrameRuntime` 的 `makeFrameUpdateInput`/`makeInteractionContext` 是打包 context 的地方。
+- **加新 SDK 配置项**:`EarthSceneConfig.h` 是纯声明式 POD;新增字段 → 在对应 struct 加字段 → 在 `installScene` 对应分派分支或辅助函数消费。新增一种 `ImagerySourceKind`/`TerrainSourceKind` 分支时留意:阻塞式初始化是现有约定,新分支引入网络抓取大概率沿用同一模式。
+
+---
+
+## 对照系
+- **core 大地测量/数学/瓦片**:全面对齐 cesium-native——类型命名、算法步骤、容差常量、测试用例名(`*MatchesCesiumNative`)均系统性对照;真实差距在异步契约层不在算法层。
+- **scene 装配**:自研,cesium-native 无直接对应物。Coordinator 分解模式、帧编排顺序都是本工程自己的设计。
+- **相机/交互/环境**(附带提及):对齐 openglobus(见 `camera-interaction.md` / `environment.md`),与 core/scene 的 cesium 血统是"混血"关系。
