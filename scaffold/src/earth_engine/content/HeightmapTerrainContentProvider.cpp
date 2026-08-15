@@ -163,8 +163,21 @@ HeightmapTerrainContentProvider::childTiles(const TileKey& key) const {
 
 TileAvailabilityState HeightmapTerrainContentProvider::availabilityState(
     const TileKey& key) const {
-    return supportsTile(key) ? TileAvailabilityState::Available
-                             : TileAvailabilityState::NotAvailable;
+    if (!supportsTile(key)) {
+        return TileAvailabilityState::NotAvailable;
+    }
+    if (TileSelectionRootPolicy::isVirtualTerrainRoot(key)) {
+        return TileAvailabilityState::Available;
+    }
+    // 源的 zoom 下界只在这里生效,**不进 supportsTile**:后者是四叉树通行证
+    // (childTiles/tileMetadata 用它),浅层拒绝会在 z0 断链让 z6+ 永远选不到。
+    // 这里拒绝则 CompositeTerrainProvider::primaryAvailable 转假,浅层正确路由
+    // 到椭球兜底。上界仍用 maximumLevel_ 而非 provider_->maxZoom():前者是
+    // 暴露给选择的四叉树深度,可超过源的 native maxZoom(见头文件注释)。
+    if (provider_ && key.z < provider_->minZoom()) {
+        return TileAvailabilityState::NotAvailable;
+    }
+    return TileAvailabilityState::Available;
 }
 
 void HeightmapTerrainContentProvider::requestTileContent(

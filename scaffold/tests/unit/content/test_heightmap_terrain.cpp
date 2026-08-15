@@ -624,5 +624,34 @@ TEST(ContractDemNodataSentinel, CleanDataDoesNotViolate) {
     EXPECT_EQ(0u, noDataViolations() - before);
 }
 
+// 源的 zoom 下界(setZoomRange 的 minZ)必须走进 availabilityState,否则
+// CompositeTerrainProvider::primaryAvailable 在源无覆盖的浅层恒真 → 椭球兜底
+// 整段被短路(全球 514 源 z6-12,demo 期待 z0-5 回落椭球)。
+//
+// 同时钉死反向约束:下界**不得**进 supportsTile。childTiles/tileMetadata 用
+// supportsTile 当四叉树通行证,浅层拒绝会在 z0 断链,z6+ 永远选不到 = 地形全灭。
+TEST(HeightmapTerrainContent, BelowSourceMinZoomIsNotAvailableButStaysTraversable) {
+    auto provider = std::make_unique<HeightmapTerrainProvider>(
+        "file:///{z}/{x}/{y}.png", "");
+    provider->setZoomRange(6, 12);
+    HeightmapTerrainContentProvider content(std::move(provider), 12);
+
+    const TileKey covered{"XYZ-WebMercator", 8, 100, 100};
+    const TileKey belowMin{"XYZ-WebMercator", 3, 1, 1};
+
+    // 源覆盖区照常 Available。
+    EXPECT_EQ(TileAvailabilityState::Available,
+              content.availabilityState(covered));
+
+    // 源不覆盖的浅层:数据不可用 → 让 Composite 路由到椭球。
+    EXPECT_EQ(TileAvailabilityState::NotAvailable,
+              content.availabilityState(belowMin));
+
+    // 但拓扑必须保留:能下降,才走得到 z6 的真数据。
+    EXPECT_TRUE(content.supportsTile(belowMin));
+    EXPECT_FALSE(content.childTiles(belowMin).empty());
+    EXPECT_TRUE(content.tileMetadata(belowMin).has_value());
+}
+
 }  // namespace
 }  // namespace earth_engine
