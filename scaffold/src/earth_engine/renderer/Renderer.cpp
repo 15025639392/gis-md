@@ -822,9 +822,10 @@ void main() {
 )glsl";
 
 // ============================================================
-// Terrain lightweight shader — 28-byte compact TerrainGpuVertex layout
+// Terrain lightweight shader — 32-byte compact TerrainGpuVertex layout
 // POSITION(f32x3@0) + NORMAL(snorm16x3+pad@12) + TEXCOORD_0/1(unorm16x4@20)
-// = 28 bytes. Quantized attributes arrive in the shader as normalized floats.
+// + geomorph heightDelta(f32@28) = 32 bytes。Quantized attributes arrive in
+// the shader as normalized floats.
 // This is the glTF shader MINUS all PBR-extension uniforms: it keeps only
 // base color, raster-overlay compositing (slots 15-18), water mask (slot 19),
 // terrain clip, directional lighting and render opacity. RTC origin stays
@@ -3251,8 +3252,9 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
 
 // ============================================================
 // Terrain lightweight shader — MSL
-// 28-byte compact TerrainGpuVertex: position(f32x3@0)
-// normal(short4Normalized@12, w = pad) texcoord01(ushort4Normalized@20).
+// 32-byte compact TerrainGpuVertex: position(f32x3@0)
+// normal(short4Normalized@12, w = pad) texcoord01(ushort4Normalized@20)
+// geomorph heightDelta(f32@28).
 // Fragment consumes the shared GltfUniforms struct at buffer(0) (byte-exact
 // mirror of GltfUniformBlock.h), same as gltfFragment — one setFragmentBytes
 // per draw, far under Metal's 31-buffer cap.
@@ -3994,7 +3996,7 @@ struct Renderer::Impl {
     std::unique_ptr<ShaderProgram> gltfShader;
     std::unique_ptr<ShaderProgram> gltfInstancedShader;
 
-    // Terrain lightweight shader (28-byte compact vertex, no PBR extensions)
+    // Terrain lightweight shader (32-byte compact vertex, no PBR extensions)
     std::unique_ptr<ShaderProgram> terrainShader;
     // Terrain instanced shader (合批 Step 3:32B 模板 + 96B per-instance 流)
     std::unique_ptr<ShaderProgram> terrainInstancedShader;
@@ -4069,7 +4071,7 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] gltfShader failed — glTF models unavailable\n");
     }
 
-    // ---- Terrain lightweight shader (28-byte compact TerrainGpuVertex) ----
+    // ---- Terrain lightweight shader (32-byte compact TerrainGpuVertex) ----
     // Unlike gltfShader, this is a small shader (<=31 Metal buffers) so it must
     // compile on BOTH backends. Treat link failure as fatal.
     ShaderDesc terrainSd;

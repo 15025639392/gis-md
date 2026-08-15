@@ -118,7 +118,7 @@ struct GltfPrimitiveRuntime {
 
 struct GltfPrimitive {
     std::vector<SurfaceVertex> vertices;
-    // Pre-built TerrainGpuVertex bytes (28-byte compact format). Populated during
+    // Pre-built TerrainGpuVertex bytes (32-byte compact format). Populated during
     // decode (worker thread) so main-thread GPU upload can create vertex
     // buffers directly without re-building vertices from SurfaceVertex.
     std::vector<uint8_t> terrainGpuVertexBytes;

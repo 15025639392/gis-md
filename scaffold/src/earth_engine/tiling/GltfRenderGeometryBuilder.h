@@ -28,7 +28,7 @@ static_assert(
     sizeof(GltfGpuVertex) == 120,
     "glTF GPU vertices pack POSITION, NORMAL, eight TEXCOORD sets, COLOR_0 and TANGENT");
 
-/// Terrain-specific compact vertex format (28 bytes).
+/// Terrain-specific compact vertex format (32 bytes).
 /// The engine currently supports Geographic and WebMercator raster
 /// projections, so two packed texcoord sets preserve the complete terrain
 /// overlay contract without paying the 120-byte generic glTF vertex cost.

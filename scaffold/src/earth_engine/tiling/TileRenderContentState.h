@@ -120,7 +120,7 @@ struct GltfPrimitiveRenderResources {
     bool doubleSided = false;
     bool unlit = false;
     bool dynamicVertices = false;
-    bool useTerrainVertexFormat = false;  // true = 28-byte TerrainGpuVertex, false = 120-byte GltfGpuVertex
+    bool useTerrainVertexFormat = false;  // true = 32-byte TerrainGpuVertex, false = 120-byte GltfGpuVertex
 };
 
 class TileRenderContentState {

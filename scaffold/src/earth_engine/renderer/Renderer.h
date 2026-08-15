@@ -99,7 +99,7 @@ public:
     /// glTF primitive shader with EXT_mesh_gpu_instancing-style instance data.
     ShaderProgram* gltfInstancedShader() const;
 
-    /// Terrain lightweight shader (28-byte compact vertex format, no PBR extensions).
+    /// Terrain lightweight shader (32-byte compact vertex format, no PBR extensions).
     ShaderProgram* terrainShader() const;
 
     /// 地球模型矩阵（单位球 → ECEF meters）
@@ -116,7 +116,7 @@ public:
     /// Build a terrain primitive command using the lightweight terrain shader.
     /// Vertex layout: POSITION(12) + NORMAL(12) +
     /// packed TEXCOORD_0/1(16) = 40 bytes.
-    /// kind stays GltfPrimitive; the 28-byte stride selects the terrain path.
+    /// kind stays GltfPrimitive; the 32-byte stride selects the terrain path.
     RenderCommand makeTerrainPrimitiveCommand(Buffer* vertexBuffer,
                                               Buffer* indexBuffer,
                                               int indexCount,
