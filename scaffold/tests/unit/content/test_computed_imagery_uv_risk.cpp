@@ -3,6 +3,7 @@
 #include "earth_engine/content/EllipsoidTerrainMeshBuilder.h"
 #include "earth_engine/content/GltfModel.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Gcj02CoordinateTransform.h"
 #include "earth_engine/core/math/MathUtils.h"
 #include "earth_engine/core/math/Rectangle.h"
@@ -287,4 +288,209 @@ TEST(ComputedImageryUvRisk, GcjAffineBoundaryTileErrorIsBoundedAndReported) {
     EXPECT_LT(px, 12.0) << "跨框瓦片仿射误差发散:" << px << " px";
     // 配套判据:crossesChinaBounds 就是产线上把这类瓦片挡出仿射路径的闸
     //(与 TerrainPageStore 跨界瓦片放弃视锥剔除同一判据)。
+}
+
+// =============================================================================
+// 第二刀 R2:float32 局部化公式 —— VS 实际要执行的形态。
+//
+// 精度陷阱与对策(全部「大数进常数、小量进运算」):
+//   - 绝对经纬(|lng|≤π)在 float32 下 eps≈2e-7 rad ≈ 1.3m 地面 —— 禁止在
+//     float 里出现;所有绝对量折进 CPU 双精度预算的每瓦片常数。
+//   - u 通道:merc_x 就是经度,线性 → u1 = C0 + C1·u0 + C2·v0 纯仿射
+//     (GCJ δlng 仿射并入系数),float32 系数相对量级 O(1),无相消。
+//   - v 通道:merc_y 非线性。局部差分:dφ = D0 + D1·v0 + D2·u0(瓦片北缘为锚,
+//     含 GCJ δlat 仿射),Δy = log1p(th/tA) − log1p(−tA·th),th = tan(dφ/2),
+//     tA = tan(π/4 + latN/2) 每瓦片常数。th/tA 与 tA·th 都是小量,log1p 无相消。
+//   - GLSL 无 log1p → |x|<0.03 走三阶级数 x−x²/2+x³/3(相对误差 ~x⁴/4),
+//     否则 log(1+x)(此时无相消主导)。
+//
+// 比对基准 = 逐顶点精确 GCJ 的双精度 UV(非仿射),故测得的是渲染端可见的
+// **总**误差:float32 精度损失 + GCJ 仿射 + 局部公式近似三项之和。
+// 判据:境内瓦片全 zoom 阶梯 < 0.25px(瓦片≈256px);高纬(GCJ 域外)同式。
+// 本测试只验数值链;GPU 上 log/tan 的实现精度是 T-P6 缺口,须真机。
+// =============================================================================
+
+namespace {
+
+float log1pApprox(float x) {
+    // 镜像未来 GLSL 实现:小参数三阶级数,大参数直算。
+    if (std::fabs(x) < 0.03f) {
+        return x * (1.0f - x * (0.5f - x * (1.0f / 3.0f)));
+    }
+    return std::log(1.0f + x);
+}
+
+// VS 形态的 float32 求值器。所有常数由 CPU 双精度预算后降 float 下发
+//(生产中即 per-instance 数据);求值路径全 float,模拟 highp VS。
+struct VsFloat32Formulation {
+    // u 通道仿射系数(含 GCJ δlng)。
+    float c0, c1, c2;
+    // v 通道:dφ 仿射系数(含 GCJ δlat)+ 锚点常数。
+    float d0, d1, d2;   // dφ = d0 + d1·v0 + d2·u0(相对瓦片北缘,rad)
+    float tanA;         // tan(π/4 + latN/2)
+    float invH1;        // 1 / rect1 高度(merc 单位)
+    float v1AtAnchor;   // 北缘锚点在 rect1 里的 v(处理保守盒留白)
+
+    static VsFloat32Formulation build(const Rectangle& bounds,
+                                      const Rectangle& rect1,
+                                      bool gcj) {
+        // ---- 全双精度预算 ----
+        const double latN = bounds.north();
+        const double h0 = bounds.computeHeight();
+        const double w0 = bounds.width();
+        GcjAffine fit{};
+        if (gcj) {
+            fit = GcjAffine::fit(bounds);
+        }
+        // 投影输出单位 = 弧度 × 长半轴(米,见 WebMercatorProjection::project);
+        // rect1 是米,经纬差是弧度 —— R 因子在此(双精度)折进常数,float 求值
+        // 路径全程只见归一化小量。
+        const double kR = Ellipsoid::WGS84().maximumRadius();
+        // u:merc_x(lng') = R·(lng + δlng) = R·(west + u0·w0 + δaffine(u0,v0))
+        const double u0Coef = kR * (w0 + fit.ddu.dLng) / rect1.width();
+        const double v0Coef = kR * fit.ddv.dLng / rect1.width();
+        const double uConst = (kR * (bounds.west() + fit.center.dLng -
+                                     0.5 * fit.ddu.dLng -
+                                     0.5 * fit.ddv.dLng) -
+                               rect1.west()) /
+                              rect1.width();
+        // v:锚点 = 北缘经 GCJ 中心平移后的 merc_y(锚点也得带 δ,否则
+        // 500m 的大偏移会漏进 float 差分)。
+        const double latAnchor = latN + (gcj ? fit.center.dLat -
+                                                   0.5 * fit.ddv.dLat *
+                                                       (-1.0)
+                                             : 0.0);
+        // 说明:dφ 展开取 v0=0 处 δlat = center + ddv·(0−0.5)+ddu·(u0−0.5),
+        // u 向分量并入 d2,v0=0 常量并入锚点纬度,残余进 d0。
+        const double latAnchorFull =
+            latN + (gcj ? fit.center.dLat - 0.5 * fit.ddv.dLat : 0.0);
+        (void)latAnchor;
+        const double yAnchor =
+            kR * std::log(std::tan(0.25 * MathUtils::OnePi +
+                                   0.5 * latAnchorFull));
+        VsFloat32Formulation f{};
+        f.c0 = static_cast<float>(uConst);
+        f.c1 = static_cast<float>(u0Coef);
+        f.c2 = static_cast<float>(v0Coef);
+        f.d0 = static_cast<float>(gcj ? -0.5 * fit.ddu.dLat : 0.0);
+        f.d1 = static_cast<float>(-h0 + (gcj ? fit.ddv.dLat : 0.0));
+        f.d2 = static_cast<float>(gcj ? fit.ddu.dLat : 0.0);
+        f.tanA = static_cast<float>(
+            std::tan(0.25 * MathUtils::OnePi + 0.5 * latAnchorFull));
+        // Δy 由 log 公式算出的是弧度制 mercator,×R 归一到米制 rect1。
+        f.invH1 = static_cast<float>(kR / rect1.computeHeight());
+        f.v1AtAnchor =
+            static_cast<float>((rect1.north() - yAnchor) /
+                               rect1.computeHeight());
+        return f;
+    }
+
+    // 全 float 求值(未来 VS 代码的逐行镜像)。
+    std::array<float, 2> eval(float u0, float v0) const {
+        const float u1 = c0 + c1 * u0 + c2 * v0;
+        const float dPhi = d0 + d1 * v0 + d2 * u0;
+        const float th = std::tan(0.5f * dPhi);
+        const float dy =
+            log1pApprox(th / tanA) - log1pApprox(-tanA * th);
+        const float v1 = v1AtAnchor - dy * invH1;
+        return {u1, v1};
+    }
+};
+
+// 全 zoom 阶梯:float32 公式 vs 逐顶点精确双精度,返回最大误差(px,瓦片≈256px)。
+double maxFloat32ErrorPx(const Rectangle& bounds, bool gcj) {
+    const RasterOverlayProjection projection =
+        gcj ? RasterOverlayProjection::Gcj02WebMercator
+            : RasterOverlayProjection::WebMercator;
+    const Rectangle rect1 =
+        projectWorldRectangleForRasterOverlay(bounds, projection);
+    const VsFloat32Formulation f =
+        VsFloat32Formulation::build(bounds, rect1, gcj);
+    const int kSamples = 33;
+    double maxUv = 0.0;
+    for (int y = 0; y < kSamples; ++y) {
+        const float v0 = static_cast<float>(y) / (kSamples - 1);
+        const double lat =
+            bounds.north() - static_cast<double>(v0) * bounds.computeHeight();
+        for (int x = 0; x < kSamples; ++x) {
+            const float u0 = static_cast<float>(x) / (kSamples - 1);
+            const double lng =
+                bounds.west() + static_cast<double>(u0) * bounds.width();
+            const Vec3 exact = projectWorldPositionForRasterOverlay(
+                Cartographic::fromRadians(lng, lat), projection);
+            const double uExact =
+                (exact.x() - rect1.west()) / rect1.width();
+            const double vExact = (rect1.north() - exact.y()) /
+                                  rect1.computeHeight();
+            const std::array<float, 2> got = f.eval(u0, v0);
+            maxUv = std::max(
+                maxUv,
+                std::max(std::abs(static_cast<double>(got[0]) - uExact),
+                         std::abs(static_cast<double>(got[1]) - vExact)));
+        }
+    }
+    return maxUv * 256.0;
+}
+
+// 以某点为中心、按 zoom 造 WebMercator 对齐瓦片(近似即可,测的是数值链)。
+Rectangle tileAround(double lngDeg, double latDeg, int zoom) {
+    const double spanLng = 360.0 / static_cast<double>(1 << zoom);
+    // mercator 方形瓦片的纬度跨度随纬度变化;取 cos 缩放近似,数值测试够用。
+    const double spanLat =
+        spanLng * std::cos(latDeg * MathUtils::OnePi / 180.0);
+    return Rectangle::fromDegrees(lngDeg, latDeg - 0.5 * spanLat,
+                                  lngDeg + spanLng,
+                                  latDeg + 0.5 * spanLat);
+}
+
+}  // namespace
+
+// ---- R2:float32 总误差,GCJ 境内,全 zoom 阶梯 ----
+TEST(ComputedImageryUvRisk, Float32FormulationSubQuarterPixelGcjInterior) {
+    double worst = 0.0;
+    int worstZoom = -1;
+    for (int zoom = 5; zoom <= 18; ++zoom) {
+        const Rectangle bounds = tileAround(106.5, 29.6, zoom);
+        const double px = maxFloat32ErrorPx(bounds, /*gcj=*/true);
+        std::printf("[R2] gcj z%-2d err=%.4f px\n", zoom, px);
+        if (px > worst) {
+            worst = px;
+            worstZoom = zoom;
+        }
+    }
+    EXPECT_LT(worst, 0.25)
+        << "float32 总误差超 1/4 px,最坏在 z" << worstZoom;
+}
+
+// ---- R2:float32 总误差,标准 mercator(无 GCJ 项),含高纬 ----
+TEST(ComputedImageryUvRisk, Float32FormulationSubQuarterPixelStandard) {
+    struct Site {
+        double lng, lat;
+        const char* name;
+    };
+    const Site sites[] = {{106.5, 29.6, "chongqing"},
+                          {10.0, 0.05, "equator"},
+                          {18.0, 60.0, "lat60"},
+                          {20.0, 80.0, "lat80"}};
+    double worst = 0.0;
+    const char* worstSite = "";
+    int worstZoom = -1;
+    for (const Site& site : sites) {
+        for (int zoom = 2; zoom <= 18; ++zoom) {
+            const Rectangle bounds = tileAround(site.lng, site.lat, zoom);
+            if (bounds.north() > 85.0 * MathUtils::OnePi / 180.0) {
+                continue;  // 超出 mercator 有效域
+            }
+            const double px = maxFloat32ErrorPx(bounds, /*gcj=*/false);
+            if (px > worst) {
+                worst = px;
+                worstSite = site.name;
+                worstZoom = zoom;
+            }
+        }
+    }
+    std::printf("[R2] standard worst=%.4f px @%s z%d\n", worst, worstSite,
+                worstZoom);
+    EXPECT_LT(worst, 0.25) << "float32 标准链最坏 " << worst << " px @"
+                           << worstSite << " z" << worstZoom;
 }
