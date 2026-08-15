@@ -1423,45 +1423,8 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
                              });
             mesh.symbols.resize(kMaxSymbolsPerTile);
         }
-        pointVerts.reserve(mesh.symbols.size() * 4 * kPointVertexFloats);
-        pointIndices.reserve(mesh.symbols.size() * 6);
-        // 贴地:锚点落到地面(采样器覆盖全部锚点的 bbox)。采样不可用
-        // (地形未注入/瓦片未驻留)退回原始几何高 —— 山地下可能被地形
-        // 遮挡吃掉,属加载瞬态;瓦片换代重 commit 时自愈。
-        std::vector<std::vector<Cartographic>> anchorRing(1);
-        anchorRing[0].reserve(mesh.symbols.size());
-        for (const TileSymbolCpu& s : mesh.symbols) {
-            anchorRing[0].emplace_back(s.lonRad, s.latRad, 0.0);
-        }
-        const AreaSampleFn groundSample = makeClampSampler(anchorRing);
-        for (const TileSymbolCpu& s : mesh.symbols) {
-            double h = s.heightM;
-            if (groundSample) {
-                const auto ground = groundSample(s.lonRad, s.latRad);
-                if (ground) h = *ground;
-            }
-            const Vec3 anchor = ellipsoid_.cartographicToCartesian(
-                Cartographic(s.lonRad, s.latRad,
-                             h + style_.heightOffset));
-            const Vec3 rel = anchor - mesh.origin;
-            const std::array<float, 3> relF{static_cast<float>(rel.x()),
-                                            static_cast<float>(rel.y()),
-                                            static_cast<float>(rel.z())};
-            const ResolvedSymbol sym =
-                resolveSymbol(s.icon, style_.pointAnchor, iconAtlas_);
-            appendSymbolQuad(relF, sym, s.colorPacked, pointVerts,
-                             pointIndices);
-            // 符号刀B/C:带 name 的实例记标签源(烘焙推迟到
-            // bakeTileBucketLabels —— 字体可能晚于 commit 就绪)。id 经
-            // crossTileIdFor 跨瓦继承 —— 瓦片换代(z13→z14 同一 POI,MVT
-            // 逐瓦量化坐标略异)时 placement 的 fade/避让账本连续,不闪。
-            if (!s.name.empty()) {
-                const uint64_t id =
-                    crossTileIdFor(s.name, s.lonRad, s.latRad, key.z);
-                labelSources.push_back(
-                    BucketGpu::TileLabelSource{relF, anchor, id, s.name});
-            }
-        }
+        buildTileSymbolGpu(mesh.symbols, mesh.origin, key.z, pointVerts,
+                           pointIndices, labelSources);
     }
 
     // 符号刀A/B 诊断:worker→commit 链路的落点计数(排查「数据有点但屏上
@@ -1488,9 +1451,95 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
         return;
     }
     gpu.tileLabelSources = std::move(labelSources);
+    gpu.tileSymbolSources = std::move(mesh.symbols);  // 重钳用(见字段注释)
     BucketGpu& stored = tileBuckets_[key];
     stored = std::move(gpu);
     bakeTileBucketLabels(stored);
+}
+
+void FeatureRenderLayer::buildTileSymbolGpu(
+    const std::vector<TileSymbolCpu>& symbols, const Vec3& origin, int tileZ,
+    std::vector<float>& pointVerts, std::vector<uint32_t>& pointIndices,
+    std::vector<BucketGpu::TileLabelSource>& labelSrc) {
+    pointVerts.reserve(symbols.size() * 4 * kPointVertexFloats);
+    pointIndices.reserve(symbols.size() * 6);
+    // 贴地:锚点落到地面(采样器覆盖全部锚点的 bbox)。采样不可用
+    // (地形未注入/瓦片未驻留)退回原始几何高。⚠️ 高度是**采样当刻**的
+    // 地形代次:冷启动时地形还粗,细化后山体升上来会把锚点埋掉(硬件深度
+    // 与 T2 判定都读它)。故地形代次变化必须重钳 —— 见
+    // reclampTileBucketSymbols,别再指望"瓦片换代重 commit 时自愈"
+    // (瓦片换代只有缩放才触发,静止加载期不会发生)。
+    std::vector<std::vector<Cartographic>> anchorRing(1);
+    anchorRing[0].reserve(symbols.size());
+    for (const TileSymbolCpu& s : symbols) {
+        anchorRing[0].emplace_back(s.lonRad, s.latRad, 0.0);
+    }
+    const AreaSampleFn groundSample = makeClampSampler(anchorRing);
+    for (const TileSymbolCpu& s : symbols) {
+        double h = s.heightM;
+        if (groundSample) {
+            const auto ground = groundSample(s.lonRad, s.latRad);
+            if (ground) h = *ground;
+        }
+        const Vec3 anchor = ellipsoid_.cartographicToCartesian(
+            Cartographic(s.lonRad, s.latRad, h + style_.heightOffset));
+        const Vec3 rel = anchor - origin;
+        const std::array<float, 3> relF{static_cast<float>(rel.x()),
+                                        static_cast<float>(rel.y()),
+                                        static_cast<float>(rel.z())};
+        const ResolvedSymbol sym =
+            resolveSymbol(s.icon, style_.pointAnchor, iconAtlas_);
+        appendSymbolQuad(relF, sym, s.colorPacked, pointVerts, pointIndices);
+        // 符号刀B/C:带 name 的实例记标签源(烘焙推迟到
+        // bakeTileBucketLabels —— 字体可能晚于 commit 就绪)。id 经
+        // crossTileIdFor 跨瓦继承 —— 瓦片换代(z13→z14 同一 POI,MVT
+        // 逐瓦量化坐标略异)时 placement 的 fade/避让账本连续,不闪。
+        if (!s.name.empty()) {
+            const uint64_t id =
+                crossTileIdFor(s.name, s.lonRad, s.latRad, tileZ);
+            labelSrc.push_back(
+                BucketGpu::TileLabelSource{relF, anchor, id, s.name});
+        }
+    }
+}
+
+void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
+    if (gpu.tileSymbolSources.empty() || !renderDevice_) return;
+    std::vector<float> pointVerts;
+    std::vector<uint32_t> pointIndices;
+    std::vector<BucketGpu::TileLabelSource> labelSrc;
+    // tileZ 只喂 crossTileIdFor 的量化格;重钳时锚点未动,id 必然命中既有
+    // 条目(同名同位),传 0 会让它按最粗格匹配 —— 用标签源里的既有 id
+    // 更直接,故这里重建后逐条沿用旧 id(顺序与 commit 时一致)。
+    buildTileSymbolGpu(gpu.tileSymbolSources, gpu.origin, 0, pointVerts,
+                       pointIndices, labelSrc);
+    if (labelSrc.size() == gpu.tileLabelSources.size()) {
+        for (size_t i = 0; i < labelSrc.size(); ++i) {
+            labelSrc[i].featureId = gpu.tileLabelSources[i].featureId;
+        }
+    }
+    // 点几何:整块换新 buffer(失败保留旧的,决不留半张)
+    if (!pointIndices.empty()) {
+        auto vb = makeBuffer(renderDevice_, pointVerts.data(),
+                             pointVerts.size() * sizeof(float),
+                             BufferDesc::Type::Vertex);
+        auto ib = makeBuffer(renderDevice_, pointIndices.data(),
+                             pointIndices.size() * sizeof(uint32_t),
+                             BufferDesc::Type::Index);
+        if (!vb || !ib) return;
+        gpu.pointVertexBuffer = std::move(vb);
+        gpu.pointIndexBuffer = std::move(ib);
+        gpu.pointIndexCount = static_cast<int>(pointIndices.size());
+    }
+    // 标签:锚点变了,glyph quad 要按新 rel 重烘(bakeTileBucketLabels 以
+    // labelIndexCount>0 早退,故先清零)
+    gpu.tileLabelSources = std::move(labelSrc);
+    gpu.labelIndexCount = 0;
+    gpu.labelVertexBuffer.reset();
+    gpu.labelIndexBuffer.reset();
+    gpu.labelVertsCpu.clear();
+    gpu.labelEntries.clear();
+    bakeTileBucketLabels(gpu);
 }
 
 uint64_t FeatureRenderLayer::crossTileIdFor(const std::string& name,
@@ -1626,6 +1675,14 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
             keys.reserve(buckets_.size());
             for (const auto& entry : buckets_) keys.push_back(entry.first);
             for (BucketKey key : keys) rebuildBucket(key);
+            // 瓦片桶(POI 符号)同样要重钳。**此前漏了这一半** —— 锚点停在
+            // commit 当刻的粗地形高度上,地形细化后山体升上来把它埋掉,
+            // 硬件深度与 T2 判定一起吃掉符号 = "标记点闪一下就没";而
+            // 缩放会触发瓦片换代重 commit,于是"缩放后又出现"。两个现象
+            // 同一个因。(V24/B.6)
+            for (auto& entry : tileBuckets_) {
+                reclampTileBucketSymbols(entry.second);
+            }
             previewDirty_ = true;
         }
     }

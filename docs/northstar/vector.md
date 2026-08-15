@@ -214,6 +214,41 @@ crossTileID + 碰撞去重兜着),是轻伪影;我却为消它付了内容量掉
 上屏)、`RenderTilesCoverWithoutHolesAndKeepLoadedFine`(无空洞 + 不丢细瓦)。
 真机复验:换代只出理想层 z14(8 瓦 125 符号),不再掉到 z8/z10。
 
+### B.6 POI 锚点高度陈旧(2026-08-15,"幸福广场闪一下就没")
+
+**用户判别域**:初始视角该有的标记点闪一下就消失;缩放后又出现。
+
+**排查中作废两轮 A/B,原因都值得记**:
+1. 关 `runTerrainDepthPrepass` → 仍消失。**该轮无效**:它只关掉 shader 侧
+   遮挡淡出,而符号命令 `cmd.depthTest = true`,**硬件深度测试还在**。
+2. 改 `cmd.depthTest = false` → **闪退**。`MVP render command validation
+   failed: Vector* depthTest violates MVP fixed state` —— depthTest 属 MVP
+   固定状态,有校验器守着。守卫响得对,abort message 直接点名违规项。
+3. 改用恒定 `u_depthPushNdc`(不碰固定状态)→ **从"必消失"变成"有时消失"**,
+   证实深度掩埋是成因之一,底下还压着一个竞态。
+
+**根因**:`buildRenderCommands` 的贴地重钳(地形代次变化 → 重采高度)
+**只遍历 `buckets_`,漏了 `tileBuckets_`** —— 而 POI 符号正是瓦片桶。
+锚点停在 commit 当刻的粗地形高度上,地形细化后山体升上来把它埋掉,
+硬件深度与 T2 判定一起吃掉符号。`commitTileMesh` 的原注释写着
+「山地下可能被地形遮挡吃掉,属加载瞬态;**瓦片换代重 commit 时自愈**」——
+这个假设错了:瓦片换代只有缩放才触发,静止加载期不会发生。
+**"闪一下就没"与"缩放后才出现"是同一个因的两面。**
+
+**修**:`BucketGpu` 留 `tileSymbolSources`(rank 截断后,容量同上屏上限
+128/瓦);抽出 `buildTileSymbolGpu` 给 commit 与重钳共用(两处各写一遍必然
+错位);新增 `reclampTileBucketSymbols` 在地形代次变化时重采锚点高度、
+重建点 buffer 并重烘标签(锚点变了 glyph quad 的 rel 也变)。
+
+**残余**:A/B 三号暴露的**竞态**尚未定位(同一版本反复冷启动,有时消失有时
+不消失)。本次修的是确定性那一半;若复看仍偶发,下一步给 `dropTileMesh`
+加落点日志,盯 z14 x=13039 y=6779(含"幸福广场"的瓦)判桶的生死。
+
+⚠️ **仓库有两份 chongqing.mbtiles**:`scaffold/tmp/`(6.4MB,08-04,**无 poi 层**)
+与 `tmp/`(10.6MB,08-14,含 poi)。server 服务的是后者。查数据前先
+`lsof` 确认 server 打开的是哪一份 —— 我查错文件得出过"数据里根本没有
+幸福广场"的假结论。
+
 ### B.4 maplibre 标注为何不闪(2026-08-15,`.ref` 源码核实)
 
 问的是"它凭什么不闪",答案是**四道防线,而不是一个技巧**。逐条对照:

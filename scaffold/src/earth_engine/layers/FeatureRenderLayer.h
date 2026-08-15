@@ -310,6 +310,12 @@ private:
             std::string name;
         };
         std::vector<TileLabelSource> tileLabelSources;
+        /// 瓦片桶专属:符号实例源(**rank 截断后**,故容量同上屏上限
+        /// 128/瓦)。留着是为了地形代次变化时重钳 —— 锚点高度是 commit
+        /// 当刻的地形采样,冷启动时地形还粗,细化后山体升上来会把锚点埋
+        /// 掉(硬件深度 + T2 判定都读它),表现为"标记点闪一下就没"。
+        /// store 桶靠 rebuildBucket 重钳,瓦片桶没有重镶路径,靠它。
+        std::vector<TileSymbolCpu> tileSymbolSources;
         /// P6 stencil 分类贴地(方案 B):面 fill 的水密挤出体(pos-only
         /// 12B,相对桶原点)。P6b 按解析 fill 色分组——每组一对
         /// Volume/Color 命令(组内并集计数,不同色互不污染)。非空 →
@@ -521,6 +527,18 @@ public:
     /// 尚未烘过 → 生成 glyph quads + LabelEntry + GPU buffer。commit 时
     /// 与字体就绪翻转时都会调,幂等。
     void bakeTileBucketLabels(BucketGpu& gpu);
+
+    /// **渲染线程**:符号实例表 → 点 quad + 标签烘焙源(采地面高 + 图集
+    /// 解析)。commit 与重钳共用一份 —— 两处各写一遍必然错位。
+    void buildTileSymbolGpu(const std::vector<TileSymbolCpu>& symbols,
+                            const Vec3& origin, int tileZ,
+                            std::vector<float>& pointVerts,
+                            std::vector<uint32_t>& pointIndices,
+                            std::vector<BucketGpu::TileLabelSource>& labelSrc);
+
+    /// **渲染线程**:地形代次变化后按新地形重采锚点高度并重建点/标签
+    /// GPU 资源(store 桶的 rebuildBucket 对应物)。无符号源则空转。
+    void reclampTileBucketSymbols(BucketGpu& gpu);
 
     /// **渲染线程**:跨瓦稳定符号 ID(符号刀C,对拍 maplibre
     /// CrossTileSymbolIndex 语义)。同名符号锚点在「两代中较粗 zoom 的
