@@ -8,6 +8,7 @@
 #include "MvtDecoder.h"
 #include "../tiling/TileKey.h"
 #include "../threading/CancellationToken.h"
+#include "../core/async/AsyncSystem.h"
 
 namespace earth_engine {
 
@@ -24,6 +25,13 @@ namespace earth_engine {
 ///   请求会重试,server 恢复后自愈。
 /// - 拆除竞态(tombstone 法则):fetch 回调只捕 shared_ptr<State>,本对象
 ///   先亡不悬垂;回调必到(取消语义由调用方在自己的回调里处理)。
+/// **两层容量(2026-08-15,P2 结清)**:解码瓦 ~450KB/张、压缩字节 ~33KB/张
+/// (实测最密 z14:1104 要素中 MvtFeature 头就占 164KB,属性 map 78KB),
+/// 13.6× 差距 —— 靠加解码层容量兜住工作集要付 ~57MB,不划算。改为:
+///   L1 解码层(小):服务在途合并与热复用,容量按并发消费者规模定;
+///   L2 字节层(大):L1 淘汰时降级到这里,命中则**重解码**(实测 5.72ms/瓦
+///                   桌面,手机 2-3×,在 decodePool 上跑不占渲染线程)。
+/// 换来的是网络重拉归零,代价 ~33KB/张而不是 ~450KB/张。
 class MvtTileFetchCache {
 public:
     using FetchCallback = std::function<void(int, std::vector<uint8_t>)>;
@@ -31,7 +39,13 @@ public:
     using TileCallback =
         std::function<void(std::shared_ptr<const MvtTile>)>;
 
-    MvtTileFetchCache(FetchFn fetch, size_t capacity);
+    /// @param capacity        L1 解码瓦上限
+    /// @param rawCapacity     L2 压缩字节上限(0 = 不启用 L2)
+    /// @param decodePool      L2 命中时的重解码线程池。**为空则就地解码**
+    ///                        —— host 测试用;真机必须传,否则 5-17ms 落在
+    ///                        调用线程(渲染线程)上。
+    MvtTileFetchCache(FetchFn fetch, size_t capacity, size_t rawCapacity = 0,
+                      std::shared_ptr<ThreadPool> decodePool = nullptr);
 
     /// 取一张数据瓦(z/x/y 语义,schemeId 透传给 FetchFn)。
     void request(const TileKey& key, TileCallback callback);
@@ -39,12 +53,26 @@ public:
     struct Stats {
         uint64_t hits = 0;
         uint64_t fetches = 0;
+        /// 重复拉取:同一 key 被 fetch 过一次以上(= 曾被淘汰又要回来)。
+        /// 容量是否够用的**直接判据**,比命中率好读:稳态该恒 0。
+        uint64_t refetches = 0;
+        /// L2 命中(免了一次网络往返,付一次重解码)
+        uint64_t rawHits = 0;
+        size_t residentTiles = 0;
+        size_t rawTiles = 0;
+        size_t rawBytes = 0;
+        /// 常驻解码瓦的近似字节数(几何点 + 属性表 + 容器头,见
+        /// approxTileBytes)。容量决策与 V18「内存有界」都要这个数 ——
+        /// 不量就只能填"应该很小",那是空头承诺。
+        size_t residentBytes = 0;
     };
     Stats stats() const;
 
 private:
     struct State;
     FetchFn fetch_;
+    /// L2 命中的重解码去处;为空则就地解码(见构造注释)。
+    std::shared_ptr<ThreadPool> decodePool_;
     std::shared_ptr<State> state_;
 };
 

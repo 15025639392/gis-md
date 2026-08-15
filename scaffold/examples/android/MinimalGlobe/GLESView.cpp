@@ -411,7 +411,8 @@ static bool createEngine() {
                        MvtTileFetchCache::FetchCallback cb) {
                         mvtFetchTile(key, std::move(cb));
                     },
-                    48);
+                    minimal_globe_demo::kMvtTileCacheDecoded,
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
             }
             VectorDrapeImageryProvider::Options dopts;
             dopts.id = "mvt-drape";
@@ -469,7 +470,8 @@ static bool createEngine() {
                        MvtTileFetchCache::FetchCallback cb) {
                         mvtFetchTile(key, std::move(cb));
                     },
-                    48);
+                    minimal_globe_demo::kMvtTileCacheDecoded,
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
             }
             RoadFieldSource::Options fopts;
             fopts.dataMaxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
@@ -651,7 +653,8 @@ static bool createEngine() {
                        MvtTileFetchCache::FetchCallback cb) {
                         mvtFetchTile(key, std::move(cb));
                     },
-                    48);
+                    minimal_globe_demo::kMvtTileCacheDecoded,
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
             }
             // E1 接线:镶嵌钩子在 worker 上跑,持一份样式快照(图集置空,
             // 见 FeatureRenderLayer::workerTessellationContext 的线程契约);
@@ -1168,13 +1171,26 @@ static void renderFrame() {
         }
         static uint64_t mvtLogCounter = 0;
         if (++mvtLogCounter % 120 == 1) {
+            // cache 三数是 P2(容量)与 V18(内存有界)的共同判据:
+            // refetch 稳态该恒 0(>0 = 容量兜不住工作集,白拉);
+            // residentKB 是**实测**常驻字节,别再填"应该很小"。
+            const auto cs = gMvtTileCache
+                                ? gMvtTileCache->stats()
+                                : MvtTileFetchCache::Stats{};
             LOGI("VectorE1 mvt: active=%zu meshes=%zu loaded=%zu pending=%zu "
-                 "failed=%zu",
+                 "failed=%zu | cache hit=%llu fetch=%llu refetch=%llu "
+                 "resident=%zu/%zuKB raw=%zu/%zuKB rawHit=%llu",
                  gMvtSource->activeTileCount(),
                  gMvtBasemapLayer ? gMvtBasemapLayer->tileMeshCount() : 0,
                  gMvtSource->tree().loadedCount(),
                  gMvtSource->tree().pendingCount(),
-                 gMvtSource->tree().failedCount());
+                 gMvtSource->tree().failedCount(),
+                 static_cast<unsigned long long>(cs.hits),
+                 static_cast<unsigned long long>(cs.fetches),
+                 static_cast<unsigned long long>(cs.refetches),
+                 cs.residentTiles, cs.residentBytes / 1024, cs.rawTiles,
+                 cs.rawBytes / 1024,
+                 static_cast<unsigned long long>(cs.rawHits));
         }
     }
     // 阶段 4:假载体在**引擎 update 之前**推进,这样本帧 tether 读到的就是新

@@ -3191,8 +3191,8 @@ MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDr
 | Item | Lines | Description |
 |---|---|---|
 | `State` | .cpp:22-34 | LRU list+map、inflight waiters、命中/拉取计数;shared_ptr 持有 |
-| `request` | .cpp:41-106 | 命中 touch+同步回调 / 在途搭车 / 发起 fetch(decode 后广播 waiters,成功瓦入 LRU) |
-| `stats` | .cpp:108-111 | 累计命中/拉取快照 |
+| `request` | .cpp:125-229 | L1 命中 touch+同步回调 / 在途搭车 / **L2 字节命中→池上重解码** / 发起 fetch(decode 后广播 waiters,成功瓦入 LRU) |
+| `stats` | .cpp:230-238 | 累计命中/拉取/**重复拉取**/常驻瓦数与近似字节快照(P2 容量与 V18 内存有界的共同判据) |
 
 ### VectorTileRasterizer.h / .cpp
 

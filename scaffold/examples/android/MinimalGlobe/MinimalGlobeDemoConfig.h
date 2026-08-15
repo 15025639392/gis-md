@@ -104,6 +104,15 @@ constexpr const char* kMvtBasemapUrlTemplate =
 constexpr int kMvtBasemapMinZoom = 0;
 constexpr int kMvtBasemapMaxZoom = 14;
 
+// MVT 数据瓦缓存两层容量(P2 结清,2026-08-15。实测:解码瓦 ~450KB/张、
+// 压缩字节 ~33KB/张,13.6× 差)。
+//   L1 = 48:够在途合并与热复用(三消费方并发要同一批祖先瓦),再大就是
+//            每张 450KB 地烧内存 —— 48 张实测常驻 ~20-23MB。
+//   L2 = 256:按"绕城一圈的工作集"取,~8.5MB。够大才能让网络重拉归零,
+//            而这正是加 L1 容量买不起的那件事(同样覆盖要 ~115MB)。
+constexpr size_t kMvtTileCacheDecoded = 48;
+constexpr size_t kMvtTileCacheRaw = 256;
+
 constexpr bool kEnableTerrainForDemo = true;
 constexpr bool kUseGaodeSatelliteForDemo = true;
 constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;

@@ -369,3 +369,37 @@ TEST(MvtVectorSource, LodSwapIsAtomicNoHoleNoOverlap) {
         EXPECT_EQ(k.z, 3) << "换手应已收敛回 z3";
     }
 }
+
+// ---------------------------------------------------------------------------
+// P2 两层缓存(2026-08-15):L1 淘汰降级到 L2 字节层,重取免网络。
+// ---------------------------------------------------------------------------
+
+TEST(MvtTileFetchCache, EvictedTileRefetchesFromRawTierNotNetwork) {
+    int networkCalls = 0;
+    const std::vector<uint8_t> body = makePointTile("pois");
+    // L1 只放 1 张,L2 放 8 张 → 第二张必挤掉第一张,但字节仍在
+    MvtTileFetchCache cache(
+        [&](const TileKey& k, MvtTileFetchCache::FetchCallback cb) {
+            ++networkCalls;
+            cb(200, body);
+        },
+        /*capacity=*/1, /*rawCapacity=*/8, /*decodePool=*/nullptr);
+
+    auto get = [&](int x) {
+        std::shared_ptr<const MvtTile> got;
+        cache.request(TileKey{SchemeId{}, 4, x, 1},
+                      [&](std::shared_ptr<const MvtTile> t) { got = t; });
+        return got;
+    };
+    ASSERT_NE(get(1), nullptr);
+    ASSERT_NE(get(2), nullptr);   // 挤掉 x=1
+    EXPECT_EQ(networkCalls, 2);
+
+    // 再要 x=1:L1 已无,但 L2 有字节 → 重解码,**不再走网络**
+    ASSERT_NE(get(1), nullptr);
+    EXPECT_EQ(networkCalls, 2) << "L2 未命中 = 又去拉网络了,两层缓存失效";
+    const auto st = cache.stats();
+    EXPECT_EQ(st.rawHits, 1u);
+    EXPECT_EQ(st.refetches, 0u) << "L2 命中不该计重复拉取";
+    EXPECT_GT(st.rawBytes, 0u);
+}
