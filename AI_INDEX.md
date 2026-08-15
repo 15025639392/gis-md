@@ -1525,7 +1525,7 @@ Emits per-primitive `RenderCommand`s from prepared `GltfPrimitiveRenderResources
 | `GltfDrawCommandBuildContext` | .h:23-38 | `frameNumber`, `generation`, `transitionOpacity`, optional `surfaceClipUv`, `edgeLutTables`(①-1 A′ 查表入口). |
 | `alphaModeUniform` | .cpp:62-71 | Opaque→0, Mask→1, Blend→2. |
 | `renderPrimitiveType` | .cpp:74-88 | `GltfPrimitiveMode` → `RenderCommand::PrimitiveType` (Fan→Triangles). |
-| `build` | .cpp:849-949 | Per resource: chooses `makeGltfPrimitiveInstancedCommand` vs `makeGltfPrimitiveCommand` (.cpp:849-949); sets frame/gen, `terrainRenderContent` flag, `u_modelOrigin`=renderLocalOrigin, world sort center, opacity, surface-clip UV for terrain (.cpp:849-949); emits full PBR uniform block + texture-transform uniforms + 15-slot texture array (.cpp:849-949); water-mask slot `kGltfWaterMaskTextureSlot` (.cpp:849-949); binds up to `kMaxGltfRasterOverlays` overlay textures at `kGltfRasterOverlayTextureBase+i` with per-overlay UV/opacity/texCoord (.cpp:849-949); blend/depth for translucent (.cpp:849-949). |
+| `build` | .cpp:854-949 | Per resource: chooses `makeGltfPrimitiveInstancedCommand` vs `makeGltfPrimitiveCommand` (.cpp:854-949); sets frame/gen, `terrainRenderContent` flag, `u_modelOrigin`=renderLocalOrigin, world sort center, opacity, surface-clip UV for terrain (.cpp:854-949); emits full PBR uniform block + texture-transform uniforms + 15-slot texture array (.cpp:854-949); water-mask slot `kGltfWaterMaskTextureSlot` (.cpp:854-949); binds up to `kMaxGltfRasterOverlays` overlay textures at `kGltfRasterOverlayTextureBase+i` with per-overlay UV/opacity/texCoord (.cpp:854-949); blend/depth for translucent (.cpp:854-949). |
 | Terrain draw wired (2026-07-01) | .cpp:71-77 | When `primitive.useTerrainVertexFormat`, emits `renderer.makeTerrainPrimitiveCommand` (stride 32, `kind=GltfPrimitive`, `shader=terrainShader`) instead of `makeGltfPrimitiveCommand`; GLES keys the 32B layout on stride, Metal on the terrain PSO (`PipelineLayout::Surface`). Compiles + unit-tested both backends; pixel-verify pending a reachable QM terrain server. |
 
 ### TileRenderContentState.h
@@ -1876,12 +1876,12 @@ cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, as
 | `resolveTile` | .cpp:3531-3556 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
 | `loadTile` / `loadTileThrottled` | .cpp:3629-3697 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
 | `loadMappedRasterTile` / `loadSourceTileList` / `loadSourceImageSet` | .cpp:3698 / :3819 / :3836 | Fetch/compose overlapping source quadtree tiles for a mapped tile |
-| `issueMappedSourceImageSet` | .cpp:4062-4130 | Dispatch source-tile requests through shared depot |
+| `issueMappedSourceImageSet` | .cpp:4071-4130 | Dispatch source-tile requests through shared depot |
 | `composeQuadtreeSourceImagesWithDetails` | .cpp:2534-2569 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
 | `projectedVForLatitude` | .cpp:2570-2576 | Latitude → projected V within bounds |
-| `processPendingUploads` | .cpp:4312-4644 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
-| `hasPendingWork` | .cpp:4645-4659 | HTTP/source-fanout/upload outstanding |
-| `trimUnusedTiles` | .cpp:4704-4764 | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
+| `processPendingUploads` | .cpp:4321-4644 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
+| `hasPendingWork` | .cpp:4654-4659 | HTTP/source-fanout/upload outstanding |
+| `trimUnusedTiles` | .cpp:4713-4764 | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
 | `refreshSourceAssetDepot` | .cpp:3110-3118 | Rebuild shared source-tile depot on option change |
 | `requestDiagnostics` | .cpp:3557-3583 | Aggregates imagery-provider + raster-source request counters |
 
@@ -1919,16 +1919,16 @@ geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDe
 
 | 项 | 行 | 说明 |
 |---|---|---|
-| `cacheKey` | .cpp:17-30 | TileKey + 参数 → 模板缓存键 |
-| `acquire` | .cpp:32-115 | 取(或建)一份模板几何 |
-| `heightCacheKey` | .cpp:117-128 | 高度纹理缓存键 |
-| `findHeightArray` / `ensureHeightArray` | .cpp:130-134 / :136-162 | 按 gridSize 取/建高度 texture array |
-| `bakeTerrainHeightNormalTexels` | .cpp:164-274 | 烘高度 + **切空间法线到 B/A 通道** |
-| `acquireHeightTexture` | .cpp:280-388 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
-| `ensureBakeResources` | .cpp:392-408 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
-| `flushHeightBakes` | .cpp:409-488 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer),然后清空。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
-| `updateEdgeLutRows` | .cpp:489-503 | 写本帧边吸附的邻居高度差表(①-1)。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
-| `touchHeightTexture` | .cpp:505- | LRU 触碰 |
+| `cacheKey` | .cpp:28-30 | TileKey + 参数 → 模板缓存键 |
+| `acquire` | .cpp:52-115 | 取(或建)一份模板几何 |
+| `heightCacheKey` | .cpp:160-128 | 高度纹理缓存键 |
+| `findHeightArray` / `ensureHeightArray` | .cpp:173-134 / :136-162 | 按 gridSize 取/建高度 texture array |
+| `bakeTerrainHeightNormalTexels` | .cpp:208-274 | 烘高度 + **切空间法线到 B/A 通道** |
+| `acquireHeightTexture` | .cpp:321-388 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
+| `ensureBakeResources` | .cpp:437-408 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
+| `flushHeightBakes` | .cpp:454-488 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer),然后清空。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
+| `updateEdgeLutRows` | .cpp:534-503 | 写本帧边吸附的邻居高度差表(①-1)。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
+| `touchHeightTexture` | .cpp:550- | LRU 触碰 |
 
 ### HeightmapTerrainContentProvider.h / .cpp
 
@@ -2466,22 +2466,22 @@ Static; fills `frameState.selectorViews`. Input `SceneSelectorViewBuildInput` (.
 
 Turns FrameState into ordered RenderCommands, sorts/validates, aggregates diagnostics, submits. Context struct `SceneRenderPipeline::Context` (.h:34-58)。⚠️ 2026-08-06 复核:此处原写「Owns `tileCommandSet_` (RenderCommandStreamingSet) + `tileCommandCandidates_` for stable-key streaming」—— 这两个成员**全仓库都不存在**,stable-key streaming 那套已撤。类现在持有的是 `polarCap_` (PolarCapRenderer) 与 `terrainBatcher_` (TerrainInstanceBatcher,mutable)。
 
-Render flow in `render()` (.cpp:191-286):
+Render flow in `render()` (.cpp:209-286):
 
 | Order | Method | Lines | Builds |
 |---|---|---|---|
-| 0 | `reserveCommands` | .cpp:299-318 | Reserve = **4 + vectorLayers*4 + Σ tileset renderEntries** |
+| 0 | `reserveCommands` | .cpp:341-318 | Reserve = **4 + vectorLayers*4 + Σ tileset renderEntries** |
 | 1 | ~~`buildStableLayerCommands`~~ | — | ⚠️ **已撤销,函数不存在**。此行原描述 stable-key streaming(prefixes `terrain:` / `content:N:`,经 `tileCommandSet_.update`)—— 该机制连同两个成员一起已从代码里移除;瓦片命令现由第 4 步 `buildLayerCommands` 直接插入。(2026-08-06 复核) |
-| 2 | `buildSkyCommands` | .cpp:319-358 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
-| 3 | `buildAtmosphereCommands` | .cpp:359-387 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
-| 4 | `buildLayerCommands` | .cpp:388-559 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
-| 5 | `applyMvpUniforms` | .cpp:670-672 | `SceneRenderCommandUniformUpdater::apply` |
-| 6 | `sortAndValidate` | .cpp:679-723 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
-| 5.5 | `assembleTerrainBatches` | .cpp:619-663 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
-| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:730-745 / :751-800 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
-| 7 | `aggregateDiagnostics` | .cpp:801-824 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
-| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:835-883 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
-| — | beforeSubmit → submit | .cpp:233-248 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:944-951) |
+| 2 | `buildSkyCommands` | .cpp:361-358 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
+| 3 | `buildAtmosphereCommands` | .cpp:401-387 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
+| 4 | `buildLayerCommands` | .cpp:430-559 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
+| 5 | `applyMvpUniforms` | .cpp:715-672 | `SceneRenderCommandUniformUpdater::apply` |
+| 6 | `sortAndValidate` | .cpp:724-723 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:664-663 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:775-745 / :751-800 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
+| 7 | `aggregateDiagnostics` | .cpp:846-824 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
+| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:880-883 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
+| — | beforeSubmit → submit | .cpp:233-248 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:965-951) |
 
 Terrain surface = `GltfPrimitive` cmds carrying `terrainRenderContent` (`isTerrainSurfaceCommand`, .cpp:32-35). QM terrain now draws via the 32-byte `TerrainGpuVertex` path (`makeTerrainPrimitiveCommand`, stride 32, `terrainShader`; 2026-07-01); ellipsoid-fallback terrain still uses the 120-byte `GltfGpuVertex` glTF path. `Renderer::terrainShader()` is defined (`kTerrainVertex/FragmentGLSL` + MSL).
 
@@ -3648,7 +3648,7 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 
 | Contract | Where | Why |
 |---|---|---|
-| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | `render()` submits commands, then `releaseRenderReferences` body SceneRenderPipeline.cpp:920-956 iterates `tileset->releaseRenderReferences()` (.cpp:944-951) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
+| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | `render()` submits commands, then `releaseRenderReferences` body SceneRenderPipeline.cpp:965-956 iterates `tileset->releaseRenderReferences()` (.cpp:944-951) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
 | `processPendingLoads(...)` BEFORE `drainGpuUploadQueue(...)` | TilesetUpdateFrameRuntime.cpp:59 then :143 | `processPendingLoads` is what pushes onto `GpuUploadQueue`; the drain in the same frame pops and does the GPU upload. Reversing the order does not error — it just makes every upload lag one frame, which reads as "loading is always half a beat late" and gets misattributed to network or device. **Machine-checked**: `contracts::Id::LoadsBeforeGpuDrain` (Tileset.cpp:359). |
 | Ref-count keep-alive until GPU consumption | GpuUploadQueue.h (deque of `PendingGpuUpload`); drain finalizes via `uploadToGpu` + `finishRenderResourcePreparation` | CPU-prepared vertex/index bytes and tile state must stay alive from enqueue through upload. The claim is `asyncGpuUploadPending` + a retained lifecycle upload key; three sites must release it (`TilePendingUploadCompletion::eraseUpload`) or the tile is pinned forever. Not machine-checked. |
 

@@ -120,6 +120,34 @@ struct Diagnostics {
     int terrainRenderEntriesMissed = 0;
     int terrainRenderEntriesSelectedMissed = 0;
     int terrainRenderEntriesDeferred = 0;
+    // 「画了但看不见」的两条量:HoleQual 的 drop/miss 系列只覆盖「选中未建条」,
+    // 与「建了条也画了、但屏幕上是天色」正交(见 Engine.cpp 黑块探针注释)。
+    // fade  = opacity<1 的 entry 数;fade0 = opacity≈0(整条透明,必然透出背景)。
+    // clipdeg = 祖先裁剪窗口退化(宽或高≤0 → 该 entry 被裁成空,等于没画)。
+    int terrainRenderEntriesFaded = 0;
+    int terrainRenderEntriesFullyTransparent = 0;
+    int terrainRenderEntriesClipDegenerate = 0;
+    // 位移高度层池(黑带排查):三条 nullptr 出口 + 占用。draw 侧对这三条都走
+    // 降级路径,黑带若与它们同帧出现,降级路径就是嫌疑。
+    int terrainHeightLayerFull = 0;
+    int terrainHeightDenseRejected = 0;
+    int terrainHeightEvicted = 0;
+    int terrainHeightEpochMiss = 0;
+    int terrainHeightGridMiss = 0;
+    int terrainSurfaceClipRemap = 0;
+    int terrainSurfaceClipPlain = 0;
+    // 直接症状量:共享模板跨度与本瓦片应有跨度不符的次数 + 第一例画像。
+    int terrainTemplateSpanMismatch = 0;
+    int terrainTemplateMismatchZ = -1;
+    int terrainTemplateMismatchX = -1;
+    int terrainTemplateMismatchY = -1;
+    float terrainTemplateMismatchLatRatio = 1.0f;
+    float terrainTemplateMismatchLonRatio = 1.0f;
+    int terrainHeightCoarseResident = 0;
+    int terrainHeightCoarseCapacity = 0;
+    int terrainHeightDenseResident = 0;
+    int terrainHeightDenseCapacity = 0;
+    float terrainRenderEntryMinOpacity = 1.0f;
     int terrainRenderEntriesSelectedDeferred = 0;
     // 破洞诊断(假设 A:选中却零绘制 = 屏幕上这块本帧彻底不出现)。
     //   selectedForRender      = 选择器本帧要渲染的瓦片数(分母)

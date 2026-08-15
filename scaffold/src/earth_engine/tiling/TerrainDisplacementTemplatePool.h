@@ -257,6 +257,11 @@ private:
     struct Entry {
         std::unique_ptr<Buffer> vertexBuffer;
         TemplateBuffers view;  // indexBuffer 指向 sharedIndexBuffers_ 里的共享份
+        // 建这份模板时用的地理跨度。共享的前提是「同 {z,row} 的瓦片跨度相同」,
+        // 而模板由**第一个来要的瓦片**的 bounds 决定并永久缓存 —— 若该前提被
+        // 破坏,整行从此都用错尺寸的几何,且不会自愈。存下来就能当场比对。
+        double builtLatSpan = 0.0;
+        double builtLonSpan = 0.0;
     };
 
     // 按 gridSize 共享的索引缓冲(内容纯拓扑,与瓦片位置无关)。生命周期与池
@@ -265,7 +270,13 @@ private:
         std::unique_ptr<Buffer> buffer;
         int indexCount = 0;
     };
-    static uint64_t cacheKey(const TileKey& key, int gridSize);
+    // ⚠️ 键必须含**地理跨度**,不能只有 {schemeId,z,row,gridSize}。
+    // 2026-08-16 真机取证:曾有跨度不同的瓦片落到同一键上(经度倍率精确 2.000
+    // = rootTilesX 相差一倍的两套切片方案),后来者拿到先来者的模板 → 几何只
+    // 铺一半、四周露背景;且模板永久缓存不自愈 → 整行一直错、复现具粘滞性。
+    // 把跨度并进键,这类共用在结构上不再可能(代价:真有多套跨度时多存几份)。
+    static uint64_t cacheKey(const TileKey& key, int gridSize,
+                             double latSpan, double lonSpan);
     static uint64_t heightCacheKey(const TileKey& key);  // 逐瓦片(含列)
 
     // 每个密度档一套独立存储:array 层边长是硬约束(同 array 各层必须等尺寸),
@@ -278,6 +289,67 @@ private:
         std::vector<uint32_t> layerEpochs;       // 每层分配代
         std::unordered_map<uint64_t, HeightTexture> index;  // 瓦片键 → 驻留视图
     };
+
+public:
+    // 黑带排查(2026-08-15):acquireHeightTexture 的三条 nullptr 出口各自计数。
+    // 三条都会让调用方走 draw 侧降级 —— 若降级路径有缺陷,黑带就出在这里。
+    // 现象是「一旦出现就容易复现」= 粘滞,故 resident/capacity 一并暴露:池饱和
+    // 后 layerFull 会持续发生,这是粘滞的直接候选解释。
+    struct HeightFrameStats {
+        int denseBudgetRejected = 0;  // dense 逐帧限流挡回
+        int layerFull = 0;            // layerPool.acquire 返回 -1(全满)
+        int evicted = 0;              // 本帧淘汰的层数
+        // draw 侧缓存命令的两条作废判据(命中即当帧 rebuild)。epoch 失配 =
+        // 该命令引用的层已被重分配给别的瓦片 —— rebuild 之前那一瞬间,着色器
+        // 拿到的是**别人的高度**。grid 失配 = 密度档变了。
+        int epochMiss = 0;
+        int gridMiss = 0;
+        // 祖先裁剪回退的两种落地形态(黑带排查 2026-08-16):
+        // remap = 命令的顶点缓冲被换成**后代模板**(深一级 → 边长减半),
+        //         屏幕上只覆盖后代那一小块,祖先其余范围无几何。
+        // plainClip = 只盖裁剪矩形,几何仍是祖先自己的模板。
+        int surfaceClipRemap = 0;
+        int surfaceClipPlain = 0;
+        // 直接量症状(2026-08-16):拿到的共享模板,其地理跨度与本瓦片应有的
+        // 跨度不符 —— 屏幕上就表现为「瓦片画大了/画小了,四周露背景」。
+        // 不依赖任何成因假设:不符就是错,并记下第一例的 key 与倍率。
+        int templateSpanMismatch = 0;
+        int mismatchZ = -1;
+        int mismatchX = -1;
+        int mismatchY = -1;
+        double mismatchLatRatio = 1.0;
+        double mismatchLonRatio = 1.0;
+        int coarseResident = 0;
+        int coarseCapacity = 0;
+        int denseResident = 0;
+        int denseCapacity = 0;
+    };
+    const HeightFrameStats& heightFrameStats() const {
+        return heightFrameStats_;
+    }
+    void noteHeightEpochMiss(uint64_t frameId) {
+        beginHeightStatsFrame(frameId);
+        ++heightFrameStats_.epochMiss;
+    }
+    void noteHeightGridMiss(uint64_t frameId) {
+        beginHeightStatsFrame(frameId);
+        ++heightFrameStats_.gridMiss;
+    }
+    void noteSurfaceClipRemap(uint64_t frameId) {
+        beginHeightStatsFrame(frameId);
+        ++heightFrameStats_.surfaceClipRemap;
+    }
+    void noteSurfaceClipPlain(uint64_t frameId) {
+        beginHeightStatsFrame(frameId);
+        ++heightFrameStats_.surfaceClipPlain;
+    }
+
+private:
+    HeightFrameStats heightFrameStats_;
+    uint64_t heightStatsFrameId_ = ~0ull;
+
+    // 帧号变化即清零(与 tryConsumeDenseBudget 同一套帧边界语义)。
+    void beginHeightStatsFrame(uint64_t frameId);
 
     // 每帧最多新建几片 dense 瓦片。release 实测单片 dense 构建
     // (高度烘焙 ~6ms + 模板 ~18ms)最坏 23.6ms;两片叠在同一帧 = 25.7ms 的

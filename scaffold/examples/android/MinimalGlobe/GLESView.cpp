@@ -1488,7 +1488,12 @@ static void renderFrame() {
         // 边界天色细缝的头号嫌疑,与截图逐帧对齐用)。
         LOGI("HoleQual frame=%llu sel=%d ent=%d clip=%d drop=%d/%d "
              "dropwhy=%d/%d/%d/%d/%d dropz=%d-%d miss=%d nofill=%d "
-             "fillnc=%d ctnc=%d nulls=%d/%d defer=%d drawn=%d dirty=%d",
+             "fillnc=%d ctnc=%d nulls=%d/%d defer=%d drawn=%d "
+             "fade=%d fade0=%d opmin=%.3f clipdeg=%d "
+             "hlFull=%d hlDenseRej=%d hlEvict=%d hlEpochMiss=%d hlGridMiss=%d "
+             "remap=%d plainClip=%d spanMis=%d spanKey=%d/%d/%d spanR=%.3f/%.3f "
+             "hlRes=%d/%d hlDense=%d/%d "
+             "dark=%.4f dirty=%d",
              static_cast<unsigned long long>(frameId),
              q.terrainSelectedForRenderTiles,
              q.terrainRenderEntriesPlanned,
@@ -1510,6 +1515,28 @@ static void renderFrame() {
              q.terrainRenderEntriesMissingRender,
              q.terrainRenderEntriesDeferred,
              q.terrainRenderEntriesDrawn,
+             q.terrainRenderEntriesFaded,
+             q.terrainRenderEntriesFullyTransparent,
+             static_cast<double>(q.terrainRenderEntryMinOpacity),
+             q.terrainRenderEntriesClipDegenerate,
+             q.terrainHeightLayerFull,
+             q.terrainHeightDenseRejected,
+             q.terrainHeightEvicted,
+             q.terrainHeightEpochMiss,
+             q.terrainHeightGridMiss,
+             q.terrainSurfaceClipRemap,
+             q.terrainSurfaceClipPlain,
+             q.terrainTemplateSpanMismatch,
+             q.terrainTemplateMismatchZ,
+             q.terrainTemplateMismatchX,
+             q.terrainTemplateMismatchY,
+             static_cast<double>(q.terrainTemplateMismatchLatRatio),
+             static_cast<double>(q.terrainTemplateMismatchLonRatio),
+             q.terrainHeightCoarseResident,
+             q.terrainHeightCoarseCapacity,
+             q.terrainHeightDenseResident,
+             q.terrainHeightDenseCapacity,
+             gEngine->lastFrameDarkFraction(),
              holeDirty ? 1 : 0);
         // notex 细分:z=被丢瓦片层级 load/ready=该 mapping 两个 RasterOverlayTile
         // 的 LoadState(-1=空) tex=ready 手上有没有纹理

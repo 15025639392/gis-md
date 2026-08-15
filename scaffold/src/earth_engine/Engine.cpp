@@ -763,6 +763,7 @@ bool Engine::render(double deltaSeconds) {
                 static_cast<double>(dark) /
                 static_cast<double>(grid * grid);
             ++blackProbeFrames_;
+            lastFrameDarkFraction_ = frac;
             if (frac > blackProbeWorstFrac_) blackProbeWorstFrac_ = frac;
             // 0.5% ≈ 256² 里 328 像素,一块可见瓦片的量级;低于它的零星
             // 黑点(文字描边/UI)不报。

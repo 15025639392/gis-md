@@ -3957,7 +3957,16 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                 state->revision.fetch_add(1, std::memory_order_relaxed);
                 return;
             }
-            logAndroidRasterPipeline("composed", cacheKey, 0, 0);
+            // 祖先-only 空合成走的也是这条成功路径,此前与正常瓦同名打
+            // "composed",在管线日志里无法区分 —— 空洞排查时分不清"合成出空图"
+            // 与"合成出内容"。按图尺寸分名,不新增任何机制。
+            const bool emptyComposition =
+                composed && composed->width == 0 && composed->height == 0;
+            logAndroidRasterPipeline(
+                emptyComposition ? "composed-empty" : "composed",
+                cacheKey,
+                0,
+                0);
             PendingUpload pendingUpload{
                 cacheKey,
                 std::move(composed),

@@ -16,8 +16,19 @@
 
 namespace earth_engine {
 
+namespace {
+// 经度跨度(反经线安全):east<west 说明跨了反经线,补一圈。
+double boundsLongitudeSpan(const Rectangle& b) {
+    double span = b.east() - b.west();
+    if (span < 0.0) span += 2.0 * 3.14159265358979323846;
+    return std::abs(span);
+}
+}  // namespace
+
 uint64_t TerrainDisplacementTemplatePool::cacheKey(const TileKey& key,
-                                                   int gridSize) {
+                                                   int gridSize,
+                                                   double latSpan,
+                                                   double lonSpan) {
     // 列无关：只用 schemeId/z/y(row)/gridSize，跨 x(列)复用同一模板。
     // schemeId 是 interned handle → 折其 std::hash 进 key（O(1)）。
     uint64_t h = static_cast<uint64_t>(std::hash<SchemeId>()(key.schemeId));
@@ -27,6 +38,13 @@ uint64_t TerrainDisplacementTemplatePool::cacheKey(const TileKey& key,
     mix(static_cast<uint64_t>(key.z));
     mix(static_cast<uint64_t>(key.y));
     mix(static_cast<uint64_t>(gridSize));
+    // 跨度量化到 1e-9 rad(约 6mm 地面)后并入:同一 {z,row} 下跨度相同的瓦片
+    // 仍然共享(量化吸收 f64 末位噪声),跨度不同的则各建各的。
+    auto quantize = [](double v) {
+        return static_cast<uint64_t>(std::llround(std::abs(v) * 1e9));
+    };
+    mix(quantize(latSpan));
+    mix(quantize(lonSpan));
     return h;
 }
 
@@ -38,9 +56,30 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
         return nullptr;
     }
 
-    const uint64_t k = cacheKey(key, gridSize);
+    const double wantLat = std::abs(bounds.north() - bounds.south());
+    const double wantLon = boundsLongitudeSpan(bounds);
+    const uint64_t k = cacheKey(key, gridSize, wantLat, wantLon);
     auto it = cache_.find(k);
     if (it != cache_.end()) {
+        // 直接量症状:共享的前提是「同 {z,row} 跨度相同」。模板由第一个来要的
+        // 瓦片决定并永久缓存,前提一旦被破坏,整行都用错尺寸几何且不自愈 ——
+        // 屏幕上就是「瓦片画大/画小,四周露背景」。不猜成因,当场比。
+        const Entry& e = it->second;
+        const double latRatio =
+            e.builtLatSpan > 0.0 ? wantLat / e.builtLatSpan : 1.0;
+        const double lonRatio =
+            e.builtLonSpan > 0.0 ? wantLon / e.builtLonSpan : 1.0;
+        if (std::abs(latRatio - 1.0) > 1e-6 ||
+            std::abs(lonRatio - 1.0) > 1e-6) {
+            ++heightFrameStats_.templateSpanMismatch;
+            if (heightFrameStats_.mismatchZ < 0) {
+                heightFrameStats_.mismatchZ = key.z;
+                heightFrameStats_.mismatchX = key.x;
+                heightFrameStats_.mismatchY = key.y;
+                heightFrameStats_.mismatchLatRatio = latRatio;
+                heightFrameStats_.mismatchLonRatio = lonRatio;
+            }
+        }
         return &it->second.view;
     }
 
@@ -111,6 +150,8 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
     entry.view.indexCount = shared.indexCount;
     entry.view.vertexCount = static_cast<int>(packed.size());
     totalVertexBytes_ += vboDesc.size;
+    entry.builtLatSpan = std::abs(bounds.north() - bounds.south());
+    entry.builtLonSpan = boundsLongitudeSpan(bounds);
 
     auto inserted = cache_.emplace(k, std::move(entry));
     return &inserted.first->second.view;
@@ -280,6 +321,7 @@ const TerrainDisplacementTemplatePool::HeightTexture*
 TerrainDisplacementTemplatePool::acquireHeightTexture(
     const TileKey& key, const DecodedHeightmap& heightmap,
     const Rectangle& bounds, int gridSize, uint64_t frameId) {
+    beginHeightStatsFrame(frameId);
     if (!device_ || gridSize < 1 || !heightmap.valid()) {
         return nullptr;
     }
@@ -298,6 +340,7 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     // (release 实测),故按帧限流;超额者本帧回落 coarse,下一帧再升。
     // 只拦"新建",缓存命中已在上面早退,不受限流影响。
     if (gridSize >= kTerrainDenseGridSize && !tryConsumeDenseBudget(frameId)) {
+        ++heightFrameStats_.denseBudgetRejected;
         return nullptr;
     }
 
@@ -307,9 +350,11 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     uint64_t evicted = 0;
     const int layer = arr->layerPool.acquire(k, frameId, &evicted);
     if (layer < 0) {
+        ++heightFrameStats_.layerFull;
         return nullptr;
     }
     if (evicted != 0) {
+        ++heightFrameStats_.evicted;
         arr->index.erase(evicted);
         ++arr->layerEpochs[static_cast<size_t>(layer)];
     }
@@ -508,6 +553,28 @@ void TerrainDisplacementTemplatePool::touchHeightTexture(const TileKey& key,
     auto it = heightArrays_.find(gridSize);
     if (it == heightArrays_.end()) return;
     it->second.layerPool.touch(heightCacheKey(key), frameId);
+}
+
+// 黑带排查(2026-08-15):帧号变化即清零并重拍占用快照。resident==capacity
+// (池饱和)是「一旦出现就容易复现」这一粘滞特征的直接候选解释。
+void TerrainDisplacementTemplatePool::beginHeightStatsFrame(uint64_t frameId) {
+    if (heightStatsFrameId_ == frameId) {
+        return;
+    }
+    heightStatsFrameId_ = frameId;
+    heightFrameStats_ = HeightFrameStats{};
+    for (const auto& entry : heightArrays_) {
+        const HeightArray& arr = entry.second;
+        const int resident = static_cast<int>(arr.index.size());
+        const int capacity = layersForGridSize(arr.gridSize);
+        if (arr.gridSize >= kTerrainDenseGridSize) {
+            heightFrameStats_.denseResident += resident;
+            heightFrameStats_.denseCapacity += capacity;
+        } else {
+            heightFrameStats_.coarseResident += resident;
+            heightFrameStats_.coarseCapacity += capacity;
+        }
+    }
 }
 
 }  // namespace earth_engine

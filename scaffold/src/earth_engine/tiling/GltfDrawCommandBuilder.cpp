@@ -721,10 +721,14 @@ void applyPerFrameCommandState(
                     u.clipUv = *context.surfaceClipUv;
                     u.clipEnabled = 2.0f;
                     remapped = true;
+                    pool->noteSurfaceClipRemap(context.frameNumber);
                 }
             }
         }
         if (!remapped) {
+            if (auto* p2 = renderer.terrainDisplacementPool()) {
+                p2->noteSurfaceClipPlain(context.frameNumber);
+            }
             cmd.surfaceClipUv = *context.surfaceClipUv;
             cmd.surfaceClipEnabled = 1.0f;
             u.clipUv = *context.surfaceClipUv;
@@ -895,6 +899,7 @@ void GltfDrawCommandBuilder::build(
                     decidedOrPredictGridSize(
                         tile.selectionFrameState.displacementGridSize,
                         tile.selectionFrameState.screenSpaceError)) {
+                    pool->noteHeightGridMiss(context.frameNumber);
                     renderContent.invalidateCachedDrawCommands();
                     break;
                 }
@@ -902,6 +907,7 @@ void GltfDrawCommandBuilder::build(
                         cached.terrainHeightGridSize,
                         cached.terrainHeightLayer,
                         cached.terrainHeightLayerEpoch)) {
+                    pool->noteHeightEpochMiss(context.frameNumber);
                     renderContent.invalidateCachedDrawCommands();
                     break;
                 }

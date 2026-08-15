@@ -71,6 +71,10 @@ void applyTerrainRenderEntryDiagnostics(
     diagnostics.terrainRenderEntriesSynchronousPrep = 0;
     diagnostics.terrainRenderEntriesDeferredPrep = 0;
     diagnostics.terrainRenderEntriesDrawn = 0;
+    diagnostics.terrainRenderEntriesFaded = 0;
+    diagnostics.terrainRenderEntriesFullyTransparent = 0;
+    diagnostics.terrainRenderEntriesClipDegenerate = 0;
+    diagnostics.terrainRenderEntryMinOpacity = 1.0f;
     diagnostics.terrainRenderEntriesSelectedDrawn = 0;
     diagnostics.terrainRenderEntriesMissed = 0;
     diagnostics.terrainRenderEntriesSelectedMissed = 0;
@@ -117,6 +121,25 @@ void applyTerrainRenderEntryDiagnostics(
         plan.renderEntryDeferredPrepCount;
     diagnostics.terrainRenderEntriesDrawn =
         plan.renderEntryCommandDrawCount;
+    // 逐 entry 量「画了但看不见」:淡入淡出透明度与祖先裁剪窗口。两者都能让
+    // 一条已计入 drawn 的 entry 在屏幕上什么都不留(透出天色),而现有 drop/miss
+    // 计数对它们全盲。
+    for (const TileRenderEntry& entry : plan.renderEntries) {
+        if (entry.opacity < 0.999f) {
+            ++diagnostics.terrainRenderEntriesFaded;
+        }
+        if (entry.opacity <= 0.01f) {
+            ++diagnostics.terrainRenderEntriesFullyTransparent;
+        }
+        diagnostics.terrainRenderEntryMinOpacity = std::min(
+            diagnostics.terrainRenderEntryMinOpacity,
+            entry.opacity);
+        if (entry.hasSurfaceClip() &&
+            (entry.surfaceClipUv[2] <= entry.surfaceClipUv[0] ||
+             entry.surfaceClipUv[3] <= entry.surfaceClipUv[1])) {
+            ++diagnostics.terrainRenderEntriesClipDegenerate;
+        }
+    }
     diagnostics.terrainRenderEntriesSelectedDrawn =
         plan.renderEntrySelectedCommandDrawCount;
     diagnostics.terrainRenderEntriesMissed =
@@ -211,6 +234,28 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     // 与主 submit 之前——它们要采样这些高度纹理层。flag off 时 pending 空,早退无副作用。
     if (auto* pool = context.renderer.terrainDisplacementPool()) {
         pool->flushHeightBakes();
+        // 黑带排查:本帧高度层池的三条 nullptr 出口与占用。抄在 flush 之后 =
+        // 本帧所有 acquireHeightTexture 都已跑过,计数已定稿。
+        const auto& hs = pool->heightFrameStats();
+        context.diagnostics.terrainHeightLayerFull = hs.layerFull;
+        context.diagnostics.terrainHeightDenseRejected = hs.denseBudgetRejected;
+        context.diagnostics.terrainHeightEvicted = hs.evicted;
+        context.diagnostics.terrainHeightEpochMiss = hs.epochMiss;
+        context.diagnostics.terrainHeightGridMiss = hs.gridMiss;
+        context.diagnostics.terrainSurfaceClipRemap = hs.surfaceClipRemap;
+        context.diagnostics.terrainSurfaceClipPlain = hs.surfaceClipPlain;
+        context.diagnostics.terrainTemplateSpanMismatch = hs.templateSpanMismatch;
+        context.diagnostics.terrainTemplateMismatchZ = hs.mismatchZ;
+        context.diagnostics.terrainTemplateMismatchX = hs.mismatchX;
+        context.diagnostics.terrainTemplateMismatchY = hs.mismatchY;
+        context.diagnostics.terrainTemplateMismatchLatRatio =
+            static_cast<float>(hs.mismatchLatRatio);
+        context.diagnostics.terrainTemplateMismatchLonRatio =
+            static_cast<float>(hs.mismatchLonRatio);
+        context.diagnostics.terrainHeightCoarseResident = hs.coarseResident;
+        context.diagnostics.terrainHeightCoarseCapacity = hs.coarseCapacity;
+        context.diagnostics.terrainHeightDenseResident = hs.denseResident;
+        context.diagnostics.terrainHeightDenseCapacity = hs.denseCapacity;
     }
     // Fill the web-mercator polar gap (±85°→pole) so it degrades to a flat
     // polar surface instead of showing through to space at globe scale.

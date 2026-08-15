@@ -167,3 +167,75 @@ TEST(TerrainDisplacementTemplate, TopologyCountsMatchGrid) {
     EXPECT_EQ(t.vertices.size(), gridVerts + skirtVerts);
     EXPECT_EQ(t.indices.size(), gridIndices + skirtIndices);
 }
+
+// ③ 接边闭合(2026-08-15,黑带排查):相邻瓦片的公共边在**世界坐标**里必须重合。
+//
+// 为什么单有 ① 不够:① 只说同一行不同列的 localPos 逐值相等,可每片还要各自
+// 套上 enuToEcef(自己中心) 的刚体帧。局部相等 + 帧不同,拼接处照样可能张口。
+// 真机上看到的正是水平方向的口子(黑带里格与格之间、以及高空的列边界竖线),
+// 而 SeamDiag 的 compensated 读数说明**高度**是对齐的(0.00m)——所以要查的
+// 不是竖直失配,是这条水平闭合。
+//
+// 判据:公共边上每个节点,两侧各自重建出的世界点距离 ≤ 该 LOD 的 f32-RTC 预算
+// (与 ② 同一套预算,因为误差同源)。超过它就意味着几何真的没接上。
+TEST(TerrainDisplacementTemplate, AdjacentTilesShareClosedEdges) {
+    struct Case {
+        int lod, tileX, tileY;
+        double budgetM;
+    };
+    // z6-8 是真机黑带出现的档位区间(relief fade 过渡带 z6→9)。
+    const Case cases[] = {
+        {6, 30, 24, 2.0},
+        {7, 99, 49, 1.0},   // 真机复现区(蒙古/戈壁)所在瓦
+        {8, 200, 90, 0.5},
+    };
+
+    for (const Case& c : cases) {
+        const int n = kGrid + 1;
+        const Rectangle rectA = webMercatorTileRect(c.lod, c.tileX, c.tileY);
+        const Rectangle rectE =
+            webMercatorTileRect(c.lod, c.tileX + 1, c.tileY);   // 东邻(同行)
+        const Rectangle rectS =
+            webMercatorTileRect(c.lod, c.tileX, c.tileY + 1);   // 南邻(下一行)
+
+        const TerrainDisplacementTemplate tA =
+            buildTerrainDisplacementTemplate(rectA, kGrid);
+        const TerrainDisplacementTemplate tE =
+            buildTerrainDisplacementTemplate(rectE, kGrid);
+        const TerrainDisplacementTemplate tS =
+            buildTerrainDisplacementTemplate(rectS, kGrid);
+        const Mat4 fA = terrainTemplateTileFrame(rectA);
+        const Mat4 fE = terrainTemplateTileFrame(rectE);
+        const Mat4 fS = terrainTemplateTileFrame(rectS);
+
+        // 列边界:A 的东边(col=n-1) vs 东邻的西边(col=0),逐行比。
+        double maxCol = 0.0;
+        for (int row = 0; row < n; ++row) {
+            const Vec3 a = reconstructTemplateWorldPosition(
+                tA, fA, row * n + (n - 1), 0.0);
+            const Vec3 b = reconstructTemplateWorldPosition(
+                tE, fE, row * n + 0, 0.0);
+            maxCol = std::max(maxCol, (a - b).length());
+        }
+
+        // 行边界:A 的南边(row=n-1) vs 南邻的北边(row=0),逐列比。
+        double maxRow = 0.0;
+        for (int col = 0; col < n; ++col) {
+            const Vec3 a = reconstructTemplateWorldPosition(
+                tA, fA, (n - 1) * n + col, 0.0);
+            const Vec3 b = reconstructTemplateWorldPosition(
+                tS, fS, 0 * n + col, 0.0);
+            maxRow = std::max(maxRow, (a - b).length());
+        }
+
+        const std::string label =
+            "lod=" + std::to_string(c.lod) + " tile=" +
+            std::to_string(c.tileX) + "," + std::to_string(c.tileY);
+        EXPECT_LT(maxCol, c.budgetM)
+            << "列边界张口 " << label << " gap=" << maxCol << "m";
+        EXPECT_LT(maxRow, c.budgetM)
+            << "行边界张口 " << label << " gap=" << maxRow << "m";
+        RecordProperty(label + ":colGap_m", std::to_string(maxCol));
+        RecordProperty(label + ":rowGap_m", std::to_string(maxRow));
+    }
+}

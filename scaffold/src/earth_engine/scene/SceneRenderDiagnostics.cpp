@@ -225,6 +225,10 @@ void SceneRenderDiagnostics::resetRenderCommandFields(
     diagnostics.terrainRenderEntriesSynchronousPrep = 0;
     diagnostics.terrainRenderEntriesDeferredPrep = 0;
     diagnostics.terrainRenderEntriesDrawn = 0;
+    diagnostics.terrainRenderEntriesFaded = 0;
+    diagnostics.terrainRenderEntriesFullyTransparent = 0;
+    diagnostics.terrainRenderEntriesClipDegenerate = 0;
+    diagnostics.terrainRenderEntryMinOpacity = 1.0f;
     diagnostics.terrainRenderEntriesSelectedDrawn = 0;
     diagnostics.terrainRenderEntriesMissed = 0;
     diagnostics.terrainRenderEntriesSelectedMissed = 0;

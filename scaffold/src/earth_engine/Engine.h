@@ -257,6 +257,12 @@ public:
     void setBlackFrameProbeEnabled(bool enabled) {
         blackFrameProbeEnabled_ = enabled;
     }
+    /// 上一帧的近黑像素占比(探针关闭时为 -1)。
+    ///
+    /// 为什么要这个 getter:排查破洞时「洞在不在」来自截图、「计数」来自 logcat,
+    /// 两者时刻对不上 —— 靠截图去猜配对已经导致两次自相矛盾的"证据"。把占比
+    /// 挂到同一帧的诊断行上,相关性才是硬的。
+    double lastFrameDarkFraction() const { return lastFrameDarkFraction_; }
     bool shadowVerifyEnabled() const { return shadowVerifyEnabled_; }
 
     void setFrameGatingEnabled(bool enabled);
@@ -351,6 +357,7 @@ private:
     int settleFrames_ = 0;
     // 黑块探针状态(见 setBlackFrameProbeEnabled)。
     bool blackFrameProbeEnabled_ = false;
+    double lastFrameDarkFraction_ = -1.0;
     std::vector<uint8_t> blackProbeScratch_;
     uint64_t blackProbeFrames_ = 0;
     uint64_t blackProbeHits_ = 0;
