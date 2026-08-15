@@ -56,6 +56,12 @@ public:
     /// 取字形(缺则栅格化+上传)。失败(无字体/无字形/图集满)返回 nullptr。
     const Glyph* ensureGlyph(uint32_t codepoint);
 
+    /// 已驻留字形数(诊断:新字形栅格化是渲染线程上的同步 SDF 计算,
+    /// 平移进新区域时成批发生 —— P6 慢帧的真因,量它才能定预算)。
+    size_t residentGlyphCount() const;
+    /// 字形是否已在图集内(不触发栅格化)。预算调度用。
+    bool hasGlyph(uint32_t codepoint) const;
+
     /// 图集页满导致的字形丢弃计数(ensureGlyph 因页满返回 nullptr 的次数)。
     /// >0 = 屏幕上有字渲染不出来。静默丢字不可接受:首次溢出打 Warning
     /// 日志,消费方(诊断面板/测试)据此报警。多页/LRU 落地前的可观测兜底。

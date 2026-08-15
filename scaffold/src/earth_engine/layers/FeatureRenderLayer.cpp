@@ -19,6 +19,7 @@
 #include <glm/gtc/type_ptr.hpp>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
@@ -1406,6 +1407,12 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
         dropTileMesh(key);
         return;
     }
+    // P6 分段:commit 实测 ~20ms/瓦(渲染线程),4 块闸 → 80ms 尖峰。
+    // 切成 符号构建 / GPU 上传 / 标签烘焙 三段定位。
+    using PClock = std::chrono::steady_clock;
+    const auto tSym = PClock::now();
+    const size_t glyphsBefore =
+        glyphAtlas_ ? glyphAtlas_->residentGlyphCount() : 0;
     // 准入定型:实例表 → 符号 quad(图集解析必须渲染线程;一瓦一次非逐帧)。
     // rank 升序截断是 placement 预算刀之前的容量闸:瓦片密度再高,上屏
     // 片元也被钉在「可见瓦数 × 上限」内。截断丢的是数据侧最不重要的尾部。
@@ -1439,6 +1446,7 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
                         ? 1 : 0);
     }
 
+    const auto tUpload = PClock::now();
     // 整瓦原子替换:先建好新 GPU 资源,成功了才换掉旧的。中途失败保留旧瓦
     // 而不是留半张 —— 半张瓦片在画面上是缺口,比旧数据糟。
     BucketGpu gpu;
@@ -1450,11 +1458,30 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
                          mesh.lineVolumeGroups, gpu)) {
         return;
     }
+    const auto tBake = PClock::now();
     gpu.tileLabelSources = std::move(labelSources);
     gpu.tileSymbolSources = std::move(mesh.symbols);  // 重钳用(见字段注释)
     BucketGpu& stored = tileBuckets_[key];
     stored = std::move(gpu);
     bakeTileBucketLabels(stored);
+    const auto tEnd = PClock::now();
+    auto pms = [](PClock::time_point a, PClock::time_point b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    const double totalMs = pms(tSym, tEnd);
+    if (totalMs >= 5.0) {
+        platformLog(LogLevel::Info, "TileCommitSlow",
+                    "z=%d x=%d y=%d %.1fms = sym %.2f + upload %.2f "
+                    "+ bake %.2f | verts f=%zu l=%zu p=%zu labels=%d "
+                    "newGlyphs=%zu",
+                    key.z, key.x, key.y, totalMs, pms(tSym, tUpload),
+                    pms(tUpload, tBake), pms(tBake, tEnd),
+                    stored.fillIndexCount ? mesh.fillVerts.size() : 0u,
+                    mesh.lineVerts.size(), pointVerts.size(),
+                    stored.labelIndexCount,
+                    (glyphAtlas_ ? glyphAtlas_->residentGlyphCount() : 0) -
+                        glyphsBefore);
+    }
 }
 
 void FeatureRenderLayer::buildTileSymbolGpu(
@@ -1586,6 +1613,34 @@ uint64_t FeatureRenderLayer::crossTileIdFor(const std::string& name,
 void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
     if (gpu.labelIndexCount > 0 || gpu.tileLabelSources.empty()) return;
     if (!glyphAtlas_ || !glyphAtlas_->ready() || !renderDevice_) return;
+    // P6:先按预算补齐本桶所需的新字形。补不齐 → 整桶推迟(本函数幂等,
+    // 每帧的重试 drain 会再来)。**决不半烘**:半桶标签在屏上是缺字。
+    {
+        std::vector<uint32_t> missing;
+        for (const BucketGpu::TileLabelSource& src : gpu.tileLabelSources) {
+            for (uint32_t cp : GlyphAtlas::decodeUtf8(src.name)) {
+                if (glyphAtlas_->hasGlyph(cp)) continue;
+                if (std::find(missing.begin(), missing.end(), cp) ==
+                    missing.end()) {
+                    missing.push_back(cp);
+                }
+            }
+        }
+        if (!missing.empty()) {
+            size_t did = 0;
+            for (uint32_t cp : missing) {
+                // 至少放行一个:否则复杂字形(成本 > 整帧预算)永远排不上。
+                if (did > 0 && glyphRasterBudgetMs_ <= 0.0) break;
+                const auto g0 = std::chrono::steady_clock::now();
+                glyphAtlas_->ensureGlyph(cp);  // 同步 SDF,实测 3-7ms
+                glyphRasterBudgetMs_ -=
+                    std::chrono::duration<double, std::milli>(
+                        std::chrono::steady_clock::now() - g0).count();
+                ++did;
+            }
+            if (did < missing.size()) return;  // 下帧接着补(本函数幂等)
+        }
+    }
     std::vector<float> labelVerts;
     std::vector<uint32_t> labelIndices;
     std::vector<LabelEntry> labelEntries;
@@ -1661,6 +1716,30 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         previewDirty_ = true;
     }
 
+    // P6:每帧重置字形栅格化预算,并给"因缺字形推迟"的瓦片桶一次重试。
+    // 桶数量级 ~视口瓦数(几十),空转开销可忽略。
+    glyphRasterBudgetMs_ = kGlyphRasterBudgetMs;
+    if (atlasReady) {
+        for (auto& entry : tileBuckets_) {
+            if (entry.second.labelIndexCount == 0 &&
+                !entry.second.tileLabelSources.empty()) {
+                bakeTileBucketLabels(entry.second);
+            }
+        }
+    }
+    // P6:重钳排队消化(每帧至多 kReclampBucketsPerFrame 个桶)
+    if (!pendingReclamp_.empty()) {
+        int done = 0;
+        while (!pendingReclamp_.empty() && done < kReclampBucketsPerFrame) {
+            auto it = tileBuckets_.find(pendingReclamp_.back());
+            pendingReclamp_.pop_back();
+            if (it != tileBuckets_.end()) {
+                reclampTileBucketSymbols(it->second);
+                ++done;
+            }
+        }
+    }
+
     // 贴地重钳(P3 方案 A 过渡态):地形代次变化 → 节流重镶全部桶
     // (LOD 细化/加载会改高度;不重钳则要素浮沉)。120 帧节流防加载期
     // 重镶风暴;万级桶规模需配可见性门控(后续)。
@@ -1680,8 +1759,10 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
             // 硬件深度与 T2 判定一起吃掉符号 = "标记点闪一下就没";而
             // 缩放会触发瓦片换代重 commit,于是"缩放后又出现"。两个现象
             // 同一个因。(V24/B.6)
-            for (auto& entry : tileBuckets_) {
-                reclampTileBucketSymbols(entry.second);
+            pendingReclamp_.clear();
+            pendingReclamp_.reserve(tileBuckets_.size());
+            for (const auto& entry : tileBuckets_) {
+                pendingReclamp_.push_back(entry.first);
             }
             previewDirty_ = true;
         }

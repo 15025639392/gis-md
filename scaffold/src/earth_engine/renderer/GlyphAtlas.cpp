@@ -95,6 +95,12 @@ float GlyphAtlas::ascent() const { return impl_->ascentPx; }
 float GlyphAtlas::descent() const { return impl_->descentPx; }
 Texture* GlyphAtlas::texture() const { return impl_->texture.get(); }
 
+size_t GlyphAtlas::residentGlyphCount() const { return impl_->glyphs.size(); }
+
+bool GlyphAtlas::hasGlyph(uint32_t codepoint) const {
+    return impl_->glyphs.find(codepoint) != impl_->glyphs.end();
+}
+
 const GlyphAtlas::Glyph* GlyphAtlas::ensureGlyph(uint32_t codepoint) {
 #if EARTH_ENGINE_HAS_STB_TRUETYPE
     if (!impl_->fontReady) return nullptr;

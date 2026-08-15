@@ -106,6 +106,19 @@ public:
     /// 按渲染集差分 commit/drop 瓦片网格。
     void update(const Rectangle& viewRect, double cameraHeightMeters);
 
+    /// P6 分段:上一次 update 的耗时构成。慢帧归因用 —— "时间不在引擎"
+    /// 之后还要能再往下切一刀,否则只能停在猜测。
+    struct UpdateStats {
+        double ingestMs = 0.0;    ///< 收件箱搬运(解码瓦/网格入账)
+        double treeMs = 0.0;      ///< 选择(视口枚举 + 回退)
+        double dispatchMs = 0.0;  ///< 请求发起 + 镶嵌派单
+        double commitMs = 0.0;    ///< **渲染线程**上传:commit/drop 差分
+        int commits = 0;
+        int drops = 0;
+        int tessellateDispatched = 0;
+    };
+    const UpdateStats& lastUpdateStats() const { return lastStats_; }
+
     /// 相机地平线圆的经纬包围矩形(视口 viewRect 的标准来源;数学与
     /// FeatureRenderLayer::visibleBucketKeys 同源:两侧地平线角相加 +
     /// 球冠经度包围界)。跨反经线时返回 west > east 的跨界矩形,
@@ -148,6 +161,7 @@ private:
     std::shared_ptr<MvtTileFetchCache> tileCache_;
     std::shared_ptr<ThreadPool> decodePool_;
 
+    UpdateStats lastStats_;
     VectorTileTree tree_;
     /// 已 commit 到渲染层的瓦片(退出渲染集时 drop)。
     std::unordered_set<TileKey> activeTiles_;

@@ -137,6 +137,8 @@ static std::atomic<int> gWidth{0}, gHeight{0};
 
 // 每帧发布相机方位角(弧度),UI 指北针无锁读取。
 static std::atomic<float> gHeadingRadians{0.0f};
+// P6 分段:本帧 gMvtSource->update 耗时(渲染线程唯一写者,读同线程)
+static double gFrameMvtMs = 0.0;
 
 // Engine + RenderDevice
 static std::unique_ptr<RenderDeviceGLES> gRenderDevice;
@@ -1159,9 +1161,20 @@ static void renderFrame() {
         const Vec3& radii = wgs84.radii();
         const double minRadius =
             std::min(radii.x(), std::min(radii.y(), radii.z()));
+        const auto mvtStart = std::chrono::steady_clock::now();
         gMvtSource->update(
             MvtVectorSource::horizonViewRectangle(camCarto, minRadius),
             std::max(1.0, camCarto.height()));
+        gFrameMvtMs = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - mvtStart).count();
+        // P6:mvt 超 8ms 就逐帧报构成 —— 尖峰是稀疏事件,周期采样必漏。
+        if (gFrameMvtMs >= 8.0) {
+            const auto& us = gMvtSource->lastUpdateStats();
+            LOGI("MvtSlow %.1fms = ingest %.2f + tree %.2f + dispatch %.2f "
+                 "+ commit %.2f | commits=%d drops=%d tess=%d",
+                 gFrameMvtMs, us.ingestMs, us.treeMs, us.dispatchMs,
+                 us.commitMs, us.commits, us.drops, us.tessellateDispatched);
+        }
         // MVT 源归应用层所有,引擎的收敛判据看不见它 —— 它自己在途时必须
         // 主动置脏位,否则瓦片正在解码/镶嵌途中被停帧,产物落地后没人消费,
         // 底图永久停在半成品。tessellating 的那批也算(worker 还没回来)。
@@ -1198,7 +1211,12 @@ static void renderFrame() {
     // 而画面上看着只是"跟得有点松"。
     gCarrier.step(1.0 / 60.0);
 
+    // P6 分段:`total − engine − post − swap` 这段宿主前奏此前**没有任何
+    // 字段覆盖**,于是"慢帧 187ms 而 engine 只有 2-3ms"只能停在
+    // 「时间不在引擎」而无法再往下定位。pre 覆盖整段,mvt 单列最大嫌疑。
     const auto engineStart = std::chrono::steady_clock::now();
+    const double preMs = std::chrono::duration<double, std::milli>(
+        engineStart - frameStart).count();
     const bool presented =
         gEngine->render(0.0);  // auto-delta（内部 update；必要时 beginFrame→render→endFrame）
     const double engineMs = std::chrono::duration<double, std::milli>(
@@ -1243,11 +1261,13 @@ static void renderFrame() {
         frameTotalMs >= 25.0 || swapMs >= 8.0) {
         const auto& stageDiag = gEngine->diagnostics();
         LOGI(
-            "FrameLoop frame=%llu total=%.3f engine=%.3f "
+            "FrameLoop frame=%llu total=%.3f pre=%.3f mvt=%.3f engine=%.3f "
             "post=%.3f swap=%.3f callback=%.3f cpu=%d hint=%d presented=%d swapOk=%d "
             "upd=%.2f build=%.2f submit=%.2f terrUpd=%.2f",
             static_cast<unsigned long long>(frameId),
             frameTotalMs,
+            preMs,
+            gFrameMvtMs,
             engineMs,
             postEngineMs,
             swapMs,

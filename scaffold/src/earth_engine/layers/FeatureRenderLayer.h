@@ -20,6 +20,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace earth_engine {
 
@@ -527,6 +528,23 @@ public:
     /// 尚未烘过 → 生成 glyph quads + LabelEntry + GPU buffer。commit 时
     /// 与字体就绪翻转时都会调,幂等。
     void bakeTileBucketLabels(BucketGpu& gpu);
+
+    /// P6:每帧新字形栅格化预算。`stbtt_GetGlyphSDF` 实测 **2-3.5ms/字形**
+    /// (32px + 6px padding,CJK),平移进新区域时一张瓦能带来 34 个新字形
+    /// = 74ms 卡顿。烘焙需要整桶字形齐备,故预算加在**栅格化**而非烘焙上:
+    /// 缺字形的桶本帧只补 kGlyphRasterBudgetPerFrame 个,补不齐就整桶推迟
+    /// (bakeTileBucketLabels 幂等,下一帧接着补)。
+    /// 用**时间**而非个数计:实测单字形 3-7ms 波动近一倍(字形复杂度),
+    /// 按个数定预算会随内容漂(实测 2 个 = 5.7-14.1ms)。至少放行 1 个,
+    /// 否则复杂字形永远排不上、标签永不出现。
+    static constexpr double kGlyphRasterBudgetMs = 4.0;
+    double glyphRasterBudgetMs_ = kGlyphRasterBudgetMs;
+
+    /// P6:地形代次重钳的每帧桶预算。重钳一次要重建全部瓦片桶(~60 个)
+    /// 的点 buffer + 重烘标签,实测单帧 27ms。代次变化本就 120 帧节流,
+    /// 摊几帧完成完全不可见。
+    static constexpr int kReclampBucketsPerFrame = 4;
+    std::vector<TileKey> pendingReclamp_;
 
     /// **渲染线程**:符号实例表 → 点 quad + 标签烘焙源(采地面高 + 图集
     /// 解析)。commit 与重钳共用一份 —— 两处各写一遍必然错位。

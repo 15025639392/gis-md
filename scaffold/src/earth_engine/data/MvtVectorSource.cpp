@@ -4,6 +4,7 @@
 #include "../core/async/AsyncSystem.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <unordered_set>
 
@@ -61,10 +62,20 @@ Rectangle MvtVectorSource::horizonViewRectangle(
 
 void MvtVectorSource::update(const Rectangle& viewRect,
                              double cameraHeightMeters) {
+    using Clock = std::chrono::steady_clock;
+    auto ms = [](Clock::time_point a, Clock::time_point b) {
+        return std::chrono::duration<double, std::milli>(b - a).count();
+    };
+    lastStats_ = UpdateStats{};
+    const auto tIngest = Clock::now();
     ingestInbox();
 
+    const auto tTree = Clock::now();
+    lastStats_.ingestMs = ms(tIngest, tTree);
     VectorTileTree::UpdateResult result =
         tree_.update(viewRect, cameraHeightMeters);
+    const auto tDispatch = Clock::now();
+    lastStats_.treeMs = ms(tTree, tDispatch);
 
     // 发缺瓦片请求(获取层单一化):fetch+解码+在途去重全在 tileCache_ ——
     // 与 drape/场共享实例时,同一块数据瓦跨消费方网络恰一次、解码恰一次。
@@ -98,6 +109,7 @@ void MvtVectorSource::update(const Rectangle& viewRect,
         std::shared_ptr<const MvtTile> tile = tree_.loadedTileShared(key);
         if (!tile || !sinks_.tessellate) continue;
         tessellating_.insert(key);
+        ++lastStats_.tessellateDispatched;
         std::weak_ptr<Inbox> weakInbox = inbox_;
         TessellateFn tessellate = sinks_.tessellate;
         std::vector<std::string> includeLayers = options_.includeLayers;
@@ -141,6 +153,9 @@ void MvtVectorSource::update(const Rectangle& viewRect,
         else work();
     }
 
+    const auto tCommit = Clock::now();
+    lastStats_.dispatchMs = ms(tDispatch, tCommit);
+
     // ---- R* 换手(2026-08-15,V24 根修消缺陷④)----
     //
     // renderTiles 是树给出的精确覆盖。旧差分"出集即 drop、进集限速 commit"
@@ -178,6 +193,7 @@ void MvtVectorSource::update(const Rectangle& viewRect,
     for (const TileKey& key : toDrop) {
         if (sinks_.drop) sinks_.drop(key);
         activeTiles_.erase(key);
+        ++lastStats_.drops;
     }
     // 已镶好但已不在渲染集的网格直接丢弃,别占内存等一个不会来的 commit。
     for (auto it = readyMeshes_.begin(); it != readyMeshes_.end();) {
@@ -222,6 +238,7 @@ void MvtVectorSource::update(const Rectangle& viewRect,
         }
         if (sinks_.drop) sinks_.drop(occ);
         activeTiles_.erase(occ);
+        ++lastStats_.drops;
     }
 
     // 3) 无占位者区域的新上屏(初次进入/离开后返回),原节流语义。
@@ -246,6 +263,8 @@ void MvtVectorSource::update(const Rectangle& viewRect,
         activeTiles_.insert(key);
         ++commits;
     }
+    lastStats_.commits = static_cast<int>(commits);
+    lastStats_.commitMs = ms(tCommit, Clock::now());
 }
 
 void MvtVectorSource::setLayerRules(std::vector<SourceLayerRule> rules) {
