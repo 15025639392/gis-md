@@ -789,6 +789,15 @@ void SceneRenderPipeline::prepareTerrainOcclusion(Context& context) const {
     if (const Camera* cam = context.frameState.camera) {
         params.nearPlaneMeters = static_cast<float>(cam->nearPlaneMeters());
         params.farPlaneMeters = static_cast<float>(cam->farPlaneMeters());
+        // 容差从「像素」换算成角比:tol_m = ratio × 锚点距离,等价于"锚点
+        // 在屏幕上被地形压过 kTolerancePx 像素才开始判遮挡"。判定阈值必须
+        // 是屏幕空间常量,固定米数在近远景语义不同(见 shader 注释)。
+        constexpr double kTolerancePx = 6.0;
+        const double viewportH =
+            std::max(1, context.surfaceHeightPixels);
+        params.toleranceRatio = static_cast<float>(
+            2.0 * kTolerancePx * std::tan(0.5 * cam->verticalFovRadians()) /
+            viewportH);
     }
     context.renderer.setTerrainOcclusion(params);
 }

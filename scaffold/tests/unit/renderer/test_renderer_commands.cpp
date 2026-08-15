@@ -1052,3 +1052,50 @@ TEST(RendererCommandTest, VectorStencilVolumePassStaysDoubleSided) {
     ASSERT_TRUE(error.has_value());
     EXPECT_NE(error->message.find("cullFace"), std::string::npos);
 }
+
+// 符号命令固定状态:**深度测试必须关**。billboard 四角共用锚点深度,逐像素
+// 深度测试只会把 quad 切一块(那道切口是不存在的形状边界),遮挡改由锚点
+// 判定整符号决定。
+//
+// ⚠️ 这条契约此前**只在真机上生效**:校验器有这个分支,但主机测试没有一条
+// 构造过 VectorPoint/VectorLabel 命令,于是把状态改错时 host 188/188 全绿、
+// 一上真机就 abort。补这两条把契约拉回主机。
+TEST(RendererCommandTest, MvpValidatorRequiresSymbolDepthTestOff) {
+    RenderCommand sym;
+    sym.kind = RenderCommandKind::VectorPoint;
+    sym.owner = "mvt-basemap";
+    sym.pass = "color";
+    sym.depthTest = false;
+    sym.depthWrite = false;
+    sym.cullFace = false;
+    sym.blend = true;
+    sym.generation = 1;
+
+    RenderCommandList commands{sym};
+    EXPECT_FALSE(validateMvpRenderCommands(commands, 1).has_value());
+
+    commands[0].depthTest = true;  // 回到"逐像素切 quad"的错误状态
+    auto error = validateMvpRenderCommands(commands, 1);
+    ASSERT_TRUE(error.has_value());
+    EXPECT_NE(std::string::npos, error->message.find("depthTest"));
+}
+
+// 面/线相反:它们是贴地几何,像素与 3D 位置一一对应,逐像素深度测试语义
+// 正确,必须保持开 —— 两条契约分道,别一起改。
+TEST(RendererCommandTest, MvpValidatorKeepsFillLineDepthTestOn) {
+    RenderCommand fill;
+    fill.kind = RenderCommandKind::VectorFill;
+    fill.owner = "mvt-basemap";
+    fill.pass = "color";
+    fill.depthTest = true;
+    fill.depthWrite = false;
+    fill.cullFace = false;
+    fill.blend = true;
+    fill.generation = 1;
+
+    RenderCommandList commands{fill};
+    EXPECT_FALSE(validateMvpRenderCommands(commands, 1).has_value());
+
+    commands[0].depthTest = false;
+    EXPECT_TRUE(validateMvpRenderCommands(commands, 1).has_value());
+}

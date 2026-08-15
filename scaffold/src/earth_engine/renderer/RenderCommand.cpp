@@ -210,13 +210,28 @@ validateMvpRenderCommands(const RenderCommandList& commands,
 
             case RenderCommandKind::VectorFill:
             case RenderCommandKind::VectorLine:
-            case RenderCommandKind::VectorPoint:
-            case RenderCommandKind::VectorLabel:
-                // 矢量 P1/P5 固定状态:压深度测试出图但不写深度(半透明叠加、
-                // 顺序即桶序),双面(球面绕向视半球翻转),alpha 混合。
+                // 矢量 P1 面/线固定状态:压深度测试出图但不写深度(半透明
+                // 叠加、顺序即桶序),双面(球面绕向视半球翻转),alpha 混合。
+                // 面/线是**贴在地表上的几何**,像素与 3D 位置一一对应,
+                // 逐像素深度测试语义正确 —— 与下面的符号分道正在于此。
                 if (!requireColorPass(i, cmd, error)) return error;
                 if (!requireState(i, cmd, true, false, false, true,
-                                  "Vector*", error)) {
+                                  "VectorFill/Line", error)) {
+                    return error;
+                }
+                break;
+
+            case RenderCommandKind::VectorPoint:
+            case RenderCommandKind::VectorLabel:
+                // 符号(billboard/文字)固定状态:**深度测试关**。四角共用
+                // 锚点深度,逐像素比对只会把 quad 切掉一块 —— 而 quad 像素
+                // 没有 3D 位置语义,那道切口是不存在的形状边界。遮挡改由
+                // 锚点判定整符号决定(shader eeSymbolTerrainVisibility)。
+                // 三家引擎同解:maplibre 地形模式关深度测试、osgEarth 默认
+                // Depth(ALWAYS)、cesium 默认 depthTestAgainstTerrain=false。
+                if (!requireColorPass(i, cmd, error)) return error;
+                if (!requireState(i, cmd, false, false, false, true,
+                                  "VectorPoint/Label", error)) {
                     return error;
                 }
                 break;

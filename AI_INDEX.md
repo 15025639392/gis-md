@@ -1196,7 +1196,7 @@ The 32-byte `TerrainGpuVertex` async upload path is end-to-end (2026-07-01): pro
 | `useTerrainVertexFormat` (32 vs 120 selector) | TileRenderContentState.h:111 | set in coordinator (.h:176) |
 | Async push/upload/drain | TilesetContentLifecycleCoordinator.h:143-261 | upload side done |
 | DRAW side wired (2026-07-01) | `GltfDrawCommandBuilder.cpp:71` branches on `useTerrainVertexFormat` → `renderer.makeTerrainPrimitiveCommand` (stride 32, `kind=GltfPrimitive`, `shader=terrainShader`) | **done** (compiles + unit-tested both backends; pixel-verify pending a reachable QM terrain server) |
-| `Renderer::terrainShader()` defined + terrain shaders added | `kTerrainVertex/FragmentGLSL` (Renderer.cpp:4367-...), `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23), `terrainShader()` getter + `makeTerrainPrimitiveCommand` | **done** |
+| `Renderer::terrainShader()` defined + terrain shaders added | `kTerrainVertex/FragmentGLSL` (Renderer.cpp:4354-4359), `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23), `terrainShader()` getter + `makeTerrainPrimitiveCommand` | **done** |
 
 Files read and verified: all listed content-lifecycle files under `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/tiling/`, plus `content/GltfModel.h` and `renderer/Renderer.h`. Line numbers above are current as read.
 
@@ -2479,9 +2479,9 @@ Render flow in `render()` (.cpp:209-286):
 | 6 | `sortAndValidate` | .cpp:724-723 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
 | 5.5 | `assembleTerrainBatches` | .cpp:664-663 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
 | 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:775-745 / :751-800 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
-| 7 | `aggregateDiagnostics` | .cpp:846-824 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
-| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:880-883 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
-| — | beforeSubmit → submit | .cpp:233-248 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:965-951) |
+| 7 | `aggregateDiagnostics` | .cpp:855-883 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
+| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:889-973 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
+| — | beforeSubmit → submit | .cpp:233-248 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:974-1010) |
 
 Terrain surface = `GltfPrimitive` cmds carrying `terrainRenderContent` (`isTerrainSurfaceCommand`, .cpp:32-35). QM terrain now draws via the 32-byte `TerrainGpuVertex` path (`makeTerrainPrimitiveCommand`, stride 32, `terrainShader`; 2026-07-01); ellipsoid-fallback terrain still uses the 120-byte `GltfGpuVertex` glTF path. `Renderer::terrainShader()` is defined (`kTerrainVertex/FragmentGLSL` + MSL).
 
@@ -2558,7 +2558,7 @@ Fat, backend-neutral draw descriptor produced by command factories and consumed 
 | `RenderCommandValidationError` | .h:110-112 | `{commandIndex, owner, message}`. |
 | `mvpRenderOrder(kind)` | .h:115, .cpp:108-130 | Draw-order map: Sky 0, SurfaceTile 10, GltfPrimitive(Instanced) 15, Atmosphere 20, VectorOverlay 30, Unknown 100. No GlobeSurface entry remains. |
 | `validateMvpRenderCommands` | .h:119-121, .cpp:118-209 | Hard contract for MVP chain. Returns `optional<...Error>` (empty=valid). Enforces monotonic pass order (.cpp:129-133), color pass, per-kind fixed depth/write/cull/blend, non-zero `generation`, matching `frameId`, back-to-front translucent glTF sort (.cpp:213-230), instanced requires count+buffer+stride (.cpp:177-190). **Terrain-primary exemption**: `owner=="terrain_primary_surface"` overlay allows all-off state (.cpp:123-130,173-183). Contract is enforced by throw at call site `SceneRenderPipeline.cpp:372-375` (`std::runtime_error` on any error). |
-| `sortMvpRenderCommands` | .h:123, .cpp:271-265 | `stable_sort` by `mvpCommandLess`: order → opaque-before-translucent glTF → translucent back-to-front by `translucentSortDepth` (.cpp:81-104). |
+| `sortMvpRenderCommands` | .h:123, .cpp:286-293 | `stable_sort` by `mvpCommandLess`: order → opaque-before-translucent glTF → translucent back-to-front by `translucentSortDepth` (.cpp:81-104). |
 
 ### RenderCommandStreamingSet.h / .cpp
 
@@ -2578,16 +2578,16 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 | Method | Lines | Notes |
 | --- | --- | --- |
 | `initialize()` (no-arg) | .h:34, .cpp:4123-4296 | Compiles **13** shaders: gltf (.cpp:4121), terrain (.cpp:4138), terrainDepth (.cpp:4151), gltfInstanced (.cpp:4163), terrainInstanced (.cpp:4179), terrainDepthInstanced (.cpp:4191), color (.cpp:4210), and 6 vector shaders (fill/pageMesh/line/lineStencil/point/label, .cpp:4219-4296). Builds a 1×1 neutral placeholder tex {174,184,170,255} (.cpp:4123-4114). Treats gltf/gltfInstanced link failure as **non-fatal on both backends** (.cpp:4121-4137, :4163-4178) — a PBR link failure must not blank the globe; terrain still renders via `terrainShader`. |
-| `submit` | .cpp:4266-4228 | Forwards to `device->submit` if initialized. |
-| `dispose` | .cpp:4271-4248 | Resets the shader/texture resources. |
-| Shared-resource getters | .cpp:4298-4253 | `terrainDepthShader`/`terrainDepthInstancedShader` (.cpp:4298-4284), `colorShader` (:4083), 6 vector getters (:4084-4102), `glyphAtlas`/`iconAtlas` (:4103, :4105), `tileIndexBuffer`/`tileIndexCount` (:4276-4277), `surfacePlaceholderTexture` (:4106), `gltfShader`/`gltfInstancedShader` (:4109-4113), `terrainShader` (:4115-4117), `terrainInstancedShader` (:4219-4221). The `globeShader`/`globeVertexBuffer`/`globeIndexBuffer`/`globeIndexCount` getters are **removed**. |
-| `terrainShader()` | .h:105 / **.cpp:4367 defined** | 32-byte terrain vertex, no PBR extensions. DRAW side wired: `GltfDrawCommandBuilder.cpp:134` calls `makeTerrainPrimitiveCommand` (.cpp:4367). ⚠️ This row previously read "declared, NO definition, linking would fail" — false since at least 2026-07-01; corrected 2026-08-06. |
-| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4341-4324 | `GltfPrimitive`, **`vertexStride`=120** POSITION/NORMAL + TEXCOORD_0..7 + COLOR_0(16) + TANGENT(16) (.cpp:4341), sets `hasGltfUniforms`. ⚠️ It no longer seeds the PBR uniforms inline (the old row described ~130 lines of factor/tex-transform defaults): those defaults now live in `GltfUniformBlock` member initializers and are ready at construction. The factory carries an explicit contract — **must not write the `uniforms` string-map** (hot-path zero-heap-allocation, .cpp:4341-4324). |
-| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4367-4353 | The live QM-terrain draw command. **Kind stays `GltfPrimitive`** — backends disambiguate on `vertexStride`: GLES keys the vertex layout on it, Metal keys the PSO on the `terrainVertex`/`terrainFragment` entry points. **`vertexStride`=32** = POSITION f32(12) + NORMAL snorm16+pad(8) + TEXCOORD_0/1 unorm16(8) + geomorph heightDelta f32(4) (.cpp:4367). `shader=terrainShader`, `hasGltfUniforms` (terrain shader consumes the subset it declares). Called from `GltfDrawCommandBuilder.cpp:134`. |
-| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4396-4374 | glTF **model** instancing (EXT_mesh_gpu_instancing). Delegates to `makeGltfPrimitiveCommand`, then sets `GltfPrimitiveInstanced`, `gltfInstancedShader`, `instanceBuffer`/`instanceCount`, **`instanceStride`=`kGltfInstanceMatrixStride`=100** (mat4 relative model 64B + mat3 normal 36B) (.cpp:4396). Live, called from `GltfDrawCommandBuilder.cpp:121`. ⚠️ This row previously carried "Current-branch WIP: surface instancing GPU batch path" — **misattributed**: that is the terrain batcher below, a different function with a different stride. Corrected 2026-08-06. |
+| `submit` | .cpp:4285-4289 | Forwards to `device->submit` if initialized. |
+| `dispose` | .cpp:4290-4309 | Resets the shader/texture resources. |
+| Shared-resource getters | .cpp:4316-4321 | `terrainDepthShader`/`terrainDepthInstancedShader` (.cpp:4316-4321), `colorShader` (:4083), 6 vector getters (:4084-4102), `glyphAtlas`/`iconAtlas` (:4103, :4105), `tileIndexBuffer`/`tileIndexCount` (:4276-4277), `surfacePlaceholderTexture` (:4106), `gltfShader`/`gltfInstancedShader` (:4109-4113), `terrainShader` (:4115-4117), `terrainInstancedShader` (:4219-4221). The `globeShader`/`globeVertexBuffer`/`globeIndexBuffer`/`globeIndexCount` getters are **removed**. |
+| `terrainShader()` | .h:105 / **.cpp:4354 defined** | 32-byte terrain vertex, no PBR extensions. DRAW side wired: `GltfDrawCommandBuilder.cpp:134` calls `makeTerrainPrimitiveCommand` (.cpp:4354). ⚠️ This row previously read "declared, NO definition, linking would fail" — false since at least 2026-07-01; corrected 2026-08-06. |
+| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4360-4385 | `GltfPrimitive`, **`vertexStride`=120** POSITION/NORMAL + TEXCOORD_0..7 + COLOR_0(16) + TANGENT(16) (.cpp:4360), sets `hasGltfUniforms`. ⚠️ It no longer seeds the PBR uniforms inline (the old row described ~130 lines of factor/tex-transform defaults): those defaults now live in `GltfUniformBlock` member initializers and are ready at construction. The factory carries an explicit contract — **must not write the `uniforms` string-map** (hot-path zero-heap-allocation, .cpp:4360-4385). |
+| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4386-4414 | The live QM-terrain draw command. **Kind stays `GltfPrimitive`** — backends disambiguate on `vertexStride`: GLES keys the vertex layout on it, Metal keys the PSO on the `terrainVertex`/`terrainFragment` entry points. **`vertexStride`=32** = POSITION f32(12) + NORMAL snorm16+pad(8) + TEXCOORD_0/1 unorm16(8) + geomorph heightDelta f32(4) (.cpp:4386). `shader=terrainShader`, `hasGltfUniforms` (terrain shader consumes the subset it declares). Called from `GltfDrawCommandBuilder.cpp:134`. |
+| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4415-4435 | glTF **model** instancing (EXT_mesh_gpu_instancing). Delegates to `makeGltfPrimitiveCommand`, then sets `GltfPrimitiveInstanced`, `gltfInstancedShader`, `instanceBuffer`/`instanceCount`, **`instanceStride`=`kGltfInstanceMatrixStride`=100** (mat4 relative model 64B + mat3 normal 36B) (.cpp:4415). Live, called from `GltfDrawCommandBuilder.cpp:121`. ⚠️ This row previously carried "Current-branch WIP: surface instancing GPU batch path" — **misattributed**: that is the terrain batcher below, a different function with a different stride. Corrected 2026-08-06. |
 | `makeTerrainInstancedCommand(...)` | .cpp:4392-4217 | **Terrain batching** (the 合批 path, live since 1c913d68b). Delegates to `makeTerrainPrimitiveCommand` (32B shared displacement template), then swaps kind/shader/instance stream: `terrainInstancedShader`, UInt32 indices (template IBO is always uint32), **`instanceStride`=`kTerrainInstanceStride`=128** (RenderCommand.h:38) = 8×vec4 — rel×3, dispMorph, clipUv, layers, pageUv(页 cell 定位,单位=源瓦片), pageAux(祖先寻址相位). Shares `RenderCommandKind::GltfPrimitiveInstanced` with the row above; backends disambiguate on `vertexStride==32 && instanceStride==kTerrainInstanceStride` (RenderDeviceGLES.cpp:1073-1051). |
-| `earthModelMatrix()` (static) | .cpp:4443-4419 | Scale by **`kEarthRadius`** = 6378137.0f (.cpp:4444); unit sphere → ECEF meters. |
-| `attachRasterInMainThread` / `detachRasterInMainThread` | .cpp:4453-4421 / :4252-4256 | No-op notification hooks; raster ownership stays in `RasterMappedToTilesetTile` / `SurfaceRasterBinding`. |
+| `earthModelMatrix()` (static) | .cpp:4462-4471 | Scale by **`kEarthRadius`** = 6378137.0f (.cpp:4462); unit sphere → ECEF meters. |
+| `attachRasterInMainThread` / `detachRasterInMainThread` | .cpp:4472-4482 / :4483-4489 | No-op notification hooks; raster ownership stays in `RasterMappedToTilesetTile` / `SurfaceRasterBinding`. |
 
 `makeTileGeometry` (.cpp:3892-3873) builds a UV-only grid VBO (`TileVertex{{u,v}}`) + `uint32_t` index buffer.
 
@@ -3036,9 +3036,9 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `visibleBucketKeys` | .cpp:1839-1908 | 可见桶筛选 |
 | `updateLabelPlacement` | .cpp:1909-1982 | 标签避让 + fade + 地平线剔除(P5c) |
 | `appendTerrainOcclusion` | .cpp:2028-2039 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:2040-2328 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2329-2344 / :2345-2351 / :2352-2377 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
-| `pick` | .cpp:2421-2639 | 要素拾取 |
+| `appendBucketCommands` | .cpp:2044-2339 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2340-2355 / :2356-2362 / :2363-2388 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
+| `pick` | .cpp:2432-2650 | 要素拾取 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
@@ -3628,7 +3628,7 @@ Per-kind fixed render state (defaults set in the Renderer command factories, enf
 | `makeGltfPrimitiveInstancedCommand` | GltfPrimitiveInstanced, delegates to `makeGltfPrimitiveCommand` then sets `instanceStride=kGltfInstanceMatrixStride`=**100** (mat4 64B + mat3 36B) | .cpp:4154-4173 |
 | `makeTerrainInstancedCommand` | GltfPrimitiveInstanced **but vertexStride=32**, delegates to `makeTerrainPrimitiveCommand` then sets `terrainInstancedShader` + `instanceStride=kTerrainInstanceStride`=**96** (6×vec4) | .cpp:4175-4195 |
 
-`terrainShader()` is **defined** (getter Renderer.h:103 / Renderer.cpp:4379; `kTerrainVertex/FragmentGLSL` + `kTerrainVertex/FragmentMSL`, Metal buffers ≤23). The draw side is wired: `GltfDrawCommandBuilder::build` branches at GltfDrawCommandBuilder.cpp:120-140 — `instanceCount>0` → `makeGltfPrimitiveInstancedCommand` (:120), else `useTerrainVertexFormat` → `makeTerrainPrimitiveCommand` (:133), else the stride-120 glTF path. Per-command `terrainRenderContent`/`surfaceClipUv`/raster-overlay population is shared across all three; ellipsoid-fallback terrain still routes through the stride-120 path.
+`terrainShader()` is **defined** (getter Renderer.h:103 / Renderer.cpp:4386; `kTerrainVertex/FragmentGLSL` + `kTerrainVertex/FragmentMSL`, Metal buffers ≤23). The draw side is wired: `GltfDrawCommandBuilder::build` branches at GltfDrawCommandBuilder.cpp:120-140 — `instanceCount>0` → `makeGltfPrimitiveInstancedCommand` (:120), else `useTerrainVertexFormat` → `makeTerrainPrimitiveCommand` (:133), else the stride-120 glTF path. Per-command `terrainRenderContent`/`surfaceClipUv`/raster-overlay population is shared across all three; ellipsoid-fallback terrain still routes through the stride-120 path.
 
 ### Reverse-Z convention
 
@@ -3648,7 +3648,7 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 
 | Contract | Where | Why |
 |---|---|---|
-| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | `render()` submits commands, then `releaseRenderReferences` body SceneRenderPipeline.cpp:965-956 iterates `tileset->releaseRenderReferences()` (.cpp:944-951) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
+| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | `render()` submits commands, then `releaseRenderReferences` body SceneRenderPipeline.cpp:974-1010 iterates `tileset->releaseRenderReferences()` (.cpp:944-951) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
 | `processPendingLoads(...)` BEFORE `drainGpuUploadQueue(...)` | TilesetUpdateFrameRuntime.cpp:59 then :143 | `processPendingLoads` is what pushes onto `GpuUploadQueue`; the drain in the same frame pops and does the GPU upload. Reversing the order does not error — it just makes every upload lag one frame, which reads as "loading is always half a beat late" and gets misattributed to network or device. **Machine-checked**: `contracts::Id::LoadsBeforeGpuDrain` (Tileset.cpp:359). |
 | Ref-count keep-alive until GPU consumption | GpuUploadQueue.h (deque of `PendingGpuUpload`); drain finalizes via `uploadToGpu` + `finishRenderResourcePreparation` | CPU-prepared vertex/index bytes and tile state must stay alive from enqueue through upload. The claim is `asyncGpuUploadPending` + a retained lifecycle upload key; three sites must release it (`TilePendingUploadCompletion::eraseUpload`) or the tile is pinned forever. Not machine-checked. |
 

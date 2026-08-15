@@ -2034,7 +2034,11 @@ void FeatureRenderLayer::appendTerrainOcclusion(const Renderer& renderer,
         enabled ? 1.0f : 0.0f,
         occ.nearPlaneMeters,
         occ.farPlaneMeters,
-        occ.biasMeters};
+        occ.toleranceRatio};
+    // y 只被点 shader 消费(文字侧不留底);两个 shader 都声明同一个 uniform,
+    // 故这里统一挂,不按 kind 分叉。
+    cmd.uniforms["u_symbolOcclusion"] = {
+        occ.minToleranceMeters, style_.symbolOccludedMinOpacity, 0.0f, 0.0f};
 }
 
 void FeatureRenderLayer::appendBucketCommands(
@@ -2255,7 +2259,13 @@ void FeatureRenderLayer::appendBucketCommands(
             // anchor(12)+offsetUnit(8)+uv(8)+color(4,RGBA8)+shape(4)
             cmd.vertexStride = 36;
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
-            cmd.depthTest = true;
+            // 符号**不做硬件逐像素深度测试**:billboard 四角共用锚点深度,
+            // 逐像素比对只会把 quad 切掉一块 —— 而 quad 像素没有 3D 位置
+            // 语义,那道切口传达的是不存在的形状边界。遮挡判定全部交给
+            // 锚点(shader 的 eeSymbolTerrainVisibility)。三家引擎同解:
+            // maplibre 地形模式关深度测试、osgEarth 默认 Depth(ALWAYS)、
+            // cesium 默认 depthTestAgainstTerrain=false。
+            cmd.depthTest = false;
             cmd.depthWrite = false;
             cmd.blend = true;
             cmd.cullFace = false;
@@ -2290,7 +2300,8 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.indexType = RenderCommand::IndexType::UInt32;
             cmd.vertexStride = 32;  // anchor(12)+offsetPx(8)+uv(8)+opacity(4)
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
-            cmd.depthTest = true;
+            // 同点符号:遮挡只在锚点判,不做逐像素切割(见上方注释)。
+            cmd.depthTest = false;
             cmd.depthWrite = false;
             cmd.blend = true;
             cmd.cullFace = false;

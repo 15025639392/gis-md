@@ -57,7 +57,13 @@ public:
         Texture* depthTexture = nullptr;
         float nearPlaneMeters = 1.0f;
         float farPlaneMeters = 1.0e7f;
-        float biasMeters = 60.0f;  // 同时是淡出带宽,见 shader 注释
+        /// 遮挡判定容差的**角比**:乘锚点距离得米制容差。由相机 fov 与视口
+        /// 高从「像素数」换算(见 SceneRenderPipeline::prepareTerrainOcclusion)
+        /// —— 判定阈值必须是屏幕空间常量,固定米数在近景过松、远景过紧。
+        float toleranceRatio = 0.0f;
+        /// 容差下限(米):吸收与距离无关的噪声(锚点高度 CPU 采样 vs 地表
+        /// GPU 位移,差米级;掠射角下放大成更大的深度差)。见 shader 注释。
+        float minToleranceMeters = 10.0f;
     };
     void setTerrainOcclusion(const TerrainOcclusionParams& params);
     const TerrainOcclusionParams& terrainOcclusion() const;

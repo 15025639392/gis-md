@@ -2120,9 +2120,20 @@ fragment float4 vectorLineStencilFragment(
 static const char* kSymbolTerrainOcclusionBody = R"glsl(
 uniform sampler2D u_terrainDepth;
 // x: 1=深度纹理可用(否则整条判定跳过);y: near(米);z: far(米);
-// w: bias(米,同时是淡出带宽)
+// w: 容差**角比**(乘锚点距离 = 米制容差),CPU 按 fov/视口高从像素数换算
 uniform vec4 u_terrainOcclusion;
+// x: 容差下限(米);y: 遮挡到底后的最低可见度(仅图标消费,文字侧不读)
+uniform vec4 u_symbolOcclusion;
 
+// 符号遮挡判定。三条视觉约定,改这段前先读懂,否则很容易改回错的形态:
+//  ① **判定只看锚点**。符号是"位置的注记",quad 其余像素没有 3D 位置
+//     语义 —— 拿它们比深度是无中生有,按像素切 quad 更是传达了一条并不
+//     存在的形状边界。故这里只采锚点一处深度,输出整符号可见度。
+//     (硬件逐像素深度测试同理必须关,见 FeatureRenderLayer 的命令装配。)
+//  ② **输出连续量,不是布尔**。二值判定会在临界点抖:相机一动、山脊扫过
+//     锚点一个像素,整个符号闪掉。
+//  ③ **容差是屏幕空间常量,不是世界空间常量**。观察者感知的是像素;固定
+//     米数在近景过松、远景过紧,同一个数两端语义完全不同。
 float eeSymbolTerrainVisibility(vec4 clipPos) {
     if (u_terrainOcclusion.x < 0.5 || clipPos.w <= 0.0) return 1.0;
     vec3 ndc = clipPos.xyz / clipPos.w;
@@ -2134,12 +2145,18 @@ float eeSymbolTerrainVisibility(vec4 clipPos) {
     if (terrainZWin <= 0.0) return 1.0;
     float near = u_terrainOcclusion.y;
     float far = u_terrainOcclusion.z;
-    float bias = max(u_terrainOcclusion.w, 1.0);
     float terrainDist =
         near * far / ((2.0 * terrainZWin - 1.0) * (far - near) + near);
     float anchorDist = near * far / (ndc.z * (far - near) + near);
-    // 地形比"锚点再往前 bias 米"还近 → 判遮挡;差在 bias 带内线性淡出。
-    return clamp((terrainDist - (anchorDist - bias)) / bias, 0.0, 1.0);
+    // 容差 = max(下限, 角比×距离)。下限吸收与距离无关的噪声:锚点高度由
+    // CPU 采样、地表由 GPU 位移,两者差米级;掠射角下这点差换算成深度差
+    // 会放大若干倍 —— 没有它锚点会**自己遮挡自己**(近景伪遮挡的真因)。
+    float tol = max(u_symbolOcclusion.x, u_terrainOcclusion.w * anchorDist);
+    // inFront > 0 = 地形挡在锚点前面。[0,tol) 判完全可见(容差死区),
+    // [tol, 2·tol) 线性淡出 —— 死区与淡出带同宽,两者都随距离缩放,
+    // 于是"埋多少像素开始淡、埋多少像素淡完"在近远景一致。
+    float inFront = anchorDist - terrainDist;
+    return clamp(1.0 - (inFront - tol) / tol, 0.0, 1.0);
 }
 )glsl";
 
@@ -2175,8 +2192,10 @@ void main() {
         return;
     }
     // T2:整符号遮挡淡出。折进顶点色 alpha —— 片元侧无需改动,SDF 软边、
-    // 图集 tint 都自然跟着淡。
-    v_color.a *= eeSymbolTerrainVisibility(cp);
+    // 图集 tint 都自然跟着淡。遮挡到底不清零而是落到最低可见度:完全消失
+    // 会 popping,且丢掉"那边有个东西、在山后面"这条信息(文字侧不留底,
+    // 半透明文字只是噪声,见 label VS)。
+    v_color.a *= mix(u_symbolOcclusion.y, 1.0, eeSymbolTerrainVisibility(cp));
     // 像素偏移 → NDC:视口跨 2 个 NDC 单位。
     vec2 offsetNdc = a_offsetUnit * u_pointSizePx * 2.0 / u_viewport;
     gl_Position = cp + vec4(offsetNdc * cp.w, 0.0, 0.0);

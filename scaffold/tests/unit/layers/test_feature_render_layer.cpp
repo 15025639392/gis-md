@@ -149,9 +149,13 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     EXPECT_EQ(36, cmd.vertexStride);  // P6b:+color;P6c:+uv/shape
     EXPECT_EQ(6, cmd.indexCount);
     EXPECT_EQ("color", cmd.pass);
-    EXPECT_TRUE(cmd.depthTest);
+    // 符号不做硬件逐像素深度测试:billboard 四角共用锚点深度,逐像素比对
+    // 只会把 quad 切一块(那道切口是不存在的形状边界)。遮挡改由锚点判定
+    // (u_terrainOcclusion/u_symbolOcclusion)整符号决定。
+    EXPECT_FALSE(cmd.depthTest);
     EXPECT_FALSE(cmd.depthWrite);
     EXPECT_TRUE(cmd.blend);
+    ASSERT_EQ(1u, cmd.uniforms.count("u_symbolOcclusion"));
     ASSERT_EQ(1u, cmd.uniforms.count("u_pointSizePx"));
     ASSERT_EQ(1u, cmd.uniforms.count("u_viewport"));
     // T2 不变量:**没有图标图集时也要占位**,深度纹理恒落 textures[1]。
