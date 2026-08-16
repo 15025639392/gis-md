@@ -236,6 +236,13 @@ public:
         return labelPlacement_.stats();
     }
 
+    /// P4:上一次**全量** placement 的耗时与候选数。哨兵只在 >4ms 报,
+    /// 拿不到低负载段的点 —— 判"线性还是超线性"需要整条曲线,不是两个点。
+    double lastPlacementMs() const { return lastPlacementMs_; }
+    size_t lastPlacementCandidates() const {
+        return lastPlacementCandidates_;
+    }
+
     /// 镶嵌所需的全部外部状态。**镶嵌不再读任何成员**,故可在 worker 线程
     /// 跑(E1 瓦片桶路径)。
     ///
@@ -542,6 +549,8 @@ public:
     /// 用**时间**而非个数计:实测单字形 3-7ms 波动近一倍(字形复杂度),
     /// 按个数定预算会随内容漂(实测 2 个 = 5.7-14.1ms)。至少放行 1 个,
     /// 否则复杂字形永远排不上、标签永不出现。
+    double lastPlacementMs_ = 0.0;
+    size_t lastPlacementCandidates_ = 0;
     static constexpr double kGlyphRasterBudgetMs = 4.0;
     double glyphRasterBudgetMs_ = kGlyphRasterBudgetMs;
 

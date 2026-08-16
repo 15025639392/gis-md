@@ -1261,6 +1261,14 @@ static void renderFrame() {
                  ga->atlasFullDropCount());
         }
     }
+    // P4 曲线采样:候选数 vs 全量 placement 耗时(哨兵只报 >4ms 的点)
+    if (gMvtBasemapLayer && frameId % 120 == 0) {
+        const size_t cand = gMvtBasemapLayer->lastPlacementCandidates();
+        if (cand > 0) {
+            LOGI("PlaceCurve cand=%zu ms=%.3f", cand,
+                 gMvtBasemapLayer->lastPlacementMs());
+        }
+    }
     if (gDemoFeatureLayer && frameId % 120 == 0) {
         const auto& ls = gDemoFeatureLayer->labelPlacementStats();
         if (ls.candidates > 0) {
@@ -1712,6 +1720,13 @@ private:
             LOGE("Failed to create Engine on render thread");
         }
         choreographer_ = AChoreographer_getInstance();
+        // Phase B 平台级唤醒钩子(§0):WorkLedger Landing 令牌在 worker/网络线程
+        // 释放时,踹醒停在 ALooper_pollOnce(-1) 的渲染线程去消费落地产物。没有
+        // 它,ledger gating 下 Landing 挂着会真睡且再也醒不过来。wake() 跨线程安全
+        // (looperMutex_ 保护);Engine 析构时清除该回调(见 Engine::~Engine)。
+        if (gEngine) {
+            gEngine->setFrameRequestCallback([this]() { wake(); });
+        }
         postFrameIfNeeded();
 
         while (running_.load()) {

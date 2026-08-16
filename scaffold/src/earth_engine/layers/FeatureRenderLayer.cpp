@@ -1971,6 +1971,8 @@ void FeatureRenderLayer::updateLabelPlacement(
     // 的边界,该上 maplibre 式时间片增量(getBucketParts/可暂停推进)了。
     // 节流下 4ms 尖刺每 300ms 一次尚可接受,先报数再决定。
     const double placeMs = perf::nowMs() - placeStartMs;
+    lastPlacementMs_ = placeMs;
+    lastPlacementCandidates_ = candidates.size();
     if (placeMs > 4.0) {
         platformLog(LogLevel::Warning, "TileSymbol",
                     "placement 全量 %.2fms cand=%zu(超 4ms,考虑时间片增量)",
