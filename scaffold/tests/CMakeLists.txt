@@ -1209,6 +1209,14 @@ if(Python3_Interpreter_FOUND)
                 --src ${CMAKE_CURRENT_SOURCE_DIR}/../src
                 --baseline
                 ${CMAKE_CURRENT_SOURCE_DIR}/../tools/ai_index_refs_baseline.txt)
+    # HDR 管线开启态防腐守卫:HDR 决策=长期做/短期挂起(northstar/lighting.md L-V5),
+    # 挂起期默认关+仅 GLES+无设备回归 → 编不到/跑不到/测不到,churn 会静默改坏。
+    # 本守卫查结构完整(分支/锚点/HDR 变体常量),不查 GLSL 语法(glslc 本机缺失)。
+    add_test(
+        NAME test_hdr_variant_integrity
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../tools/check_hdr_variant_integrity.py
+                --src ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 else()
-    message(STATUS "未找到 Python3,跳过 test_ai_index_refs")
+    message(STATUS "未找到 Python3,跳过 test_ai_index_refs / test_hdr_variant_integrity")
 endif()
