@@ -307,6 +307,8 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     public native void nativeDebugFlyTo();
     public native void nativeDebugTether();
     public native void nativeDebugToggleOrtho(int width, int height);
+    /** V26 一期:日/夜换肤往返(面 drape 重栅格化 + 场线色 uniform + 场页重烘)。 */
+    public native void nativeDebugRestyle();
     // 阶段 4/5 的状态回读(同样"真值在引擎,UI 不存镜像"):
     // nativeGetTetherState 返回 0=Free / 1=跟车 / 2=座舱。
     public native boolean nativeGetOrtho();

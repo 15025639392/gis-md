@@ -426,7 +426,7 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
    | 面 drape | ✅ **一期新增** | `VectorDrapeImageryProvider::setStyle`(加锁快照,在途任务解耦)+ `Engine::invalidateComposedTerrainPages()`(Re-bake:全页重栅格化,与"源列表变了全作废"共用 `clearAllComposedPages` 同构) |
    | 线/场 | ✅ **一期新增** | Uniform 类:`Engine::setRoadFieldStyleUniforms`(线色/ramp,零重烘下帧生效);Re-bake 类:`RoadFieldSource::setStyle` + `Engine::invalidateRoadFieldPages`(**含清跳烘门 `fieldLayerKey_`**——不清则同 key 重建复用旧样式层,静默失效;可同步改场页 zoom 封顶) |
 
-   证据:host 新增 5 测(`SetStyleTakesEffectOnNextRequest`/`SetStyleTakesEffectOnNextBake`/`TerrainPageStoreRestyle.*`),189/189 全绿;端到端(determination 建页→失效→重烘)未纳 host(需 RealTerrain 全套测试台),靠 clearAllComposedPages 与已真机验证的源变清页路径同构 + 真机换肤像素验证(待做,归你)。已知瞬态:Re-bake 期间面/线短暂消失(换肤低频,设计文档 §4.3 拍定整路重建)。
+   证据:host 新增 5 测(`SetStyleTakesEffectOnNextRequest`/`SetStyleTakesEffectOnNextBake`/`TerrainPageStoreRestyle.*`),189/189 全绿;端到端未纳 host(需 RealTerrain 全套测试台),靠 clearAllComposedPages 与已真机验证的源变清页路径同构兜底。**真机往返已验(2026-08-18,debug 变体,重庆默认视角)**:demo 加 `nativeDebugRestyle` 日/夜换肤钩子(夜版=日版改色,分级同源;Skin 按钮),logcat 双向 `V26Restyle applied: night/day`,截图三张,中央区均色 day→night 蓝通道 86→68、night→day2 往返闭合(差 ≤1);**路网琥珀/楼暖棕/水深蓝肉眼即判,重烘后路网完整 = 跳烘门清除后正确重建**。观感终判归你(截图已交)。已知瞬态:Re-bake 期间面/线短暂消失(§4.3 拍定);另记一观察:night 截图标注短暂缺席,换肤未碰符号链,疑为 placement 节流时相,未定性。
 
 3. **无外置**:数据源模板、色值、ramp、封顶全是 `constexpr`(`MinimalGlobeDemoConfig.h`),全仓无 style.json 解析器;`GLESView.cpp` 仍有 ~90 行 `FeatureRenderStyle` 样式语句。
    **已部分还**:面 drape 与线/场的分级规则已抽到 `MinimalGlobeDemoConfig.cpp`(`makeMvtDrapeStyle`/`makeMvtRoadFieldStyle`,321 行)且由 `test_mvt_basemap_grading` 守卫。

@@ -90,6 +90,14 @@ VectorRasterStyle makeMvtRoadFieldStyle();
 /// (0.95,0.95,0.90,0.85),交接观感不变。
 constexpr std::array<float, 4> kMvtRoadFieldColor{0.95f, 0.95f, 0.90f,
                                                   0.85f};
+
+/// V26 一期换肤验证:夜间面样式(**调日版改色**,分级/filter 与日版同源,
+/// 不复制 —— test_mvt_basemap_grading 锁的分级自动共享)。
+VectorRasterStyle makeMvtDrapeStyleNight();
+/// 夜间路网线色(亮琥珀):Uniform 成本类,经 setRoadFieldStyleUniforms
+/// 零重烘切换。米白(日)↔琥珀(夜)肉眼即判。
+constexpr std::array<float, 4> kMvtRoadFieldColorNight{1.00f, 0.72f, 0.20f,
+                                                       0.90f};
 // 路网场分级宽度 ramp (z0, halfPx0, z1, halfPx1):FS 在局部 zoom 上线性
 // 插值线半宽(设备px),两端 clamp。宽度=0.6→1.8 CSS px × dpr 3.5 ÷ 2。
 // zoom 基准=影像页 zoom(比地图直觉 zoom 高 ~2-3 档,30km 俯瞰全屏约

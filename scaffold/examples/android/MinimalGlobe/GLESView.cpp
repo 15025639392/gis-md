@@ -211,6 +211,12 @@ static std::shared_ptr<ThreadPool> gMvtWorkerPool;
 // 刀2:面 drape 与路网场共享的 MVT 瓦 fetch+decode 缓存(同一批 z14 祖先
 // 瓦零重复拉取)。shared_ptr:两消费者 + 迟到回调自持。
 static std::shared_ptr<MvtTileFetchCache> gMvtTileCache;
+// V26 一期换肤钩子:留生产者指针供 nativeDebugRestyle 换样式。
+//   drape:raw(unique_ptr move 进 overlay,归其持有;teardown 置空,与
+//   gDemoFeatureLayer 同一套裸指针纪律);场:shared(与 request lambda 共持)。
+static VectorDrapeImageryProvider* gDrapeProviderRaw = nullptr;
+static std::shared_ptr<RoadFieldSource> gRoadFieldSource;
+static bool gNightStyle = false;
 // HttpRequest 是取消句柄(析构即取消),须持有到完成;完成 id 攒起来
 // 由下一次发请求时(渲染线程)剪除,避免在 curl 回调线程里析构句柄。
 struct MvtFetchInflight {
@@ -292,6 +298,9 @@ static void clearDemoEngineObjects() {
     gEditHandleIds.clear();
     gEditDrag = EditDragState{};
     gEditUndoStack.clear();
+    gDrapeProviderRaw = nullptr;  // overlay 随 facade 亡,裸指针先置空
+    gRoadFieldSource.reset();
+    gNightStyle = false;
     gSdkFacade.reset();
     gEngine.reset();
     gRenderDevice.reset();
@@ -450,6 +459,7 @@ static bool createEngine() {
                 minimal_globe_demo::kUseGaodeSatelliteForDemo
                     ? RasterOverlayGeoreference::Gcj02WebMercator
                     : RasterOverlayGeoreference::Standard;
+            gDrapeProviderRaw = drapeProvider.get();  // V26 换肤钩子
             gSdkFacade->addCustomImageryOverlay(
                 std::move(drapeProvider),
                 TileScheme::createXYZWebMercator(), oopts);
@@ -485,6 +495,7 @@ static bool createEngine() {
                 minimal_globe_demo::kUseGaodeSatelliteForDemo;
             auto roadField = std::make_shared<RoadFieldSource>(
                 std::move(fopts), gMvtTileCache, gMvtWorkerPool);
+            gRoadFieldSource = roadField;  // V26 换肤钩子
             gEngine->setRoadFieldSource(
                 [roadField](const TileKey& pageKey, CancellationToken token,
                             std::function<void(std::vector<uint8_t>)> cb) {
@@ -2534,6 +2545,43 @@ Java_com_earthengine_sdk_GLESView_nativeDebugFlyTo(
 // 阶段 5 的真实用途:可复现的**正俯视**位姿。掠视下的正交是退化用例
 // (正交盒半高远大于相机高度 ⇒ 下半部整个在地下 ⇒ 天空色),俯视才是正交要干的活。
 //
+// V26 一期换肤真机验证:日/夜样式往返切换,三条通路各按成本类走一遍——
+// 面 drape 换色(Re-bake:setStyle + invalidateComposedTerrainPages 全页重
+// 栅格化)、场线色(Uniform:setRoadFieldStyleUniforms 零重烘下帧生效)、
+// 场页重烘(Re-bake:invalidateRoadFieldPages,同分级重烘 —— 验的是跳烘门
+// 清除后正确重建,坏了的症状=路网全灭)。像素判据(归用户):水深蓝/楼暖棕
+// /路网琥珀 ↔ 日版米白,一眼即判;瞬态=重烘期间面短暂回落纯影像。
+JNIEXPORT void JNICALL
+Java_com_earthengine_sdk_GLESView_nativeDebugRestyle(
+    JNIEnv* /* env */, jobject /* this */) {
+    gRenderThread.post([]() {
+        if (!gEngine) return;
+        gNightStyle = !gNightStyle;
+        const bool night = gNightStyle;
+        if (gDrapeProviderRaw) {
+            gDrapeProviderRaw->setStyle(
+                night ? minimal_globe_demo::makeMvtDrapeStyleNight()
+                      : minimal_globe_demo::makeMvtDrapeStyle());
+            gEngine->invalidateComposedTerrainPages();
+        }
+        if (gRoadFieldSource) {
+            gEngine->setRoadFieldStyleUniforms(
+                night ? minimal_globe_demo::kMvtRoadFieldColorNight
+                      : minimal_globe_demo::kMvtRoadFieldColor,
+                minimal_globe_demo::kMvtRoadFieldWidthRampPx);
+            // 分级样式本 demo 日/夜同源,setStyle 传同一份即可;仍显式走
+            // 一遍 Re-bake 通路(见函数头注释)。
+            gRoadFieldSource->setStyle(
+                minimal_globe_demo::makeMvtRoadFieldStyle());
+            gEngine->invalidateRoadFieldPages(
+                minimal_globe_demo::kMvtRoadFieldMaxZoom);
+        }
+        LOGI("V26Restyle applied: %s (drape=%d field=%d)",
+             night ? "night" : "day", gDrapeProviderRaw != nullptr,
+             gRoadFieldSource != nullptr);
+    });
+}
+
 // 走 setViewpoint 的「部分 viewpoint」语义,顺带在设备上验阶段 2 的**万向节约定**:
 // pitch 恰好 −π/2 是奇点(direction 沿天底,绕它转不改视线 ⇒ heading 只能由 up 定,
 // 约定 roll=0)。回读 currentViewpoint() 打出来,位姿往返在真机上也必须闭合。

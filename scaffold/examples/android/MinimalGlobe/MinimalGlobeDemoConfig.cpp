@@ -48,6 +48,21 @@ VectorRasterStyle makeMvtDrapeStyle() {
     return style;
 }
 
+VectorRasterStyle makeMvtDrapeStyleNight() {
+    // V26 一期换肤验证:日版改色,分级/filter 原样保留(唯一权威在日版)。
+    // 水=深墨蓝、建筑=暖棕,与日版色相差开到肉眼即判;alpha 略提,夜景
+    // 底图偏暗、盖度可以更高。
+    VectorRasterStyle style = makeMvtDrapeStyle();
+    for (VectorRasterLayerPaint& paint : style.layers) {
+        if (paint.layer == "water") {
+            paint.fillColor = {18, 42, 92, 170};
+        } else if (paint.layer == "building") {
+            paint.fillColor = {120, 92, 60, 170};
+        }
+    }
+    return style;
+}
+
 VectorRasterStyle makeMvtRoadFieldStyle() {
     using C = StyleFilter::Compare;
     // highway 分级:与几何通路退役前的分级表同源(zoom 固定于**页 z**,

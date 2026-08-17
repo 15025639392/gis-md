@@ -163,6 +163,13 @@ public class MainActivity extends Activity {
         btnFly.setOnClickListener(v -> mGLView.nativeDebugFlyTo());
         cameraActions.addView(btnFly);
 
+        // V26 一期:日/夜换肤往返(drape 重栅格化 + 场线色 uniform + 场页重烘)。
+        Button btnSkin = new Button(this);
+        btnSkin.setText("Skin");
+        btnSkin.setTextSize(10);
+        btnSkin.setOnClickListener(v -> mGLView.nativeDebugRestyle());
+        cameraActions.addView(btnSkin);
+
         // 阶段 4:系留三态循环 Free → 跟车 → 座舱 → Free。
         mBtnTether = new Button(this);
         mBtnTether.setTextSize(10);
