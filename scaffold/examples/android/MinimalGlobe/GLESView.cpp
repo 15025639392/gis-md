@@ -300,6 +300,9 @@ static void clearDemoEngineObjects() {
     gEditHandleIds.clear();
     gEditDrag = EditDragState{};
     gEditUndoStack.clear();
+    if (gEngine) {
+        gEngine->setStyleTargets(nullptr, nullptr, nullptr);  // V26 三期
+    }
     gDrapeProviderRaw = nullptr;  // overlay 随 facade 亡,裸指针先置空
     gRoadFieldSource.reset();
     gNightStyle = false;
@@ -702,6 +705,10 @@ static bool createEngine() {
             gMvtSource = std::make_unique<MvtVectorSource>(
                 mvtOpts, std::move(sinks), gMvtTileCache, gMvtWorkerPool);
             gEngine->addFeatureRenderLayer(std::move(basemapLayer));
+            // V26 三期:样式文档分发目标注册(drape/场在前面已建;任一为
+            // 空 = 该路不分发)。teardown 与三个 g* 指针同点清。
+            gEngine->setStyleTargets(gDrapeProviderRaw, gRoadFieldSource,
+                                     gMvtBasemapLayer);
             LOGI("VectorP4 MVT basemap installed: %s (z%d-%d)",
                  minimal_globe_demo::kMvtBasemapUrlTemplate,
                  minimal_globe_demo::kMvtBasemapMinZoom,
@@ -2566,53 +2573,6 @@ constexpr const char* kStyleDocDirs[] = {
     "/sdcard/Android/data/com.earthengine.minimalglobe/files",
 };
 
-// 上一次成功应用的编译产物(成本类路由的 old 侧)。渲染线程独占。
-std::optional<CompiledStyle> gLastCompiledStyle;
-
-/// 读文件→parse→compile。任一步失败:逐条 LOGE(fail-loud)并返回 nullopt,
-/// 调用方回落内置样式 —— 错误样式文档**不得**半应用。
-std::optional<CompiledStyle> loadStyleDocument(const char* path) {
-    std::ifstream in(path, std::ios::binary);
-    if (!in) return std::nullopt;  // 文件缺席不是错误(内置兜底)
-    std::string text((std::istreambuf_iterator<char>(in)),
-                     std::istreambuf_iterator<char>());
-    std::vector<StyleError> errors;
-    StyleDocument doc = parseStyleDocument(text, errors);
-    CompiledStyle compiled;
-    if (errors.empty()) compiled = compileStyleDocument(doc, errors);
-    if (!errors.empty()) {
-        for (const StyleError& e : errors) {
-            LOGE("V26Restyle style doc %s: %s: %s", path, e.where.c_str(),
-                 e.message.c_str());
-        }
-        return std::nullopt;
-    }
-    return compiled;
-}
-
-/// 按成本类路由应用编译产物。Uniform 恒直写;Re-bake 按 plan。
-void applyCompiledStyle(const CompiledStyle& style) {
-    const StyleApplyPlan plan = planStyleApply(
-        gLastCompiledStyle ? &*gLastCompiledStyle : nullptr, style);
-    if (gDrapeProviderRaw) {
-        if (plan.rebakeDrape) {
-            gDrapeProviderRaw->setStyle(style.drapeStyle);
-            gEngine->invalidateComposedTerrainPages();
-        }
-    }
-    if (gRoadFieldSource) {
-        gEngine->setRoadFieldStyleUniforms(style.fieldLineColor,
-                                           style.fieldWidthRamp);
-        if (plan.rebakeField) {
-            gRoadFieldSource->setStyle(style.fieldStyle);
-            gEngine->invalidateRoadFieldPages(style.fieldMaxZoom);
-        }
-    }
-    gLastCompiledStyle = style;
-    LOGI("V26Restyle doc applied (rebakeDrape=%d rebakeField=%d)",
-         plan.rebakeDrape, plan.rebakeField);
-}
-
 }  // namespace
 
 JNIEXPORT void JNICALL
@@ -2622,18 +2582,31 @@ Java_com_earthengine_sdk_GLESView_nativeDebugRestyle(
         if (!gEngine) return;
         gNightStyle = !gNightStyle;
         const bool night = gNightStyle;
-        // 二期文档路:外置文件在则整份走文档(含成本类路由)。
+        // 三期文档路:Engine 一口气分发(parse→契约→成本类路由→三路)。
+        // 错误 = 整份拒收逐条 LOGE,继续试下一路径/回落内置 —— 坏文档
+        // 不得半应用。
         for (const char* dir : kStyleDocDirs) {
             const std::string docPath = std::string(dir) + "/style-" +
                                         (night ? "night" : "day") + ".json";
-            if (auto compiled = loadStyleDocument(docPath.c_str())) {
-                applyCompiledStyle(*compiled);
+            std::ifstream in(docPath, std::ios::binary);
+            if (!in) continue;  // 文件缺席不是错误(内置兜底)
+            std::string text((std::istreambuf_iterator<char>(in)),
+                             std::istreambuf_iterator<char>());
+            const std::vector<StyleError> errors =
+                gEngine->applyStyleDocument(text);
+            if (errors.empty()) {
                 LOGI("V26Restyle applied from doc: %s", docPath.c_str());
                 return;
             }
+            for (const StyleError& e : errors) {
+                LOGE("V26Restyle style doc %s: %s: %s", docPath.c_str(),
+                     e.where.c_str(), e.message.c_str());
+            }
         }
-        // 一期内置兜底(真机已验路径,行为不变)。
-        gLastCompiledStyle.reset();  // 内置路绕过文档指纹,别让旧指纹误判 diff
+        // 一期内置兜底(真机已验路径,行为不变)。内置路绕过 Engine 的文档
+        // 指纹 memo —— 重注册目标清掉它,防下次文档应用按旧指纹误判 diff。
+        gEngine->setStyleTargets(gDrapeProviderRaw, gRoadFieldSource,
+                                 gMvtBasemapLayer);
         if (gDrapeProviderRaw) {
             gDrapeProviderRaw->setStyle(
                 night ? minimal_globe_demo::makeMvtDrapeStyleNight()

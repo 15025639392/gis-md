@@ -3,6 +3,7 @@
 #include "core/math/Vec3.h"
 #include "scene/Diagnostics.h"
 #include "scene/FrameState.h"
+#include "style/StyleDocument.h"
 #include "threading/CancellationToken.h"
 #include "tiling/TileKey.h"
 #include "tiling/TileOcclusionCallback.h"
@@ -11,6 +12,7 @@
 #include <functional>
 #include <memory>
 #include <cstdint>
+#include <optional>
 #include <vector>
 #include <string>
 
@@ -31,6 +33,8 @@ class TerrainDisplacementTemplatePool;
 class Tileset;
 class FeatureRenderLayer;
 class VectorLayer;
+class VectorDrapeImageryProvider;
+class RoadFieldSource;
 struct PresentationTrace;
 struct InputEvent;
 struct PickResult;
@@ -338,6 +342,20 @@ public:
     /// fetch 走 HttpCache 通常为热)。页存储未建时 no-op。
     void invalidateComposedTerrainPages();
 
+    /// ==== V26 三期:样式文档一口气分发(渲染线程)。====
+    /// 目标注册:宿主建层后注册,teardown 前清(全传空)。drape 为裸指针
+    /// (overlay 持有,注册方负责生命周期纪律 —— 与 demo gDrapeProviderRaw
+    /// 同一套);场 shared;symbol 层须已 addFeatureRenderLayer(Engine 只借
+    /// 引用,不持有)。任一目标为空 = 该路不分发(文档对应层被忽略)。
+    void setStyleTargets(VectorDrapeImageryProvider* drapeProvider,
+                         std::shared_ptr<RoadFieldSource> fieldSource,
+                         FeatureRenderLayer* symbolLayer);
+    /// 应用样式 JSON:parse → compile(能力契约 fail-loud)→ planStyleApply
+    /// (成本类路由:Uniform 直写 / Re-bake 面页重栅格化 / Re-bake 场页重烘 /
+    /// Re-tess 符号全桶重镶)→ 按 plan 分发。返回错误清单;**非空 = 整份
+    /// 拒收,现行样式不动**(不半应用)。
+    std::vector<StyleError> applyStyleDocument(const std::string& jsonText);
+
 private:
     /// Phase B(WorkLedger 接管 gating)的活性判据。仅当 kEnableWorkLedgerGating
     /// 翻转为 true 时被 needsFrame 调用;默认关,当前为死代码骨架(见其定义处注释)。
@@ -436,6 +454,13 @@ private:
     std::function<void(const TileKey&, CancellationToken,
                        std::function<void(std::vector<uint8_t>)>)>
         roadFieldRequest_;
+    // V26 三期:样式文档分发目标(宿主注册,Engine 只借引用)与上次编译产物
+    // (成本类路由的 old 侧)。均渲染线程独占。
+    VectorDrapeImageryProvider* styleDrapeTarget_ = nullptr;
+    std::shared_ptr<RoadFieldSource> styleFieldTarget_;
+    FeatureRenderLayer* styleSymbolTarget_ = nullptr;
+    std::optional<CompiledStyle> lastCompiledStyle_;
+
     std::array<float, 4> roadFieldColor_{0.96f, 0.96f, 0.94f, 0.86f};
     std::array<float, 4> roadFieldWidthRampPx_{12.0f, 1.05f, 16.0f, 3.15f};
     int roadFieldMaxZoom_ = 15;

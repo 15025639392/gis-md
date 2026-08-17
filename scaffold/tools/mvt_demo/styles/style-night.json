@@ -212,6 +212,32 @@
           3.15
         ]
       }
+    },
+    {
+      "id": "poi",
+      "type": "symbol",
+      "paint": {
+        "point-anchor": "bottom",
+        "point-image": {
+          "match": {
+            "property": "kind",
+            "cases": {
+              "place:city": "star",
+              "place:town": "star",
+              "place:district": "star",
+              "place:suburb": "star",
+              "railway:station": "square",
+              "aeroway:aerodrome": "diamond",
+              "tourism:attraction": "triangle",
+              "tourism:museum": "triangle",
+              "leisure:park": "triangle",
+              "amenity:hospital": "pin"
+            },
+            "default": "circle"
+          }
+        },
+        "point-color": "#ffd24df5"
+      }
     }
   ]
 }

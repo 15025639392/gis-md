@@ -413,7 +413,7 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
 
 | # | 判据 | 类型 | 状态 | 代价(实测) | 证据 / 差距 |
 |---|---|---|---|---|---|
-| **V26** | **运行期换样式**:换肤 / 样式热加载 / 外置样式文件,不重编译即可换城市、换数据源、换配色 | 机制 | ⚠️ | 一期(失效通路)~0;二期(Doc/parse/compile)加载期一次,稳态零;Re-bake = 换肤瞬间一次重栅格化/场重烘(低频) | **一期✅二期✅(2026-08-18)**。二期=StyleDocument(A 案对象风格 JSON)+ 契约 fail-loud + 成本类路由(`style/StyleDocument.*`,host 11 测 190/190)。**真机热改闭环**:adb 改设备 style-night.json(路网琥珀→青)→ Skin → 画面变青,零重装;logcat `rebakeField=0` = 成本类路由真机自证(day↔night 分级同、只差色 → 场不重烘,线色 uniform 直写)。**余**:数据源 URL 外置(仍 constexpr,样式文档只管观感)、点/交互路 JSON 化(三期)。架构:`docs/issues/vector-style-architecture-2026-08-18.md` |
+| **V26** | **运行期换样式**:换肤 / 样式热加载 / 外置样式文件,不重编译即可换城市、换数据源、换配色 | 机制 | ⚠️ | 一期(失效通路)~0;二期(Doc/parse/compile)加载期一次,稳态零;三期 symbol=Re-tess 全桶重镶(换肤瞬间一次);Re-bake = 一次重栅格化/场重烘(低频) | **一期✅二期✅三期✅(2026-08-18)**。二期=StyleDocument(A 案对象风格 JSON)+ 契约 fail-loud + 成本类路由;**真机热改闭环**(改设备 json→Skin→变色零重装,`rebakeField=0` 成本类自证)。**三期**=symbol 路 JSON 化(match/interpolate 表达式对象形态,层过滤仍归 MvtVectorSource C++ 配置)+ `Engine::setStyleTargets/applyStyleDocument` 一口气分发 + **掩码合成**(文档没写的字段不洗现行——真机踩过:altitudeMode 被洗成 Absolute 符号整批埋进地形,`mergeSymbolStyle` + 回归锁);host 16 测 190/190。**交互路(OverlayStyle/VectorLayer)判缓**:唯一消费者是 demo 编辑演示层,JSON 化收益≈0,正路是日后退役合并进 FeatureRenderLayer(另立项,归你拍)。⚠️ symbol 真机像素验证被独立回归阻塞:POI 符号在纯内置基线也缺席(A/B 已证与样式路径无关,疑省电门控冻住 fade,已立案排查);夜版 doc 应用日志与面/线变色均正常。**余**:数据源 URL 外置(另立项)。架构:`docs/issues/vector-style-architecture-2026-08-18.md` |
 
 **差距(2026-08-17 逐条对源码核实)**:
 

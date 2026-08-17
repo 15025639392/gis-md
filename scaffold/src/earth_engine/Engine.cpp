@@ -13,6 +13,8 @@
 #include "renderer/RenderDevice.h"
 #include "layers/FeatureRenderLayer.h"
 #include "layers/VectorLayer.h"
+#include "providers/RoadFieldSource.h"
+#include "providers/VectorDrapeImageryProvider.h"
 #include "layers/ActivatedRasterOverlay.h"  // B2a 门②:overlays.front()->getTileProvider()
 #include "core/cache/HttpCache.h"
 #include "core/async/WorkLedger.h"
@@ -435,6 +437,49 @@ void Engine::invalidateComposedTerrainPages() {
     if (terrainPageStore_) {
         terrainPageStore_->invalidateComposedPages();
     }
+}
+
+void Engine::setStyleTargets(VectorDrapeImageryProvider* drapeProvider,
+                             std::shared_ptr<RoadFieldSource> fieldSource,
+                             FeatureRenderLayer* symbolLayer) {
+    styleDrapeTarget_ = drapeProvider;
+    styleFieldTarget_ = std::move(fieldSource);
+    styleSymbolTarget_ = symbolLayer;
+    // 目标集变了,旧编译产物的指纹不再对应可达目标,清掉让下一份全量应用。
+    lastCompiledStyle_.reset();
+}
+
+std::vector<StyleError> Engine::applyStyleDocument(const std::string& jsonText) {
+    std::vector<StyleError> errors;
+    StyleDocument doc = parseStyleDocument(jsonText, errors);
+    CompiledStyle compiled;
+    if (errors.empty()) compiled = compileStyleDocument(doc, errors);
+    if (!errors.empty()) return errors;  // 整份拒收,现行样式不动
+
+    const StyleApplyPlan plan = planStyleApply(
+        lastCompiledStyle_ ? &*lastCompiledStyle_ : nullptr, compiled);
+    if (styleDrapeTarget_ && plan.rebakeDrape) {
+        styleDrapeTarget_->setStyle(compiled.drapeStyle);
+        invalidateComposedTerrainPages();
+    }
+    if (styleFieldTarget_) {
+        setRoadFieldStyleUniforms(compiled.fieldLineColor,
+                                  compiled.fieldWidthRamp);
+        if (plan.rebakeField) {
+            styleFieldTarget_->setStyle(compiled.fieldStyle);
+            invalidateRoadFieldPages(compiled.fieldMaxZoom);
+        }
+    }
+    if (styleSymbolTarget_ && plan.retessSymbols) {
+        // FeatureRenderLayer::setStyle 内部已全桶重镶(Re-tess 通路现成)。
+        // 按掩码合成:文档没写的字段保持现行 —— 尤其 altitudeMode 这类
+        // 几何语义(真机踩过:洗成 Absolute 后符号整批埋进地形)。
+        styleSymbolTarget_->setStyle(mergeSymbolStyle(
+            styleSymbolTarget_->style(), compiled.symbolStyle,
+            compiled.symbolMask));
+    }
+    lastCompiledStyle_ = std::move(compiled);
+    return {};
 }
 
 void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {

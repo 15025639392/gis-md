@@ -22,6 +22,12 @@ struct PaintContract {
 const PaintContract kPaintContracts[] = {
     {"fill", {"fill-color"}},
     {"line", {"line-color", "line-width-ramp"}},
+    // 三期 symbol 子集:点符号 + 标注(FeatureRenderStyle 对应字段)。
+    // 值可为字面量或表达式对象(match/interpolate,见 parseStyleValueExpr)。
+    {"symbol",
+     {"point-color", "point-size", "point-image", "point-anchor",
+      "label-property", "label-color", "label-halo-color", "label-size",
+      "label-offset", "label-halo"}},
 };
 
 /// 已知但表示画不出的键 → 定制错误(不是"未知键"而是"知道你要什么,
@@ -35,6 +41,18 @@ const char* unsupportedPaintHint(const std::string& type,
     if (type == "line" && key == "line-color-expr") {
         return "场是单色 uniform(D2 无分类通道,northstar V26 差距#3);"
                "多色路网需扩通道或加平面,样式层无法兜";
+    }
+    return nullptr;
+}
+
+/// symbol 型的 layer 级键限制:层过滤(SourceLayerRule)归 MvtVectorSource
+/// 的 C++ 配置(三期范围裁定,牵动 source 侧失效面),文档给要报清楚。
+const char* unsupportedSymbolLayerHint(const std::string& key) {
+    if (key == "filter" || key == "minzoom" || key == "maxzoom" ||
+        key == "source-layer") {
+        return "symbol 层的源图层/过滤/zoom 档归 MvtVectorSource 的"
+               " includeLayers/layerRules(C++ 配置)——文档只管样式;"
+               "过滤 JSON 化牵动 source 侧失效面,三期未纳入";
     }
     return nullptr;
 }
@@ -172,6 +190,189 @@ StyleFilter::Ptr parseFilter(const json& node, const std::string& where,
     return nullptr;
 }
 
+// ===== 三期:StyleExpression 的 JSON 对象形态 =====
+// 值域按**目标属性**定(色/数/字符串),解析器带 kind —— 色属性收 hex 串、
+// 尺寸属性收数、图形属性收名字,类型错位在 parse 期报,不进求值期。
+// 形态:
+//   字面量:      "#rrggbbaa" / 26 / "star"
+//   match:       {"match": {"property": p, "cases": {值键: 值...},
+//                           "default": 值}}(数据驱动,禁 zoom —— 由
+//                 FeatureRenderLayer::setStyle 语义校验兜底)
+//   interpolate: {"interpolate": {"input": "zoom", "stops": [[z, 值]...]}}
+enum class ValueKind { Color, Number, String };
+
+StyleExpression::Ptr parseLeafValue(const json& v, ValueKind kind,
+                                    const std::string& where,
+                                    std::vector<StyleError>& errors) {
+    switch (kind) {
+        case ValueKind::Color: {
+            auto c = v.is_string() ? parseHexColor(v.get<std::string>())
+                                   : std::nullopt;
+            if (!c) {
+                addError(errors, where, "色值须是 \"#rrggbb(aa)\"");
+                return nullptr;
+            }
+            return StyleExpression::literal(toFloatColor(*c));
+        }
+        case ValueKind::Number:
+            if (!v.is_number()) {
+                addError(errors, where, "须是数");
+                return nullptr;
+            }
+            return StyleExpression::literal(v.get<double>());
+        case ValueKind::String:
+            if (!v.is_string()) {
+                addError(errors, where, "须是字符串");
+                return nullptr;
+            }
+            return StyleExpression::literalString(v.get<std::string>());
+    }
+    return nullptr;
+}
+
+/// 值或表达式。返回 {expr, isLiteral}:isLiteral=true 时调用方可选择落
+/// 字面量字段(省一层求值);表达式恒落 *Expr 字段。
+struct ParsedValue {
+    StyleExpression::Ptr expr;
+    bool isLiteral = false;
+};
+
+ParsedValue parseStyleValueExpr(const json& v, ValueKind kind,
+                                const std::string& where,
+                                std::vector<StyleError>& errors) {
+    if (!v.is_object()) {
+        return {parseLeafValue(v, kind, where, errors), true};
+    }
+    if (v.size() != 1) {
+        addError(errors, where, "表达式对象须恰含一个键(match/interpolate)");
+        return {nullptr, false};
+    }
+    const std::string key = v.begin().key();
+    const json& body = v.begin().value();
+    if (key == "match") {
+        if (!body.is_object() || !body.contains("property") ||
+            !body.contains("cases") || !body["cases"].is_object() ||
+            !body.contains("default")) {
+            addError(errors, where + ".match",
+                     "须是 {\"property\": p, \"cases\": {…}, \"default\": 值}");
+            return {nullptr, false};
+        }
+        std::vector<std::pair<std::string, StyleExpression::Ptr>> cases;
+        for (const auto& [ck, cv] : body["cases"].items()) {
+            auto leaf = parseLeafValue(cv, kind,
+                                       where + ".match.cases." + ck, errors);
+            if (leaf) cases.emplace_back(ck, std::move(leaf));
+        }
+        auto fallback = parseLeafValue(body["default"], kind,
+                                       where + ".match.default", errors);
+        if (!fallback) return {nullptr, false};
+        return {StyleExpression::match(body["property"].get<std::string>(),
+                                       std::move(cases), std::move(fallback)),
+                false};
+    }
+    if (key == "interpolate") {
+        if (!body.is_object() || body.value("input", "") != "zoom" ||
+            !body.contains("stops") || !body["stops"].is_array()) {
+            addError(errors, where + ".interpolate",
+                     "须是 {\"input\": \"zoom\", \"stops\": [[z, 值]...]}"
+                     "(input 目前仅 zoom —— 数据驱动插值属后置)");
+            return {nullptr, false};
+        }
+        std::vector<std::pair<double, StyleExpression::Ptr>> stops;
+        for (size_t i = 0; i < body["stops"].size(); ++i) {
+            const json& s = body["stops"][i];
+            const std::string sw =
+                where + ".interpolate.stops[" + std::to_string(i) + "]";
+            if (!s.is_array() || s.size() != 2 || !s[0].is_number()) {
+                addError(errors, sw, "须是 [zoom, 值] 二元组");
+                continue;
+            }
+            auto leaf = parseLeafValue(s[1], kind, sw, errors);
+            if (leaf) stops.emplace_back(s[0].get<double>(), std::move(leaf));
+        }
+        if (stops.empty()) {
+            addError(errors, where + ".interpolate.stops", "至少一个 stop");
+            return {nullptr, false};
+        }
+        return {StyleExpression::interpolateLinear(StyleExpression::zoom(),
+                                                   std::move(stops)),
+                false};
+    }
+    addError(errors, where, "未知表达式键 \"" + key + "\"");
+    return {nullptr, false};
+}
+
+/// symbol paint → FeatureRenderStyle + set 掩码(字面量落标量字段,表达式
+/// 落 *Expr;掩码记录"文档写了哪些",应用侧按掩码合成不洗未写字段)。
+void parseSymbolPaint(const json& paint, FeatureRenderStyle& style,
+                      StyleDocumentLayer::SymbolMask& mask,
+                      const std::string& where,
+                      std::vector<StyleError>& errors) {
+    for (const auto& [k, v] : paint.items()) {
+        const std::string kw = where + "." + k;
+        if (k == "point-color") {
+            ParsedValue pv = parseStyleValueExpr(v, ValueKind::Color, kw, errors);
+            if (!pv.expr) continue;
+            mask.pointColor = true;
+            if (pv.isLiteral) {
+                auto out = pv.expr->evaluate(nullptr, 0.0);
+                style.pointColor = out->color();
+            } else {
+                style.pointColorExpr = pv.expr;
+            }
+        } else if (k == "point-size") {
+            ParsedValue pv = parseStyleValueExpr(v, ValueKind::Number, kw, errors);
+            if (!pv.expr) continue;
+            mask.pointSize = true;
+            if (pv.isLiteral) {
+                style.pointSizePx =
+                    static_cast<float>(pv.expr->evaluate(nullptr, 0.0)->number());
+            } else {
+                style.pointSizeExpr = pv.expr;
+            }
+        } else if (k == "point-image") {
+            ParsedValue pv = parseStyleValueExpr(v, ValueKind::String, kw, errors);
+            if (!pv.expr) continue;
+            mask.pointImage = true;
+            if (pv.isLiteral) {
+                style.pointImage = pv.expr->evaluate(nullptr, 0.0)->string();
+            } else {
+                style.pointImageExpr = pv.expr;
+            }
+        } else if (k == "point-anchor") {
+            const std::string a = v.is_string() ? v.get<std::string>() : "";
+            if (a == "auto") style.pointAnchor = SymbolAnchor::Auto;
+            else if (a == "center") style.pointAnchor = SymbolAnchor::Center;
+            else if (a == "bottom") style.pointAnchor = SymbolAnchor::Bottom;
+            else { addError(errors, kw, "须是 auto|center|bottom"); continue; }
+            mask.pointAnchor = true;
+        } else if (k == "label-property") {
+            if (!v.is_string()) { addError(errors, kw, "须是属性名字符串"); continue; }
+            style.labelProperty = v.get<std::string>();
+            mask.labelProperty = true;
+        } else if (k == "label-color" || k == "label-halo-color") {
+            auto c = v.is_string() ? parseHexColor(v.get<std::string>())
+                                   : std::nullopt;
+            if (!c) { addError(errors, kw, "色值须是 \"#rrggbb(aa)\""); continue; }
+            if (k == "label-color") {
+                style.labelColor = toFloatColor(*c);
+                mask.labelColor = true;
+            } else {
+                style.labelHaloColor = toFloatColor(*c);
+                mask.labelHaloColor = true;
+            }
+        } else if (k == "label-size" || k == "label-offset" ||
+                   k == "label-halo") {
+            if (!v.is_number()) { addError(errors, kw, "须是数(px)"); continue; }
+            const float f = v.get<float>();
+            if (k == "label-size") { style.labelSizePx = f; mask.labelSize = true; }
+            else if (k == "label-offset") { style.labelOffsetPx = f; mask.labelOffset = true; }
+            else { style.labelHaloPx = f; mask.labelHalo = true; }
+        }
+        // 未知键由调用方的契约表统一拦,此处只处理已允许键。
+    }
+}
+
 }  // namespace
 
 StyleDocument parseStyleDocument(const std::string& jsonText,
@@ -230,19 +431,32 @@ StyleDocument parseStyleDocument(const std::string& jsonText,
                          "\"(二期支持 fill/line;symbol 属三期)");
             continue;
         }
-        layer.sourceLayer = jl.value("source-layer", "");
-        if (layer.sourceLayer.empty()) {
-            addError(errors, where + ".source-layer", "必填(MVT 源图层名)");
+        const bool isSymbol = layer.type == "symbol";
+        if (isSymbol) {
+            // symbol 型:源图层/过滤/zoom 档归 MvtVectorSource C++ 配置,
+            // 文档里出现即报(带出路提示,不是泛化"未知键")。
+            for (const char* k : {"source-layer", "filter", "minzoom",
+                                  "maxzoom"}) {
+                if (jl.contains(k)) {
+                    addError(errors, where + "." + k,
+                             unsupportedSymbolLayerHint(k));
+                }
+            }
+        } else {
+            layer.sourceLayer = jl.value("source-layer", "");
+            if (layer.sourceLayer.empty()) {
+                addError(errors, where + ".source-layer", "必填(MVT 源图层名)");
+            }
+            // ⚠️ zoom 三义:min/maxzoom 与 filter 里的 zoom 同为**页 z**。
+            layer.minZoom = jl.value("minzoom", 0);
+            layer.maxZoom = jl.value("maxzoom", 24);
+            int maxZoomSeen = -1;
+            if (jl.contains("filter")) {
+                layer.filter = parseFilter(jl["filter"], where + ".filter",
+                                           errors, maxZoomSeen);
+            }
+            derivedFieldMaxZoom = std::max(derivedFieldMaxZoom, maxZoomSeen);
         }
-        // ⚠️ zoom 三义:min/maxzoom 与 filter 里的 zoom 同为**页 z**。
-        layer.minZoom = jl.value("minzoom", 0);
-        layer.maxZoom = jl.value("maxzoom", 24);
-        int maxZoomSeen = -1;
-        if (jl.contains("filter")) {
-            layer.filter = parseFilter(jl["filter"], where + ".filter", errors,
-                                       maxZoomSeen);
-        }
-        derivedFieldMaxZoom = std::max(derivedFieldMaxZoom, maxZoomSeen);
 
         const json paint = jl.value("paint", json::object());
         for (const auto& [k, v] : paint.items()) {
@@ -256,6 +470,7 @@ StyleDocument parseStyleDocument(const std::string& jsonText,
                               : "type \"" + layer.type + "\" 不支持该属性");
                 continue;
             }
+            if (isSymbol) continue;  // symbol 键统一在循环后整体解析
             if (k == "fill-color" || k == "line-color") {
                 auto c = v.is_string() ? parseHexColor(v.get<std::string>())
                                        : std::nullopt;
@@ -290,16 +505,26 @@ StyleDocument parseStyleDocument(const std::string& jsonText,
             }
         }
 
-        // Re-bake 指纹:规范化序列化该层的重烘相关字段。nlohmann object 按键
-        // 有序 → dump 即规范形。Uniform 类(line-color/ramp)**刻意不进**指纹。
+        if (isSymbol) {
+            parseSymbolPaint(paint, layer.symbol, layer.symbolMask,
+                             where + ".paint", errors);
+        }
+
+        // Re-bake/Re-tess 指纹:规范化序列化该层的重建相关字段。nlohmann
+        // object 按键有序 → dump 即规范形。Uniform 类(line-color/ramp)
+        // **刻意不进**指纹;symbol 整个 paint 都是 Re-tess(全桶重镶)。
         json fp;
-        fp["source-layer"] = layer.sourceLayer;
-        fp["minzoom"] = layer.minZoom;
-        fp["maxzoom"] = layer.maxZoom;
-        if (jl.contains("filter")) fp["filter"] = jl["filter"];
-        if (layer.type == "fill") {
-            fp["fill-color"] = jl.value("paint", json::object())
-                                   .value("fill-color", "");
+        if (isSymbol) {
+            fp["paint"] = paint;
+        } else {
+            fp["source-layer"] = layer.sourceLayer;
+            fp["minzoom"] = layer.minZoom;
+            fp["maxzoom"] = layer.maxZoom;
+            if (jl.contains("filter")) fp["filter"] = jl["filter"];
+            if (layer.type == "fill") {
+                fp["fill-color"] = jl.value("paint", json::object())
+                                       .value("fill-color", "");
+            }
         }
         layer.rebakeFingerprint = fp.dump();
 
@@ -358,6 +583,17 @@ CompiledStyle compileStyleDocument(const StyleDocument& doc,
                          "(D2 无分类通道,northstar V26 差距#3;多色路网"
                          "需扩通道,样式层兜不了)");
             }
+        } else if (layer.type == "symbol") {
+            if (out.hasSymbol) {
+                addError(errors, where,
+                         "至多一个 symbol 层(编译目标是单 FeatureRenderLayer;"
+                         "多符号层拆分归后续,现在给两个会静默丢一个 —— 拒收)");
+                continue;
+            }
+            out.symbolStyle = layer.symbol;
+            out.symbolMask = layer.symbolMask;
+            out.hasSymbol = true;
+            out.symbolFingerprint = layer.rebakeFingerprint;
         }
         // parser 已挡未知 type,此处不重复。
     }
@@ -378,11 +614,41 @@ StyleApplyPlan planStyleApply(const CompiledStyle* oldStyle,
     if (!oldStyle) {
         plan.rebakeDrape = true;
         plan.rebakeField = true;
+        plan.retessSymbols = newStyle.hasSymbol;  // 无 symbol 层不许洗默认样式
         return plan;
     }
     plan.rebakeDrape = oldStyle->drapeFingerprint != newStyle.drapeFingerprint;
     plan.rebakeField = oldStyle->fieldFingerprint != newStyle.fieldFingerprint;
+    plan.retessSymbols =
+        newStyle.hasSymbol &&
+        oldStyle->symbolFingerprint != newStyle.symbolFingerprint;
     return plan;
+}
+
+FeatureRenderStyle mergeSymbolStyle(
+    const FeatureRenderStyle& current, const FeatureRenderStyle& fromDoc,
+    const StyleDocumentLayer::SymbolMask& mask) {
+    FeatureRenderStyle out = current;  // 未置位字段(含几何语义)全保持现状
+    if (mask.pointColor) {
+        out.pointColor = fromDoc.pointColor;
+        out.pointColorExpr = fromDoc.pointColorExpr;  // 可为空 = literal 压 expr
+    }
+    if (mask.pointSize) {
+        out.pointSizePx = fromDoc.pointSizePx;
+        out.pointSizeExpr = fromDoc.pointSizeExpr;
+    }
+    if (mask.pointImage) {
+        out.pointImage = fromDoc.pointImage;
+        out.pointImageExpr = fromDoc.pointImageExpr;
+    }
+    if (mask.pointAnchor) out.pointAnchor = fromDoc.pointAnchor;
+    if (mask.labelProperty) out.labelProperty = fromDoc.labelProperty;
+    if (mask.labelColor) out.labelColor = fromDoc.labelColor;
+    if (mask.labelHaloColor) out.labelHaloColor = fromDoc.labelHaloColor;
+    if (mask.labelSize) out.labelSizePx = fromDoc.labelSizePx;
+    if (mask.labelOffset) out.labelOffsetPx = fromDoc.labelOffsetPx;
+    if (mask.labelHalo) out.labelHaloPx = fromDoc.labelHaloPx;
+    return out;
 }
 
 } // namespace earth_engine

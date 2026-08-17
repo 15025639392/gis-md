@@ -110,7 +110,7 @@ TEST(StyleDocumentParse, LineDasharrayGetsCapabilityHintNotGenericError) {
 TEST(StyleDocumentParse, UnknownLayerTypeNamesPhase) {
     std::vector<StyleError> errors;
     parseStyleDocument(R"json({
-      "layers": [{"id": "poi", "type": "symbol", "source-layer": "poi"}]
+      "layers": [{"id": "c", "type": "circle", "source-layer": "poi"}]
     })json",
                        errors);
     ASSERT_TRUE(hasErrorAt(errors, "layers[0].type"));
@@ -265,4 +265,163 @@ TEST(StyleApplyPlan, FirstApplyRebakesEverything) {
     StyleApplyPlan plan = planStyleApply(nullptr, b);
     EXPECT_TRUE(plan.rebakeField);
     EXPECT_TRUE(plan.rebakeDrape);
+}
+
+// ---------------- 三期:symbol 路 ----------------
+
+namespace {
+std::string symbolDoc(const char* pointColorJson) {
+    return std::string(R"json({
+      "layers": [{"id": "poi", "type": "symbol", "paint": {
+        "point-anchor": "bottom",
+        "point-size": {"interpolate": {"input": "zoom",
+                                       "stops": [[8, 14], [15, 30]]}},
+        "point-image": {"match": {"property": "kind",
+          "cases": {"place:city": "star", "railway:station": "square"},
+          "default": "circle"}},
+        "point-color": )json") + pointColorJson + R"json(,
+        "label-property": "name", "label-size": 28, "label-halo": 2
+      }}]
+    })json";
+}
+}  // namespace
+
+TEST(StyleDocumentSymbol, ExpressionsEvaluateIdenticallyToBuilder) {
+    std::vector<StyleError> errors;
+    StyleDocument doc = parseStyleDocument(symbolDoc(R"({"match": {
+        "property": "kind",
+        "cases": {"place:city": "#ffd640f2"},
+        "default": "#eb4336f2"}})"), errors);
+    ASSERT_TRUE(errors.empty()) << errors[0].where << ": " << errors[0].message;
+    CompiledStyle style = compileStyleDocument(doc, errors);
+    ASSERT_TRUE(errors.empty());
+    ASSERT_TRUE(style.hasSymbol);
+    const FeatureRenderStyle& s = style.symbolStyle;
+
+    // builder 版对拍(与 GLESView 硬编码同构的子集)。
+    auto builderColor = StyleExpression::match(
+        "kind",
+        {{"place:city",
+          StyleExpression::literal({1.00f, 0.84f, 0.25f, 0.95f})}},
+        StyleExpression::literal({0.92f, 0.26f, 0.21f, 0.95f}));
+    auto builderSize = StyleExpression::interpolateLinear(
+        StyleExpression::zoom(),
+        {{8.0, StyleExpression::literal(14.0)},
+         {15.0, StyleExpression::literal(30.0)}});
+
+    StyleExpression::PropertyMap city{{"kind", "place:city"}};
+    StyleExpression::PropertyMap other{{"kind", "shop"}};
+    for (const auto* props : {&city, &other}) {
+        auto a = s.pointColorExpr->evaluate(props, NAN);
+        auto b = builderColor->evaluate(props, NAN);
+        ASSERT_TRUE(a && b);
+        for (int i = 0; i < 4; ++i)
+            EXPECT_NEAR(a->color()[i], b->color()[i], 1.0f / 255.0f);
+    }
+    for (double z : {8.0, 11.5, 15.0, 20.0}) {
+        auto a = s.pointSizeExpr->evaluate(nullptr, z);
+        auto b = builderSize->evaluate(nullptr, z);
+        ASSERT_TRUE(a && b);
+        EXPECT_NEAR(a->number(), b->number(), 1e-9) << "zoom=" << z;
+    }
+    auto img = s.pointImageExpr->evaluate(&city, NAN);
+    ASSERT_TRUE(img);
+    EXPECT_EQ(img->string(), "star");
+    EXPECT_EQ(s.pointAnchor, SymbolAnchor::Bottom);
+    EXPECT_EQ(s.labelProperty, "name");
+    EXPECT_EQ(s.labelSizePx, 28.0f);
+    EXPECT_EQ(s.labelHaloPx, 2.0f);
+}
+
+TEST(StyleDocumentSymbol, LayerFilterZoomKeysRejectedWithHint) {
+    std::vector<StyleError> errors;
+    parseStyleDocument(R"json({
+      "layers": [{"id": "poi", "type": "symbol", "source-layer": "poi",
+                  "minzoom": 10, "filter": {"has": "name"},
+                  "paint": {"point-color": "#ffffff"}}]
+    })json", errors);
+    EXPECT_TRUE(hasErrorAt(errors, "layers[0].source-layer"));
+    EXPECT_TRUE(hasErrorAt(errors, "layers[0].minzoom"));
+    EXPECT_TRUE(hasErrorAt(errors, "layers[0].filter"));
+    for (const auto& e : errors) {
+        if (e.where == "layers[0].filter") {
+            EXPECT_NE(e.message.find("MvtVectorSource"), std::string::npos)
+                << "要给出路(归 C++ 配置),不是泛化未知键";
+        }
+    }
+}
+
+TEST(StyleDocumentSymbol, TwoSymbolLayersRejected) {
+    std::vector<StyleError> errors;
+    StyleDocument doc = parseStyleDocument(R"json({
+      "layers": [
+        {"id": "a", "type": "symbol", "paint": {"point-color": "#ffffff"}},
+        {"id": "b", "type": "symbol", "paint": {"point-color": "#000000"}}]
+    })json", errors);
+    ASSERT_TRUE(errors.empty());
+    compileStyleDocument(doc, errors);
+    ASSERT_FALSE(errors.empty()) << "两个 symbol 层会静默丢一个,必须拒收";
+}
+
+TEST(StyleApplyPlan, SymbolOnlyChangeRetessesSymbolsOnly) {
+    std::vector<StyleError> errors;
+    CompiledStyle a = compileStyleDocument(
+        parseStyleDocument(symbolDoc(R"("#ffffff")"), errors), errors);
+    CompiledStyle b = compileStyleDocument(
+        parseStyleDocument(symbolDoc(R"("#000000")"), errors), errors);
+    ASSERT_TRUE(errors.empty());
+    StyleApplyPlan plan = planStyleApply(&a, b);
+    EXPECT_TRUE(plan.retessSymbols);
+    EXPECT_FALSE(plan.rebakeDrape) << "面没动,不许连坐";
+    EXPECT_FALSE(plan.rebakeField);
+
+    // 同文档 → 零动作。
+    StyleApplyPlan same = planStyleApply(&a, a);
+    EXPECT_FALSE(same.retessSymbols);
+
+    // 无 symbol 层的文档:首次应用也不许洗符号层默认样式。
+    CompiledStyle noSym = compileStyleDocument(
+        parseStyleDocument(R"json({"field-max-zoom": 15, "layers": [
+          {"id": "w", "type": "fill", "source-layer": "water",
+           "paint": {"fill-color": "#4080d98c"}}]})json", errors), errors);
+    ASSERT_TRUE(errors.empty());
+    EXPECT_FALSE(planStyleApply(nullptr, noSym).retessSymbols);
+}
+
+TEST(StyleDocumentSymbol, MergePreservesFieldsNotInDocument) {
+    // 真机教训回归锁:文档只写 point-*,不得洗掉现行样式的几何语义字段
+    // (altitudeMode=ClampToGround 被洗成 Absolute → 符号整批埋进地形)。
+    std::vector<StyleError> errors;
+    CompiledStyle compiled = compileStyleDocument(
+        parseStyleDocument(R"json({
+          "layers": [{"id": "poi", "type": "symbol",
+                      "paint": {"point-color": "#ffd24df5"}}]
+        })json", errors), errors);
+    ASSERT_TRUE(errors.empty());
+
+    FeatureRenderStyle current;
+    current.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    current.heightOffset = 2.5;
+    current.pointSizePx = 26.0f;
+    current.pointAnchor = SymbolAnchor::Bottom;
+    current.pointImageExpr = StyleExpression::match(
+        "kind", {{"tower", StyleExpression::literalString("pin")}},
+        StyleExpression::literalString("circle"));
+    current.pointColorExpr = StyleExpression::match(
+        "kind", {{"tower", StyleExpression::literal({1.f, 0.f, 0.f, 1.f})}},
+        StyleExpression::literal({0.f, 1.f, 0.f, 1.f}));
+
+    FeatureRenderStyle merged = mergeSymbolStyle(current, compiled.symbolStyle,
+                                                 compiled.symbolMask);
+    // 未写字段保持现状:
+    EXPECT_EQ(merged.altitudeMode, FeatureAltitudeMode::ClampToGround);
+    EXPECT_EQ(merged.heightOffset, 2.5);
+    EXPECT_EQ(merged.pointSizePx, 26.0f);
+    EXPECT_EQ(merged.pointAnchor, SymbolAnchor::Bottom);
+    EXPECT_NE(merged.pointImageExpr, nullptr) << "未写的 image expr 保留";
+    // 写了的字段覆盖,且 literal 压掉旧 expr:
+    EXPECT_EQ(merged.pointColorExpr, nullptr)
+        << "文档给 literal 色必须清旧 expr,否则 expr 优先级盖掉新色";
+    EXPECT_NEAR(merged.pointColor[0], 1.0f, 1e-3);
+    EXPECT_NEAR(merged.pointColor[1], 0xd2 / 255.0f, 1e-3);
 }

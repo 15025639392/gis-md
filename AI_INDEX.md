@@ -3195,10 +3195,11 @@ nativeDebugRestyle 读外置 style-day/night.json(tools/mvt_demo/styles/)。
 | Item | Lines | Description |
 |---|---|---|
 | `kPaintContracts` / `unsupportedPaintHint` | .cpp:21-42 | 每 type 允许的 paint 键表 + 画不出键的能力提示(契约 schema 半面) |
-| `parseFilter` (file-local) | .cpp:78-172 | filter 对象递归解析(all/any/not/has/in/zoom/比较);记 maxZoomSeen 供封顶推导 |
-| `parseStyleDocument` | .cpp:177-310 | JSON→Doc:全错误一次收齐;层级未知键 fail-loud;Re-bake 指纹(Uniform 类刻意不进) |
-| `compileStyleDocument` | .cpp:312-373 | Doc→CompiledStyle:按 type 路由两路;场单色单 ramp 契约;fieldMaxZoom 显式/推导缺一报错 |
-| `planStyleApply` | .cpp:375-386 | 成本类路由:指纹比对出 rebakeDrape/rebakeField;old 空=全 Re-bake |
+| `parseFilter` (file-local) | .cpp:96-203 | filter 对象递归解析(all/any/not/has/in/zoom/比较);记 maxZoomSeen 供封顶推导 |
+| `parseStyleDocument` | .cpp:378-536 | JSON→Doc:全错误一次收齐;层级未知键 fail-loud;Re-bake 指纹(Uniform 类刻意不进) |
+| `compileStyleDocument` | .cpp:537-610 | Doc→CompiledStyle:按 type 路由两路;场单色单 ramp 契约;fieldMaxZoom 显式/推导缺一报错 |
+| `planStyleApply` | .cpp:611-627 | 成本类路由:指纹比对出 rebakeDrape/rebakeField/retessSymbols;old 空=全 Re-bake(symbol 仅 hasSymbol 时) |
+| `mergeSymbolStyle` | .cpp:629-660 | 三期掩码合成:文档写了的字段覆盖(literal 压旧 expr),没写的保持现行(altitudeMode 埋地形教训的回归锁) |
 
 ### LineFieldRasterizer.h / .cpp
 
@@ -3537,25 +3538,25 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| ctor `Engine(RenderDevice*)` | .h:35, .cpp:50-49 | Stores device_, constructs Scene. |
+| ctor `Engine(RenderDevice*)` | .h:35, .cpp:55-49 | Stores device_, constructs Scene. |
 | dtor | .cpp:83-120 | Clears WorkLedger wake callback, then delegates to `onSurfaceDestroyed()` (cited here; the `~Engine` body itself is ~line 58, which the ref guard's parser does not resolve as a named symbol). |
 | `onSurfaceCreated()` | .h:45, .cpp:65-75 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:76-82 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:83-120 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:488-1074 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:488). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:488-1074). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:488-1074). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:615-616). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:1075-1078 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:1079-1087 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:533-1119 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:533). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:533-1119). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:533-1119). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:615-616). |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:1120-1123 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:1124-1132 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1146-1149 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1154-1157 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1191-1194 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1199-1202 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1175-1180 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1220-1225 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1257-1264 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1265-1272 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:1104-1107, 1273-1277 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:1302-1309 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1310-1313 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:1149-1152, 1318-1322 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:692-740 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
