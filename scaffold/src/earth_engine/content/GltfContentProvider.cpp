@@ -8,6 +8,7 @@
 #include "../core/math/AttributeCompression.h"
 #include "../core/math/MathUtils.h"
 #include "../platform/bridge/CurlMultiRequestScheduler.h"
+#include "../debug/PlatformLog.h"
 
 #include <nlohmann/json.hpp>
 
@@ -4092,6 +4093,16 @@ bool TilesetJsonContentProvider::parseTilesetJson(
                     const std::optional<TileKey>& parentKey,
                     int depth) -> std::optional<TileKey> {
         if (!tileJson.is_object()) return std::nullopt;
+        // 深度守卫:tileset.json 来自网络,恶意/损坏输入可无限嵌套 children →
+        // 无界递归爆栈(gap-audit P1)。真实 3D Tiles 树极少超 ~30 层,512 远高
+        // 于合法值、远低于爆栈阈值。超限跳过更深子树并记一条(不静默截断)。
+        constexpr int kMaxTilesetTreeDepth = 512;
+        if (depth > kMaxTilesetTreeDepth) {
+            platformLog(LogLevel::Warning, "Tileset",
+                        "parseTile: tileset.json 深度 > %d,跳过更深子树"
+                        "(疑似恶意/损坏输入)", kMaxTilesetTreeDepth);
+            return std::nullopt;
+        }
         const bool unsupportedMultipleContents =
             hasUnsupportedMultipleContents(tileJson);
         const bool unsupportedImplicitTiling =
