@@ -95,6 +95,8 @@
 | **V14** | 拉近时场不重烘(overzoom 解耦) | 机制 | ✅ | **省**:场上传降到影像的 **~7%**(20+9 vs 208+167 项);显存 32→10MB | 步3(`0fb90a919`) |
 | **V24** | **连续缩放期点/线不闪**,且不伴随无谓重建 | 观感+机制 | 🔒 | R* 选择层 ~微秒级/帧;过渡帧后代拼贴 draw ≤64×/理想瓦(封顶 3 级,收敛归零) | **四轮根修**(见 B.1-B.6):①R* 后代回退+存货保活+原子换手 ②场页三连修(线闪)③标签 opacity 烘入(文字硬闪)④POI 锚点随地形代次重钳(标记点闪一下就没)。⚠️ R* 的全有全无回退**已撤销**(B.5,曾致点内容整支降级)。用户复看:标记点稳态正常;缩放期整体观感**仍待最终拍板** |
 
+| **V27** | **POI 符号/标注首现稳定**:冷启动后默认视角**无需交互**即出现,不依赖缩放/拖动催化 | 观感+机制 | ❌ | 未评估 | **用户确认为长期既有 bug(2026-08-18 登记):一般缩放后才出现**。当日三期验证中撞见:冷启动 40s+轻交互像素检测零 POI(红/金簇=0,已排除指北针),A/B 已证与 V26 样式文档路径无关(纯内置基线同样缺席)。⚠️ 当日"疑省电门控 d53b53718 冻住 fade"的归因假设**作废**——该 bug 早于省电门控存在(但门控是否加重待查)。排查线索:符号树(VectorTileTree)首次选择时机 / placement 首跑触发条件 / fade 推进依赖帧循环;复现=冷启动默认视角静置,对照=捏合缩放一次后 POI 现身 |
+
 ### B.1 V24 排查记录(2026-08-15,未结案)
 
 **⚠️ 先记环境坑**:发现时 `adb reverse tcp:8092` **已静默失效**(USB 重连的老坑,
@@ -413,7 +415,7 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
 
 | # | 判据 | 类型 | 状态 | 代价(实测) | 证据 / 差距 |
 |---|---|---|---|---|---|
-| **V26** | **运行期换样式**:换肤 / 样式热加载 / 外置样式文件,不重编译即可换城市、换数据源、换配色 | 机制 | ⚠️ | 一期(失效通路)~0;二期(Doc/parse/compile)加载期一次,稳态零;三期 symbol=Re-tess 全桶重镶(换肤瞬间一次);Re-bake = 一次重栅格化/场重烘(低频) | **一期✅二期✅三期✅(2026-08-18)**。二期=StyleDocument(A 案对象风格 JSON)+ 契约 fail-loud + 成本类路由;**真机热改闭环**(改设备 json→Skin→变色零重装,`rebakeField=0` 成本类自证)。**三期**=symbol 路 JSON 化(match/interpolate 表达式对象形态,层过滤仍归 MvtVectorSource C++ 配置)+ `Engine::setStyleTargets/applyStyleDocument` 一口气分发 + **掩码合成**(文档没写的字段不洗现行——真机踩过:altitudeMode 被洗成 Absolute 符号整批埋进地形,`mergeSymbolStyle` + 回归锁);host 16 测 190/190。**交互路(OverlayStyle/VectorLayer)判缓**:唯一消费者是 demo 编辑演示层,JSON 化收益≈0,正路是日后退役合并进 FeatureRenderLayer(另立项,归你拍)。⚠️ symbol 真机像素验证被独立回归阻塞:POI 符号在纯内置基线也缺席(A/B 已证与样式路径无关,疑省电门控冻住 fade,已立案排查);夜版 doc 应用日志与面/线变色均正常。**余**:数据源 URL 外置(另立项)。架构:`docs/issues/vector-style-architecture-2026-08-18.md` |
+| **V26** | **运行期换样式**:换肤 / 样式热加载 / 外置样式文件,不重编译即可换城市、换数据源、换配色 | 机制 | ⚠️ | 一期(失效通路)~0;二期(Doc/parse/compile)加载期一次,稳态零;三期 symbol=Re-tess 全桶重镶(换肤瞬间一次);Re-bake = 一次重栅格化/场重烘(低频) | **一期✅二期✅三期✅(2026-08-18)**。二期=StyleDocument(A 案对象风格 JSON)+ 契约 fail-loud + 成本类路由;**真机热改闭环**(改设备 json→Skin→变色零重装,`rebakeField=0` 成本类自证)。**三期**=symbol 路 JSON 化(match/interpolate 表达式对象形态,层过滤仍归 MvtVectorSource C++ 配置)+ `Engine::setStyleTargets/applyStyleDocument` 一口气分发 + **掩码合成**(文档没写的字段不洗现行——真机踩过:altitudeMode 被洗成 Absolute 符号整批埋进地形,`mergeSymbolStyle` + 回归锁);host 16 测 190/190。**交互路(OverlayStyle/VectorLayer)判缓**:唯一消费者是 demo 编辑演示层,JSON 化收益≈0,正路是日后退役合并进 FeatureRenderLayer(另立项,归你拍)。⚠️ symbol 真机像素验证被 **V27**(POI 首现依赖缩放催化,长期既有 bug)阻塞,A/B 已证与样式路径无关;夜版 doc 应用日志与面/线变色均正常,V27 修复后补像素验证。**余**:数据源 URL 外置(另立项)。架构:`docs/issues/vector-style-architecture-2026-08-18.md` |
 
 **差距(2026-08-17 逐条对源码核实)**:
 
