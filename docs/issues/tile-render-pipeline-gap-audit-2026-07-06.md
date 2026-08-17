@@ -206,7 +206,7 @@
 > | SkyBox `.release()`→裸指针泄漏(P1) | ✅ **已修** | `.release()` 零处;`shader_`/`vertexBuffer_`=`unique_ptr`,`dispose` 用 `.reset()` 真删;`cubemapTexture_` 裸指针但只赋 nullptr(cubemap 未接线,无分配) |
 > | AtmospherePass `.release()` 泄漏(P1) | ✅ **已修** | 同上,`shader_`/`quadBuffer_`=`unique_ptr`+`.reset()` |
 > | 每帧每 primitive 深拷 `RenderCommand`(P1 性能) | ⚠️ **仍在(部分缓解)** | 仍带 3×`std::string`(owner/pass/stableKey,`RenderCommand.h:140-144`);`uniforms` map 仅 `OffscreenPostProcess` 填充,tile 热路径为空 map(拷贝廉价) |
-> | 上采样深拷整个父地形再丢 primitive(P1 性能) | ⚠️ **仍在** | `GltfTerrainUpsampler.cpp:1000-1001` `make_unique<GltfModel>(parentModel)` 后 `primitives.clear()` |
+> | 上采样深拷整个父地形再丢 primitive(P1 性能) | ⟳ **本轮修**(等价重写) | 改为构空模型+逐字段拷 16 个非-primitive 元数据,避开 primitives 深拷(commit `70ce01c89`)。频率纠正:是 per-child 物化(churn 期几个/帧,稳态 0),非原判『每帧数十个』;端到端 ≈1.1-1.3× churn-only |
 > | `SceneRenderPipeline` 多趟全遍历(P1 性能) | ⚠️ **仍在** | `aggregateDiagnostics` 每帧无门控(`SceneRenderPipeline.cpp:271`)+ applyMvp/sort/validate 多趟 |
 >
 > 三条性能项属**需 benchmark 驱动**的优化(触热路径),未盲改;上采样那条是低风险等价重写候选(构空模型+只拷元数据)。
