@@ -12,8 +12,11 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <optional>
+#include <string>
+#include <string_view>
 #include <vector>
 
 namespace earth_engine {
@@ -495,14 +498,25 @@ public:
     }
     RenderCommandList& restartCachedDrawCommands() {
         cachedDrawCommands_.clear();
+        cachedStableKeys_.clear();
         cachedDrawCommandsValid_ = true;
         cachedDrawCommandsBuiltRevision_ = drawCommandReadSetRevision_;
         return cachedDrawCommands_;
     }
     void invalidateCachedDrawCommands() {
         cachedDrawCommands_.clear();
+        cachedStableKeys_.clear();
         cachedDrawCommandsValid_ = false;
         ++drawCommandReadSetRevision_;
+    }
+    // RenderCommand::stableKey 是 string_view(每帧逐可见瓦片拷进帧列表,拥有式
+    // std::string 会每命令一次堆分配)。真源字符串驻留在本 tile 缓存里(与
+    // cachedDrawCommands_ 同生命周期,失效时同步清),cached 命令持指向它的
+    // view;帧拷贝只搬 16B view。deque 保证 push_back 不迁移既有元素 → 已发出的
+    // view 在缓存整个生命周期内稳定有效。
+    std::string_view internCachedStableKey(std::string key) {
+        cachedStableKeys_.push_back(std::move(key));
+        return cachedStableKeys_.back();
     }
 
     void setSurfaceLocalOrigin(const Vec3& origin) {
@@ -1027,6 +1041,9 @@ private:
 
     TileSurfaceContentState surface_;
     RenderCommandList cachedDrawCommands_;
+    // cachedDrawCommands_ 里各命令 stableKey(string_view)的真源持有存储。
+    // 见 internCachedStableKey。
+    std::deque<std::string> cachedStableKeys_;
     bool cachedDrawCommandsValid_ = false;
     // 命令读取集代次:资源/读取集 mutator bump,缓存构建时记录快照,消费时
     // 比对——代次失配 = 缓存 stale(见 hasCachedDrawCommands)。

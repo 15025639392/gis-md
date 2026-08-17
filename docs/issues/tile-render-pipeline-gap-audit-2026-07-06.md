@@ -212,6 +212,25 @@
 > 三条性能项属**需 benchmark 驱动**的优化(触热路径),未盲改;上采样那条是低风险等价重写候选(构空模型+只拷元数据)。
 >
 > 取向印证:此档(07-06)的 P1 判断到 08-17 多已被后续重构消解——递归/并发四条里三条已修/消解(一条 P2 本轮修);泄漏两条已修;性能三条仍开(需测量驱动)。**复核价值在证伪与坐实**,不在照单全收。
+>
+> **⟳ 追加(2026-08-18)——`RenderCommand` 深拷 P1:测量翻前提 + stableKey 根修**
+>
+> 上表 08-17 判「3×std::string 仍在」凭 sizeof 静态观察。08-18 用隔离微基准(host libc++ -O2,构造代表性地形命令拷 N 次分解各字段成本)实测,**前提被推翻一半**:
+>
+> | 分量 | 每命令拷贝成本 | 结论 |
+> |---|---|---|
+> | `pass` | ~0ns | 所有取值 ≤11 字符,libc++(SSO 22)/libstdc++(15)均 SSO,零堆 |
+> | `owner` | ~0ns(目标平台) | `terrain_*`(17 字符)在 Android/libc++ 走 SSO;仅 `gltf_primitive_instanced`(24)堆,少数 |
+> | **`stableKey`** | **~29ns(恒堆)** | `tileCacheKey+"#idx"` 恒长,每帧每命令一次 alloc+free。**纯诊断字段**——只喂 `PresentationTrace`,零决策消费者 |
+> | `resourceKeepAlive` | ~23ns | 每命令 ≥1 `shared_ptr` 原子引用计数,**载荷相关不可删** |
+> | POD memcpy 底 | ~47ns | 结构体大(128B 位移矩阵等),结构性 |
+> | FULL | ~94ns | |
+>
+> 即:`owner`/`pass` 在目标平台本就零成本(原「3×string 热拷」判断的红鲱鱼);唯一可去的无条件堆开销是 `stableKey`。
+>
+> **本轮修**(commit 见下):`RenderCommand::stableKey` 由 `std::string` 改**非拥有 `std::string_view`**,真源串移到发出方持有——热瓦片路径进 tile 缓存 `cachedStableKeys_`(`std::deque`,与 cached 命令同生命周期,失效时同步清);clip 瞬态路径进帧级 `thread_local` arena(按 `frameNumber` 变化清);静态字面量(PolarCap)天然驻留。测量实收 **FULL 94→65ns/命令(−31%),stableKey 分量 29→0.3ns**。等价性:`test_gltf_draw_command_cache`(热路径 key 精确内容)+ `test_sse_pipeline`(clip 唯一性+trace)+ `test_tile_render_entry_command_builder`(clip find)三测守卫全绿(189/189)。
+>
+> **仍开(未动,需更大重构)**:`resourceKeepAlive` 原子抖动(~23ns,载荷不可删)+ POD memcpy 底(~47ns,须拆 hot/cold 或瘦身结构体)。绝对量级:300 命令/帧 × 29ns ≈ 帧预算 0.05%(host);移动端 malloc 更贵约 0.2%——stableKey 属「纯浪费的诊断堆」故值得根除,余两项 ROI 需单独权衡。
 
 ### 8.2 并发正确性
 

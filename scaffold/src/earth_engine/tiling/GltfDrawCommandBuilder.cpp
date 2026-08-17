@@ -148,7 +148,10 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
                 static_cast<int>(sizeof(uint16_t))
             ? RenderCommand::IndexType::UInt16
             : RenderCommand::IndexType::UInt32;
-        cmd.stableKey = tileCacheKey + "#" + std::to_string(stableIndex++);
+        // stableKey 是 string_view;真源串存进 tile 缓存(与 cached 命令同生命
+        // 周期),view 随每帧拷贝零分配传播。见 internCachedStableKey。
+        cmd.stableKey = tile.content.renderContent.internCachedStableKey(
+            tileCacheKey + "#" + std::to_string(stableIndex++));
         cmd.terrainRenderContent =
             tile.content.renderContent.drawIsTerrainContent();
         if (cmd.terrainRenderContent) {

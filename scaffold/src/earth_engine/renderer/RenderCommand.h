@@ -2,6 +2,7 @@
 
 #include <initializer_list>
 #include <string>
+#include <string_view>
 #include <vector>
 #include <unordered_map>
 #include <array>
@@ -141,7 +142,12 @@ struct RenderCommand {
     std::string pass;      // "depth" | "color" | "picking" | "shadow" | "postprocess"
     // Stable identity for long-lived renderables. Transient commands leave this
     // empty and are rebuilt directly into the frame list.
-    std::string stableKey;
+    // ⚠️ 非拥有 view:真源串由发出方持有(热瓦片路径 = tile 缓存的
+    // cachedStableKeys_,与 cached 命令同生命周期;clip 瞬态路径 = 帧级 arena;
+    // 静态字面量 = 程序生命周期)。持有式 std::string 会让每帧逐命令拷贝各付一次
+    // 堆分配,而 stableKey 是纯诊断字段(仅喂 PresentationTrace)。发出方必须保证
+    // 真源串活到本帧命令被消费(submit + trace 构建)完。默认空 view。
+    std::string_view stableKey;
     uint64_t frameId = 0;
     uint64_t generation = 0;
     bool terrainRenderContent = false;

@@ -173,7 +173,8 @@ void populateCommandTrace(const RenderCommandList& renderCommands,
         PresentationCommandTrace commandTrace;
         commandTrace.kind = command.kind;
         commandTrace.owner = command.owner;
-        commandTrace.stableKey = command.stableKey;
+        // command.stableKey 是非拥有 view;trace 要在命令列表之外留存,取拥有拷贝。
+        commandTrace.stableKey = std::string(command.stableKey);
         commandTrace.surfaceGeometryZoom = command.surfaceGeometryZoom;
         commandTrace.surfaceTextureZoom = command.surfaceTextureZoom;
         commandTrace.indexOffset = command.indexOffset;
