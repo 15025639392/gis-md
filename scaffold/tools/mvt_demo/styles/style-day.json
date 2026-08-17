@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "field-max-zoom": 15,
+  "layers": [
+    {
+      "id": "water", "type": "fill", "source-layer": "water",
+      "paint": {"fill-color": "#4080d98c"}
+    },
+    {
+      "id": "building", "type": "fill", "source-layer": "building",
+      "minzoom": 13,
+      "filter": {"any": [
+        {"has": "name"},
+        {"in": {"property": "building", "values": [
+          "commercial", "industrial", "retail", "warehouse", "hospital",
+          "school", "university", "college", "stadium", "hotel", "apartments",
+          "church", "temple", "mosque", "public", "civic", "government",
+          "train_station", "hangar"]}},
+        {"zoom": {"op": ">=", "value": 15}}
+      ]},
+      "paint": {"fill-color": "#99999e8c"}
+    },
+    {
+      "id": "roads", "type": "line", "source-layer": "roads",
+      "filter": {"any": [
+        {"all": [{"zoom": {"op": "<", "value": 10}},
+                 {"in": {"property": "highway", "values": ["motorway", "trunk"]}}]},
+        {"all": [{"zoom": {"op": ">=", "value": 10}}, {"zoom": {"op": "<", "value": 12}},
+                 {"in": {"property": "highway", "values": ["motorway", "trunk", "primary"]}}]},
+        {"all": [{"zoom": {"op": ">=", "value": 12}}, {"zoom": {"op": "<", "value": 13}},
+                 {"in": {"property": "highway", "values": ["motorway", "trunk", "primary", "secondary"]}}]},
+        {"all": [{"zoom": {"op": ">=", "value": 13}}, {"zoom": {"op": "<", "value": 14}},
+                 {"in": {"property": "highway", "values": ["motorway", "trunk", "primary", "secondary", "tertiary"]}}]},
+        {"all": [{"zoom": {"op": ">=", "value": 14}}, {"zoom": {"op": "<", "value": 15}},
+                 {"in": {"property": "highway", "values": ["motorway", "trunk", "primary", "secondary", "tertiary", "residential", "unclassified", "living_street"]}}]},
+        {"zoom": {"op": ">=", "value": 15}}
+      ]},
+      "paint": {"line-color": "#f2f2e6d9", "line-width-ramp": [12, 1.05, 16, 3.15]}
+    }
+  ]
+}

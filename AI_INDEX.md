@@ -3181,6 +3181,25 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 `PointStyle` (.h:58)、`LineStyle` (.h:71);`InteractionStyle::find` (.cpp:5)
 按状态名查交互态覆盖。
 
+### style/StyleDocument.h / .cpp
+
+V26 二期:统一样式源模型(A 案自建精简子集,对象风格 JSON)+ 编译器。
+架构=上半借形/下半原创,见 docs/issues/vector-style-architecture-2026-08-18.md;
+判据 northstar V26。parse → compile(**表示能力契约 fail-loud**:未知键报
+路径,画不出的键给"为什么+出路",如 line-dasharray → D2 无弧长通道)→
+planStyleApply(**成本类路由**:Uniform 恒直写,Re-bake 按源指纹 diff ——
+只换线色不重烘场)。层渲染路由编译器按 type 推(fill→drape/line→场),
+文档不写路。zoom 语义 = **页 z**(三义纪律)。demo 消费:GLESView
+nativeDebugRestyle 读外置 style-day/night.json(tools/mvt_demo/styles/)。
+
+| Item | Lines | Description |
+|---|---|---|
+| `kPaintContracts` / `unsupportedPaintHint` | .cpp:21-42 | 每 type 允许的 paint 键表 + 画不出键的能力提示(契约 schema 半面) |
+| `parseFilter` (file-local) | .cpp:78-172 | filter 对象递归解析(all/any/not/has/in/zoom/比较);记 maxZoomSeen 供封顶推导 |
+| `parseStyleDocument` | .cpp:177-310 | JSON→Doc:全错误一次收齐;层级未知键 fail-loud;Re-bake 指纹(Uniform 类刻意不进) |
+| `compileStyleDocument` | .cpp:312-373 | Doc→CompiledStyle:按 type 路由两路;场单色单 ramp 契约;fieldMaxZoom 显式/推导缺一报错 |
+| `planStyleApply` | .cpp:375-386 | 成本类路由:指纹比对出 rebakeDrape/rebakeField;old 空=全 Re-bake |
+
 ### LineFieldRasterizer.h / .cpp
 
 路网线「线段纹素」场烘焙(D2 定稿,场线宽像素一致专项):MVT 线要素 → 256² **RGBA8 线段纹素**(R,G=最近点偏移 ±kLineFieldOffsetRangeTexels(4)、B=方向角 [0,π)、A=fwd|back 端点余量 4bit×2,A==0=空哨兵/失败安全)。FS 取 2×2 邻域 4 条线段各自解析算胶囊距离取 min(PageStoreSamplingGLSL.h),**全程无插值** → 折线数据精确重建仅剩量化误差(真实路网模拟 texelPx=4:漏画 0.28%/有害幽灵 0/误差 0.025px)。勿回头:标量距离场(插值跨线心尖点→漏画 63%)/向量场(中轴过零→幽灵)/d+θ 紧凑编码(θ 误差旋转锚点)。逐段 scatter,亚毫秒/页;坐标语义与 rasterizeMvtRect 同构;只消费 line 通道(lineWidthPixels 不消费)。纯函数,worker 可并发。

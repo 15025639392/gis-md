@@ -994,6 +994,14 @@ add_executable(test_style_expression
 target_link_libraries(test_style_expression PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_style_expression COMMAND test_style_expression)
 
+# V26 二期:样式文档(A 案精简子集)——parser fail-loud / filter 对拍 /
+# 编译契约(场单色/封顶推导)/ 成本类路由(Uniform 不触发 Re-bake)。
+add_executable(test_style_document
+    unit/style/test_style_document.cpp
+)
+target_link_libraries(test_style_document PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_style_document COMMAND test_style_document)
+
 add_executable(test_feature_bucket_grid
     unit/data/test_feature_bucket_grid.cpp
 )

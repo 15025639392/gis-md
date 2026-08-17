@@ -14,6 +14,7 @@
 #include <cmath>
 #include <deque>
 #include <fstream>
+#include <optional>
 #include <functional>
 #include <future>
 #include <memory>
@@ -42,6 +43,7 @@
 #include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
 #include "earth_engine/data/MvtTileFetchCache.h"
 #include "earth_engine/providers/RoadFieldSource.h"
+#include "earth_engine/style/StyleDocument.h"
 #include "earth_engine/providers/VectorDrapeImageryProvider.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/scene/Camera.h"
@@ -2545,12 +2547,74 @@ Java_com_earthengine_sdk_GLESView_nativeDebugFlyTo(
 // 阶段 5 的真实用途:可复现的**正俯视**位姿。掠视下的正交是退化用例
 // (正交盒半高远大于相机高度 ⇒ 下半部整个在地下 ⇒ 天空色),俯视才是正交要干的活。
 //
-// V26 一期换肤真机验证:日/夜样式往返切换,三条通路各按成本类走一遍——
-// 面 drape 换色(Re-bake:setStyle + invalidateComposedTerrainPages 全页重
-// 栅格化)、场线色(Uniform:setRoadFieldStyleUniforms 零重烘下帧生效)、
-// 场页重烘(Re-bake:invalidateRoadFieldPages,同分级重烘 —— 验的是跳烘门
-// 清除后正确重建,坏了的症状=路网全灭)。像素判据(归用户):水深蓝/楼暖棕
-// /路网琥珀 ↔ 日版米白,一眼即判;瞬态=重烘期间面短暂回落纯影像。
+// V26 二期:样式文档驱动的换肤。优先读**外置样式文件**(adb push 即热换,
+// 不重编译 —— V26 判据本体);文件缺席回落一期的内置 C++ 样式(demo 不依赖
+// push 也能演示)。文档路:parse → compile(契约 fail-loud)→ planStyleApply
+// (成本类路由:只换线色不重烘场)→ 按 plan 分发三条通路。
+// 像素判据(归用户):水深蓝/楼暖棕/路网琥珀 ↔ 日版米白;瞬态=Re-bake 期间
+// 面短暂回落纯影像。
+namespace {
+
+// 样式文档候选目录,按序尝试。⚠️ external 那条只有 app 自建目录才可读:
+// adb shell mkdir 建出来 owner=shell,app 读 Permission denied(真机踩过,
+// scoped storage 语义)——debug 变体用 internal + run-as cp 注入最稳:
+//   adb push style-*.json /data/local/tmp/ &&
+//   adb shell run-as com.earthengine.minimalglobe sh -c \
+//     'mkdir -p files && cp /data/local/tmp/style-*.json files/'
+constexpr const char* kStyleDocDirs[] = {
+    "/data/data/com.earthengine.minimalglobe/files",
+    "/sdcard/Android/data/com.earthengine.minimalglobe/files",
+};
+
+// 上一次成功应用的编译产物(成本类路由的 old 侧)。渲染线程独占。
+std::optional<CompiledStyle> gLastCompiledStyle;
+
+/// 读文件→parse→compile。任一步失败:逐条 LOGE(fail-loud)并返回 nullopt,
+/// 调用方回落内置样式 —— 错误样式文档**不得**半应用。
+std::optional<CompiledStyle> loadStyleDocument(const char* path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return std::nullopt;  // 文件缺席不是错误(内置兜底)
+    std::string text((std::istreambuf_iterator<char>(in)),
+                     std::istreambuf_iterator<char>());
+    std::vector<StyleError> errors;
+    StyleDocument doc = parseStyleDocument(text, errors);
+    CompiledStyle compiled;
+    if (errors.empty()) compiled = compileStyleDocument(doc, errors);
+    if (!errors.empty()) {
+        for (const StyleError& e : errors) {
+            LOGE("V26Restyle style doc %s: %s: %s", path, e.where.c_str(),
+                 e.message.c_str());
+        }
+        return std::nullopt;
+    }
+    return compiled;
+}
+
+/// 按成本类路由应用编译产物。Uniform 恒直写;Re-bake 按 plan。
+void applyCompiledStyle(const CompiledStyle& style) {
+    const StyleApplyPlan plan = planStyleApply(
+        gLastCompiledStyle ? &*gLastCompiledStyle : nullptr, style);
+    if (gDrapeProviderRaw) {
+        if (plan.rebakeDrape) {
+            gDrapeProviderRaw->setStyle(style.drapeStyle);
+            gEngine->invalidateComposedTerrainPages();
+        }
+    }
+    if (gRoadFieldSource) {
+        gEngine->setRoadFieldStyleUniforms(style.fieldLineColor,
+                                           style.fieldWidthRamp);
+        if (plan.rebakeField) {
+            gRoadFieldSource->setStyle(style.fieldStyle);
+            gEngine->invalidateRoadFieldPages(style.fieldMaxZoom);
+        }
+    }
+    gLastCompiledStyle = style;
+    LOGI("V26Restyle doc applied (rebakeDrape=%d rebakeField=%d)",
+         plan.rebakeDrape, plan.rebakeField);
+}
+
+}  // namespace
+
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeDebugRestyle(
     JNIEnv* /* env */, jobject /* this */) {
@@ -2558,6 +2622,18 @@ Java_com_earthengine_sdk_GLESView_nativeDebugRestyle(
         if (!gEngine) return;
         gNightStyle = !gNightStyle;
         const bool night = gNightStyle;
+        // 二期文档路:外置文件在则整份走文档(含成本类路由)。
+        for (const char* dir : kStyleDocDirs) {
+            const std::string docPath = std::string(dir) + "/style-" +
+                                        (night ? "night" : "day") + ".json";
+            if (auto compiled = loadStyleDocument(docPath.c_str())) {
+                applyCompiledStyle(*compiled);
+                LOGI("V26Restyle applied from doc: %s", docPath.c_str());
+                return;
+            }
+        }
+        // 一期内置兜底(真机已验路径,行为不变)。
+        gLastCompiledStyle.reset();  // 内置路绕过文档指纹,别让旧指纹误判 diff
         if (gDrapeProviderRaw) {
             gDrapeProviderRaw->setStyle(
                 night ? minimal_globe_demo::makeMvtDrapeStyleNight()
@@ -2569,14 +2645,12 @@ Java_com_earthengine_sdk_GLESView_nativeDebugRestyle(
                 night ? minimal_globe_demo::kMvtRoadFieldColorNight
                       : minimal_globe_demo::kMvtRoadFieldColor,
                 minimal_globe_demo::kMvtRoadFieldWidthRampPx);
-            // 分级样式本 demo 日/夜同源,setStyle 传同一份即可;仍显式走
-            // 一遍 Re-bake 通路(见函数头注释)。
             gRoadFieldSource->setStyle(
                 minimal_globe_demo::makeMvtRoadFieldStyle());
             gEngine->invalidateRoadFieldPages(
                 minimal_globe_demo::kMvtRoadFieldMaxZoom);
         }
-        LOGI("V26Restyle applied: %s (drape=%d field=%d)",
+        LOGI("V26Restyle applied builtin: %s (drape=%d field=%d)",
              night ? "night" : "day", gDrapeProviderRaw != nullptr,
              gRoadFieldSource != nullptr);
     });

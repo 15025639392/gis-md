@@ -714,6 +714,7 @@ endif()
 target_sources(earth_engine_core PRIVATE
     earth_engine/style/OverlayStyle.h
     earth_engine/style/OverlayStyle.cpp
+    earth_engine/style/StyleDocument.cpp
 )
 
 # ============================================================

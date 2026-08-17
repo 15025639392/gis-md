@@ -413,7 +413,7 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
 
 | # | 判据 | 类型 | 状态 | 代价(实测) | 证据 / 差距 |
 |---|---|---|---|---|---|
-| **V26** | **运行期换样式**:换肤 / 样式热加载 / 外置样式文件,不重编译即可换城市、换数据源、换配色 | 机制 | ⚠️ | 一期(失效通路)~0:Uniform 类零重烘;Re-bake 类 = 换肤瞬间一次全页重栅格化/场重烘(低频,稳态零成本) | **一期已落地(2026-08-18)**:面/线失效通路,见差距 #2;余二期(Doc+parser+Compiler,A/B 在此拍板)三期(交互路),架构:`docs/issues/vector-style-architecture-2026-08-18.md` |
+| **V26** | **运行期换样式**:换肤 / 样式热加载 / 外置样式文件,不重编译即可换城市、换数据源、换配色 | 机制 | ⚠️ | 一期(失效通路)~0;二期(Doc/parse/compile)加载期一次,稳态零;Re-bake = 换肤瞬间一次重栅格化/场重烘(低频) | **一期✅二期✅(2026-08-18)**。二期=StyleDocument(A 案对象风格 JSON)+ 契约 fail-loud + 成本类路由(`style/StyleDocument.*`,host 11 测 190/190)。**真机热改闭环**:adb 改设备 style-night.json(路网琥珀→青)→ Skin → 画面变青,零重装;logcat `rebakeField=0` = 成本类路由真机自证(day↔night 分级同、只差色 → 场不重烘,线色 uniform 直写)。**余**:数据源 URL 外置(仍 constexpr,样式文档只管观感)、点/交互路 JSON 化(三期)。架构:`docs/issues/vector-style-architecture-2026-08-18.md` |
 
 **差距(2026-08-17 逐条对源码核实)**:
 
@@ -547,7 +547,7 @@ d=2 (92% 画面)
 | 分级宽度 ramp 停点与端点 | 现 z12(0.6css)→z16(1.8css);需你手势拉远拉近看观感 | V4 |
 | 线色与不透明度 | 现 (0.95,0.95,0.90,0.85) 米白 | V2 |
 | V9 dash 优先级 | 我建议押后:实线已可用,dash 是样式丰富度不是体验缺口 | V9 |
-| **V26 样式来源:自建精简子集 vs MapLibre style.json v8 兼容** | **架构已定调(2026-08-18,用户同意),样式来源仍待拍板但已降级为叶子决策**。<br>调研完成:`.ref/maplibre-gl-style-spec`(v25.0.1)已拉取量化——87 算子/10 layer/symbol 59 属性本引擎消费 ~6 个、line 18 属性消费 2 个,吃全 spec 大半死代码。<br>**定调 = 上半借形、下半原创**:声明式文档+求值内核借 maplibre 收敛形态(Cesium/osgEarth/deck.gl 对照后确认);编译+失效层原创——**表示能力契约(fail-loud)+ 成本类失效路由**(Uniform/Re-bake/Re-tess 三档),因为四条异构表示路的失效传播 maplibre 根本没有、无处可抄。设计文档:`docs/issues/vector-style-architecture-2026-08-18.md`(五层图/接口草案/三期分期)。<br>架构定调后 A/B 只影响 parser 层,换 schema 不动下面四层。**拍板判据归你:要表达力(A,数百行)还是要生态兼容(B,数千行+版本税)**。<br>分期不变:**一期 = 面/线失效通路**(gate,与 A/B 无关),二期 = Doc+parser+Compiler(A/B 在此拍板),三期 = 交互路纳入。 | V26 |
+| **V26 样式来源:自建精简子集 vs MapLibre style.json v8 兼容** | **架构已定调(2026-08-18,用户同意),样式来源仍待拍板但已降级为叶子决策**。<br>调研完成:`.ref/maplibre-gl-style-spec`(v25.0.1)已拉取量化——87 算子/10 layer/symbol 59 属性本引擎消费 ~6 个、line 18 属性消费 2 个,吃全 spec 大半死代码。<br>**定调 = 上半借形、下半原创**:声明式文档+求值内核借 maplibre 收敛形态(Cesium/osgEarth/deck.gl 对照后确认);编译+失效层原创——**表示能力契约(fail-loud)+ 成本类失效路由**(Uniform/Re-bake/Re-tess 三档),因为四条异构表示路的失效传播 maplibre 根本没有、无处可抄。设计文档:`docs/issues/vector-style-architecture-2026-08-18.md`(五层图/接口草案/三期分期)。<br>**已拍板(2026-08-18):A,自建精简子集**——理由=表达力自用、数百行成本、100% 落地率;B(style.json v8 兼容)若日后生态需求出现按设计文档 §7 失效边界重开,parser 层可换不动下面四层。<br>分期:一期 ✅(面/线失效通路+真机往返)、**二期开工**(Doc+parser+Compiler,编译目标=面/线;点路 JSON 化随三期交互路同收)、三期未动。 | V26 |
 
 ---
 
