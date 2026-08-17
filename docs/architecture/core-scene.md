@@ -98,10 +98,14 @@
 
 > 背景见上节"⚠️ 短板"首条。这不是修 bug——是把原作者停在并行验证期的迁移走完。机制(Ticket/审计/`consumeLanded` 语义)已就位,工作量几乎全在 Phase A 的"枚举异步源"。
 
-**进度(2026-08-16,commit `69b52412a`)**:
-- ✅ **Phase A 已落地**:`WorkTicketSlot` 幂等对账槽 + 矢量链两票(`mvtVectorLoad`/`mvtVectorCommit`)+ raster overlay 两票(`rasterOverlayLoad`/`rasterOverlayUpload`),`test_work_ledger` 加 3 条守卫,ctest 189/189。纯增量、零行为风险(ticket 仅喂审计)。
-- ⏳ **Phase B 骨架已落地但默认关**:`kEnableWorkLedgerGating=false`(constexpr,死代码消除)+ `Engine::ledgerGatingNeedsFrame` + `Scene::hasContinuousProducerWork`。翻转前四项 TODO(下方)未做,**均需真机**,故未启用。
-- ❌ **未做**:H 影像 provider 解码逸出实测;下方 Phase B 四项 TODO;真机 audit soak。
+**进度(2026-08-17,Phase B 已收官)**:
+- ✅ **Phase A**(`69b52412a`):`WorkTicketSlot` 幂等对账槽 + 矢量链两票(`mvtVectorLoad`/`mvtVectorCommit`)+ raster overlay 两票(`rasterOverlayLoad`/`rasterOverlayUpload`)+ `test_work_ledger` 3 条守卫。纯增量、零行为风险。
+- ✅ **Phase B 翻转 + 平台级唤醒钩子**(`aa3715360`):`kEnableWorkLedgerGating=true`,失败安全(仅 host 注入唤醒钩子才走 ledger,否则回落旧判据)。`WorkLedger::setWakeCallback`(Landing 释放触发)+ `Engine::setFrameRequestCallback` + Android GLESView `wake()` 接线。
+- ✅ **真机 soak 通过**(Android debug,2026-08-17):静置 6s 渲染 0 帧(真睡)/ 全程 WorkLedger DIVERGE=0 / `FrameGate: wake reason=workLanded` 端到端 / 停手截图内容自补齐(零冻屏)/ 收敛后再睡(无 ticket 泄漏)。
+- ✅ **N 时钟/太阳**(`966bae234`):`advanceTime`/`setTime` 补 `requestRender("timeChanged")`(事件脏位,模式无关);固定钟 demo 零影响。
+- ✅ **上传尾**(`b97fd851d`):`Tileset::update` 按 `gpuUploadQueue_.hasWork()` 对账 Pumped 令牌,替代 settle 依赖;demo 队列恒空零影响。
+- ✅ **H 影像解码逸出**:复核 XYZ 系 `decodeTile` 内联于 callback 前、`inFlightRequests` 括住整段;Google/TMS 覆写但委托 XYZ 覆盖流程 → 无逸出。附:gap-audit 的 GoogleMapTiles availability UAF 已由 `availabilityMutex_` 修掉。
+- ⏳ **余留(非阻塞)**:更广真机 soak(fly-to 飞行豁免路径 / 人为限速慢网 / 全球遍历)属持续观察;release 变体精确功耗数字待量(debug 已定性确认会睡)。
 
 **账本现状:全仓只登记两个源**(仅两处 `WorkLedger::shared().acquire`):
 
