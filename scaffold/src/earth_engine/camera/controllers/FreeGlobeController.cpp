@@ -20,7 +20,10 @@ namespace earth_engine {
 namespace {
 
 constexpr double kMaxInertiaAngularVelocityRadPerSec = 5.0;
-constexpr double kInertiaDampingPerSecond = 3.0;
+// iOS 列表手感（契约 1.4）：velocity *= 0.998 每毫秒 ≈ exp(-2.0/s)。
+// 依据：UIScrollViewDecelerationRateNormal=0.998、Mapbox Maps iOS
+// panDecelerationFactor 每毫秒乘一次。
+constexpr double kInertiaDampingPerSecond = 2.0;
 constexpr double kVelocitySmoothing = 0.35;
 constexpr double kEarthRadiusMeters = 6378137.0;
 // 相机包络常量（净空/最大地形高/地心距上限）归 CameraConstraintSolver 单点持有。
@@ -31,11 +34,21 @@ constexpr double kMaxDistanceEarthRadii =
     CameraConstraintSolver::kMaxDistanceEarthRadii;
 constexpr double kTouchJerkLimit = 0.3;
 constexpr double kTouchMinSlope = 0.1;
-// Pitch 增益按视口高度归一：满屏竖移 = 0.9 rad（等价旧 0.0015 rad/px 在
-// 600px 视口下的标定），设备/分辨率无关——旧的每物理像素定义在 3.5x 手机
-// 上比 1.5x 平板快 2.3 倍。
-constexpr double kPinchTiltFullHeightRadians = 0.9;
+// Pitch 增益：Mapbox 生产值 -0.5°/px（满倾角约 150px 竖移），保留质心
+// 绝对值映射；真机标定项（契约 2.2）。
+constexpr double kPinchTiltRadiansPerPixel = 0.008726646259971648;
 constexpr double kPinchTiltMaxStepRadians = 0.08;
+// 单指模式切换（契约 1.2）：海拔门限 = Cesium minimumPickingTerrainHeight
+// (WGS84 生产默认)；倾斜门限 = MapLibre issue #6111 的高倾斜病态起点。
+constexpr double kNearModeMaxAltitudeMeters = 150000.0;
+constexpr double kNearModeMinPitchRadians = glm::pi<double>() / 3.0;
+// 地平线裁剪（契约 1.3）：位移/惯性偏移不得超过地平线像素距离的 75%
+// （MapLibre PR #6345；0.75 为手感调参，真机标定项）。
+constexpr double kNearHorizonClampFactor = 0.75;
+// 近地惯性触发下限：100px/s（Mapbox GL Native iOS 与 Flutter iOS 双重印证）。
+constexpr double kNearMinInertiaVelocityPxPerSec = 100.0;
+// 射线与锚点切平面近平行判据（数值守卫；主裁剪由地平线偏移量承担）。
+constexpr double kNearPlaneGrazingEpsilon = 1e-4;
 // 抓取球半径对 eye 半径的安全余量：锚点半径钳到 |eye|−margin 以下，防止
 // 抓取球包住相机（见 tryAcquirePinchAnchor/grabSurfacePoint）。
 constexpr double kGrabSphereEyeMarginMeters = 25.0;
@@ -68,17 +81,6 @@ constexpr double kZoomInertiaDampingPerSecond = 6.0;
 constexpr double kMaxZoomInertiaLogRate = 6.0;   // |d(ln dist)/dt| 上限，滤抖动尖峰
 constexpr double kMinZoomInertiaLogRate = 0.08;  // 低于此停止滑行
 
-// 高空缩放回中：拉远到高空时把"视线偏离地心"的夹角 θ 收敛到 0，让球心回到
-// 屏幕中心。硬约束事件原子、软约束时间松弛：手势/滑行期只按 zoom-out 对数
-// 步长"充值"预算（不动相机——回中旋转会推开刚钉好的锚点，与 pin 互相拉扯），
-// 松手后 tick() 按指数节奏消费预算，球心在 ~0.3-0.5s 内自然沉降回中。
-// 由此手势期 viewLineMissDistance 成为全海拔精确不变量。权重随海拔在
-// [start, full] 间平滑爬升，低空(城市/地形视角)完全不介入。
-constexpr double kRecenterStartAltitudeMeters = 1.5e6;  // 低于此海拔不回中
-constexpr double kRecenterFullAltitudeMeters = 8.0e6;   // 高于此海拔全权重
-constexpr double kRecenterGainPerLogStep = 2.5;  // 预算充值速率 / 单位 ln(距离)
-constexpr double kRecenterSettleRatePerSecond = 6.0;  // 松手后 θ 指数收敛速率
-
 } // namespace
 
 FreeGlobeController::FreeGlobeController(Camera* camera,
@@ -107,16 +109,37 @@ void FreeGlobeController::onDragStart(float xPixels, float yPixels,
     inertiaAngularVelocity_ = 0.0;
     hasZoomInertia_ = false;   // 拖拽打断 zoom 惯性滑行
     zoomInertiaLogRate_ = 0.0;
-    // 拖拽=用户显式抓世界重定位，残留的回中欠账此后再沉降会像无因漂移。
-    recenterBudgetRadians_ = 0.0;
+    zoomSettleActive_ = false; // 拖拽打断滚轮平滑缩放
+    dragVelocitySamples_.clear();
+    pixelVelocitySamples_.clear();
+    nearInertiaActive_ = false;
     lastDragTimestamp_ = timestamp;
+
+    // 契约 1.2：起手判定模式一次，整段拖拽不切换；抓不到锚点（球外/天空）
+    // 回退空间模式（spin 转台，与旧行为一致）。
+    dragMode_ = hasGrabbedPoint_ ? resolveDragMode() : DragMode::Space;
+    if (dragMode_ == DragMode::NearGround) {
+        nearAnchorWorld_ = grabbedPoint_;
+        nearAnchorNormal_ = grabbedNormal_;
+        nearStartX_ = xPixels;
+        nearStartY_ = yPixels;
+        nearAppliedOffsetX_ = 0.0;
+        nearAppliedOffsetY_ = 0.0;
+        nearHorizonY_ = horizonScreenY();
+        nearPixelsToHorizon_ = std::max(
+            std::abs(static_cast<double>(yPixels) - nearHorizonY_), 1.0);
+    }
 }
 
 void FreeGlobeController::onDragMove(float xPixels, float yPixels,
                                          double timestamp) {
     if (!dragging_) return;
 
-    applyAnchorDrag(xPixels, yPixels, timestamp);
+    if (dragMode_ == DragMode::NearGround) {
+        applyNearGroundPan(xPixels, yPixels, timestamp);
+    } else {
+        applyAnchorDrag(xPixels, yPixels, timestamp);
+    }
 
     dragLastX_ = xPixels;
     dragLastY_ = yPixels;
@@ -126,7 +149,393 @@ void FreeGlobeController::onDragEnd() {
     if (!dragging_) return;
     dragging_ = false;
     hasGrabbedPoint_ = false;
-    // 惯性参数由最后一次 applyAnchorDrag 设置
+
+    if (dragMode_ == DragMode::NearGround) {
+        // 近地惯性（契约 1.4）：像素速度样本按 iOS 权重 0.6/0.35/0.05 合成，
+        // 低于 100px/s 不触发（Mapbox/Flutter 双重证据）。
+        constexpr double kWeights[3] = {0.6, 0.35, 0.05};
+        const int n = static_cast<int>(pixelVelocitySamples_.size());
+        double vx = 0.0;
+        double vy = 0.0;
+        double totalWeight = 0.0;
+        for (int i = 0; i < n; ++i) {
+            const PixelVelocitySample& s = pixelVelocitySamples_[i];
+            const double w = kWeights[3 - n + i];
+            if (s.dt > 0.0) {
+                vx += static_cast<double>(s.dx) / s.dt * w;
+                vy += static_cast<double>(s.dy) / s.dt * w;
+            }
+            totalWeight += w;
+        }
+        pixelVelocitySamples_.clear();
+        if (n > 0 && totalWeight > 0.0) {
+            vx /= totalWeight;
+            vy /= totalWeight;
+            if (std::hypot(vx, vy) >= kNearMinInertiaVelocityPxPerSec) {
+                nearVelocityX_ = vx;
+                nearVelocityY_ = vy;
+                nearInertiaActive_ = true;
+            }
+        }
+        return;
+    }
+
+    // iOS 风格松手速度（契约 1.4）：最近 ≤3 个相邻样本按 0.6/0.35/0.05
+    // 加权（最旧样本权重最大，最新样本是"松开前一刻"的抖动值，权重最低；
+    // 样本不足时对可用权重归一化）。方向锁定为加权速度方向，只衰减不反转。
+    constexpr double kWeights[3] = {0.6, 0.35, 0.05};
+    const int n = static_cast<int>(dragVelocitySamples_.size());
+    glm::dvec3 velocity(0.0);
+    double totalWeight = 0.0;
+    for (int i = 0; i < n; ++i) {
+        const DragVelocitySample& s = dragVelocitySamples_[i];
+        const double w = kWeights[3 - n + i];  // 旧样本取靠前的高权重
+        velocity += s.axis * (s.rate * w);
+        totalWeight += w;
+    }
+    dragVelocitySamples_.clear();
+    if (n == 0 || totalWeight <= 0.0) {
+        inertiaAngularVelocity_ = 0.0;
+        return;
+    }
+    velocity /= totalWeight;
+    const double speed = glm::length(velocity);
+    if (speed <= 1e-9) {
+        inertiaAngularVelocity_ = 0.0;
+        return;
+    }
+    inertiaAxis_ = glm::normalize(velocity);
+    inertiaAngularVelocity_ =
+        std::min(speed, kMaxInertiaAngularVelocityRadPerSec);
+}
+
+void FreeGlobeController::onDragCancel() {
+    dragging_ = false;
+    hasGrabbedPoint_ = false;
+    dragVelocitySamples_.clear();
+    clearGlideInertia();  // 立即停：pan + zoom 惯性全清（契约 1.5）
+}
+
+void FreeGlobeController::onPinchCancel() {
+    pinching_ = false;
+    hasPinchAnchor_ = false;
+    pinchActiveMode_ = PinchMode::Undecided;
+    clearGlideInertia();  // 立即停、不启动 zoom 惯性（契约 2.3）
+}
+
+FreeGlobeController::DragMode FreeGlobeController::resolveDragMode() const {
+    const glm::dvec3 eye = camera_->position().raw();
+    const double altitude =
+        Ellipsoid::WGS84().cartesianToCartographic(Vec3(eye)).height();
+    if (altitude >= kNearModeMaxAltitudeMeters) {
+        return DragMode::Space;
+    }
+    const glm::dvec3 eyeNorm = glm::normalize(eye);
+    const double cosPitch = std::clamp(
+        glm::dot(-glm::normalize(camera_->direction().raw()), eyeNorm),
+        -1.0, 1.0);
+    const double pitch = std::acos(cosPitch);
+    return pitch >= kNearModeMinPitchRadians ? DragMode::NearGround
+                                             : DragMode::Space;
+}
+
+double FreeGlobeController::horizonScreenY() const {
+    const glm::dvec3 eye = camera_->position().raw();
+    const double eyeRadius = glm::length(eye);
+    const double altitude = std::max(eyeRadius - kEarthRadiusMeters, 1.0);
+    // 地平线俯角（相对当地水平）：δ = acos(R/(R+h))。
+    const double delta = std::acos(
+        std::clamp(kEarthRadiusMeters / (kEarthRadiusMeters + altitude),
+                   -1.0, 1.0));
+    const glm::dvec3 dir = glm::normalize(camera_->direction().raw());
+    const glm::dvec3 eyeNorm = eye / eyeRadius;
+    const double cosPitch = std::clamp(glm::dot(-dir, eyeNorm), -1.0, 1.0);
+    const double pitch = std::acos(cosPitch);
+    // 视线仰角 = 90°−pitch；地平线仰角 = −δ；屏幕 y 向下为正。
+    const double offsetRad = (glm::half_pi<double>() - pitch) + delta;
+    const double radPerPixel =
+        camera_->verticalFovRadians() /
+        static_cast<double>(std::max(1, viewportHeight_));
+    if (radPerPixel <= 0.0) {
+        return 1.0e9;
+    }
+    return static_cast<double>(viewportHeight_) * 0.5 +
+           offsetRad / radPerPixel;
+}
+
+void FreeGlobeController::applyNearGroundPan(float xPixels, float yPixels,
+                                             double timestamp) {
+    // ① 地平线裁剪（契约 1.3）：请求偏移 = 手指相对起手的位移；总偏移
+    // （含惯性）不得超过 0.75×地平线像素距离。按向量长度缩放、方向不变，
+    // 绝不反向（MapLibre PR #6345 同款）。
+    const double requestedX = static_cast<double>(xPixels) - nearStartX_;
+    const double requestedY = static_cast<double>(yPixels) - nearStartY_;
+    const double requestedLen = std::hypot(requestedX, requestedY);
+    const double bound = kNearHorizonClampFactor * nearPixelsToHorizon_;
+    double appliedX = requestedX;
+    double appliedY = requestedY;
+    if (bound > 0.0 && requestedLen > bound) {
+        const double s = bound / requestedLen;
+        appliedX = requestedX * s;
+        appliedY = requestedY * s;
+    }
+    const double appliedDeltaX = appliedX - nearAppliedOffsetX_;
+    const double appliedDeltaY = appliedY - nearAppliedOffsetY_;
+    // 已停在边界（或没动）：不施加、不反向；方向折回时偏移减小、跟手恢复。
+    if (std::abs(appliedDeltaX) < 1e-6 && std::abs(appliedDeltaY) < 1e-6) {
+        lastDragTimestamp_ = timestamp;
+        return;
+    }
+
+    // ② 有效手指位置 = 起手 + 已施加偏移；姿态锁定 ⇒ 射线→锚点切平面交点
+    // 唯一。平移量 = 锚点 − 交点（平面平行位移 ⇒ 锚点保持在手指下）。
+    const float fX = nearStartX_ + static_cast<float>(appliedX);
+    const float fY = nearStartY_ + static_cast<float>(appliedY);
+    const Ray ray = camera_->getPickRay(
+        static_cast<double>(fX), static_cast<double>(fY),
+        static_cast<double>(viewportWidth_),
+        static_cast<double>(viewportHeight_));
+    const glm::dvec3 o = ray.origin().raw();
+    const glm::dvec3 d = ray.direction().raw();
+    const glm::dvec3 n = nearAnchorNormal_.raw();
+    const glm::dvec3 a = nearAnchorWorld_.raw();
+    const double denom = glm::dot(d, n);
+    if (std::abs(denom) < kNearPlaneGrazingEpsilon) {
+        lastDragTimestamp_ = timestamp;
+        return;  // 射线近平行/朝平面背面：不投影（地平线病态区）
+    }
+    const double t = glm::dot(a - o, n) / denom;
+    if (t <= 0.0) {
+        lastDragTimestamp_ = timestamp;
+        return;  // 交点已在相机后方（越过地平线）
+    }
+    const glm::dvec3 p = o + d * t;
+    const glm::dvec3 trans = a - p;
+    camera_->setView(Vec3(camera_->position().raw() + trans),
+                     camera_->direction(), camera_->up());
+    clampNow(&a);
+
+    nearAppliedOffsetX_ = appliedX;
+    nearAppliedOffsetY_ = appliedY;
+
+    // ③ 像素速度采样（最近 ≤3 个相邻样本，松手时 iOS 权重合成）。
+    const double dt = timestamp - lastDragTimestamp_;
+    if (dt > 0.0 && dt < 0.25) {
+        PixelVelocitySample sample;
+        sample.dt = dt;
+        sample.dx = static_cast<float>(appliedDeltaX);
+        sample.dy = static_cast<float>(appliedDeltaY);
+        pixelVelocitySamples_.push_back(sample);
+        if (pixelVelocitySamples_.size() > 3) {
+            pixelVelocitySamples_.erase(pixelVelocitySamples_.begin());
+        }
+    }
+    lastDragTimestamp_ = timestamp;
+}
+
+void FreeGlobeController::tickNearGroundInertia(double deltaSeconds) {
+    const double speed = std::hypot(nearVelocityX_, nearVelocityY_);
+    if (speed <= 1e-9) {
+        nearInertiaActive_ = false;
+        return;
+    }
+    // 停止判据（契约 1.4）：折合屏幕位移 < 0.5px/帧（与空间模式同规则）。
+    if (speed * deltaSeconds < 0.5) {
+        nearInertiaActive_ = false;
+        nearVelocityX_ = 0.0;
+        nearVelocityY_ = 0.0;
+        return;
+    }
+
+    // 候选偏移（从起手累计）受地平线裁剪；方向锁定 ⇒ 只缩不放，绝不反向。
+    double nextX = nearAppliedOffsetX_ + nearVelocityX_ * deltaSeconds;
+    double nextY = nearAppliedOffsetY_ + nearVelocityY_ * deltaSeconds;
+    const double nextLen = std::hypot(nextX, nextY);
+    const double bound = kNearHorizonClampFactor * nearPixelsToHorizon_;
+    if (bound > 0.0 && nextLen > bound) {
+        const double s = bound / nextLen;
+        nextX *= s;
+        nextY *= s;
+    }
+    if (std::abs(nextX - nearAppliedOffsetX_) < 1e-6 &&
+        std::abs(nextY - nearAppliedOffsetY_) < 1e-6) {
+        nearInertiaActive_ = false;  // 已到地平线边界：停，不反向
+        nearVelocityX_ = 0.0;
+        nearVelocityY_ = 0.0;
+        return;
+    }
+
+    const float fX = nearStartX_ + static_cast<float>(nextX);
+    const float fY = nearStartY_ + static_cast<float>(nextY);
+    const Ray ray = camera_->getPickRay(
+        static_cast<double>(fX), static_cast<double>(fY),
+        static_cast<double>(viewportWidth_),
+        static_cast<double>(viewportHeight_));
+    const glm::dvec3 o = ray.origin().raw();
+    const glm::dvec3 d = ray.direction().raw();
+    const glm::dvec3 n = nearAnchorNormal_.raw();
+    const glm::dvec3 a = nearAnchorWorld_.raw();
+    const double denom = glm::dot(d, n);
+    if (std::abs(denom) < kNearPlaneGrazingEpsilon ||
+        glm::dot(a - o, n) / denom <= 0.0) {
+        nearInertiaActive_ = false;
+        nearVelocityX_ = 0.0;
+        nearVelocityY_ = 0.0;
+        return;
+    }
+    const glm::dvec3 p = o + d * (glm::dot(a - o, n) / denom);
+    const glm::dvec3 trans = a - p;
+    camera_->setView(Vec3(camera_->position().raw() + trans),
+                     camera_->direction(), camera_->up());
+    clampNow(&a);
+    nearAppliedOffsetX_ = nextX;
+    nearAppliedOffsetY_ = nextY;
+
+    // iOS 衰减：v *= 0.998^(dt_ms) ≈ exp(-2.0·dt)，方向锁定。
+    const double decay = std::exp(-kInertiaDampingPerSecond * deltaSeconds);
+    nearVelocityX_ *= decay;
+    nearVelocityY_ *= decay;
+}
+
+void FreeGlobeController::onKeyCommand(
+    InputEvent::Key key, const InputEvent::Modifiers& modifiers) {
+    clearGlideInertia();  // 键盘是离散相机操作：先停惯性/滚轮平滑，避免混合自走
+    const double kPanPixels = 100.0;  // Mapbox keyboard.js panStep
+    switch (key) {
+        case InputEvent::Key::ArrowLeft:
+            if (modifiers.shift) {
+                rotateHeadingByDegrees(-15.0);  // Mapbox bearingStep
+            } else {
+                panByPixels(-kPanPixels, 0.0);
+            }
+            break;
+        case InputEvent::Key::ArrowRight:
+            if (modifiers.shift) {
+                rotateHeadingByDegrees(15.0);
+            } else {
+                panByPixels(kPanPixels, 0.0);
+            }
+            break;
+        case InputEvent::Key::ArrowUp:
+            if (modifiers.shift) {
+                pitchByDegrees(10.0);  // Mapbox pitchStep
+            } else {
+                panByPixels(0.0, -kPanPixels);
+            }
+            break;
+        case InputEvent::Key::ArrowDown:
+            if (modifiers.shift) {
+                pitchByDegrees(-10.0);
+            } else {
+                panByPixels(0.0, kPanPixels);
+            }
+            break;
+        case InputEvent::Key::Plus:
+            zoomByLevels(modifiers.shift ? 2.0 : 1.0);  // Mapbox: Shift 加倍
+            break;
+        case InputEvent::Key::Minus:
+            zoomByLevels(modifiers.shift ? -2.0 : -1.0);
+            break;
+        default:
+            break;
+    }
+}
+
+void FreeGlobeController::panByPixels(double dx, double dy) {
+    const float cx = static_cast<float>(viewportWidth_) * 0.5f;
+    const float cy = static_cast<float>(viewportHeight_) * 0.5f;
+    if (resolveDragMode() == DragMode::NearGround) {
+        // 近地：切平面平移（与单指拖拽同一条路径，含地平线裁剪）。
+        // 近地高倾斜时屏幕中心射线常指向天空，先取中心、再取下半屏可见地表。
+        const float grabY = static_cast<float>(viewportHeight_) * 0.9f;
+        float anchorY = cy;
+        bool got = grabSurfacePoint(cx, cy);
+        if (!got) {
+            got = grabSurfacePoint(cx, grabY);
+            anchorY = grabY;
+        }
+        if (!got || !hasGrabbedPoint_) {
+            // 中心与下半屏都取不到地表（异常姿态）：回退空间转台。
+            const glm::dquat delta = turntableDeltaFromPixels(dx, dy);
+            camera_ops::rotateAboutOrigin(*camera_, delta);
+            clampNow(nullptr);
+            return;
+        }
+        dragMode_ = DragMode::NearGround;
+        nearAnchorWorld_ = grabbedPoint_;
+        nearAnchorNormal_ = grabbedNormal_;
+        nearStartX_ = cx;
+        nearStartY_ = anchorY;
+        nearAppliedOffsetX_ = 0.0;
+        nearAppliedOffsetY_ = 0.0;
+        nearHorizonY_ = horizonScreenY();
+        nearPixelsToHorizon_ = std::max(
+            std::abs(static_cast<double>(anchorY) - nearHorizonY_), 1.0);
+        applyNearGroundPan(cx + static_cast<float>(dx),
+                           anchorY + static_cast<float>(dy), 0.0);
+        hasGrabbedPoint_ = false;  // 键盘平移是瞬时的，不留拖拽状态
+    } else {
+        // 空间：转台旋转（拖球语义的离散一步）。
+        const glm::dquat delta = turntableDeltaFromPixels(dx, dy);
+        camera_ops::rotateAboutOrigin(*camera_, delta);
+        clampNow(nullptr);
+    }
+}
+
+void FreeGlobeController::zoomByLevels(double levels) {
+    const float cx = static_cast<float>(viewportWidth_) * 0.5f;
+    const float cy = static_cast<float>(viewportHeight_) * 0.5f;
+    const double stepScale = std::exp(levels * std::log(2.0));
+    if (grabSurfacePoint(cx, cy) && hasGrabbedPoint_) {
+        const glm::dvec3 anchor = grabbedPoint_.raw();
+        const glm::dvec3 eye = camera_->position().raw();
+        const glm::dvec3 toAnchor = anchor - eye;
+        const double dist = glm::length(toAnchor);
+        if (dist > 1e-6) {
+            const double moveMeters = dist * (1.0 - 1.0 / stepScale);
+            glm::dvec3 nextEye = eye + (toAnchor / dist) * moveMeters;
+            if ((glm::length(nextEye) / kEarthRadiusMeters) <=
+                kMaxDistanceEarthRadii) {
+                camera_->setView(Vec3(nextEye), camera_->direction(),
+                                 camera_->up());
+            }
+            clampNow(&anchor);
+        }
+        hasGrabbedPoint_ = false;
+    } else {
+        const double moveMeters =
+            camera_->position().length() * (1.0 - 1.0 / stepScale);
+        const glm::dvec3 nextEye =
+            camera_->position().raw() +
+            camera_->direction().raw() * moveMeters;
+        if ((glm::length(nextEye) / kEarthRadiusMeters) <=
+            kMaxDistanceEarthRadii) {
+            camera_->setView(Vec3(nextEye), camera_->direction(),
+                             camera_->up());
+        }
+        clampNow(nullptr);
+    }
+}
+
+void FreeGlobeController::rotateHeadingByDegrees(double degrees) {
+    camera_ops::rotateAboutPoint(*camera_, camera_->position().raw(),
+                                 camera_->up().raw(),
+                                 glm::radians(degrees));
+    clampNow(nullptr);
+}
+
+void FreeGlobeController::pitchByDegrees(double degrees) {
+    const float cx = static_cast<float>(viewportWidth_) * 0.5f;
+    const float cy = static_cast<float>(viewportHeight_) * 0.5f;
+    const double rad = glm::radians(degrees);
+    const glm::dvec3 eye = camera_->position().raw();
+    if (grabSurfacePoint(cx, cy) && hasGrabbedPoint_) {
+        rotateCameraVerticalAroundPoint(grabbedPoint_.raw(), rad,
+                                        kTouchMinSlope);
+    } else {
+        rotateCameraVerticalAroundPoint(eye, rad, kTouchMinSlope);
+    }
+    hasGrabbedPoint_ = false;
 }
 
 void FreeGlobeController::onPinchGesture(const PinchInput& input) {
@@ -142,15 +551,15 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
         // 新捏合打断上一段 zoom 惯性滑行，并重置速率累积。
         hasZoomInertia_ = false;
         zoomInertiaLogRate_ = 0.0;
+        if (!input.smoothZoom) {
+            zoomSettleActive_ = false;  // 双指捏合打断滚轮平滑缩放
+        }
         lastPinchTimestamp_ = input.timestamp;
         pinchAppliedScaleLog_ = 0.0;
         pinchAppliedTwistRadians_ = 0.0;
-        pinchPanAngularVelocity_ = 0.0;
         pinchActiveMode_ = PinchMode::Undecided;
         pitchAppliedRadians_ = 0.0;
         pitchBaselineY_ = input.centroidY;
-        pitchPinX_ = input.centroidX;
-        pitchPinY_ = input.centroidY;
         pinchAnchorScreenX_ = input.centroidX;
         pinchAnchorScreenY_ = input.centroidY;
         lastPinchCentroidX_ = input.centroidX;
@@ -165,41 +574,64 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
 
     inertiaAngularVelocity_ = 0.0;
 
-    // mode 迁移（latch 在 InputManager，一段手势最多一次）：
-    // Undecided→Manipulate 无需特殊处理——pin 是状态求解而非增量累加，pin
-    // 目标切到当前质心后，窗口期积压的质心行程被一次精确补齐（上界=latch
-    // 阈值 8dp，肉眼不可见），不丢量、不需要回滚。
-    // Undecided→Pitch：以 latch 时刻的质心为 pitch 基线与钉合像素。
+    // mode 迁移（契约 2.2 组合手势）：PinchMode 只是"倾斜轴是否启用"的锁，
+    // 缩放/旋转/平移由 InputManager 的每轴激活标志独立门控。Undecided→
+    // Manipulate/Pitch 无需特殊处理——pin 是状态求解而非增量累加，pin 目标
+    // 切到当前质心后，窗口期积压的质心行程被一次精确补齐（上界=pan 阈值
+    // 8dp，肉眼不可见），不丢量、不需要回滚。Pitch 起手锁只重取倾斜基线。
     if (input.mode != pinchActiveMode_) {
         if (input.mode == PinchMode::Pitch) {
             pitchBaselineY_ = input.centroidY;
-            pitchPinX_ = input.centroidX;
-            pitchPinY_ = input.centroidY;
             pitchAppliedRadians_ = 0.0;
         }
         pinchActiveMode_ = input.mode;
     }
 
+    // 缩放轴（契约 2.2）：未达阈值（0.1 log2）前不缩放，达到后整段激活。
     // Jerk 限幅（绝对量状态表述）：本事件增量 = 请求累计 − 已施加累计，
-    // 夹到 ±ln(1.3)；已施加值对请求值的落后量夹到 ±kMaxPinchScaleResidualLog，
-    // 防事件流长时间单向饱和攒出一段松手仍在自走的"欠账"。语义等价旧的
-    // 残差补回机制，但绝对量表述在事件被合并/丢弃时不漂。
-    const double jerkStepLimit = std::log(1.0 + kTouchJerkLimit);
-    const double requestedLog =
-        std::log(std::max(static_cast<double>(input.scaleFromStart), 1e-6));
-    double newAppliedLog = pinchAppliedScaleLog_ +
-        std::clamp(requestedLog - pinchAppliedScaleLog_,
-                   std::log(1.0 - kTouchJerkLimit), jerkStepLimit);
-    newAppliedLog = std::clamp(newAppliedLog,
-                               requestedLog - kMaxPinchScaleResidualLog,
-                               requestedLog + kMaxPinchScaleResidualLog);
-    const double stepScale = std::exp(newAppliedLog - pinchAppliedScaleLog_);
-    pinchAppliedScaleLog_ = newAppliedLog;
+    // 夹到 ±ln(1.3)；已施加值对请求值的落后量夹到 ±kMaxPinchScaleResidualLog。
+    double stepScale = 1.0;
+    if (input.zoomEngaged && !input.smoothZoom) {
+        const double jerkStepLimit = std::log(1.0 + kTouchJerkLimit);
+        const double requestedLog =
+            std::log(std::max(static_cast<double>(input.scaleFromStart), 1e-6));
+        double newAppliedLog = pinchAppliedScaleLog_ +
+            std::clamp(requestedLog - pinchAppliedScaleLog_,
+                       std::log(1.0 - kTouchJerkLimit), jerkStepLimit);
+        newAppliedLog = std::clamp(newAppliedLog,
+                                   requestedLog - kMaxPinchScaleResidualLog,
+                                   requestedLog + kMaxPinchScaleResidualLog);
+        stepScale = std::exp(newAppliedLog - pinchAppliedScaleLog_);
+        pinchAppliedScaleLog_ = newAppliedLog;
+    }
 
     // 无锚起手（球外/pick 全 miss）后每事件重试获取，成功即转入有锚分支。
     if (!hasPinchAnchor_) {
         hasPinchAnchor_ =
             tryAcquirePinchAnchor(input.centroidX, input.centroidY);
+    }
+
+    // 滚轮平滑缩放（契约 3.1）：把本格对数增量并入目标，交由 tick 指数收敛
+    // （~300ms、单帧上限 ±ln(2)、不越目标不反向）；本事件不瞬时施加。
+    // 无锚（天空/太空像素）时锚点取 eye 前方 |eye| 处——沿视线平滑缩放。
+    if (input.smoothZoom) {
+        const double notchLog = std::log(std::max(
+            static_cast<double>(input.scaleFromStart), 1e-6));
+        if (!zoomSettleActive_) {
+            zoomSettleActive_ = true;
+            zoomSettleAppliedLog_ = 0.0;
+            zoomSettleTargetLog_ = 0.0;
+        }
+        if (hasPinchAnchor_) {
+            zoomSettleAnchor_ =
+                pinchAnchorNormal_.raw() * grabbedRadiusMeters_;
+        } else {
+            const glm::dvec3 eye = camera_->position().raw();
+            zoomSettleAnchor_ =
+                eye + camera_->direction().raw() * glm::length(eye);
+        }
+        zoomSettleTargetLog_ += notchLog;
+        stepScale = 1.0;
     }
 
     if (hasPinchAnchor_) {
@@ -238,16 +670,18 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
             zoomInertiaAnchor_ = anchorWorld;
         }
 
-        // ② twist：绕锚点、以锚点法线为轴。锚点在轴上 ⇒ 精确保锚。
-        // 无阈值——死区会吞掉刻意的慢速拧动（steppy），噪声由 InputManager
-        // 的 latch 窗口与传感自身平滑兜底。
-        const double twistStep = static_cast<double>(
-            input.twistFromStartRadians) - pinchAppliedTwistRadians_;
-        pinchAppliedTwistRadians_ =
-            static_cast<double>(input.twistFromStartRadians);
-        if (std::abs(twistStep) > 0.0) {
-            camera_ops::rotateAboutPoint(*camera_, anchorWorld,
-                                         pinchAnchorNormal_.raw(), twistStep);
+        // ② twist（契约 2.2）：弧长 ≥25px 激活后绕锚点法线旋转；锚点在轴上
+        // ⇒ 精确保锚。阈值防近距手指误转，激活后每帧增量直接施加。
+        if (input.rotateEngaged) {
+            const double twistStep = static_cast<double>(
+                input.twistFromStartRadians) - pinchAppliedTwistRadians_;
+            pinchAppliedTwistRadians_ =
+                static_cast<double>(input.twistFromStartRadians);
+            if (std::abs(twistStep) > 0.0) {
+                camera_ops::rotateAboutPoint(*camera_, anchorWorld,
+                                             pinchAnchorNormal_.raw(),
+                                             twistStep);
+            }
         }
 
         // ③ pitch（仅 Pitch 模式）：质心 Y 相对基线的绝对映射，绕锚点
@@ -255,9 +689,7 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
         // pitchAppliedRadians_，被守卫拒绝时重取基线——到达俯仰界后反向
         // 立即响应，零死区离合。
         if (pinchActiveMode_ == PinchMode::Pitch) {
-            const double radPerPixel = kPinchTiltFullHeightRadians /
-                static_cast<double>(std::max(1, viewportHeight_));
-            const double desired = -radPerPixel *
+            const double desired = -kPinchTiltRadiansPerPixel *
                 static_cast<double>(input.centroidY - pitchBaselineY_);
             const double tiltStep = std::clamp(
                 desired - pitchAppliedRadians_,
@@ -269,47 +701,22 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
                 } else {
                     // 重基线：让 desired(当前质心) == 已施加量。
                     pitchBaselineY_ = input.centroidY +
-                        static_cast<float>(pitchAppliedRadians_ / radPerPixel);
+                        static_cast<float>(pitchAppliedRadians_ /
+                                           kPinchTiltRadiansPerPixel);
                 }
             }
         }
 
-        // ④ pin：唯一产生横向世界运动的通道。Manipulate 钉当前质心（刚性
-        // pan 内建），Undecided 钉起手质心，Pitch 钉 latch 质心。
+        // ④ pin：唯一产生横向世界运动的通道（契约 2.2 组合——Pitch 锁只
+        // 启用倾斜轴，平移与缩放/旋转一样随动）。Undecided 钉起手质心，
+        // 一旦任一轴激活钉当前质心（刚性 pan 内建）。
         float pinTargetX = input.centroidX;
         float pinTargetY = input.centroidY;
         if (pinchActiveMode_ == PinchMode::Undecided) {
             pinTargetX = pinchAnchorScreenX_;
             pinTargetY = pinchAnchorScreenY_;
-        } else if (pinchActiveMode_ == PinchMode::Pitch) {
-            pinTargetX = pitchPinX_;
-            pinTargetY = pitchPinY_;
         }
-        const glm::dquat pinDelta = applyPinchPin(pinTargetX, pinTargetY);
-
-        // 双指 pan 惯性累积（EMA，与 zoom 惯性同构：静止/纯缩放帧采样 0，
-        // 速率自然衰减向 0，只有真正在平移才留下动量）。Pitch/Undecided 的
-        // pin 目标静止 → delta≈identity → 自动不积。松手时种进与单指共用
-        // 的惯性通道（onPinchEnd）。
-        {
-            const double dt = input.timestamp - lastPinchTimestamp_;
-            if (dt > 0.0 && dt < 0.25) {
-                const double angle = glm::angle(pinDelta);
-                const double instVelocity = angle > 1e-9
-                    ? std::min(angle / dt, kMaxInertiaAngularVelocityRadPerSec)
-                    : 0.0;
-                if (angle > 1e-9) {
-                    pinchPanAxis_ = glm::axis(pinDelta);
-                }
-                pinchPanAngularVelocity_ =
-                    pinchPanAngularVelocity_ * (1.0 - kVelocitySmoothing) +
-                    instVelocity * kVelocitySmoothing;
-            }
-        }
-
-        if (stepScale < 1.0) {
-            accrueRecenterBudget(-std::log(stepScale));
-        }
+        applyPinchPin(pinTargetX, pinTargetY);
     } else {
         // 无有效 pinch anchor 时，沿视线方向缩放相机（无锚点可钉，只能以
         // 地心距当作被缩放的距离）。位移量与有锚点分支同一公式 d*(1-1/s)，
@@ -323,9 +730,6 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
             camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
         }
         clampNow(nullptr);
-        if (stepScale < 1.0) {
-            accrueRecenterBudget(-std::log(stepScale));
-        }
     }
 
     lastPinchCentroidX_ = input.centroidX;
@@ -335,13 +739,8 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
 
 void FreeGlobeController::onPinchEnd() {
     pinching_ = false;
-    // 双指 pan 惯性：把手势期累积的 pin 角速度种进与单指拖拽共用的惯性
-    // 通道（tick() 统一衰减；量太小会立即跌破 1e-4 地板自然停）。
-    inertiaAngularVelocity_ = pinchPanAngularVelocity_;
-    inertiaAxis_ = pinchPanAxis_;
-    pinchPanAngularVelocity_ = 0.0;
-    // 松手时若刚才在缩放且留有足够动量，启动 zoom 惯性滑行（锚点仍需保留以
-    // 沿视线朝它 dolly）。否则清零。
+    // 契约 2.3：双指 pan 无惯性（直接操纵，松手即停）；仅当缩放留有足够
+    // 动量时启动 zoom 惯性滑行（锚点仍需保留以沿视线朝它 dolly）。
     if (hasPinchAnchor_ &&
         std::abs(zoomInertiaLogRate_) >= kMinZoomInertiaLogRate) {
         hasZoomInertia_ = true;
@@ -358,7 +757,8 @@ void FreeGlobeController::onActivate() {
     hasGrabbedPoint_ = false;
     pinching_ = false;
     hasPinchAnchor_ = false;
-    pinchPanAngularVelocity_ = 0.0;
+    dragMode_ = DragMode::Space;
+    nearInertiaActive_ = false;
     clearAllInertia();
 }
 
@@ -377,15 +777,65 @@ void FreeGlobeController::tick(double deltaSeconds) {
         inertiaAngularVelocity_ > kMinInertiaAngularVelocity &&
         deltaSeconds > 0.0) {
         double angle = inertiaAngularVelocity_ * deltaSeconds;
-        glm::dquat delta = glm::angleAxis(angle, inertiaAxis_);
-        camera_ops::rotateAboutOrigin(*camera_, delta);
-        clampNow(nullptr);
-        inertiaAngularVelocity_ *= std::exp(-kInertiaDampingPerSecond * deltaSeconds);
-        // 掉到阈值以下就归零。指数衰减永远够不到 0,留着那个小尾巴的话
-        // 「是否还在动」这个问题就永远答"是"(zoom 惯性早就是这么自清的,
-        // pan 这条一直缺)。
-        if (inertiaAngularVelocity_ <= kMinInertiaAngularVelocity) {
+        // 停止判据（Cesium 规则，契约 1.4）：折合屏幕位移 < 0.5px/帧即停。
+        // 与 isAnimating 共用 kMinInertiaAngularVelocity 作为归零 epsilon，
+        // 但真实停止量是像素——视口越大可接受的角度越小。
+        const double radPerPixel =
+            camera_->verticalFovRadians() /
+            static_cast<double>(std::max(1, viewportHeight_));
+        if (radPerPixel > 0.0 && angle / radPerPixel < 0.5) {
             inertiaAngularVelocity_ = 0.0;
+        } else {
+            glm::dquat delta = glm::angleAxis(angle, inertiaAxis_);
+            camera_ops::rotateAboutOrigin(*camera_, delta);
+            clampNow(nullptr);
+            inertiaAngularVelocity_ *=
+                std::exp(-kInertiaDampingPerSecond * deltaSeconds);
+            if (inertiaAngularVelocity_ <= kMinInertiaAngularVelocity) {
+                inertiaAngularVelocity_ = 0.0;
+            }
+        }
+    }
+
+    // 近地拖图惯性（契约 1.4）：像素速度沿锁定方向滑行，受地平线裁剪。
+    if (!dragging_ && !pinching_ && nearInertiaActive_ && deltaSeconds > 0.0) {
+        tickNearGroundInertia(deltaSeconds);
+    }
+
+    // 滚轮平滑缩放（契约 3.1）：指数收敛到目标，单帧上限 ±ln(2)。
+    if (!dragging_ && !pinching_ && zoomSettleActive_ && deltaSeconds > 0.0) {
+        const double remaining =
+            zoomSettleTargetLog_ - zoomSettleAppliedLog_;
+        if (std::abs(remaining) < 1e-6) {
+            zoomSettleActive_ = false;
+        } else {
+            const double ln2 = std::log(2.0);
+            const double cap = kMaxZoomLevelsPerFrame * ln2;
+            double step = remaining *
+                (1.0 - std::exp(-kZoomSettleRatePerSecond * deltaSeconds));
+            step = std::clamp(step, -cap, cap);
+            if (std::abs(step) < 1e-9) {
+                step = remaining;  // 收敛到目标（指数永不到达，最后一步直接结算）
+            }
+            const double stepScale = std::exp(step);
+            const glm::dvec3 eye = camera_->position().raw();
+            const glm::dvec3 toAnchor = zoomSettleAnchor_ - eye;
+            const double dist = glm::length(toAnchor);
+            if (dist > 1e-3) {
+                const double moveMeters = dist * (1.0 - 1.0 / stepScale);
+                glm::dvec3 nextEye = eye + (toAnchor / dist) * moveMeters;
+                if ((glm::length(nextEye) / kEarthRadiusMeters) <=
+                    kMaxDistanceEarthRadii) {
+                    camera_->setView(Vec3(nextEye), camera_->direction(),
+                                     camera_->up());
+                }
+                clampNow(&zoomSettleAnchor_);
+            }
+            zoomSettleAppliedLog_ += step;
+            if (std::abs(zoomSettleTargetLog_ - zoomSettleAppliedLog_) <
+                1e-6) {
+                zoomSettleActive_ = false;
+            }
         }
     }
 
@@ -405,10 +855,6 @@ void FreeGlobeController::tick(double deltaSeconds) {
                                  camera_->up());
                 }
             clampNow(&zoomInertiaAnchor_);
-            // 拉远方向的惯性滑行（rate<0 = 距离增大）继续充值回中预算。
-            if (zoomInertiaLogRate_ < 0.0) {
-                accrueRecenterBudget(-zoomInertiaLogRate_ * deltaSeconds);
-            }
         }
         zoomInertiaLogRate_ *=
             std::exp(-kZoomInertiaDampingPerSecond * deltaSeconds);
@@ -418,26 +864,28 @@ void FreeGlobeController::tick(double deltaSeconds) {
         }
     }
 
-    // 高空回中预算消费：仅在无活动手势时沉降（手势期严格正交——回中旋转
-    // 会推开刚钉好的锚点）。
-    if (!dragging_ && !pinching_) {
-        consumeRecenterBudget(deltaSeconds);
-    }
 }
 
 void FreeGlobeController::clearPanInertia() {
     inertiaAngularVelocity_ = 0.0;
+    dragVelocitySamples_.clear();
+    nearInertiaActive_ = false;
+    nearVelocityX_ = 0.0;
+    nearVelocityY_ = 0.0;
+    pixelVelocitySamples_.clear();
 }
 
 void FreeGlobeController::clearGlideInertia() {
     clearPanInertia();
     hasZoomInertia_ = false;
     zoomInertiaLogRate_ = 0.0;
+    zoomSettleActive_ = false;
+    zoomSettleTargetLog_ = 0.0;
+    zoomSettleAppliedLog_ = 0.0;
 }
 
 void FreeGlobeController::clearAllInertia() {
     clearGlideInertia();
-    recenterBudgetRadians_ = 0.0;
 }
 
 bool FreeGlobeController::clampNow(const glm::dvec3* pinnedAnchorWorld) {
@@ -513,67 +961,6 @@ bool FreeGlobeController::rotateCameraVerticalAroundPoint(
 
     camera_->setView(Vec3(nextEye), Vec3(nextDirection), Vec3(nextUp));
     return true;
-}
-
-void FreeGlobeController::accrueRecenterBudget(double zoomOutLogStep) {
-    if (zoomOutLogStep <= 0.0) return;
-
-    const glm::dvec3 eye = camera_->position().raw();
-    const double eyeRadius = glm::length(eye);
-    const double altitude = eyeRadius - kEarthRadiusMeters;
-    if (altitude <= kRecenterStartAltitudeMeters) return;
-
-    const glm::dvec3 toCenter = -eye / eyeRadius;
-    const glm::dvec3 dir = glm::normalize(camera_->direction().raw());
-    const double cosTheta = std::clamp(glm::dot(dir, toCenter), -1.0, 1.0);
-    const double theta = std::acos(cosTheta);
-    if (theta < 1e-6) return;
-
-    double w = (altitude - kRecenterStartAltitudeMeters) /
-               (kRecenterFullAltitudeMeters - kRecenterStartAltitudeMeters);
-    w = std::clamp(w, 0.0, 1.0);
-    w = w * w * (3.0 - 2.0 * w);  // smoothstep：介入边界无手感突变
-
-    recenterBudgetRadians_ +=
-        w * kRecenterGainPerLogStep * zoomOutLogStep * theta;
-    // 预算封顶到当前 θ：θ 收敛到 0 后多余欠账没有意义。
-    recenterBudgetRadians_ = std::min(recenterBudgetRadians_, theta);
-}
-
-void FreeGlobeController::consumeRecenterBudget(double deltaSeconds) {
-    if (recenterBudgetRadians_ <= 1e-9 || deltaSeconds <= 0.0) {
-        return;
-    }
-
-    const glm::dvec3 eye = camera_->position().raw();
-    const double eyeRadius = glm::length(eye);
-    if (eyeRadius < 1e-6) return;
-    const glm::dvec3 toCenter = -eye / eyeRadius;
-    const glm::dvec3 dir = glm::normalize(camera_->direction().raw());
-    const double cosTheta = std::clamp(glm::dot(dir, toCenter), -1.0, 1.0);
-    const double theta = std::acos(cosTheta);
-    if (theta < 1e-6) {
-        recenterBudgetRadians_ = 0.0;
-        return;
-    }
-
-    glm::dvec3 axis = glm::cross(dir, toCenter);
-    const double axisLength = glm::length(axis);
-    if (axisLength < 1e-12) {
-        recenterBudgetRadians_ = 0.0;
-        return;
-    }
-    axis /= axisLength;
-
-    const double step = std::min(
-        recenterBudgetRadians_,
-        theta * (1.0 - std::exp(-kRecenterSettleRatePerSecond * deltaSeconds)));
-    // 绕相机自身位置旋转：eye 不动，仅视线向地心方向收敛 → 球心向屏幕中心靠。
-    camera_ops::rotateAboutPoint(*camera_, eye, axis, step);
-    recenterBudgetRadians_ -= step;
-    if (recenterBudgetRadians_ < 1e-9) {
-        recenterBudgetRadians_ = 0.0;
-    }
 }
 
 bool FreeGlobeController::debugAnchorWorld(Vec3& outWorld) const {
@@ -903,17 +1290,21 @@ void FreeGlobeController::applyAnchorDrag(float xPixels, float yPixels,
         }
     }
 
-    // 更新惯性（使用事件时间戳，而非渲染时钟）；spin 与 anchor 共用同一通道，
-    // 故隔着地平线甩一下也能顺滑滑行。
+    // 惯性采样（使用事件时间戳，而非渲染时钟）：只记录最近 ≤3 个相邻样本，
+    // 松手时在 onDragEnd 按 iOS 权重 0.6/0.35/0.05 合成（契约 1.4）。spin 与
+    // anchor 共用同一通道，故隔着地平线甩一下也能顺滑滑行。
     const double angle = glm::angle(delta);
-    double dt = timestamp - lastDragTimestamp_;
+    const double dt = timestamp - lastDragTimestamp_;
     if (angle > 1e-9 && dt > 0.0 && dt < 0.25) {
-        double instantaneousVelocity = std::min(angle / dt,
-                                                kMaxInertiaAngularVelocityRadPerSec);
-        inertiaAxis_ = glm::axis(delta);
-        inertiaAngularVelocity_ =
-            inertiaAngularVelocity_ * (1.0 - kVelocitySmoothing) +
-            instantaneousVelocity * kVelocitySmoothing;
+        DragVelocitySample sample;
+        sample.dt = dt;
+        sample.axis = glm::axis(delta);
+        sample.rate = std::min(angle / dt,
+                               kMaxInertiaAngularVelocityRadPerSec);
+        dragVelocitySamples_.push_back(sample);
+        if (dragVelocitySamples_.size() > 3) {
+            dragVelocitySamples_.erase(dragVelocitySamples_.begin());
+        }
     }
     lastDragTimestamp_ = timestamp;
 }

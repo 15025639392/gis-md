@@ -225,7 +225,7 @@ TEST_F(PoseTraceTest, TraceA_AnchorDragThenInertia) {
     ASSERT_FALSE(controller_->isSelfAnimating())
         << "场景失效:惯性未自清零,没走到清零分支";
 
-    EXPECT_TRACE_HASH(trace_, 0x5cc85e9e368ef874ull);
+    EXPECT_TRACE_HASH(trace_, 0xdcf961f06118a4efull);
 }
 
 // ---------------------------------------------------------------------------
@@ -291,7 +291,7 @@ TEST_F(PoseTraceTest, TraceB_PinchDollyTwistPanPitch) {
     EXPECT_TRUE(controller_->groundState().hasTerrainData)
         << "场景失效:没拿到地形样本,滤波/探针分支空转";
 
-    EXPECT_TRACE_HASH(trace_, 0x439584debe38efd4ull);
+    EXPECT_TRACE_HASH(trace_, 0xed5e7ee27054dbecull);
 }
 
 // ---------------------------------------------------------------------------
@@ -371,10 +371,10 @@ TEST_F(PoseTraceTest, TraceC_TerrainClampAndFilter) {
 }
 
 // ---------------------------------------------------------------------------
-// 场景 D:高空——快速路径(跳过地形采样) + zoom-out 回中预算充值与消费 +
+// 场景 D:高空——快速路径(跳过地形采样) + zoom-out 锚点缩放 +
 //         帧末哨兵收编绕过控制器的裸写。
-// 覆盖:constrainEyeAgainstTerrain 高空早退 / accrueRecenterBudget /
-//       consumeRecenterBudget / resolveConstraints 的位姿指纹分支。
+// 覆盖:constrainEyeAgainstTerrain 高空早退 / dolly 沿 eye→anchor /
+//       resolveConstraints 的位姿指纹分支。(契约 2.4:无高空回中。)
 // ---------------------------------------------------------------------------
 TEST_F(PoseTraceTest, TraceD_HighAltitudeRecenterAndSentinel) {
     int sampleCalls = 0;
@@ -389,7 +389,7 @@ TEST_F(PoseTraceTest, TraceD_HighAltitudeRecenterAndSentinel) {
     EXPECT_FALSE(controller_->groundState().hasTerrainData)
         << "场景失效:高空仍在采样,快速路径没走到";
 
-    // 偏心 zoom-out:充值回中预算(手势期不动相机,与锚点钉合正交)。
+    // 偏心 zoom-out:锚点缩放(契约 2.4:无回中欠账)。
     double t = 0.0;
     controller_->onPinchGesture(pinchIn(1.0f, 0.0f, 560.0f, 200.0f,
                                         CameraSystem::PinchMode::Undecided,
@@ -404,14 +404,14 @@ TEST_F(PoseTraceTest, TraceD_HighAltitudeRecenterAndSentinel) {
     }
     controller_->onPinchEnd();
     trace_.record(*camera_, controller_->groundState());
-    step(25);  // 松手后回中预算消费
+    step(25);  // 松手后 zoom 惯性/约束沉降
 
     // 外部裸写(模拟 Facade/JNI 绕过控制器):帧末哨兵应按 user-driven 收编。
     const glm::dvec3 eye = camera_->position().raw();
     camera_->setView(Vec3(eye * 1.0001), camera_->direction(), camera_->up());
     step(4);
 
-    EXPECT_TRACE_HASH(trace_, 0xecf0d516c4b614abull);
+    EXPECT_TRACE_HASH(trace_, 0x10f1c10311c00f2full);
 }
 
 // ---------------------------------------------------------------------------
@@ -444,7 +444,7 @@ TEST_F(PoseTraceTest, TraceE_LimbAndOffGlobeDrag) {
     trace_.record(*camera_, controller_->groundState());
     step(10);
 
-    EXPECT_TRACE_HASH(trace_, 0xe2f5de8f36db6ff6ull);
+    EXPECT_TRACE_HASH(trace_, 0x7468198d2a01bccaull);
 }
 
 }  // namespace

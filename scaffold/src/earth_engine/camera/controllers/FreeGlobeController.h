@@ -1,12 +1,14 @@
 #pragma once
 
 #include "../../core/math/Vec3.h"
+#include "../../interaction/InputEvent.h"
 #include "ICameraController.h"
 #include "TouchGesture.h"
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace earth_engine {
 
@@ -52,10 +54,18 @@ public:
 
     /// drag 结束（手指抬起，启动惯性）
     void onDragEnd() override;
+    /// drag 被取消：立即停、清惯性、锚点作废（契约 1.5）。
+    void onDragCancel() override;
 
     void onPinchGesture(const PinchInput& input) override;
     void onPinchEnd() override;
+    /// pinch 被取消：立即停、不启动 zoom 惯性（契约 2.3）。
+    void onPinchCancel() override;
     bool pinching() const override { return pinching_; }
+    /// 键盘命令（契约 3.3，Mapbox 键位）：方向键平移 100px、+/- 缩放 ±1 级
+    /// （Shift 加倍 ±2 级）、Shift+方向键旋转 15°/倾斜 10°。
+    void onKeyCommand(InputEvent::Key key,
+                      const InputEvent::Modifiers& modifiers);
 
     /// 惯性/滑行/回中的时间步进。编排层在冻结与脚本平移的早退**之后**调用，
     /// 故本函数不认识这两种测量台状态。
@@ -68,16 +78,16 @@ public:
     /// 交出：同上，瞬时量不跨控制器存活。
     void onDeactivate() override;
 
-    /// pan 惯性的"已经停了"阈值(rad/s)。低于它不再产生任何位移,故等价于零。
-    /// **三处必须同用这一个常量**:运动闸、自清零、isAnimating 判据。
-    /// 各写各的字面量正是这类 bug 的温床 —— 判据比消费者宽一点点,表现就是
-    /// 「拖一下之后永远不再空闲」,而画面上完全看不出区别。
+    /// 惯性速度的"归零"最小量(rad/s)。tick() 里的真实停止判据是"折合屏幕
+    /// 位移 < 0.5px/帧"(Cesium 规则,视口相关);此常量只是数值归零的 epsilon,
+    /// 运动闸、自清零、isAnimating 判据三处必须同用这一个常量。
     static constexpr double kMinInertiaAngularVelocity = 0.0001;
 
     /// 是否仍在自行滑行（惯性/zoom 滑行）。**不含**编排层的脚本平移。
     bool isAnimating() const override {
         return hasZoomInertia_ ||
-               inertiaAngularVelocity_ > kMinInertiaAngularVelocity;
+               inertiaAngularVelocity_ > kMinInertiaAngularVelocity ||
+               nearInertiaActive_ || zoomSettleActive_;
     }
 
     // ---- 惯性清零：三个**不同**的子集 ----
@@ -97,6 +107,34 @@ public:
     bool debugAnchorWorld(Vec3& outWorld) const;
 
 private:
+    /// 单指拖拽反馈模式（契约 1.2）：起手判定一次，整段拖拽不切换。
+    /// Space = 空间拖球（绕地心锚点旋转）；NearGround = 近地拖图（姿态锁定、
+    /// 锚点钉在指下、Δpx 等量换算地表位移）。
+    enum class DragMode : uint8_t {
+        Space,
+        NearGround
+    };
+    /// 模式判据：海拔 < 150km（Cesium minimumPickingTerrainHeight）且
+    /// pitch ≥ 60°（MapLibre issue #6111 高倾斜病态起点）。
+    DragMode resolveDragMode() const;
+
+    /// 近地像素平移（契约 1.3）：锚点钉在指下，姿态完全锁定；每帧把屏幕
+    /// Δpx 经"锚点局部切平面"换算成世界位移（旋转的平直极限，不引入第二套
+    /// 相机数学）；位移/惯性偏移 ≤ 0.75×地平线像素距离（MapLibre PR #6345），
+    /// 越界即停、绝不反向。
+    void applyNearGroundPan(float xPixels, float yPixels, double timestamp);
+    /// 近地惯性：松手后按 iOS 衰减（v *= 0.998/ms）沿锁定方向滑行，
+    /// 停止判据 = 折合屏幕位移 < 0.5px/帧（与空间模式同规则）。
+    void tickNearGroundInertia(double deltaSeconds);
+    /// 当前相机姿态下地平线在屏幕上的 y（契约 1.2 地平线几何约束）。
+    double horizonScreenY() const;
+    /// 键盘平移（契约 3.3）：空间=转台旋转，近地=切平面平移（带地平线裁剪）。
+    void panByPixels(double dx, double dy);
+    /// 键盘缩放：绕屏幕中心锚点 ±levels 缩放级（1 级 = ×2）。
+    void zoomByLevels(double levels);
+    void rotateHeadingByDegrees(double degrees);
+    void pitchByDegrees(double degrees);
+
     /// 锚点钉合求解：求把"像素 (x,y) 射线与抓取球的交点方向"转到 anchorNormal
     /// 的绕地心旋转。单指拖拽与双指钉合共用同一份数学（同构，见 applyAnchorDrag
     /// 与 applyPinchPin），任何一侧的修正必须同时作用于另一侧。
@@ -137,11 +175,6 @@ private:
     bool rotateCameraVerticalAroundPoint(const glm::dvec3& center,
                                          double angle,
                                          double minSlope);
-    /// 高空 zoom-out 回中（预算松弛，见 .cpp 常量说明）：手势/滑行期只充值
-    /// 预算（不动相机，与锚点钉合严格正交），松手后 tick() 指数消费。
-    void accrueRecenterBudget(double zoomOutLogStep);
-    void consumeRecenterBudget(double deltaSeconds);
-
     /// 手势/惯性路径的位姿钳位：调用方刚显式动过相机，故恒 user-driven、
     /// 无帧间隔（dt=0）。与编排层的帧末哨兵是**两条性质不同的路径**——前者是
     /// "我刚动了，钳一下"，后者是"检查有没有人绕过我"——别再合并回一个带
@@ -173,6 +206,34 @@ private:
     glm::dvec3 inertiaAxis_{0.0, 1.0, 0.0};
     double inertiaAngularVelocity_ = 0.0;
     double lastDragTimestamp_ = 0.0;  // 最近一次 drag 事件的时间戳
+    /// iOS 风格速度采样（契约 1.4）：最近 ≤3 个相邻样本，松手时按
+    /// 0.6/0.35/0.05 加权（最新样本权重最低——它是"松开前一刻"的抖动值）。
+    struct DragVelocitySample {
+        double dt = 0.0;
+        glm::dvec3 axis{0.0, 1.0, 0.0};
+        double rate = 0.0;  // rad/s（已按上限钳位）
+    };
+    std::vector<DragVelocitySample> dragVelocitySamples_;
+
+    // 近地拖图状态（契约 1.2/1.3）
+    DragMode dragMode_ = DragMode::Space;
+    bool nearInertiaActive_ = false;
+    Vec3 nearAnchorWorld_{0.0, 0.0, 6378137.0};
+    Vec3 nearAnchorNormal_{0.0, 0.0, 1.0};
+    float nearStartX_ = 0.0f;   // 起手手指像素（锚点初始指下位置）
+    float nearStartY_ = 0.0f;
+    double nearHorizonY_ = 1.0e9;        // 地平线屏幕 y（近地模式起手时算一次）
+    double nearPixelsToHorizon_ = 1.0e9; // |起手Y − 地平线Y|
+    double nearAppliedOffsetX_ = 0.0;     // 已施加的屏幕偏移（相对起手）
+    double nearAppliedOffsetY_ = 0.0;
+    double nearVelocityX_ = 0.0;          // 近地惯性速度（px/s，屏幕系）
+    double nearVelocityY_ = 0.0;
+    struct PixelVelocitySample {
+        double dt = 0.0;
+        float dx = 0.0f;
+        float dy = 0.0f;
+    };
+    std::vector<PixelVelocitySample> pixelVelocitySamples_;
 
     // pinch 状态
     bool pinching_ = false;
@@ -191,25 +252,22 @@ private:
     // （零死区离合，防 wind-up），锚点钉 latch 时刻的质心像素。
     float pitchBaselineY_ = 0.0f;
     double pitchAppliedRadians_ = 0.0;
-    float pitchPinX_ = 0.0f;
-    float pitchPinY_ = 0.0f;
     // 上一事件质心（pin 病态区转台回退的位移基准）。
     float lastPinchCentroidX_ = 0.0f;
     float lastPinchCentroidY_ = 0.0f;
-    // 双指 pan 惯性累积（EMA，静止帧自然衰减向 0）：松手时种进与单指拖拽
-    // 共用的 inertiaAxis_/inertiaAngularVelocity_ 通道。zoomInertiaAnchor_
-    // 是固定世界点，pan 惯性转的是相机（rotateAboutOrigin），世界点不动，
-    // 双惯性并行无需同转锚点——dolly 朝固定世界点在任意相机旋转下都正确。
-    glm::dvec3 pinchPanAxis_{0.0, 1.0, 0.0};
-    double pinchPanAngularVelocity_ = 0.0;
-
-    // 高空回中欠账（弧度）。手势/滑行期充值，无手势时 tick() 消费。
-    double recenterBudgetRadians_ = 0.0;
-
     // zoom 惯性状态（对数距离空间，见 .cpp 常量说明）
     bool hasZoomInertia_ = false;
     double zoomInertiaLogRate_ = 0.0;         // d(ln dist)/dt，>0 = 继续拉近
     glm::dvec3 zoomInertiaAnchor_{0.0, 0.0, 0.0};
+
+    // 滚轮平滑缩放（契约 3.1）：目标/已施加的对数缩放（累计），tick 指数收敛
+    // （~300ms），单帧上限 ±ln(2)（Mapbox maxScalePerFrame=2），不越目标（不反向）。
+    bool zoomSettleActive_ = false;
+    double zoomSettleTargetLog_ = 0.0;
+    double zoomSettleAppliedLog_ = 0.0;
+    glm::dvec3 zoomSettleAnchor_{0.0, 0.0, 0.0};
+    static constexpr double kZoomSettleRatePerSecond = 8.0;  // ~0.3s 收敛 91%
+    static constexpr double kMaxZoomLevelsPerFrame = 1.0;    // ±1 级/帧
 };
 
 } // namespace earth_engine

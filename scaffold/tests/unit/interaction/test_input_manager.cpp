@@ -100,7 +100,7 @@ TEST(InputManagerTest, CancelClearsDragWithoutClick) {
     ASSERT_EQ(3u, gestures.size());
     EXPECT_EQ(InputManager::Gesture::DragStart, gestures[0]);
     EXPECT_EQ(InputManager::Gesture::DragMove, gestures[1]);
-    EXPECT_EQ(InputManager::Gesture::DragEnd, gestures[2]);
+    EXPECT_EQ(InputManager::Gesture::DragCancel, gestures[2]);
 }
 
 TEST(InputManagerTest, PinchEndSuppressesFollowingPointerUpClick) {
@@ -155,7 +155,7 @@ TEST(InputManagerTest, CancelClearsPinchWithoutClick) {
     ASSERT_EQ(3u, gestures.size());
     EXPECT_EQ(InputManager::Gesture::PinchStart, gestures[0]);
     EXPECT_EQ(InputManager::Gesture::PinchMove, gestures[1]);
-    EXPECT_EQ(InputManager::Gesture::PinchEnd, gestures[2]);
+    EXPECT_EQ(InputManager::Gesture::PinchCancel, gestures[2]);
 }
 
 // ---- 双指会话 mode latch（起手快照 + 单次判定，整段手势不再改）----
@@ -195,9 +195,10 @@ TEST(InputManagerTest, PinchLatchPitchOnParallelVerticalMove) {
     EXPECT_EQ(InputEvent::PinchMode::Pitch, log.moves[2].pinchMode);
 }
 
-TEST(InputManagerTest, PinchLatchManipulateOnSpreadChange) {
+TEST(InputManagerTest, PinchCombinationZoomThenPitchBothEngaged) {
     PinchEventLog log;
-    // 两指张开（spread 变化超过 5% 对数阈值）→ Manipulate，竖移后保持。
+    // 契约 2.2 组合：两指张开（超过 0.1 log2 阈值）→ 缩放轴激活；随后同向
+    // 竖移可再锁定倾斜轴——两轴同时生效，不是互斥 latch。
     log.manager.process(pinchPair(InputEvent::Type::PinchMove,
                                   300.0f, 300.0f, 500.0f, 300.0f, 1.00));
     log.manager.process(pinchPair(InputEvent::Type::PinchMove,
@@ -207,8 +208,64 @@ TEST(InputManagerTest, PinchLatchManipulateOnSpreadChange) {
 
     ASSERT_EQ(3u, log.moves.size());
     EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves[1].pinchMode);
-    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves[2].pinchMode);
+    EXPECT_EQ(InputEvent::PinchMode::Pitch, log.moves[2].pinchMode);
     EXPECT_NEAR(1.2f, log.moves[1].pinchScaleFromStart, 1e-4f);
+    EXPECT_TRUE(log.moves[1].pinchZoomEngaged);
+    EXPECT_TRUE(log.moves[2].pinchZoomEngaged);  // 缩放轴保持激活
+}
+
+TEST(InputManagerTest, PinchZoomEngagesAboveThreshold) {
+    PinchEventLog log;
+    // 阈值 0.1 log2 ≈ 7.2%：5% 不激活，20% 激活。
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 300.0f, 500.0f, 300.0f, 1.00));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  295.0f, 300.0f, 505.0f, 300.0f, 1.02));
+    ASSERT_EQ(2u, log.moves.size());
+    EXPECT_FALSE(log.moves[1].pinchZoomEngaged);
+    EXPECT_EQ(InputEvent::PinchMode::Undecided, log.moves[1].pinchMode);
+
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  280.0f, 300.0f, 520.0f, 300.0f, 1.04));
+    ASSERT_EQ(3u, log.moves.size());
+    EXPECT_TRUE(log.moves[2].pinchZoomEngaged);
+    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves[2].pinchMode);
+}
+
+TEST(InputManagerTest, PinchRotateEngagesAboveArcThreshold) {
+    PinchEventLog log;
+    // 旋转阈值 = 25px 弧长（|twist|·spread0）。spread0=200：
+    // 0.1 rad×200=20px 不激活；0.15 rad×200=30px 激活。
+    const float cx = 400.0f, cy = 300.0f, r = 100.0f;
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  cx - r, cy, cx + r, cy, 1.00));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  cx - r * std::cos(0.1), cy - r * std::sin(0.1),
+                                  cx + r * std::cos(0.1), cy + r * std::sin(0.1),
+                                  1.02));
+    EXPECT_FALSE(log.moves.back().pinchRotateEngaged);
+
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  cx - r * std::cos(0.15), cy - r * std::sin(0.15),
+                                  cx + r * std::cos(0.15), cy + r * std::sin(0.15),
+                                  1.04));
+    EXPECT_TRUE(log.moves.back().pinchRotateEngaged);
+    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves.back().pinchMode);
+}
+
+TEST(InputManagerTest, PinchPitchRejectedWhenSecondFingerLate) {
+    PinchEventLog log;
+    // 一指先动、另一指 100ms 内未跟上（Mapbox ALLOWED_SINGLE_TOUCH_TIME）→
+    // 倾斜锁永久拒绝；此后两指同向竖移也不再触发 pitch。
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 300.0f, 500.0f, 300.0f, 1.00));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 305.0f, 500.0f, 300.0f, 1.02));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 310.0f, 500.0f, 300.0f, 1.20));
+    log.manager.process(pinchPair(InputEvent::Type::PinchMove,
+                                  300.0f, 320.0f, 500.0f, 320.0f, 1.22));
+    EXPECT_EQ(InputEvent::PinchMode::Manipulate, log.moves.back().pinchMode);
 }
 
 TEST(InputManagerTest, PinchLatchManipulateOnHorizontalCentroidMove) {

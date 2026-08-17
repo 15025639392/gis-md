@@ -73,6 +73,18 @@ struct InputEvent {
     /// 归一到这个尺度 —— 核心层不认识平台单位。
     float wheelDelta = 0.0f;
 
+    /// 键盘键（平台层归一化；契约 3.3 Mapbox 键位）。
+    enum class Key : uint8_t {
+        None,
+        ArrowLeft,
+        ArrowRight,
+        ArrowUp,
+        ArrowDown,
+        Plus,    // = / + / 小键盘 +
+        Minus    // - / _
+    };
+    Key key = Key::None;
+
     /// PinchMove 时相对上一帧的缩放因子（当前双指距离 / 上一帧双指距离，
     /// 1.0 = 无缩放）
     float pinchScale = 1.0f;
@@ -109,6 +121,14 @@ struct InputEvent {
     float pinchScaleFromStart = 1.0f;
     /// 两指连线角相对起手的累计旋转（radian，跨帧 unwrap 防 ±π 跳变）。
     float twistFromStartRadians = 0.0f;
+    /// 每轴独立激活（契约 2.2，Mapbox 阈值）：缩放/旋转超过阈值后保持激活，
+    /// 倾斜由起手竖直锁单独决定（pinchMode==Pitch）；平移随动。平台无法提供
+    /// 两指原始坐标时恒为 true（安全默认，等价旧行为）。
+    bool pinchZoomEngaged = true;
+    bool pinchRotateEngaged = true;
+    /// 滚轮合成捏合的平滑缩放标志（契约 3.1）：控制器对目标做短指数收敛
+    /// （~300ms），不瞬时跳变、不种 zoom 惯性。
+    bool pinchSmoothZoom = false;
 
     /// 便捷查询
     bool isPointerEvent() const {

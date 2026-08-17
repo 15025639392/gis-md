@@ -6,15 +6,19 @@ namespace earth_engine {
 
 namespace {
 
-// ---- mode latch 阈值（dp，事件的 devicePixelRatio 换算物理像素）----
-// 参考 MapLibre："起手快照 + 单次 latch"。判据全部是"当前 vs 起手基准"
-// 而非 vs 上一帧——未 latch 前依据不变的起点重判，一旦 latch 整段手势不变。
-constexpr float kLatchSpreadLogThreshold = 0.05f;   // |ln(spread/spread0)|
-constexpr float kLatchTwistThresholdRadians = 0.05f;
-constexpr float kLatchCentroidXDp = 8.0f;           // 质心水平位移
-constexpr float kPitchFingerMoveDp = 2.0f;          // 每指最小有效位移
+// ---- 双指每轴阈值（契约 2.2，Mapbox GL JS touch_zoom_rotate.js 生产值）----
+// 缩放：ZOOM_THRESHOLD = 0.1 log2（≈7.2% 距离变化）→ ln 阈值 = 0.1·ln2；
+// 旋转：ROTATION_THRESHOLD = 25px 弧长（角度阈值随两指间距自适应）；
+// 平移：随动，质心位移 >8dp 或起手窗口超时兜底（小位移也可平移）；
+// 倾斜：起手竖直锁——每指 ≥2dp 同向竖移；一指先动等 100ms 第二指。
+constexpr float kPinchZoomEngageLog =
+    0.1f * 0.6931471805599453f;              // 0.1·ln2
+constexpr float kPinchRotateEngageArcPixels = 25.0f;
+constexpr float kLatchCentroidDp = 8.0f;
+constexpr float kPitchFingerMoveDp = 2.0f;
 constexpr float kPitchVerticalDominance = 1.5f;     // |dy| 须 > 1.5|dx|
-constexpr double kLatchTimeoutSeconds = 0.15;       // 超时兜底 Manipulate
+constexpr double kLatchTimeoutSeconds = 0.15;       // 起手窗口超时 → 平移可用
+constexpr double kPitchSecondFingerWaitSeconds = 0.10;  // Mapbox ALLOWED_SINGLE_TOUCH_TIME
 
 float unwrapAngle(float angle, float reference) {
     constexpr float kPi = 3.14159265358979323846f;
@@ -70,7 +74,8 @@ void InputManager::emitSyntheticPinch(const InputEvent& source,
                                       float centroidX,
                                       float centroidY,
                                       float scaleFromStart,
-                                      InputEvent::PinchMode mode) {
+                                      InputEvent::PinchMode mode,
+                                      bool smoothZoom) {
     InputEvent e = source;
     e.type = gesture == Gesture::PinchStart   ? InputEvent::Type::PinchStart
              : gesture == Gesture::PinchMove  ? InputEvent::Type::PinchMove
@@ -89,6 +94,7 @@ void InputManager::emitSyntheticPinch(const InputEvent& source,
     e.pinchScaleFromStart = scaleFromStart;
     e.twistFromStartRadians = 0.0f;
     e.pinchMode = mode;
+    e.pinchSmoothZoom = smoothZoom;
     callback_(gesture, e);
 }
 
@@ -99,19 +105,20 @@ void InputManager::handleWheel(const InputEvent& event) {
         return;
     }
     // **每一格滚轮 = 一次完整的微会话**(Start→Move→End)。这样每格都在光标处
-    // 重新取锚点(= 朝光标缩放),且 Start 与 Move 时间戳相同 ⇒ dt=0 ⇒ 不种 zoom
-    // 惯性,滚轮给出干脆的离散步进而不是甩飞。
+    // 重新取锚点(= 朝光标缩放)。**格间平滑(契约 3.1)**:pinchSmoothZoom=true
+    // ⇒ 控制器对目标做 ~300ms 指数收敛,不瞬时跳变;且不种 zoom 惯性(避免甩飞),
+    // 单帧上限 ln(2) 由控制器 settle 路径施加。
     const float scale =
         static_cast<float>(std::exp(event.wheelDelta * wheelZoomLogStep_));
     emitSyntheticPinch(event, Gesture::PinchStart, event.screenX,
                        event.screenY, 1.0f,
-                       InputEvent::PinchMode::Manipulate);
+                       InputEvent::PinchMode::Manipulate, /*smoothZoom=*/true);
     emitSyntheticPinch(event, Gesture::PinchMove, event.screenX,
                        event.screenY, scale,
-                       InputEvent::PinchMode::Manipulate);
+                       InputEvent::PinchMode::Manipulate, /*smoothZoom=*/true);
     emitSyntheticPinch(event, Gesture::PinchEnd, event.screenX,
                        event.screenY, scale,
-                       InputEvent::PinchMode::Manipulate);
+                       InputEvent::PinchMode::Manipulate, /*smoothZoom=*/true);
 }
 
 bool InputManager::processDesktopEvent(const InputEvent& event) {
@@ -213,7 +220,6 @@ void InputManager::processPinchWithPointerPair(InputEvent& event) {
         s.t0 = event.timestamp;
         s.prevAngleRaw = angleRaw;
         s.angleUnwrapped = angleRaw;
-        s.mode = InputEvent::PinchMode::Undecided;
     } else {
         s.angleUnwrapped += unwrapAngle(angleRaw, s.prevAngleRaw) - s.prevAngleRaw;
         s.prevAngleRaw = angleRaw;
@@ -221,38 +227,63 @@ void InputManager::processPinchWithPointerPair(InputEvent& event) {
 
     const float twistFromStart = s.angleUnwrapped - s.angle0;
     const float spreadLog = std::log(std::max(spread, 1.0f) / s.spread0);
+    const float dpr = std::max(event.devicePixelRatio, 0.5f);
+    const float v0x = event.pointer0X - s.p0StartX;
+    const float v0y = event.pointer0Y - s.p0StartY;
+    const float v1x = event.pointer1X - s.p1StartX;
+    const float v1y = event.pointer1Y - s.p1StartY;
 
-    if (s.mode == InputEvent::PinchMode::Undecided) {
-        const float dpr = std::max(event.devicePixelRatio, 0.5f);
-        const float v0x = event.pointer0X - s.p0StartX;
-        const float v0y = event.pointer0Y - s.p0StartY;
-        const float v1x = event.pointer1X - s.p1StartX;
-        const float v1y = event.pointer1Y - s.p1StartY;
-
-        // Manipulate 优先：pitch 手势按定义不改 spread/连线角/质心横位。
-        // 错判偏向"能平移"一侧（代价小），且超时兜底也是 Manipulate。
-        if (std::abs(spreadLog) > kLatchSpreadLogThreshold ||
-            std::abs(twistFromStart) > kLatchTwistThresholdRadians ||
-            std::abs(centroidX - s.centroid0X) > kLatchCentroidXDp * dpr) {
-            s.mode = InputEvent::PinchMode::Manipulate;
-        } else if (std::abs(v0y) > kPitchFingerMoveDp * dpr &&
-                   std::abs(v1y) > kPitchFingerMoveDp * dpr) {
-            // 两指都动了才能判定方向性：平行竖移且同向 → Pitch，否则排除。
+    // ① 缩放：|ln(spread/spread0)| ≥ 0.1·ln2 后激活，保持整段。
+    if (!s.zoomEngaged && std::abs(spreadLog) >= kPinchZoomEngageLog) {
+        s.zoomEngaged = true;
+    }
+    // ② 旋转：沿两指圆的弧长 ≥25px（角度阈值随间距自适应）。
+    if (!s.rotateEngaged &&
+        std::abs(twistFromStart) * s.spread0 >= kPinchRotateEngageArcPixels) {
+        s.rotateEngaged = true;
+    }
+    // ③ 平移：随动——质心位移 >8dp，或起手窗口超时兜底。
+    const float centroidMove = std::hypot(centroidX - s.centroid0X,
+                                          centroidY - s.centroid0Y);
+    if (!s.panEngaged &&
+        (centroidMove > kLatchCentroidDp * dpr ||
+         event.timestamp - s.t0 > kLatchTimeoutSeconds)) {
+        s.panEngaged = true;
+    }
+    // ④ 倾斜起手锁：两指各 ≥2dp 同向竖移才 latch；一指先动等 100ms 第二指；
+    // 一旦判定（latch 或 reject）不再改判。
+    if (!s.pitchLatched && !s.pitchRejected) {
+        const bool movedA = std::abs(v0y) > kPitchFingerMoveDp * dpr;
+        const bool movedB = std::abs(v1y) > kPitchFingerMoveDp * dpr;
+        if (movedA && movedB) {
             const bool sameDirection = (v0y > 0.0f) == (v1y > 0.0f);
             const bool bothVertical =
                 std::abs(v0y) > kPitchVerticalDominance * std::abs(v0x) &&
                 std::abs(v1y) > kPitchVerticalDominance * std::abs(v1x);
-            s.mode = (sameDirection && bothVertical)
-                ? InputEvent::PinchMode::Pitch
-                : InputEvent::PinchMode::Manipulate;
-        } else if (event.timestamp - s.t0 > kLatchTimeoutSeconds) {
-            s.mode = InputEvent::PinchMode::Manipulate;
+            s.pitchLatched = sameDirection && bothVertical;
+            s.pitchRejected = !s.pitchLatched;
+        } else if (movedA || movedB) {
+            if (s.firstMoveTime <= 0.0) {
+                s.firstMoveTime = event.timestamp;
+            } else if (event.timestamp - s.firstMoveTime >
+                       kPitchSecondFingerWaitSeconds) {
+                s.pitchRejected = true;
+            }
         }
     }
 
-    event.pinchMode = s.mode;
+    // 组合模式（契约 2.2）：倾斜锁只决定 pitch 轴；缩放/旋转/平移各自激活。
+    if (s.pitchLatched) {
+        event.pinchMode = InputEvent::PinchMode::Pitch;
+    } else if (s.zoomEngaged || s.rotateEngaged || s.panEngaged) {
+        event.pinchMode = InputEvent::PinchMode::Manipulate;
+    } else {
+        event.pinchMode = InputEvent::PinchMode::Undecided;
+    }
     event.pinchScaleFromStart = std::exp(spreadLog);
     event.twistFromStartRadians = twistFromStart;
+    event.pinchZoomEngaged = s.zoomEngaged;
+    event.pinchRotateEngaged = s.rotateEngaged;
 }
 
 void InputManager::process(const InputEvent& event) {
@@ -329,6 +360,12 @@ void InputManager::process(const InputEvent& event) {
 
     // ---- 指针事件 ----
     switch (event.type) {
+        case InputEvent::Type::Key:
+            if (event.key != InputEvent::Key::None) {
+                callback_(Gesture::KeyCommand, event);
+            }
+            break;
+
         case InputEvent::Type::PointerDown:
             cancelActiveGesture();
             state_ = State::OneFingerPending;
@@ -429,15 +466,15 @@ void InputManager::finishPointerGesture(const InputEvent& event) {
 void InputManager::cancelActiveGesture() {
     if (state_ == State::OneFingerDrag) {
         InputEvent event;
-        event.type = InputEvent::Type::PointerUp;
+        event.type = InputEvent::Type::Cancel;
         event.screenX = trackLastX_;
         event.screenY = trackLastY_;
-        callback_(Gesture::DragEnd, event);
+        callback_(Gesture::DragCancel, event);
     }
     if (pinchActive_) {
         InputEvent event;
-        event.type = InputEvent::Type::PinchEnd;
-        callback_(Gesture::PinchEnd, event);
+        event.type = InputEvent::Type::Cancel;
+        callback_(Gesture::PinchCancel, event);
     }
     state_ = State::Idle;
     pinchActive_ = false;

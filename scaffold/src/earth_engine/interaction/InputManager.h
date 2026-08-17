@@ -24,11 +24,14 @@ public:
         DragStart,    // → CameraSystem::onDragStart
         DragMove,     // → CameraSystem::onDragMove
         DragEnd,      // → CameraSystem::onDragEnd（可能启动惯性）
+        DragCancel,   // → CameraSystem::onDragCancel（系统取消：立即停、无惯性）
         PinchStart,   // → CameraSystem::onPinch
         PinchMove,    // → CameraSystem::onPinch
         PinchEnd,     // → 重置 pinch 状态
+        PinchCancel,  // → CameraSystem::onPinchCancel（系统取消：不启动惯性）
         Click,        // → pick + onSelect
         DoubleClick,  // → zoom-to 或 pick + onSelect
+        KeyCommand,   // → CameraSystem::onKeyCommand（契约 3.3 键盘）
     };
 
     /// 回调：Scene 注册此回调来处理识别出的手势
@@ -132,10 +135,12 @@ private:
                             float centroidX,
                             float centroidY,
                             float scaleFromStart,
-                            InputEvent::PinchMode mode);
+                            InputEvent::PinchMode mode,
+                            bool smoothZoom = false);
     void cancelActiveGesture();
     /// 双指会话：从 pointer0/1 计算派生量（spread 比、twist unwrap 累计），
-    /// 并在起手窗口内做一次 mode latch。event 为可写副本，填充后回调转发。
+    /// 并按契约 2.2 做**每轴独立激活**（缩放/旋转超阈值后保持；倾斜由起手
+    /// 竖直锁单独决定；平移随动）。event 为可写副本，填充后回调转发。
     void processPinchWithPointerPair(InputEvent& event);
 
     /// 双指会话状态（首个携带 pointer pair 的事件初始化，PinchEnd/Cancel 清空）
@@ -150,7 +155,14 @@ private:
         double t0 = 0.0;
         float prevAngleRaw = 0.0f;   // unwrap 用
         float angleUnwrapped = 0.0f; // 累计连线角（连续，无 ±π 跳变）
-        InputEvent::PinchMode mode = InputEvent::PinchMode::Undecided;
+        // 每轴激活（一旦 engage 整段手势保持）：
+        bool zoomEngaged = false;
+        bool rotateEngaged = false;
+        bool panEngaged = false;
+        // 倾斜起手竖直锁：一旦判定（latch 或 reject）不再改判。
+        bool pitchLatched = false;
+        bool pitchRejected = false;
+        double firstMoveTime = 0.0;  // 一指先动时等待第二指的时间窗起点
     };
     PinchSession pinchSession_;
 

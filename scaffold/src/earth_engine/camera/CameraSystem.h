@@ -65,6 +65,8 @@ public:
     void onDragMove(float xPixels, float yPixels, double timestamp = 0.0);
     /// drag 结束（手指抬起，启动惯性）
     void onDragEnd();
+    /// drag 被系统取消：立即停、无惯性
+    void onDragCancel();
 
     /// 双指手势输入（绝对量表述：事件被合并/丢弃不产生累积漂移）。
     void onPinchGesture(const PinchInput& input);
@@ -77,6 +79,14 @@ public:
                         float centerDeltaY,
                         double timestamp = 0.0);
     void onPinchEnd();
+    /// pinch 被系统取消：立即停、不启动惯性
+    void onPinchCancel();
+    /// 键盘命令（契约 3.3）→ FreeGlobeController。
+    void onKeyCommand(InputEvent::Key key,
+                      const InputEvent::Modifiers& modifiers);
+    /// 双击平滑缩放（契约 3.2）：~300ms 指数逼近目标距离（0.5×=+1 级），绕点，
+    /// 不反向、不越过目标。
+    void animateZoomTo(const Vec3& targetWorld, double targetDistanceMeters);
 
     /// 时间步进（更新惯性动画）
     /// @param deltaSeconds 上一帧到现在的秒数
@@ -109,7 +119,8 @@ public:
     /// 空闲」这种两边都不认领的缝。
     bool isSelfAnimating() const {
         const ICameraController* active = selector_.active();
-        return scriptedPanActive_ || (active && active->isAnimating());
+        return doubleClickZoomActive_ || scriptedPanActive_ ||
+               (active && active->isAnimating());
     }
 
     // ---- 相机状态 ----
@@ -309,6 +320,15 @@ private:
     // 测量台脚本化平移(见 setScriptedPan):active 时 update() 每帧原地偏航一步,
     // 内部帧计数确定性驱动,frames 帧后 hold。
     bool scriptedPanActive_ = false;
+
+    // 双击平滑缩放（契约 3.2）：距离按指数减半（时间常数 0.3s），不反向。
+    bool doubleClickZoomActive_ = false;
+    Vec3 doubleClickZoomAnchor_{0.0, 0.0, 0.0};
+    glm::dvec3 doubleClickZoomDir_{0.0, 0.0, 0.0};
+    double doubleClickZoomDistance_ = 0.0;
+    double doubleClickZoomTargetDistance_ = 0.0;
+    void cancelDoubleClickZoom();
+    static constexpr double kDoubleClickZoomTimeConstantSeconds = 0.3;
     int scriptedPanStartFrame_ = 0;  // 扫掠前先 hold 的帧数(让冷启动 settle)
     int scriptedPanFrames_ = 0;
     int scriptedPanFrame_ = 0;

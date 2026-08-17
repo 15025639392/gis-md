@@ -20,7 +20,7 @@ constexpr double kFrameMoveEpsilonMeters = 1e-3;
 constexpr double kFrameRotateEpsilon = 1e-9;
 
 // 拖拽增益:满屏横移转一整圈的一半(π),竖移转 ±90°。按视口归一 ⇒ 设备无关
-// (与 Free 侧 kPinchTiltFullHeightRadians 同一取向,别再写成每物理像素)。
+// (与 Free 侧 kPinchTiltRadiansPerPixel 同一取向,别再写成每物理像素)。
 constexpr double kDragFullWidthYawRadians = glm::pi<double>();
 constexpr double kDragFullHeightPitchRadians = glm::pi<double>() * 0.5;
 

@@ -178,6 +178,28 @@ TEST(DesktopBindingTest, WheelEmitsTheSamePinchContractAsTwoFingerZoom) {
     EXPECT_GT(synth.pinchScaleFromStart, 1.0f) << "正 delta 应拉近";
 }
 
+TEST(DesktopBindingTest, WheelPinchCarriesSmoothZoomFlag) {
+    InputManager m;
+    Recorder rec;
+    rec.attach(m);
+
+    // 真双指不要求平滑（直接操纵）；滚轮合成捏合要求格间平滑（契约 3.1）。
+    m.process(twoFinger(InputEvent::Type::PinchStart, 400.0f, 300.0f, 200.0f, 0.0));
+    m.process(twoFinger(InputEvent::Type::PinchMove, 400.0f, 300.0f, 250.0f, 0.016));
+    const std::vector<Emitted> touchMoves =
+        rec.ofType(InputManager::Gesture::PinchMove);
+    ASSERT_FALSE(touchMoves.empty());
+    EXPECT_FALSE(touchMoves.back().event.pinchSmoothZoom);
+
+    rec.clear();
+    m.reset();
+    m.process(wheel(400.0f, 300.0f, 1.0f, 1.0));
+    const std::vector<Emitted> wheelMoves =
+        rec.ofType(InputManager::Gesture::PinchMove);
+    ASSERT_EQ(1u, wheelMoves.size());
+    EXPECT_TRUE(wheelMoves.back().event.pinchSmoothZoom);
+}
+
 TEST(DesktopBindingTest, WheelIsACompleteMicroSessionPerNotch) {
     InputManager m;
     Recorder rec;

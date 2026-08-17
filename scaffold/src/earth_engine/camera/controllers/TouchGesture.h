@@ -19,6 +19,11 @@ struct PinchInput {
     float centroidX = 0.0f;           ///< 双指质心（物理像素）
     float centroidY = 0.0f;
     PinchMode mode = PinchMode::Manipulate;
+    /// 每轴激活（契约 2.2）：缩放/旋转超过阈值后保持；默认 true 兼容旧路径。
+    bool zoomEngaged = true;
+    bool rotateEngaged = true;
+    /// 滚轮合成捏合的平滑缩放（契约 3.1）：~300ms 指数收敛，不瞬时跳变。
+    bool smoothZoom = false;
     double timestamp = 0.0;
 };
 
@@ -42,9 +47,14 @@ public:
     virtual void onDragStart(float xPixels, float yPixels, double timestamp) = 0;
     virtual void onDragMove(float xPixels, float yPixels, double timestamp) = 0;
     virtual void onDragEnd() = 0;
+    /// drag 被系统取消（来电、系统手势、新手势抢占）：立即停、无惯性。
+    /// 默认空实现；有惯性的控制器覆盖为"清惯性 + 作废锚点"。
+    virtual void onDragCancel() {}
 
     virtual void onPinchGesture(const PinchInput& input) = 0;
     virtual void onPinchEnd() = 0;
+    /// pinch 被系统取消：立即停、不启动任何惯性（含 zoom 惯性）。
+    virtual void onPinchCancel() {}
 
     /// 是否有活动的双指手势。编排层据此判「手势起手帧」——起手前要先跑一个
     /// 同步帧,让手势数学从一个约束已满足的位姿起步。

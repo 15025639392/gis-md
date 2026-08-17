@@ -79,6 +79,9 @@ void SceneInputCoordinator::handleGesture(
         case InputManager::Gesture::DragEnd:
             cameraSystem->onDragEnd();
             break;
+        case InputManager::Gesture::DragCancel:
+            cameraSystem->onDragCancel();
+            break;
         case InputManager::Gesture::PinchStart:
         case InputManager::Gesture::PinchMove:
             if (event.hasPointerPair) {
@@ -89,6 +92,9 @@ void SceneInputCoordinator::handleGesture(
                 input.centroidX = (event.pointer0X + event.pointer1X) * 0.5f;
                 input.centroidY = (event.pointer0Y + event.pointer1Y) * 0.5f;
                 input.mode = toCameraPinchMode(event.pinchMode);
+                input.zoomEngaged = event.pinchZoomEngaged;
+                input.rotateEngaged = event.pinchRotateEngaged;
+                input.smoothZoom = event.pinchSmoothZoom;
                 input.timestamp = event.timestamp;
                 cameraSystem->onPinchGesture(input);
             } else {
@@ -106,6 +112,12 @@ void SceneInputCoordinator::handleGesture(
         case InputManager::Gesture::PinchEnd:
             cameraSystem->onPinchEnd();
             break;
+        case InputManager::Gesture::PinchCancel:
+            cameraSystem->onPinchCancel();
+            break;
+        case InputManager::Gesture::KeyCommand:
+            cameraSystem->onKeyCommand(event.key, event.modifiers);
+            break;
         case InputManager::Gesture::Click:
         case InputManager::Gesture::DoubleClick: {
             const PickResult result = context.pick
@@ -113,13 +125,12 @@ void SceneInputCoordinator::handleGesture(
                 : PickResult{};
             if (gesture == InputManager::Gesture::DoubleClick) {
                 // 未命中椭球 = 双击在天空/太空上，没有地理语义 ⇒ 不响应。
-                // 旧行为是 setDistance(distance*0.7)，它翻开 orbit 模式，下一帧
-                // 位姿被重建成"看向地心"，用户的 tilt/heading 当场丢光；低空时
-                // 0.7×地心距还会跌破下限被钳到地表 50m 正俯视。orbit 表示已删。
+                // 契约 3.2：命中地表 → 300ms 平滑缩放到 0.5× 距离（+1 级），
+                // 绕点击点、单调不反向。旧行为瞬间 0.57× 跳变。
                 if (result.isValid()) {
-                    cameraSystem->viewDistance(
+                    cameraSystem->animateZoomTo(
                         result.worldPosition,
-                        result.distance * 0.57);
+                        result.distance * 0.5);
                 }
             } else {
                 selectFromClick(context, event, result);

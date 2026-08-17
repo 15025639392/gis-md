@@ -103,6 +103,12 @@ void CameraSystem::onDragEnd() {
     }
 }
 
+void CameraSystem::onDragCancel() {
+    if (auto* c = selector_.activeAs<ITouchGestureTarget>()) {
+        c->onDragCancel();
+    }
+}
+
 void CameraSystem::onPinchGesture(const PinchInput& input) {
     cancelFlightForTakeover();
     auto* c = selector_.activeAs<ITouchGestureTarget>();
@@ -150,6 +156,45 @@ void CameraSystem::onPinchEnd() {
     if (auto* c = selector_.activeAs<ITouchGestureTarget>()) {
         c->onPinchEnd();
     }
+}
+
+void CameraSystem::onPinchCancel() {
+    if (auto* c = selector_.activeAs<ITouchGestureTarget>()) {
+        c->onPinchCancel();
+    }
+}
+
+void CameraSystem::onKeyCommand(InputEvent::Key key,
+                                const InputEvent::Modifiers& modifiers) {
+    // 键盘只作用于 Free 模式（契约 3.3）；tether/飞行激活时忽略，避免背
+    // 着活动控制器改相机（独立审查指出的路由越权）。
+    if (selector_.active() != freeGlobe_) {
+        return;
+    }
+    cancelFlightForTakeover();
+    freeGlobe_->onKeyCommand(key, modifiers);
+}
+
+void CameraSystem::animateZoomTo(const Vec3& targetWorld,
+                                 double targetDistanceMeters) {
+    cancelFlightForTakeover();
+    const glm::dvec3 eye = camera_->position().raw();
+    const glm::dvec3 toTarget = targetWorld.raw() - eye;
+    const double d0 = glm::length(toTarget);
+    if (d0 < 1e-6) {
+        return;
+    }
+    doubleClickZoomAnchor_ = targetWorld;
+    // 保持 target→eye 方位（viewDistance 语义）：eye' = target + dir·d，
+    // dir 指向原 eye 一侧，距离单调收敛到目标，不跨到目标另一侧。
+    doubleClickZoomDir_ = -toTarget / d0;
+    doubleClickZoomDistance_ = d0;
+    doubleClickZoomTargetDistance_ = std::max(targetDistanceMeters, d0 * 1e-3);
+    doubleClickZoomActive_ = true;
+}
+
+void CameraSystem::cancelDoubleClickZoom() {
+    doubleClickZoomActive_ = false;
 }
 
 bool CameraSystem::debugAnchorWorld(Vec3& outWorld) const {
@@ -291,6 +336,7 @@ Viewpoint CameraSystem::currentViewpoint() const {
 
 bool CameraSystem::flyTo(const Viewpoint& destination,
                          double durationSecondsOverride) {
+    cancelDoubleClickZoom();
     CameraPose to;
     if (!resolveViewpoint(destination, to)) {
         return false;  // tether 目标暂不可用
@@ -330,6 +376,7 @@ void CameraSystem::cancelFlightForTakeover() {
     if (flight_->active()) {
         selector_.select(kFreeGlobeController);
     }
+    cancelDoubleClickZoom();  // 手势/显式写入打断双击动画（契约 3.2）
 }
 
 // ============================================================
@@ -374,6 +421,23 @@ void CameraSystem::updateInternal(double deltaSeconds) {
     if (flight_->consumeCompleted()) {
         selector_.select(kFreeGlobeController);
     }
+
+    // 双击平滑缩放（契约 3.2）：沿 eye→目标 直线指数逼近目标距离
+    // （每 0.3s 减半），单调、不越过目标、不反向。帧末哨兵负责钳位。
+    if (doubleClickZoomActive_ && deltaSeconds > 0.0) {
+        const double decay = std::exp(
+            -std::log(2.0) / kDoubleClickZoomTimeConstantSeconds *
+            deltaSeconds);
+        doubleClickZoomDistance_ *= decay;
+        if (doubleClickZoomDistance_ <= doubleClickZoomTargetDistance_) {
+            doubleClickZoomDistance_ = doubleClickZoomTargetDistance_;
+            doubleClickZoomActive_ = false;
+        }
+        const glm::dvec3 eye = doubleClickZoomAnchor_.raw() +
+                               doubleClickZoomDir_ *
+                                   doubleClickZoomDistance_;
+        camera_->setView(Vec3(eye), camera_->direction(), camera_->up());
+    }
 }
 
 bool CameraSystem::resolveAtFrameEnd(double deltaSeconds) {
@@ -414,6 +478,7 @@ void CameraSystem::setMeasurementFreeze(bool frozen) {
     if (frozen) {
         // 冻结瞬间清零所有惯性，避免残留速度在解冻前被"锁"进状态。
         freeGlobe_->clearAllInertia();
+        cancelDoubleClickZoom();
     }
 }
 
@@ -469,6 +534,7 @@ void CameraSystem::setNadirOrbitView(const Vec3& targetEcef,
 }
 
 void CameraSystem::viewDistance(const Vec3& targetWorld, double distanceMeters) {
+    cancelDoubleClickZoom();
     const double maxDistanceMeters = kMaxDistanceEarthRadii * kEarthRadiusMeters;
     const double clampedDistance = std::clamp(
         distanceMeters,
