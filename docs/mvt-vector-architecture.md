@@ -244,17 +244,46 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 1. **三条消费路没有共同抽象层**。加一个新数据类型要从头决定走哪条路、
    从头接线;三条路的产物类型、生命周期管理、失效机制各写一套。
    现状能工作是因为只有三条且都稳定了,**再加第四条(如 3D 建筑)会暴露**。
-2. **样式系统割裂成三套**:`VectorRasterStyle`(面/线烘焙)、
+2. **样式系统割裂成四套**:`VectorRasterStyle`(面/线烘焙)、
    `FeatureRenderStyle` + `StyleExpression`(点/标注)、
-   `SourceLayerRule` + `StyleFilter`(层过滤)。没有 mapbox-style-spec 式的
-   统一样式模型。**后果**:要做"运行期换肤 / 样式热加载 / 用户自定义样式"
-   得同时改三处,而这正是矢量相对预烘影像的核心卖点。
+   `SourceLayerRule` + `StyleFilter`(层过滤),外加 `style/OverlayStyle.h`
+   (`Color` / `AltitudeMode` / `PointStyle` 一整套平行类型)—— 那是旧
+   `VectorLayer` GeoJSON 标注路径的样式模型,**仍在 demo 上线**
+   (`addDemoVectorLayer`,不在任何 `kEnable*` 开关内)。没有
+   mapbox-style-spec 式的统一样式模型。
+   **后果分两层,第二层更硬**:
+   - 要做"运行期换肤 / 样式热加载 / 用户自定义样式"得同时改四处,
+     而这正是矢量相对预烘影像的核心卖点;
+   - **面/线两路运行期物理改不了**,不只是"改起来麻烦":点/符号路有
+     `FeatureRenderLayer::setStyle`(渲染线程写,worker 读),但面 drape
+     的样式是 `VectorDrapeImageryProvider::Options` 构造期注入、**无 setter**,
+     线/场的 `Engine::setRoadFieldSource` 更是"**须在首帧渲染前调用**
+     (页存储 lazy 初始化时快照 Config,之后注入不生效)"。换肤要先给这两路
+     补"重建/失效"通路,不是抽一层公共样式结构就够。
 3. **线的样式表达力被编码格式卡死**:D2 场编码只有"距离 + 方向 + 端点余量",
-   **没有图层/分类通道**,所以全图线只能一个颜色。要分色/dash(V9)
-   必须扩通道或加平面 —— 这是"表示选得便宜"的对偶代价,当初该记进立项。
+   **没有图层/分类通道**,而且即便有位、颜色也在 uniform 侧(全局一个
+   `u_roadFieldColor`,FS 里 `mix(base.rgb, roadFieldColor.rgb, roadCov)`),
+   所以**全图线只能一个颜色**。多色路网必须扩通道或加平面 —— 这是
+   "表示选得便宜"的对偶代价,当初该记进立项。
+   **dash(V9)要分清两种形态**(推断,未实测):
+   - `FeatureRenderStyle` 的同语义 dash(`lineDashPeriodMeters`,**沿折线
+     累积弧长**)编码**不支持** —— fwd/back 上限 `kLineFieldClampMaxTexels
+     = 1.5` texel、4bit 量化,拿不到全局弧长;
+   - 不扩通道能做的是**段内相位** dash(`phase = dot(pagePos, dir) mod
+     period`),代价是每个拐角相位断裂、周期是页空间量而非路上米数。
+
+   即走场只能拿到降级形态,要同语义 dash 得走 E(几何线条带)——
+   与 northstar 把 E 立为战略备选一致。
 4. **zoom 三义无类型区分**(§4.2),已踩两次。裸 `int` 传递,靠注释约束。
-5. **样式硬编码在 demo 代码里**:`GLESView.cpp` 有几百行样式接线,
-   换城市/换数据源要改代码重编译。没有样式文件或运行期配置。
+5. **样式硬编码在 demo 代码里**:`GLESView.cpp` 仍有 ~90 行样式语句
+   (块跨度 420–499 / 504–696 / 725–944,合计约 490 行矢量接线),
+   数据源模板、色值、ramp、封顶全是 `constexpr` → 换城市/换数据源要改代码
+   重编译。没有样式文件或运行期配置(全仓无 style.json 解析器)。
+   **已部分还**:面 drape 与线/场的分级规则已抽到
+   `MinimalGlobeDemoConfig.cpp`(`makeMvtDrapeStyle` / `makeMvtRoadFieldStyle`,
+   321 行)且由 `test_mvt_basemap_grading` 守卫(测试直接读工厂,不复制分级
+   逻辑)。剩在 `GLESView.cpp` 的是 `FeatureRenderStyle` 那部分(符号/标注/
+   编辑层)。
 6. **符号链是"复活的退役链",命名与职责脱节**:`kEnableMvtBasemap` 现在的
    真实职责是"点符号通路总开关",但名字、注释、`includeLayers`/`layerRules`
    的语义坑都是历史沉积。**新人按名字理解一定会错**。
@@ -269,8 +298,8 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 
 | 优先级 | 债 | 理由 |
 |---|---|---|
-| 高 | #2 样式统一 + #5 样式外置 | 挡住"运行期换样式"这个核心能力;越晚改成本越高(三套已各自长大) |
-| 中 | #3 线分类通道 | 直接卡住 V9 dash 与多色路网;需与 P7 容量债一起算 |
+| 高 | #2 样式统一 + #5 样式外置 | 挡住"运行期换样式"这个核心能力;越晚改成本越高(四套已各自长大)。**注意真正的工作量在面/线两路的"样式可失效"通路,不在公共结构** |
+| 中 | #3 线分类通道 | 直接卡住**多色路网**;dash(V9)只被卡住"同语义"那一半(见 #3)。~~需与 P7 容量债一起算~~ —— P7 已于 2026-08-15 量化后**结清判定不修**,不再是前置 |
 | 中 | #6 命名/开关正名 | 纯清理,便宜,防止新人踩坑 |
 | 低 | #1 统一抽象 | 现在抽象是过早;等第四条路真出现时再抽 |
 | 低 | #7 Metal | 无设备,阻塞在硬件 |
