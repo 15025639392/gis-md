@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -96,6 +97,13 @@ public:
     std::unique_ptr<DecodedImage> decodeTile(const uint8_t* data,
                                              size_t len) override;
 
+    /// V26 一期:运行期换样式(换肤)。线程安全(小锁,requestTile 契约是
+    /// 任意线程);在途请求持旧快照收口(Assembly 按值快照),新请求起用
+    /// 新样式。**只换生产侧**:已合成进页存储的旧样式页不自动作废——生产者
+    /// 不知道谁缓存了它的产物(页存储对 provider 反向零依赖是刻意的),
+    /// 调用方随后须 Engine::invalidateComposedTerrainPages() 触发重栅格化。
+    void setStyle(VectorRasterStyle style);
+
 private:
     struct Assembly;  // 一次 requestTile 的聚合状态(等多张源瓦到齐)
 
@@ -103,7 +111,11 @@ private:
     static void runAssembly(const std::shared_ptr<Assembly>& assembly);
     static void completeIfReady(const std::shared_ptr<Assembly>& assembly);
 
+    /// options_.style 的加锁快照(setStyle 可与任意线程的 requestTile 并发)。
+    VectorRasterStyle styleSnapshot() const;
+
     Options options_;
+    mutable std::mutex styleMutex_;  // 只护 options_.style,其余字段构造后只读
     std::shared_ptr<MvtTileFetchCache> tileCache_;
     std::shared_ptr<ThreadPool> rasterPool_;
 };

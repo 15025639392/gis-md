@@ -888,3 +888,65 @@ TEST(TerrainPageStoreGeomAffine, GcjSharedEdgeCornersAgreeAcrossTiles) {
     // 而不是静默退化成轴对齐。
     EXPECT_GT(std::abs(A[3]), 0.01f) << "dU.y 交叉项(沿边 GCJ-y 变化)";
 }
+
+// ---------------- V26 一期:运行期换样式的失效通路 ----------------
+// 端到端(determination 驱动建页→失效→重烘)需 RealTerrain 瓦片全套测试台,
+// 未纳入 host(与"源列表变了全作废"共用 clearAllComposedPages,同构保证);
+// 这里锁 host 可判定的部分:uniform 直写生效、封顶同步、空态/未初始化安全。
+
+TEST(TerrainPageStoreRestyle, SetRoadFieldStyleUniformsWritesConfig) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 8;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    const std::array<float, 4> color{0.1f, 0.2f, 0.3f, 0.4f};
+    const std::array<float, 4> ramp{10.0f, 0.5f, 14.0f, 2.0f};
+    store.setRoadFieldStyleUniforms(color, ramp);
+    EXPECT_EQ(store.roadFieldStyleColor(), color);
+    EXPECT_EQ(store.roadFieldStyleWidthRamp(), ramp);
+}
+
+TEST(TerrainPageStoreRestyle, InvalidateFieldPagesUpdatesZoomCap) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 8;
+    // 场平面开启态(request 非空才建场纹理与跳烘门数组)。
+    cfg.roadFieldRequest = [](const TileKey&, CancellationToken,
+                              std::function<void(std::vector<uint8_t>)> cb) {
+        cb({});
+    };
+    cfg.roadFieldMaxZoom = 15;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+    EXPECT_EQ(store.roadFieldZoomCap(), 15);
+
+    store.invalidateFieldPages(/*newFieldMaxZoom=*/16);
+    EXPECT_EQ(store.roadFieldZoomCap(), 16) << "新样式分级档变了封顶要跟着变";
+    EXPECT_EQ(store.ledgerFieldPageCount(), 0);
+
+    store.invalidateFieldPages();  // 缺省不改封顶
+    EXPECT_EQ(store.roadFieldZoomCap(), 16);
+}
+
+TEST(TerrainPageStoreRestyle, InvalidateIsSafeOnEmptyAndUninitialized) {
+    // 未初始化:全部容器为空,调用必须是安全 no-op(宿主可能在页存储建立
+    // 前就响应换肤指令)。
+    TerrainPageStore cold;
+    cold.invalidateComposedPages();
+    cold.invalidateFieldPages(16);
+    EXPECT_EQ(cold.ledgerPageCount(), 0);
+    EXPECT_EQ(cold.ledgerFieldPageCount(), 0);
+
+    // 已初始化但空账本:同样安全,计数保持 0。
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 8;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+    store.invalidateComposedPages();
+    store.invalidateFieldPages();
+    EXPECT_EQ(store.ledgerPageCount(), 0);
+    EXPECT_EQ(store.ledgerFieldPageCount(), 0);
+}

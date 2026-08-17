@@ -307,8 +307,9 @@ public:
     /// 刀2 路网 SDF 场:注入页存储"第二平面"的生产回调(签名/契约见
     /// TerrainPageStore::Config::roadFieldRequest)、线色与分级宽度 ramp
     /// (z0, halfPx0, z1, halfPx1;线半宽设备px,FS 在局部 zoom 上线性插值,
-    /// 语义见 Config::roadFieldWidthRamp)。**须在首帧渲染前调用**
-    /// (页存储 lazy 初始化时快照 Config,之后注入不生效)。
+    /// 语义见 Config::roadFieldWidthRamp)。**request 回调须在首帧渲染前
+    /// 注入**(页存储 lazy 初始化时快照 Config,之后注入不生效);样式
+    /// (线色/ramp/分级)自 V26 一期起运行期可换,见下方三个失效入口。
     /// fieldMaxZoom:场页 zoom 封顶,= max(场数据 maxZoom, 样式最后一个
     /// zoom 分级档)(语义详见 TerrainPageStore::Config::roadFieldMaxZoom)。
     void setRoadFieldSource(
@@ -318,6 +319,24 @@ public:
         std::array<float, 4> lineColor,
         std::array<float, 4> widthRampPx,
         int fieldMaxZoom);
+
+    /// ==== V26 一期:运行期换样式的失效通路(渲染线程)。====
+    /// 与 setRoadFieldSource 的"首帧前"限定互补:request 回调(换数据源)仍
+    /// 只能首帧前注入;**样式**自此运行期可换,走下面三个入口,按成本类分流。
+    ///
+    /// Uniform 类(零重烘):改场线色/宽度 ramp。任意时刻可调:首帧前落成员
+    /// (随 Config 快照带入),首帧后直写页存储,下一帧生效。
+    void setRoadFieldStyleUniforms(std::array<float, 4> lineColor,
+                                   std::array<float, 4> widthRampPx);
+    /// Re-bake 类(线):场分级样式已换(RoadFieldSource::setStyle 之后)→
+    /// 作废全部场页触发重烘(含清跳烘门,否则旧样式静默复活);
+    /// fieldMaxZoom >= 0 同步改场页 zoom 封顶。页存储未建时只落成员。
+    /// 瞬态:重烘期间路网短暂消失(换肤是低频操作,可接受;设计文档 §4.3)。
+    void invalidateRoadFieldPages(int fieldMaxZoom = -1);
+    /// Re-bake 类(面):面 drape 样式已换(VectorDrapeImageryProvider::
+    /// setStyle 之后)→ 作废全部合成页触发重栅格化(影像源同页重合成,
+    /// fetch 走 HttpCache 通常为热)。页存储未建时 no-op。
+    void invalidateComposedTerrainPages();
 
 private:
     /// Phase B(WorkLedger 接管 gating)的活性判据。仅当 kEnableWorkLedgerGating

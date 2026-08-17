@@ -411,6 +411,32 @@ void Engine::setRoadFieldSource(
     roadFieldMaxZoom_ = fieldMaxZoom;
 }
 
+void Engine::setRoadFieldStyleUniforms(std::array<float, 4> lineColor,
+                                       std::array<float, 4> widthRampPx) {
+    // 成员与页存储双写:首帧前调只落成员(随 Config 快照带入);首帧后调
+    // 直写页存储,下一帧命令构建生效(V26 一期,Uniform 成本类,零重烘)。
+    roadFieldColor_ = lineColor;
+    roadFieldWidthRampPx_ = widthRampPx;
+    if (terrainPageStore_) {
+        terrainPageStore_->setRoadFieldStyleUniforms(lineColor, widthRampPx);
+    }
+}
+
+void Engine::invalidateRoadFieldPages(int fieldMaxZoom) {
+    if (fieldMaxZoom >= 0) {
+        roadFieldMaxZoom_ = fieldMaxZoom;
+    }
+    if (terrainPageStore_) {
+        terrainPageStore_->invalidateFieldPages(fieldMaxZoom);
+    }
+}
+
+void Engine::invalidateComposedTerrainPages() {
+    if (terrainPageStore_) {
+        terrainPageStore_->invalidateComposedPages();
+    }
+}
+
 void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
     terrainGpuDisplacementEnabled_ = enabled;
     Tileset* tileset = scene_ ? scene_->tileset() : nullptr;

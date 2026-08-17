@@ -413,18 +413,20 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
 
 | # | 判据 | 类型 | 状态 | 代价(实测) | 证据 / 差距 |
 |---|---|---|---|---|---|
-| **V26** | **运行期换样式**:换肤 / 样式热加载 / 外置样式文件,不重编译即可换城市、换数据源、换配色 | 机制 | ❌ | **未评估**。⚠️ 工作量落点**不在**抽一层公共样式结构,在给面/线两路补"样式可失效"通路(见差距列) | 差距见下;架构方案已定调(2026-08-18):`docs/issues/vector-style-architecture-2026-08-18.md`,样式来源待拍板见 F 节 |
+| **V26** | **运行期换样式**:换肤 / 样式热加载 / 外置样式文件,不重编译即可换城市、换数据源、换配色 | 机制 | ⚠️ | 一期(失效通路)~0:Uniform 类零重烘;Re-bake 类 = 换肤瞬间一次全页重栅格化/场重烘(低频,稳态零成本) | **一期已落地(2026-08-18)**:面/线失效通路,见差距 #2;余二期(Doc+parser+Compiler,A/B 在此拍板)三期(交互路),架构:`docs/issues/vector-style-architecture-2026-08-18.md` |
 
 **差距(2026-08-17 逐条对源码核实)**:
 
 1. **样式模型四套并存**,无 mapbox-style-spec 式统一模型:`VectorRasterStyle`(面/线烘焙)、`FeatureRenderStyle`+`StyleExpression`(点/标注)、`SourceLayerRule`+`StyleFilter`(层过滤),外加 `style/OverlayStyle.h`(`Color`/`AltitudeMode`/`PointStyle` 一整套平行类型,旧 `VectorLayer` GeoJSON 路径,**仍在 demo 上线**——`addDemoVectorLayer`,不在任何 `kEnable*` 开关内)。
-2. **面/线两路运行期物理改不了**(比"要改四处"严重一个量级):
+2. ~~**面/线两路运行期物理改不了**~~ → **一期已解(2026-08-18,本会话)**:
 
-   | 路 | 运行期能改? | 约束来源 |
+   | 路 | 运行期能改? | 通路(成本类见设计文档 §4.2) |
    |---|---|---|
-   | 点/符号 | ✅ | `FeatureRenderLayer::setStyle`(渲染线程写,worker 读) |
-   | 面 drape | ❌ | `VectorDrapeImageryProvider::Options` 构造期注入,**无 setter** |
-   | 线/场 | ❌ | `Engine::setRoadFieldSource` 注释:「**须在首帧渲染前调用**(页存储 lazy 初始化时快照 Config,之后注入不生效)」 |
+   | 点/符号 | ✅(原有) | `FeatureRenderLayer::setStyle` |
+   | 面 drape | ✅ **一期新增** | `VectorDrapeImageryProvider::setStyle`(加锁快照,在途任务解耦)+ `Engine::invalidateComposedTerrainPages()`(Re-bake:全页重栅格化,与"源列表变了全作废"共用 `clearAllComposedPages` 同构) |
+   | 线/场 | ✅ **一期新增** | Uniform 类:`Engine::setRoadFieldStyleUniforms`(线色/ramp,零重烘下帧生效);Re-bake 类:`RoadFieldSource::setStyle` + `Engine::invalidateRoadFieldPages`(**含清跳烘门 `fieldLayerKey_`**——不清则同 key 重建复用旧样式层,静默失效;可同步改场页 zoom 封顶) |
+
+   证据:host 新增 5 测(`SetStyleTakesEffectOnNextRequest`/`SetStyleTakesEffectOnNextBake`/`TerrainPageStoreRestyle.*`),189/189 全绿;端到端(determination 建页→失效→重烘)未纳 host(需 RealTerrain 全套测试台),靠 clearAllComposedPages 与已真机验证的源变清页路径同构 + 真机换肤像素验证(待做,归你)。已知瞬态:Re-bake 期间面/线短暂消失(换肤低频,设计文档 §4.3 拍定整路重建)。
 
 3. **无外置**:数据源模板、色值、ramp、封顶全是 `constexpr`(`MinimalGlobeDemoConfig.h`),全仓无 style.json 解析器;`GLESView.cpp` 仍有 ~90 行 `FeatureRenderStyle` 样式语句。
    **已部分还**:面 drape 与线/场的分级规则已抽到 `MinimalGlobeDemoConfig.cpp`(`makeMvtDrapeStyle`/`makeMvtRoadFieldStyle`,321 行)且由 `test_mvt_basemap_grading` 守卫。

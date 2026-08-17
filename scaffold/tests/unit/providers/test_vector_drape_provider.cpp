@@ -349,3 +349,40 @@ TEST(VectorDrapeProviderTest, Gcj02GridSelectsWgs84ShiftedContent) {
     EXPECT_FALSE(anyOpaquePixel(*gotOff))
         << "不平移时矩形停在 GCJ 数值位置,应不含 p 处要素";
 }
+
+// V26 一期:运行期 setStyle 后,同 key 重新请求产出新样式(换肤语义本体)。
+// 缓存命中路径也必须换色 —— 数据瓦缓存的是 MVT 解码瓦,样式在栅格化时求值,
+// 故无需清数据缓存;若此测试红,多半是有人把"样式烘进数据缓存"了。
+TEST(VectorDrapeProviderTest, SetStyleTakesEffectOnNextRequest) {
+    FakeFetch fetch;
+    fetch.body = makeHalfTilePolygon("L");
+    auto cache = cacheFor(fetch);
+    VectorDrapeImageryProvider provider(optionsFor("L"), cache);
+    const TileKey key{"XYZ-WebMercator", 12, 1, 1};
+
+    auto before = request(provider, key);
+    ASSERT_NE(before, nullptr);
+    // optionsFor 的 fillColor = 纯红;取一个左半边不透明像素验证基色。
+    const int cx = before->width / 4, cy = before->height / 2;
+    const size_t px = (static_cast<size_t>(cy) * before->width + cx) * 4;
+    ASSERT_GT(before->pixels[px + 3], 0) << "前置:要素像素应不透明";
+    EXPECT_GT(before->pixels[px + 0], 200) << "旧样式为红";
+    EXPECT_LT(before->pixels[px + 2], 60);
+
+    VectorRasterLayerPaint bluePaint;
+    bluePaint.layer = "L";
+    bluePaint.fillColor = {0, 0, 255, 255};
+    VectorRasterStyle blue;
+    blue.layers = {bluePaint};
+    provider.setStyle(blue);
+
+    auto after = request(provider, key);
+    ASSERT_NE(after, nullptr);
+    ASSERT_GT(after->pixels[px + 3], 0);
+    EXPECT_GT(after->pixels[px + 2], 200) << "新样式应为蓝(含缓存命中路径)";
+    EXPECT_LT(after->pixels[px + 0], 60) << "红通道应已让位";
+    // 数据瓦不因换样式重拉:两次请求同一批源瓦,fetch 计数不变。
+    const int fetchesAfterFirst = fetch.calls;
+    request(provider, key);
+    EXPECT_EQ(fetch.calls, fetchesAfterFirst) << "换样式不该触发数据重拉";
+}

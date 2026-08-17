@@ -90,6 +90,16 @@ VectorDrapeImageryProvider::VectorDrapeImageryProvider(
       tileCache_(std::move(tileCache)),
       rasterPool_(std::move(rasterPool)) {}
 
+void VectorDrapeImageryProvider::setStyle(VectorRasterStyle style) {
+    std::lock_guard<std::mutex> lock(styleMutex_);
+    options_.style = std::move(style);
+}
+
+VectorRasterStyle VectorDrapeImageryProvider::styleSnapshot() const {
+    std::lock_guard<std::mutex> lock(styleMutex_);
+    return options_.style;
+}
+
 std::string VectorDrapeImageryProvider::buildUrl(const TileKey& key) const {
     return options_.id + "://" + std::to_string(key.z) + "/" +
            std::to_string(key.x) + "/" + std::to_string(key.y);
@@ -124,7 +134,7 @@ void VectorDrapeImageryProvider::requestTile(const TileKey& key,
     assembly->gcj = options_.gcj02SourceGrid;
     assembly->styleZoom = key.z;
     assembly->tileSize = options_.tileSize;
-    assembly->style = options_.style;
+    assembly->style = styleSnapshot();  // V26:加锁快照,在途任务与换样式解耦
     assembly->rasterPool = rasterPool_;
     assembly->refs.reserve(tiles.size());
     for (const mvt_rect::TileXY& t : tiles) {
@@ -162,7 +172,7 @@ std::unique_ptr<DecodedImage> VectorDrapeImageryProvider::decodeTile(
         return nullptr;
     }
     return toDecodedImage(rasterizeMvtTile(tile, options_.dataMaxZoom,
-                                           options_.style,
+                                           styleSnapshot(),
                                            options_.tileSize));
 }
 

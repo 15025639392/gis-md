@@ -176,3 +176,36 @@ TEST(RoadFieldSourceTest, CancelledStillInvokesCallback) {
                         });
     EXPECT_TRUE(called);
 }
+
+// V26 一期:运行期 setStyle 后,同 key 重烘产出新分级(换肤语义本体)。
+// 新样式把 roads 层滤除 → 中线纹素退为空哨兵;数据瓦缓存不因换样式重拉。
+TEST(RoadFieldSourceTest, SetStyleTakesEffectOnNextBake) {
+    FakeFetch fetch;
+    fetch.body = makeMidlineRoad("roads");
+    auto cache = std::make_shared<MvtTileFetchCache>(fetch.fn(), 8);
+    RoadFieldSource source(fieldOptions(), cache);
+    const TileKey key{"XYZ-WebMercator", 12, 1, 1};
+    const size_t mid = (32u * 64u + 32u) * 4u + 3u;
+
+    std::vector<uint8_t> before;
+    source.requestField(key, CancellationToken(),
+                        [&](std::vector<uint8_t> r8) { before = std::move(r8); });
+    ASSERT_EQ(before.size(), 64u * 64u * 4u);
+    ASSERT_NE(before[mid], 0) << "前置:旧样式下中线有线段记录";
+
+    // 新样式:只认 "rails" 层 → 本瓦的 roads 线全部滤除。
+    VectorRasterLayerPaint rails;
+    rails.layer = "rails";
+    rails.lineColor = {255, 255, 255, 255};
+    VectorRasterStyle railOnly;
+    railOnly.layers = {rails};
+    source.setStyle(railOnly);
+
+    const int fetchesAfterFirst = fetch.calls;
+    std::vector<uint8_t> after;
+    source.requestField(key, CancellationToken(),
+                        [&](std::vector<uint8_t> r8) { after = std::move(r8); });
+    ASSERT_EQ(after.size(), 64u * 64u * 4u);
+    EXPECT_EQ(after[mid], 0) << "新样式滤除 roads → 中线应为空哨兵";
+    EXPECT_EQ(fetch.calls, fetchesAfterFirst) << "换样式不该触发数据重拉";
+}

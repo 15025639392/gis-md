@@ -1777,8 +1777,8 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 | `Assembly` | .cpp:30-47 | 一次 requestTile 的聚合态:slot 独占写、原子计数归零者收尾,样式按值快照;线程池持 weak(拆除竞态) |
 | `runAssembly` | .cpp:49-67 | 收尾本体:取消仍回调 nullptr;失败/空区域产全透明图 |
 | `completeIfReady` | .cpp:73-80 | 计数归零 → weak pool lock 成功 enqueue,失败(host 测试/会话已拆)就地跑 |
-| `requestTile` | .cpp:98-149 | 矩形(可选 GCJ 平移)→ coverage 数据瓦网格 → 逐 slot cache->request(命中同步回调/在途搭车由 cache 负责) |
-| `decodeTile` | .cpp:158-160 | 同步整瓦栅格化(按 dataMaxZoom),测试/调试 |
+| `requestTile` | .cpp:108-159 | 矩形(可选 GCJ 平移)→ coverage 数据瓦网格 → 逐 slot cache->request(命中同步回调/在途搭车由 cache 负责) |
+| `decodeTile` | .cpp:168-170 | 同步整瓦栅格化(按 dataMaxZoom),测试/调试 |
 
 
 ### RoadFieldSource.h / .cpp
@@ -1790,7 +1790,7 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 | `Assembly` | .cpp:14-27 | 聚合态:slot 独占写、原子计数归零者收尾 |
 | `runAssembly` | .cpp:36-58 | 收尾:取消回空场;rasterizeLineFieldRect;空结果补全 0 |
 | `completeIfReady` | .cpp:65-70 | weak pool lock 成功 enqueue / 失败就地 |
-| `requestField` | .cpp:77-128 | 矩形(GCJ 平移)→ coverage → 逐 slot cache->request |
+| `requestField` | .cpp:89-140 | 矩形(GCJ 平移)→ coverage → 逐 slot cache->request |
 
 ### TerrainProvider.h / .cpp
 
@@ -2614,11 +2614,11 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 |---|---|---|
 | `initialize(device, Config)` | .cpp:1249-1335 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
 | `updateVisiblePages(view, ...)` | .cpp:560-1248 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1351-1444 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1445-1486 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1563-1646 / :1487-1527 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1647-1747 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1336-1350 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1381-1474 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1475-1516 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1593-1676 / :1517-1557 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1677-1777 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1366-1380 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:283-329 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:546-379 / :477-496 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:406-476 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
@@ -3523,20 +3523,20 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:65-75 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:76-82 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:83-120 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:460-1036 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:460). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:460-1036). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:460-1036). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:615-616). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:1037-1040 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:1041-1049 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:488-1074 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:488). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:488-1074). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:488-1074). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:615-616). |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:1075-1078 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:1079-1087 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1108-1111 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1116-1119 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1146-1149 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1154-1157 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1137-1142 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1175-1180 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1199-1206 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1207-1210 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:1066-1069, 1205-1209 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:1257-1264 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1265-1272 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:1104-1107, 1273-1277 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:692-740 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 

@@ -295,6 +295,37 @@ public:
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
     int lastVisiblePageCount() const { return lastVisiblePageCount_; }
 
+    /// ==== V26 一期:运行期换样式的失效通路(渲染线程,与 tick 同线程)====
+    /// Uniform 类:线色/宽度 ramp 直写 config_ 快照(applyToTerrainCommand
+    /// 每帧从 config_ 读),下一帧命令构建即生效,零重建。
+    void setRoadFieldStyleUniforms(const std::array<float, 4>& color,
+                                   const std::array<float, 4>& widthRamp);
+    /// Re-bake 类(面):面 drape 生产者换样式后调。清空全部合成页(cancel
+    /// 在途;pool 槽位不清,同 key 重 acquire 同 layer 直接重 kick)——与
+    /// updateVisiblePages 里"源列表变了全作废"共用 clearAllComposedPages,
+    /// 同构保证。下一次 determination 自然重建重烘。
+    void invalidateComposedPages();
+    /// Re-bake 类(线):场生产者(RoadFieldSource::setStyle)换样式后调。
+    /// 清空全部场页 + **清跳烘门 fieldLayerKey_** —— 不清则同 key 重建走
+    /// determination 的"层内真场直接复用"分支,旧样式内容原地复活(静默
+    /// 失效);跳烘门是 churn 无闪复用的机关,换样式时它恰好变成敌人。
+    /// newFieldMaxZoom >= 0 时同步改场页 zoom 封顶(新样式分级档变了封顶
+    /// 要跟着变,语义见 Config::roadFieldMaxZoom)。
+    void invalidateFieldPages(int newFieldMaxZoom = -1);
+    // 诊断(单测/日志):账本计数与场样式快照。注意与 residentPageCount()
+    // (pool 槽位驻留数)语义不同:invalidate 后账本清零而槽位保留,二者分叉。
+    int ledgerPageCount() const { return static_cast<int>(pages_.size()); }
+    int ledgerFieldPageCount() const {
+        return static_cast<int>(fieldPages_.size());
+    }
+    const std::array<float, 4>& roadFieldStyleColor() const {
+        return config_.roadFieldColor;
+    }
+    const std::array<float, 4>& roadFieldStyleWidthRamp() const {
+        return config_.roadFieldWidthRamp;
+    }
+    int roadFieldZoomCap() const { return config_.roadFieldMaxZoom; }
+
     /// 停滞多少帧之后,一个未完成的页不再算"在途"。
     ///
     /// 判据必须有**终止态**:页可以长期停在 partial(某个源在该 key 上根本没有
@@ -507,6 +538,10 @@ private:
     /// 取走 worker 已合成的页快照,按预算上传 + 叠画(渲染线程)。
     void drainReadyUploads();
     void erasePageEntry(uint64_t pageKey);
+    /// 全量作废合成页(cancel 在途 fetch/compose + pages_.clear;pool 槽位
+    /// 不清)。两个调用点:源列表变更(updateVisiblePages)与运行期换样式
+    /// (invalidateComposedPages)—— 同一形态收进一处,不许再抄。
+    void clearAllComposedPages();
 
     RenderDevice* device_ = nullptr;
     Config config_{};

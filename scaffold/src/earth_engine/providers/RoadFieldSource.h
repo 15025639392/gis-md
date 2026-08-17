@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <vector>
 
 #include "../data/MvtTileFetchCache.h"
@@ -53,12 +54,23 @@ public:
 
     int fieldSize() const { return options_.fieldSize; }
 
+    /// V26 一期:运行期换线分级样式(换肤)。线程安全(小锁);在途烘焙持旧
+    /// 快照收口,新请求起用新样式。**只换生产侧**:页存储已烘的旧样式场页
+    /// 不自动作废(且其跳烘门会静默复用旧层),调用方随后须
+    /// Engine::invalidateRoadFieldPages() 触发场页重烘。线色/宽度 ramp 不在
+    /// 此处——那是 FS uniform(Engine::setRoadFieldStyleUniforms,零重烘)。
+    void setStyle(VectorRasterStyle style);
+
 private:
     struct Assembly;
     static void completeIfReady(const std::shared_ptr<Assembly>& assembly);
     static void runAssembly(const std::shared_ptr<Assembly>& assembly);
 
+    /// options_.style 的加锁快照(setStyle 可与 requestField 并发)。
+    VectorRasterStyle styleSnapshot() const;
+
     Options options_;
+    mutable std::mutex styleMutex_;  // 只护 options_.style,其余构造后只读
     std::shared_ptr<MvtTileFetchCache> tileCache_;
     std::shared_ptr<ThreadPool> rasterPool_;
 };

@@ -76,6 +76,16 @@ void RoadFieldSource::completeIfReady(
     }
 }
 
+void RoadFieldSource::setStyle(VectorRasterStyle style) {
+    std::lock_guard<std::mutex> lock(styleMutex_);
+    options_.style = std::move(style);
+}
+
+VectorRasterStyle RoadFieldSource::styleSnapshot() const {
+    std::lock_guard<std::mutex> lock(styleMutex_);
+    return options_.style;
+}
+
 void RoadFieldSource::requestField(const TileKey& pageKey,
                                    CancellationToken token,
                                    FieldCallback callback) {
@@ -107,7 +117,7 @@ void RoadFieldSource::requestField(const TileKey& pageKey,
     assembly->gcj = options_.gcj02SourceGrid;
     assembly->styleZoom = pageKey.z;
     assembly->fieldSize = size;
-    assembly->style = options_.style;
+    assembly->style = styleSnapshot();  // V26:加锁快照,在途任务与换样式解耦
     assembly->rasterPool = rasterPool_;
     assembly->refs.reserve(tiles.size());
     for (const mvt_rect::TileXY& t : tiles) {

@@ -584,14 +584,7 @@ void TerrainPageStore::updateVisiblePages(
     }
     if (providers_ != detProvidersScratch_) {
         providers_ = detProvidersScratch_;
-        for (auto& [key, entry] : pages_) {
-            for (CancellationToken& token : entry.fetchTokens) {
-                token.cancel();
-            }
-        }
-        pages_.clear();
-        // pool_ 的槽位不清:key 仍驻留 → 下次 acquire 返回同一 layer、try_emplace 报
-        // inserted → 按新源列表重新 kick。槽位有界不泄漏,且省一轮 LRU 抖动。
+        clearAllComposedPages();
     }
     RasterOverlayTileProvider* provider = providers.front();
     const TileScheme& scheme = provider->getTileScheme();
@@ -1331,6 +1324,43 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
         }
     }
     return true;
+}
+
+void TerrainPageStore::clearAllComposedPages() {
+    for (auto& [key, entry] : pages_) {
+        for (CancellationToken& token : entry.fetchTokens) {
+            token.cancel();  // 在途 fetch 作废(到达经 drain 校验丢弃)
+        }
+        if (entry.compose) {
+            // 在途合成省功早退;迟到快照由 drainReadyUploads 账本校验丢弃。
+            entry.compose->cancelled.store(true, std::memory_order_release);
+        }
+    }
+    pages_.clear();
+    // pool_ 的槽位不清:key 仍驻留 → 下次 acquire 返回同一 layer、try_emplace 报
+    // inserted → 重新 kick。槽位有界不泄漏,且省一轮 LRU 抖动。
+}
+
+void TerrainPageStore::setRoadFieldStyleUniforms(
+    const std::array<float, 4>& color, const std::array<float, 4>& widthRamp) {
+    config_.roadFieldColor = color;
+    config_.roadFieldWidthRamp = widthRamp;
+}
+
+void TerrainPageStore::invalidateComposedPages() { clearAllComposedPages(); }
+
+void TerrainPageStore::invalidateFieldPages(int newFieldMaxZoom) {
+    for (auto& [key, entry] : fieldPages_) {
+        entry.token.cancel();  // 迟到 r8 经账本校验丢弃
+    }
+    fieldPages_.clear();
+    // 清跳烘门:不清则 determination 同 key 重建走"层内真场直接复用"分支,
+    // 旧样式内容原地复活(静默失效)。fieldLayerKey_ 未建(场平面关)时为空,
+    // fill 是 no-op,安全。
+    std::fill(fieldLayerKey_.begin(), fieldLayerKey_.end(), kInvalidFieldKey);
+    if (newFieldMaxZoom >= 0) {
+        config_.roadFieldMaxZoom = newFieldMaxZoom;
+    }
 }
 
 void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
