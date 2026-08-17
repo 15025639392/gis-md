@@ -13,24 +13,12 @@
 # 每行 = 源文件:引用行号:符号位(`-` = 本判据不按单符号归属)
 AndroidPlatformBridge.cpp:32:-  # JNI 辅助块起点,32 行是空行、真正的定义在 42(detachJniAtThreadExit)—— 文档给的是块起点,可接受
 AndroidPlatformBridge.cpp:60:-  # 函数体内语句 gJvm->AttachCurrentThread —— 已回读,正确
-AtmosphereBackgroundPass.cpp:20:-  # GLSL 字符串内的 layout 声明行 —— 已回读,正确
 BoundingCylinderRegion.cpp:79:-  # 构造函数,索引不建范围 —— 已回读,79 行确是 ctor 首行
-Camera.cpp:18:-  # Camera::Camera() 构造函数 —— 已回读,正确
-Camera.cpp:67:-  # Camera::projectionMatrix 定义首行 —— 已回读,正确
-CameraController.cpp:146:-  # 函数体内语句 Cartographic::fromDegrees —— 已回读,正确
-CameraController.cpp:27:-  # 常量块内的说明注释(Everest 8849m)—— 已回读,正确
 CurlMultiRequestScheduler.cpp:117:-  # 函数体内语句 const size_t total —— 已回读,正确
 EarthEngineSdkFacade.cpp:402:-  # 函数体内语句 bingOptions.subdomains —— 已回读,正确
-Engine.cpp:210:-  # 函数体内 if (enabled) 分支 —— 已回读,正确
 RasterMappedToTilesetTile.cpp:221:-  # 指向 `// Step 2:` 分段注释,非函数定义 —— 已回读,正确
 RasterMappedToTilesetTile.cpp:371:-  # 同上,指向分段注释 —— 已回读,正确
-Renderer.cpp:1061:-  # shader 字符串内的中文注释行 —— 已回读,正确
-Renderer.cpp:3998:-  # makeTileGeometry 定义首行(静态自由函数)—— 已回读,正确
-Renderer.cpp:4126:-  # Renderer::initialize 定义首行 —— 已回读,正确
-Renderer.cpp:4436:-  # 函数体内语句 cmd.vertexStride=32,本行无函数名可锚 —— 已回读,正确
 Renderer.cpp:4464:-  # 同上,vertexStride=120 —— 已回读,正确
-Renderer.cpp:4523:-  # 同上,instanceStride —— 已回读,正确
-SceneRenderPipeline.cpp:132:-  # 函数体内语句 diagnostics.terrainRenderEntriesFadingDeferred —— 已回读,正确
 SkyBox.cpp:45:-  # kSkyBoxStarfieldVert GLSL 字符串常量首行 —— 已回读,正确
 SkyGradient.cpp:125:-  # `// ====` 分节分隔注释 —— 已回读,正确
 SkyGradient.cpp:164:-  # 同上,分节分隔注释 —— 已回读,正确
