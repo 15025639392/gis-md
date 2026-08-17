@@ -779,7 +779,9 @@ void applyPerFrameCommandState(
         }
         cmd.textures[textureSlot] = texture;
         if (binding.tileHandle) {
-            cmd.resourceKeepAlive.push_back(binding.tileHandle);
+            // 帧级保活(替代逐命令 resourceKeepAlive):同一 overlay tile 被本帧
+            // 多命令引用时只锚定一份。释放时机不变,见 Renderer::keepAliveThisFrame。
+            renderer.keepAliveThisFrame(binding.tileHandle);
         }
         cmd.gltfRasterOverlayTileUvs[rasterOverlayTextureCount] = {
             binding.offsetU,

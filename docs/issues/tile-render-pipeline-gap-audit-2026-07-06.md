@@ -230,7 +230,11 @@
 >
 > **本轮修**(commit 见下):`RenderCommand::stableKey` 由 `std::string` 改**非拥有 `std::string_view`**,真源串移到发出方持有——热瓦片路径进 tile 缓存 `cachedStableKeys_`(`std::deque`,与 cached 命令同生命周期,失效时同步清);clip 瞬态路径进帧级 `thread_local` arena(按 `frameNumber` 变化清);静态字面量(PolarCap)天然驻留。测量实收 **FULL 94→65ns/命令(−31%),stableKey 分量 29→0.3ns**。等价性:`test_gltf_draw_command_cache`(热路径 key 精确内容)+ `test_sse_pipeline`(clip 唯一性+trace)+ `test_tile_render_entry_command_builder`(clip find)三测守卫全绿(189/189)。
 >
-> **仍开(未动,需更大重构)**:`resourceKeepAlive` 原子抖动(~23ns,载荷不可删)+ POD memcpy 底(~47ns,须拆 hot/cold 或瘦身结构体)。绝对量级:300 命令/帧 × 29ns ≈ 帧预算 0.05%(host);移动端 malloc 更贵约 0.2%——stableKey 属「纯浪费的诊断堆」故值得根除,余两项 ROI 需单独权衡。
+> **本轮同修 `resourceKeepAlive`**(见下第二条 commit):原判「载荷不可删」成立,但**逐命令持有本身是冗余**——同一 raster overlay tile 被本帧数百命令各 push 一份 `shared_ptr`(每命令一次 vector 堆分配 + 原子 inc)。查实它是**只写字段**(renderer/platform 无读者,纯 RAII 生命周期锚),且填充在逐帧 `applyPerFrameCommandState`(非缓存构建)。改**帧级单一保活集**(挂 `Renderer`,按裸指针去重,一帧一份),字段从 `RenderCommand` 移除。释放时机**逐字节不变**——由渲染循环在下一帧命令重建前 `clearFrameKeepAlive`(SceneRenderPipeline 帧首,晚于本帧 submit → 满足 `SubmitBeforeReleaseRefs` 契约,契约不变式保留、仅换实现描述)。实收 **per-command 拷贝 65→43ns(触 POD 底)**,且每帧成本从 O(命令数) alloc+原子 降到 O(绑定数) 哈希 + O(不同 tile 数) 原子;结构体 sizeof −24B(顺带帮 POD 底)。等价性:`test_sse_pipeline`(资源保活迁到 renderer 帧级集)+ `test_raster_overlay_lifecycle`(provider trim 尊重外部引用)更新后 189/189 绿。⚠️ 动了共享契约 `SubmitBeforeReleaseRefs` 的**实现机制描述**(不变式未变)+ `Renderer` 公共接口(加 3 方法,additive)。
+>
+> **两轮组合实收:per-command 拷贝 94→43ns(−54%)**,已触纯 POD memcpy 底。
+>
+> **仍开(未动,盘子最大)**:POD memcpy 底 ~43ns/命令 = 结构体(~1936B:128B 位移矩阵 + 多个 std::array)整体 memcpy。要降须**拆 hot/cold**(帧列表持精简热命令 + 指针指向缓存的不变字段)或瘦身结构体——是每命令消费者(submit/sort/validate/trace/diagnostics)全链的大 ripple,需真机热点证据再动。绝对量级:300 命令/帧 × 43ns ≈ 帧预算 0.08%(host)。
 
 ### 8.2 并发正确性
 

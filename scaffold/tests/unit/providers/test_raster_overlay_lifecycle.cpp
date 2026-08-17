@@ -8841,7 +8841,9 @@ TEST(RasterOverlayLifecycleTest, RenderCommandKeepAliveRetainsRasterAfterMapping
 
     RenderCommand command;
     command.textures.push_back(binding.tile->getTexture());
-    command.resourceKeepAlive.push_back(binding.tileHandle);
+    // resourceKeepAlive 已移除(改 Renderer 帧级保活)。本测只需一个 shared_ptr
+    // 持有者验证 provider trim 尊重外部引用 —— 用局部变量替代原字段,语义等价。
+    std::shared_ptr<const void> keepAlive = binding.tileHandle;
     binding.tileHandle.reset();
 
     mapped.releaseTileReferences(nullptr);
@@ -8852,7 +8854,7 @@ TEST(RasterOverlayLifecycleTest, RenderCommandKeepAliveRetainsRasterAfterMapping
     EXPECT_FALSE(weakTile.expired());
     EXPECT_EQ(command.textures[0], tile->getTexture());
 
-    command.resourceKeepAlive.clear();
+    keepAlive.reset();
     provider.trimUnusedTiles();
     EXPECT_EQ(provider.getCachedTileCount(), 0);
     EXPECT_TRUE(weakTile.expired());

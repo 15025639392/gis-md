@@ -160,10 +160,10 @@ struct RenderCommand {
     Buffer* indexBuffer = nullptr;
     Buffer* instanceBuffer = nullptr;
     RenderCommandTextureList textures;
-    // Optional short-lived resource owners for raw pointers above. Commands can
-    // keep raster/content resources alive through submit without taking over
-    // renderer ownership.
-    std::vector<std::shared_ptr<const void>> resourceKeepAlive;
+    // 命令引用的裸 Buffer*/Texture* 的 CPU 侧持有者(raster/content 资源)不再逐
+    // 命令持有,改由 Renderer 帧级保活集统一锚定(见 Renderer::keepAliveThisFrame)
+    // —— 同一资源本帧一份 shared_ptr 而非每命令一份,省去每命令 vector 堆分配 +
+    // 冗余原子引用计数。释放时机不变(下一帧命令重建前,晚于本帧 submit)。
 
     // 绘制参数
     int vertexCount = 0;       // glDrawArrays 的顶点数（indexBuffer 为 null 时使用）

@@ -209,6 +209,10 @@ void applyTerrainRenderEntryDiagnostics(
 SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     const double renderStartMs = perf::nowMs();
     context.commands.clear();
+    // 帧级资源保活集与命令列表同点清空(下一帧重建前):上一帧持有的 raster/
+    // content handle 在此释放,晚于上一帧 submit → 满足 SubmitBeforeReleaseRefs。
+    // 与旧逐命令 resourceKeepAlive 随 commands.clear() 释放的时机逐字节一致。
+    context.renderer.clearFrameKeepAlive();
     reserveCommands(context);
 
     double skyMs = 0.0;
@@ -975,8 +979,10 @@ void SceneRenderPipeline::releaseRenderReferences(Context& context,
                                                  bool presentable) const {
     // 契约(消费侧):本帧若提交过命令,释放必须发生在那次 submit **之后**。
     //
-    // 渲染命令持有裸 Buffer*/Texture* 加 resourceKeepAlive shared_ptr;先释放会
-    // 在 draw 中途放掉 GPU 资源。AI_INDEX §20 把这条列为跨子系统契约,并在小标题
+    // 渲染命令持有裸 Buffer*/Texture*;其 CPU 侧持有者由 Renderer 帧级保活集锚定
+    // (见 Renderer::keepAliveThisFrame,该集在下一帧帧首清、晚于本帧 submit)。
+    // 本函数释放的是 tile 渲染引用(renderReferences),同样必须晚于 submit,否则
+    // 会在 draw 中途放掉 GPU 资源。AI_INDEX §20 把这条列为跨子系统契约,并在小标题
     // 里写明 "enforced by call order, not by types" —— 在此之前它只是一句文档。
     //
     // 未提交帧(presentable=false,hold/跳帧)不参与判定:那种帧没有需要保活的

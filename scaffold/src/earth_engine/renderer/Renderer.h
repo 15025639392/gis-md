@@ -36,6 +36,20 @@ public:
     /// 提交渲染命令列表
     void submit(const RenderCommandList& commands);
 
+    // ---- 帧级资源保活(替代逐命令 RenderCommand::resourceKeepAlive)----
+    // 渲染命令持裸 Buffer*/Texture*;其 CPU 侧持有者(如 raster overlay tile
+    // handle)必须活到本帧 submit 被 GPU 消费完。旧实现每命令一个
+    // shared_ptr vector:同一 overlay tile 被本帧数百命令各持一份 = 每命令一次
+    // 堆分配 + 冗余原子引用计数。改帧级单一集合:一帧一份(按裸指针去重),
+    // 释放时机与旧实现完全一致——由渲染循环在**下一帧命令重建前**清空
+    // (SceneRenderPipeline::render 帧首,晚于本帧 submit → 满足
+    // SubmitBeforeReleaseRefs 契约)。
+    void keepAliveThisFrame(std::shared_ptr<const void> handle);
+    /// 清空帧级保活集。契约:必须晚于本帧 submit(见 keepAliveThisFrame)。
+    void clearFrameKeepAlive();
+    /// 测试/诊断用:当前帧级保活集持有的去重资源数。
+    size_t frameKeepAliveCount() const;
+
     /// 释放所有 GPU 资源
     void dispose();
 

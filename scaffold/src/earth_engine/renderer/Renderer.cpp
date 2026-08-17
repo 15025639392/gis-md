@@ -15,8 +15,10 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <array>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace earth_engine {
@@ -4031,6 +4033,12 @@ static std::string withGltfHdr(const char* fragmentSource) {
 struct Renderer::Impl {
     RenderDevice* device = nullptr;
 
+    // 帧级资源保活集(见 Renderer::keepAliveThisFrame)。holds 承载真正的
+    // shared_ptr(RAII 锚),seen 按裸指针去重避免同一资源被本帧多命令重复
+    // 持有引发的冗余原子引用计数。每帧 clearFrameKeepAlive 一并清空。
+    std::vector<std::shared_ptr<const void>> frameKeepAlive;
+    std::unordered_set<const void*> frameKeepAliveSeen;
+
     // Surface tile (unified, cesium-native glTF layout)
     std::unique_ptr<Texture> surfacePlaceholderTexture;
 
@@ -4484,6 +4492,24 @@ void Renderer::detachRasterInMainThread(
     const TileKey&,
     int32_t) noexcept {
     // Notification hook only; renderer does not store raster binding state.
+}
+
+void Renderer::keepAliveThisFrame(std::shared_ptr<const void> handle) {
+    if (!handle) return;
+    // 按裸指针去重:同一资源本帧只持一份 shared_ptr → 一次原子 inc,而非
+    // 逐命令一次。首次见到才 push(移动进 holds),重复直接丢弃。
+    if (impl_->frameKeepAliveSeen.insert(handle.get()).second) {
+        impl_->frameKeepAlive.push_back(std::move(handle));
+    }
+}
+
+void Renderer::clearFrameKeepAlive() {
+    impl_->frameKeepAlive.clear();
+    impl_->frameKeepAliveSeen.clear();
+}
+
+size_t Renderer::frameKeepAliveCount() const {
+    return impl_->frameKeepAlive.size();
 }
 
 } // namespace earth_engine

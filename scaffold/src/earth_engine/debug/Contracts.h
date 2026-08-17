@@ -65,9 +65,10 @@ enum class Id : uint8_t {
     // 覆盖,否则"架构是否被忠实执行"这个问题根本没有可查的答案。
 
     /// 渲染 → 资源释放:releaseRenderReferences 必须晚于本帧的 submit。
-    /// 渲染命令持有**裸** Buffer*/Texture* 加 resourceKeepAlive shared_ptr,
-    /// 先释放会在 draw 中途释放 GPU 资源。文档 §20「submit BEFORE
-    /// releaseRenderReferences」。
+    /// 渲染命令持有**裸** Buffer*/Texture*,其 CPU 侧持有者由 Renderer 帧级保活集
+    /// 锚定(keepAliveThisFrame,下一帧帧首 clearFrameKeepAlive 释放,晚于本帧
+    /// submit);tile 渲染引用同理。先释放会在 draw 中途释放 GPU 资源。文档 §20
+    /// 「submit BEFORE releaseRenderReferences」。
     SubmitBeforeReleaseRefs,
 
     /// 加载 → 上传:drainGpuUploadQueue 必须晚于本帧的 processPendingLoads。

@@ -7064,7 +7064,9 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
               std::abs(gltfUniform(cmd, "u_mappedRasterOpacity0").front() -
                        overlayOptions.opacity) < 1e-6f,
           "Tileset: glTF mapped raster preserves overlay opacity");
-    check(!cmd.resourceKeepAlive.empty(),
+    // 资源保活已从逐命令 resourceKeepAlive 迁到 Renderer 帧级集(去冗余分配/原子);
+    // 绑定 raster tile 时经 keepAliveThisFrame 锚定,故帧级集非空。
+    check(renderer.frameKeepAliveCount() > 0,
           "Tileset: glTF mapped raster command retains raster tile resources");
 }
 void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
