@@ -189,6 +189,18 @@
 | 上采样深拷整个父地形再丢弃 primitive | 性能 | P1 | `GltfTerrainUpsampler.cpp:921-922` `make_unique<GltfModel>(parent)` 后 `primitives.clear()`；深缩放每帧数十个 | 构空 GltfModel 只拷元数据 |
 | `SceneRenderPipeline` 对命令列表 7-8 次全遍历 | 性能 | P1 | `SceneRenderPipeline.cpp:31,299-321,139-149`；诊断 pass 未 gate，1664B stride cache-hostile | 折叠 stat pass 进 validate/applyMvp，诊断门控 |
 
+> **⟳ 复核更新(2026-08-17)** — 本档冻结,以下不改原表、只追加当前状态。
+> 仅复核了 §8.1 里的**递归 + 并发**四条(其余泄漏/深拷/遍历项未在本轮复核范围):
+>
+> | 原条目 | 复核结论(2026-08-17) | 证据 |
+> |---|---|---|
+> | GoogleMaps availability 无锁跨线程(P1) | ✅ **已修** | 现有 `availabilityMutex_` 守两个 range vector(`GoogleMapTilesImageryProvider.h`) |
+> | glTF 节点树 `traverseNode` 无界递归(P1) | ✅ **已修** | `GltfModel.cpp:5277` `kMaxNodeHierarchyDepth=256` 守卫,两处 `traverseNode` 均 `if(depth>=MAX)` 拒收 |
+> | `SharedAssetDepot` 缓存 `deque::iterator`(P1) | ✅ **已消解** | `SharedAssetDepot.h` 文件已删除(该模板 0 实例化,从未接线);重写为 `QuadtreeSourceAssetDepot`=`unordered_map`+`deque<key值>`+`std::list` LRU,无缓存迭代器。残留 `SharedAssetDepot` 仅注释里指 cesium-native 概念 |
+> | tileset.json `parseTile` children 无界递归(P2) | ⟳ **本轮修复** | 复核时仍无守卫;`GltfContentProvider.cpp` `parseTile` 加 `kMaxTilesetTreeDepth=512`,超限跳子树+Warning(commit `6ddcfefeb`) |
+>
+> 取向印证:此档(07-06)的 P1 判断到 08-17 多已被后续重构消解——四条里三条已修/已消解,仅一条 P2 遗留(本轮修)。**复核价值在证伪与坐实**,不在照单全收。
+
 ### 8.2 并发正确性
 
 - **✅ "detached-thread `.then` 泄漏"前提被证伪**：`ThreadPool` 用 joined worker，析构 drain，吞 worker 异常防 terminate；无 detached thread，`Future::then()` 不存在（doc 是假抽象）。池干净。
