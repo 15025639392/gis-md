@@ -343,6 +343,13 @@ private:
     /// 翻转为 true 时被 needsFrame 调用;默认关,当前为死代码骨架(见其定义处注释)。
     bool ledgerGatingNeedsFrame(const char** reason);
 
+    /// 层1 静态省电:时间驱动重画的感知门控。仅当太阳自上次真渲染那帧起移动
+    /// 超过感知阈值(~0.1°)才 requestRender("timeChanged");否则不请求 → 静态
+    /// 无其它工作时循环真睡(idle 太阳冻结,交互/跳时因 dt 累积越阈即刻追上)。
+    /// 替代 advanceTime/setTime 里的无条件 requestRender(那会让活时钟把设备
+    /// 永久钉在 60fps,见 docs 发热债)。setTime 跳变=大角差→照常渲染。
+    void requestRenderIfSunMoved();
+
     /// Phase B 平台级唤醒回调(见 setFrameRequestCallback)。非空 = 宿主已接
     /// 唤醒,ledger gating 方可安全启用。
     std::function<void()> frameRequestCallback_;
@@ -356,6 +363,10 @@ private:
     std::unique_ptr<TerrainPageStore> terrainPageStore_;
     std::unique_ptr<TerrainDisplacementTemplatePool> terrainDisplacementPool_;
     double lastRenderTime_ = 0.0;
+    // 层1 时间驱动重画门控的基准:上次真渲染那帧所用的(归一)太阳方向。
+    // 见 requestRenderIfSunMoved / Engine::render 末尾快照。
+    Vec3 lastRenderedSunDir_{0.0, 0.0, 0.0};
+    bool haveRenderedSunDir_ = false;
     bool surfaceCreated_ = false;
     // 离屏后处理开关。优先级:AerialFog > FXAA > passthrough 调试直通。
     bool offscreenPassthroughEnabled_ = false;

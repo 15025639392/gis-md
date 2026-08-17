@@ -542,6 +542,16 @@ bool Engine::render(double deltaSeconds) {
             Scene::EngineTimingScope::SceneUpdate,
             perf::nowMs() - startMs);
     }
+    // 层1:本帧的太阳方向已由 update 定稿。记为时间驱动重画门控的基准
+    // (「上次真渲染那帧的太阳」),供 advanceTime/setTime 判越阈(见
+    // requestRenderIfSunMoved)。零向量(未定)不更新,避免 normalize NaN。
+    {
+        const Vec3 sun = scene_->sunDirection();
+        if (sun.lengthSquared() > 1e-12) {
+            lastRenderedSunDir_ = sun.normalized();
+            haveRenderedSunDir_ = true;
+        }
+    }
     // 北极星 VT PoC(测量台专用,默认关):在场景 update 后、主 draw 前跑一帧
     // feedback→回读→页表整链,量移动端固定开销。任何一环失败都短路,绝不影响
     // 生产渲染。lastStats() 在帧尾并进 EarthPerf 头行。
@@ -1186,12 +1196,33 @@ void Engine::clearSelection() {
 
 // ---- 环境系统 ----
 
+// 层1:时间驱动重画的感知门控。太阳自上次真渲染那帧起移动越阈才出帧。
+// 实时太阳 0.25°/分 → 静态每帧位移 ~0.00007° ≪ 阈值 → 不请求 → 循环真睡
+// (idle 太阳冻结)。醒来(输入/跳时/其它生产者)时 dt 累积 → 越阈 → 这里请求,
+// 太阳即刻追上当前真实位置。取代无条件 requestRender:后者让活时钟把设备永久
+// 钉在 60fps(静态发热债根因)。N 修意图(可见时间变化不冻在旧光照)保留——
+// 「可见」现在有了感知阈值;不可感知的位移不出帧,画面本就无差别。
+void Engine::requestRenderIfSunMoved() {
+    // cos(0.1°);太阳方向点积低于此 = 移动超 ~0.1°(感知下限,可调)。
+    constexpr double kSunRedrawMinCosDelta = 0.99999848;
+    const Vec3 sun = scene_->sunDirection();
+    if (sun.lengthSquared() <= 1e-12) {
+        requestRender("timeChanged");  // 太阳未定(退化)→ 保守出帧
+        return;
+    }
+    const Vec3 sunN = sun.normalized();
+    if (!haveRenderedSunDir_ ||
+        sunN.dot(lastRenderedSunDir_) < kSunRedrawMinCosDelta) {
+        requestRender("timeChanged");
+    }
+}
+
 void Engine::setTime(double julianDate) {
     scene_->setTime(julianDate);
-    // 时间变了 → 太阳方向/天空/大气随之变,须出一帧。gating 下不置脏位就会
-    // 冻在旧光照(N,§0 的时钟/太阳缺口)。事件脏位路径,两种 gating 模式通用;
-    // 固定钟的 demo 不调本 API,零影响。
-    requestRender("timeChanged");
+    // 时间变了 → 太阳方向/天空/大气随之变。跳变(如设到日落)= 大角差 → 门控放行
+    // 出帧;微调低于阈值则不出(见 requestRenderIfSunMoved)。固定钟的 demo 不调
+    // 本 API,零影响。
+    requestRenderIfSunMoved();
 }
 
 void Engine::setSunsetTerrainTint(float warmth, float shadowScale) {
@@ -1204,10 +1235,11 @@ double Engine::time() const {
 
 void Engine::advanceTime(double seconds) {
     scene_->advanceTime(seconds);
-    // 见 setTime:动态时间是账本外的连续生产者,靠事件脏位保证出帧。若 host
-    // 每帧 advanceTime(连续动画),则每帧请求一帧=持续渲染,正确;调一次跳时=
-    // 出一帧后回睡。
-    requestRender("timeChanged");
+    // 层1:活时钟是账本外连续生产者,但按需渲染下**不该每帧出帧**——太阳实时移动
+    // 不可感知(0.25°/分)。感知门控:越阈才出帧,否则静态循环真睡(见
+    // requestRenderIfSunMoved)。host 每帧 advanceTime 仍会累积场景时间,只是不
+    // 再每帧钉一帧。
+    requestRenderIfSunMoved();
 }
 
 Vec3 Engine::sunDirection() const {
