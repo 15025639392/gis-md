@@ -272,6 +272,16 @@ public:
     /// reason 只进日志,不参与逻辑。
     void requestRender(const char* reason);
 
+    /// Phase B 平台级唤醒钩子(§0)。宿主注入一个"把睡着的渲染循环踹醒"的回调
+    /// (Android:ALooper_wake;iOS/macOS:CADisplayLink 触发一帧)。**从任意
+    /// 线程调用安全** —— 每次 WorkLedger Landing 令牌释放时触发。
+    ///
+    /// 这是 WorkLedger 接管 gating(kEnableWorkLedgerGating)的**前提**:
+    /// ledger 模式下 Landing 挂着时循环会真睡,没有它落地后无人唤醒=永久冻屏。
+    /// 因此 gating 采用**失败安全**:仅当本回调已注入时才走 ledger 判据,否则
+    /// 回落旧的 hasConvergingWork(见 needsFrame)。传 nullptr 清除。
+    void setFrameRequestCallback(std::function<void()> cb);
+
     /// 帧尾判定:还需要排下一帧吗?宿主循环据此决定是否投递下一次 vsync 回调。
     /// 未开启 gating 时恒 true。
     bool needsFrame();
@@ -313,6 +323,10 @@ private:
     /// Phase B(WorkLedger 接管 gating)的活性判据。仅当 kEnableWorkLedgerGating
     /// 翻转为 true 时被 needsFrame 调用;默认关,当前为死代码骨架(见其定义处注释)。
     bool ledgerGatingNeedsFrame(const char** reason);
+
+    /// Phase B 平台级唤醒回调(见 setFrameRequestCallback)。非空 = 宿主已接
+    /// 唤醒,ledger gating 方可安全启用。
+    std::function<void()> frameRequestCallback_;
 
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;

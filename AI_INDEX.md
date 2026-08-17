@@ -441,10 +441,10 @@ Clips a triangle against an axis-aligned scalar threshold; cesium-native `clipTr
 | `Ticket` | .h:46-80 | move-only RAII。析构即释放;`release()` 幂等。move 后源置空 —— 双重释放会让计数变负、判据从此恒说"空闲"(= 退回无 gating 的冻屏) |
 | `acquire` | .cpp:10-24 | 原子加 + label 表记账。`label` 必须静态存活(落地脏位只存指针) |
 | `release` | .cpp:26-41 | Landing 释放时置**落地脏位** + 记 label;label 表按 kind 分两张 |
-| `hasPumpedWork` | .cpp:52-68 | Pumped 在途 = 本帧必须继续出帧;`outLabel` 只从 Pumped 表取(报出一个不驱动帧的 Landing label 会把人引开) |
-| `consumeLanded` | .cpp:70-79 | **exchange 语义,消费一次** —— 不消费则一次到货让循环永远跑下去(`Engine::requestRender` 踩过) |
-| `anyOutstanding` | .cpp:81-91 | 并行验证期与 `hasConvergingWork` 对拍用(那条判据不区分两类) |
-| `outstandingForLabel` | .cpp:93-102 | 审计:与"从权威容器重新数一遍"的真值对拍 |
+| `hasPumpedWork` | .cpp:72-88 | Pumped 在途 = 本帧必须继续出帧;`outLabel` 只从 Pumped 表取(报出一个不驱动帧的 Landing label 会把人引开) |
+| `consumeLanded` | .cpp:89-99 | **exchange 语义,消费一次** —— 不消费则一次到货让循环永远跑下去(`Engine::requestRender` 踩过) |
+| `anyOutstanding` | .cpp:100-111 | 并行验证期与 `hasConvergingWork` 对拍用(那条判据不区分两类) |
+| `outstandingForLabel` | .cpp:112-122 | 审计:与"从权威容器重新数一遍"的真值对拍 |
 
 **接入点**(对账式 `sync*WorkTicket`,不是配对 acquire/release —— 配对要求每条
 出错路径都记得放手,漏掉正是 6028adcdf 的形状):
@@ -3510,24 +3510,24 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | Item | Lines | Description |
 | --- | --- | --- |
 | ctor `Engine(RenderDevice*)` | .h:35, .cpp:50-49 | Stores device_, constructs Scene. |
-| dtor | .cpp:77-109 | Calls `onSurfaceDestroyed()`. |
-| `onSurfaceCreated()` | .h:45, .cpp:59-64 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
-| `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:70-71 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
-| `onSurfaceDestroyed()` | .h:51, .cpp:77-109 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:438-1014 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:438). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:438-1014). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:438-1014). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:593-594). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:1015-1018 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:1019-1027 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| dtor | .cpp:83-120 | Clears WorkLedger wake callback, then delegates to `onSurfaceDestroyed()` (cited here; the `~Engine` body itself is ~line 58, which the ref guard's parser does not resolve as a named symbol). |
+| `onSurfaceCreated()` | .h:45, .cpp:65-75 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
+| `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:76-82 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
+| `onSurfaceDestroyed()` | .h:51, .cpp:83-120 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:460-1036 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:460). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:460-1036). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:460-1036). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:615-616). |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:1037-1040 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:1041-1049 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1086-1089 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1094-1097 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1108-1111 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1116-1119 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1115-1120 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1137-1142 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1167-1174 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1175-1178 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:1044-1047, 1183-1187 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:1189-1196 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1197-1200 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:1066-1069, 1205-1209 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:692-740 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 

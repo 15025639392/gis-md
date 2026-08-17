@@ -56,6 +56,9 @@ Engine::Engine(RenderDevice* device)
 }
 
 Engine::~Engine() {
+    // 先摘除 WorkLedger 唤醒桥接:它捕获 this,worker/网络线程可能正要触发,
+    // 必须在任何成员析构前断开(WorkLedger 是全局单例,活得比 Engine 久)。
+    WorkLedger::shared().setWakeCallback(nullptr);
     onSurfaceDestroyed();
 }
 
@@ -245,16 +248,33 @@ void Engine::requestRender(const char* reason) {
     renderRequested_.store(true, std::memory_order_release);
 }
 
+void Engine::setFrameRequestCallback(std::function<void()> cb) {
+    frameRequestCallback_ = std::move(cb);
+    // 把 WorkLedger 的 Landing-落地唤醒桥接到宿主钩子:置事件脏位 + 踹醒循环。
+    // WorkLedger 是全局单例,故 ~Engine 必须清除(见析构),否则 worker 线程
+    // 回调进已亡 Engine。回调可能在任意 worker/网络线程触发。
+    if (frameRequestCallback_) {
+        WorkLedger::shared().setWakeCallback([this] {
+            requestRender("workLanded");
+            if (frameRequestCallback_) frameRequestCallback_();
+        });
+    } else {
+        WorkLedger::shared().setWakeCallback(nullptr);
+    }
+}
+
 namespace {
 /// 自检窗口帧数。20 帧 ≈ 0.33s @60fps:够长到能等到"刚落地但慢一步"的产物,
 /// 又短到不会把设备按在满帧率上。
 constexpr int kShadowVerifySampleFrames = 20;
 
-/// Phase B(WorkLedger 接管 gating)总开关。默认关,尚未真机验证。
-/// 翻转前必做项(平台级唤醒钩子/audit soak/时钟太阳并入/上传尾实测)与
-/// 收益详见 docs/architecture/core-scene.md「还债路线」及 ledgerGatingNeedsFrame。
-/// constexpr false 时 ledger 分支被死代码消除,对现有行为零影响。
-constexpr bool kEnableWorkLedgerGating = false;
+/// Phase B(WorkLedger 接管 gating)总开关。**默认开,真机验证中**。
+/// 采用失败安全:即使为 true,也仅当宿主经 setFrameRequestCallback 注入了
+/// 平台级唤醒钩子时才真正走 ledger 判据,否则回落 hasConvergingWork(见
+/// needsFrame 的 useLedger)。故未接唤醒的平台(当前 iOS/macOS)零风险。
+/// 翻转前 TODO(时钟太阳并入/上传尾实测/真机 audit soak)详见
+/// docs/architecture/core-scene.md「还债路线」及 ledgerGatingNeedsFrame。
+constexpr bool kEnableWorkLedgerGating = true;
 }  // namespace
 
 bool Engine::ledgerGatingNeedsFrame(const char** reason) {
@@ -295,11 +315,13 @@ bool Engine::needsFrame() {
         // 它永远停在原地,hold 从"暂态"变成"永久黑屏"。
         reason = "held";
         settleFrames_ = kSettleFrames;
-    } else if (kEnableWorkLedgerGating
-                   ? ledgerGatingNeedsFrame(&convergingReason)
-                   : (scene_ && scene_->hasConvergingWork(&convergingReason))) {
-        // 默认走 hasConvergingWork(旧四判据);flag 翻转后走账本(Phase B)。
-        // constexpr false 时 ledger 分支被死代码消除,零行为影响。
+    } else if (
+        // 失败安全:ledger 判据仅在 flag 开 **且** 宿主已注入平台级唤醒钩子时
+        // 启用;否则(iOS/macOS 暂未接、host 测试等)回落旧 hasConvergingWork。
+        // 没有唤醒钩子却走 ledger = Landing 落地后无人踹醒 = 永久冻屏。
+        (kEnableWorkLedgerGating && frameRequestCallback_)
+            ? ledgerGatingNeedsFrame(&convergingReason)
+            : (scene_ && scene_->hasConvergingWork(&convergingReason))) {
         reason = convergingReason;
         settleFrames_ = kSettleFrames;
     } else if (settleFrames_ > 0) {

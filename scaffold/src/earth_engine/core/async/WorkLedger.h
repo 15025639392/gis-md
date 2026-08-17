@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <functional>
 #include <map>
 #include <mutex>
 #include <string>
@@ -105,6 +106,15 @@ public:
     /// 诊断:当前未释放令牌的 label → 计数。泄漏时用它点名。
     std::vector<std::pair<std::string, int>> outstandingByLabel() const;
 
+    /// 设置**唤醒回调**(Phase B 平台级唤醒,§0):每次 Landing 令牌**释放**时
+    /// 触发一次 —— 有产物落地了,睡着的渲染循环需要被踹醒去消费。传 nullptr 清除
+    /// (宿主/引擎拆除时必须清,否则 worker 线程回调进已亡对象)。
+    ///
+    /// 线程安全:回调可能在任意 worker/网络线程被触发;set/clear 与触发用独立锁,
+    /// 触发时先在锁下取副本再在锁外调用(回调里通常做 ALooper_wake 之类,不应
+    /// 持本账本的锁)。回调本身必须线程安全且可重入。
+    void setWakeCallback(std::function<void()> cb);
+
     /// 单测用:清空全部状态。生产路径不得调用。
     void resetForTesting();
 
@@ -117,6 +127,11 @@ private:
     /// Landing 释放过的一次性脏位 + 最后一个释放者的 label。
     std::atomic<bool> landed_{false};
     std::atomic<const char*> lastLandedLabel_{nullptr};
+
+    /// 唤醒回调(见 setWakeCallback)。独立锁:触发在 release 路径(可能已在
+    /// 其他锁语境下),不与 labelMutex_ 共用免得放大锁竞争/引入锁序。
+    mutable std::mutex wakeMutex_;
+    std::function<void()> wakeCallback_;
 
     mutable std::mutex labelMutex_;
     /// 按 **string 值**而不是 const char* 指针索引:同一份字面量在不同翻译

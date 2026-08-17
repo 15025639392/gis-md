@@ -186,4 +186,30 @@ TEST_F(WorkLedgerTest, SlotDestructionReleases) {
     EXPECT_EQ(ledger.outstanding(Kind::Landing), 0);
 }
 
+// ── 平台级唤醒回调(Phase B §0)──
+// Landing 释放=产物落地=必须踹醒睡着的循环。这条唤醒是"睡下去还能醒过来"的
+// 唯一保证;漏触发 = 永久冻屏。故 Landing 释放必触发、Pumped 释放不触发、
+// 清除后不再触发,三条都要钉死。
+TEST_F(WorkLedgerTest, WakeCallbackFiresOnLandingReleaseOnly) {
+    WorkLedger& ledger = WorkLedger::shared();
+    int wakes = 0;
+    ledger.setWakeCallback([&wakes] { ++wakes; });
+
+    ledger.acquire(Kind::Landing, "net").release();   // Landing 落地 → 唤醒
+    EXPECT_EQ(wakes, 1);
+
+    {
+        WorkLedger::Ticket p = ledger.acquire(Kind::Pumped, "upload");
+        // Pumped 持有期靠 hasPumpedWork 持续出帧,释放不是"落地",不唤醒。
+    }
+    EXPECT_EQ(wakes, 1);
+
+    ledger.acquire(Kind::Landing, "decode").release();
+    EXPECT_EQ(wakes, 2);
+
+    ledger.setWakeCallback(nullptr);                  // 清除(宿主拆除)
+    ledger.acquire(Kind::Landing, "late").release();
+    EXPECT_EQ(wakes, 2) << "清除后不得再触发 —— 否则回调进已亡宿主";
+}
+
 } // namespace

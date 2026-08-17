@@ -24,21 +24,40 @@ WorkLedger::Ticket WorkLedger::acquire(Kind kind, const char* label) {
 }
 
 void WorkLedger::release(Kind kind, const char* label) {
+    bool landed = false;
     if (kind == Kind::Landing) {
         landing_.fetch_sub(1, std::memory_order_acq_rel);
         // 落地脏位:Landing 的价值全在**释放**这一刻 —— 有东西到货了,需要
         // 一帧去消费它。持有期间反而不需要出帧(它在别的线程上跑)。
         lastLandedLabel_.store(label, std::memory_order_relaxed);
         landed_.store(true, std::memory_order_release);
+        landed = true;
     } else {
         pumped_.fetch_sub(1, std::memory_order_acq_rel);
     }
-    std::lock_guard<std::mutex> lock(labelMutex_);
-    auto& counts = labelCounts_[slot(kind)];
-    auto it = counts.find(label);
-    if (it != counts.end() && --it->second <= 0) {
-        counts.erase(it);
+    {
+        std::lock_guard<std::mutex> lock(labelMutex_);
+        auto& counts = labelCounts_[slot(kind)];
+        auto it = counts.find(label);
+        if (it != counts.end() && --it->second <= 0) {
+            counts.erase(it);
+        }
     }
+    // 平台级唤醒(§0):产物落地了,踹醒睡着的渲染循环去消费。取副本再在锁外
+    // 调用 —— 回调里通常做 ALooper_wake,不应持本账本任何锁。
+    if (landed) {
+        std::function<void()> cb;
+        {
+            std::lock_guard<std::mutex> lock(wakeMutex_);
+            cb = wakeCallback_;
+        }
+        if (cb) cb();
+    }
+}
+
+void WorkLedger::setWakeCallback(std::function<void()> cb) {
+    std::lock_guard<std::mutex> lock(wakeMutex_);
+    wakeCallback_ = std::move(cb);
 }
 
 void WorkLedger::Ticket::release() {
