@@ -199,7 +199,19 @@
 > | `SharedAssetDepot` 缓存 `deque::iterator`(P1) | ✅ **已消解** | `SharedAssetDepot.h` 文件已删除(该模板 0 实例化,从未接线);重写为 `QuadtreeSourceAssetDepot`=`unordered_map`+`deque<key值>`+`std::list` LRU,无缓存迭代器。残留 `SharedAssetDepot` 仅注释里指 cesium-native 概念 |
 > | tileset.json `parseTile` children 无界递归(P2) | ⟳ **本轮修复** | 复核时仍无守卫;`GltfContentProvider.cpp` `parseTile` 加 `kMaxTilesetTreeDepth=512`,超限跳子树+Warning(commit `6ddcfefeb`) |
 >
-> 取向印证:此档(07-06)的 P1 判断到 08-17 多已被后续重构消解——四条里三条已修/已消解,仅一条 P2 遗留(本轮修)。**复核价值在证伪与坐实**,不在照单全收。
+> **§8.1 其余 P1(泄漏 + 性能,2026-08-17 补复核):**
+>
+> | 原条目 | 复核结论 | 证据 |
+> |---|---|---|
+> | SkyBox `.release()`→裸指针泄漏(P1) | ✅ **已修** | `.release()` 零处;`shader_`/`vertexBuffer_`=`unique_ptr`,`dispose` 用 `.reset()` 真删;`cubemapTexture_` 裸指针但只赋 nullptr(cubemap 未接线,无分配) |
+> | AtmospherePass `.release()` 泄漏(P1) | ✅ **已修** | 同上,`shader_`/`quadBuffer_`=`unique_ptr`+`.reset()` |
+> | 每帧每 primitive 深拷 `RenderCommand`(P1 性能) | ⚠️ **仍在(部分缓解)** | 仍带 3×`std::string`(owner/pass/stableKey,`RenderCommand.h:140-144`);`uniforms` map 仅 `OffscreenPostProcess` 填充,tile 热路径为空 map(拷贝廉价) |
+> | 上采样深拷整个父地形再丢 primitive(P1 性能) | ⚠️ **仍在** | `GltfTerrainUpsampler.cpp:1000-1001` `make_unique<GltfModel>(parentModel)` 后 `primitives.clear()` |
+> | `SceneRenderPipeline` 多趟全遍历(P1 性能) | ⚠️ **仍在** | `aggregateDiagnostics` 每帧无门控(`SceneRenderPipeline.cpp:271`)+ applyMvp/sort/validate 多趟 |
+>
+> 三条性能项属**需 benchmark 驱动**的优化(触热路径),未盲改;上采样那条是低风险等价重写候选(构空模型+只拷元数据)。
+>
+> 取向印证:此档(07-06)的 P1 判断到 08-17 多已被后续重构消解——递归/并发四条里三条已修/消解(一条 P2 本轮修);泄漏两条已修;性能三条仍开(需测量驱动)。**复核价值在证伪与坐实**,不在照单全收。
 
 ### 8.2 并发正确性
 
