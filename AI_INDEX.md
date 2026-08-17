@@ -561,8 +561,8 @@ cesium-native `Tileset` equivalent. Owns a unified quadtree of terrain + raster-
 | ctor (scheme, overlays, device, options) | .h:95-98 | Primary ctor; delegates to private ctor with `TilesetTerrainProviders(nullptr)` (.cpp:41-50) |
 | ctor (+ contentProvider) | .h:99-103 | 3D-Tiles content path; wraps provider in `TilesetTerrainProviders` (.cpp:115-126) |
 | `update(FrameState, IPrepareRendererResources*)` | .h:106-107 / .cpp:495-506 | Per-frame entry; delegates to `TilesetUpdateFrameFacade::update`; logs if >5ms |
-| `buildRenderCommands(Renderer&, RenderCommandList&)` | .h:108 / .cpp:507-545 | `++frameNumber_`, `renderCommands_.beginFrame(...)`, then `TilesetRenderFrameExecutor::buildRenderCommands` over `tilePlan_` |
-| `releaseRenderReferences()` | .h:125 / .cpp:655-662 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
+| `buildRenderCommands(Renderer&, RenderCommandList&)` | .h:108 / .cpp:514-553 | `++frameNumber_`, `renderCommands_.beginFrame(...)`, then `TilesetRenderFrameExecutor::buildRenderCommands` over `tilePlan_` |
+| `releaseRenderReferences()` | .h:125 / .cpp:659-666 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
 | `tilePlan()` / `tileScheme()` | .h:110-111 | Const accessors to the frame selection result |
 | `sampleHeight(lngRad, latRad)` | .h:120 / .cpp:481-493 | Best-loaded terrain height in meters (0 if none); via `LoadedTerrainHeightSampler` |
 | `setOcclusionCallback` / `clearOcclusionCallback` | .h:131-132 / .cpp:247-254 | cesium-native `TileOcclusionRendererProxyPool` input hook |

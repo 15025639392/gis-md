@@ -500,6 +500,10 @@ void Tileset::update(
     IPrepareRendererResources* pPrepRenderer) {
     const double t0 = perf::nowMs();
     TilesetUpdateFrameFacade::update(*this, frameState, pPrepRenderer);
+    // Phase B:facade 已跑完 processPendingLoads + drainGpuUploadQueue;残余积压
+    // 持 Pumped 令牌强制续帧排空(ContentLoaded→Done 上传尾,替代 settle 依赖)。
+    gpuUploadSlot_.reconcile(
+        WorkLedger::Kind::Pumped, "tileGpuUpload", gpuUploadQueue_.hasWork());
     const double t_tot = perf::nowMs() - t0;
     if (t_tot > 5.0) {
         platformLog(LogLevel::Info, "EarthPerf",

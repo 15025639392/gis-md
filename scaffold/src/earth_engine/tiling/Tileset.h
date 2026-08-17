@@ -17,6 +17,7 @@
 #include "TileOcclusionCallback.h"
 #include "TileSoftwareOcclusionPolicy.h"
 #include "GpuUploadQueue.h"
+#include "../core/async/WorkLedger.h"
 #include "TileMeshPreparationManager.h"
 #include "TileOcclusionState.h"
 #include "TileRasterUpsampledChildCoordinator.h"
@@ -378,6 +379,11 @@ private:
     TileContentLifecycleManager contentLifecycle_;
     TileContentCacheManager contentCache_;
     GpuUploadQueue gpuUploadQueue_;  // async CPU→GPU pipeline
+    /// Phase B:GPU 上传积压的 Pumped 对账槽。ContentLoaded→Done 的上传尾此前
+    /// 靠 kSettleFrames 兜(gating idle 后多渲几帧);积压 > settle 容量时会漏。
+    /// 队列非空即持 Pumped 令牌,强制出帧直到排空,不再依赖 settle。demo
+    /// (decoupleImageryFromGeometry=true)队列恒空→令牌恒不取→零影响。
+    WorkTicketSlot gpuUploadSlot_;
     uint64_t resourceRevision_ = 1;
     TileSelectionReuseState selectionReuseState_;
     // Last requestMissingContent outcome, surfaced via loadDiagnostics()
