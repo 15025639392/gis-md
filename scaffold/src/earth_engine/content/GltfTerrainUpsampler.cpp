@@ -997,8 +997,26 @@ std::unique_ptr<GltfModel> GltfTerrainUpsampler::upsampleForRasterOverlay(
             static_cast<size_t>(textureCoordinateIndex)],
         hasInvertedVCoordinate);
 
-    auto result = std::make_unique<GltfModel>(parentModel);
-    result->primitives.clear();
+    // 只拷父模型的**非-primitive 元数据**(与原「深拷全部再 clear primitives」逐字段等价)。
+    // 原写法深拷父的 primitives(顶点/索引 CPU 数据,每次子瓦物化 ~百KB-1MB)再立即丢弃,
+    // 而下方循环从 parentModel.primitives 重建、从不读 result 里那份拷贝 → 纯浪费。
+    // ⚠️ 与 GltfModel 字段保持同步:新增非-primitive 字段须在此补一行(primitives 除外);
+    //   terrainWaterMask 由紧接的下一行处理。
+    auto result = std::make_unique<GltfModel>();
+    result->textures = parentModel.textures;
+    result->nodes = parentModel.nodes;
+    result->sceneRootNodes = parentModel.sceneRootNodes;
+    result->skins = parentModel.skins;
+    result->animations = parentModel.animations;
+    result->credits = parentModel.credits;
+    result->rasterOverlayDetails = parentModel.rasterOverlayDetails;
+    result->terrainWaterMaskTextureIndex = parentModel.terrainWaterMaskTextureIndex;
+    result->preferredLocalOriginEcef = parentModel.preferredLocalOriginEcef;
+    result->activeAnimationIndex = parentModel.activeAnimationIndex;
+    result->animationLooping = parentModel.animationLooping;
+    result->animationPaused = parentModel.animationPaused;
+    result->animationRevision = parentModel.animationRevision;
+    result->lastAnimationTimeSeconds = parentModel.lastAnimationTimeSeconds;
     result->terrainWaterMask = parentModel.terrainWaterMask;
     scaleWaterMask(result->terrainWaterMask, sides);
 
