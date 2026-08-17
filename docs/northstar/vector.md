@@ -409,6 +409,37 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
 
 ---
 
+## D2. 样式能力(运行期可配置性)
+
+| # | 判据 | 类型 | 状态 | 代价(实测) | 证据 / 差距 |
+|---|---|---|---|---|---|
+| **V26** | **运行期换样式**:换肤 / 样式热加载 / 外置样式文件,不重编译即可换城市、换数据源、换配色 | 机制 | ❌ | **未评估**。⚠️ 工作量落点**不在**抽一层公共样式结构,在给面/线两路补"样式可失效"通路(见差距列) | 见下 |
+
+**差距(2026-08-17 逐条对源码核实)**:
+
+1. **样式模型四套并存**,无 mapbox-style-spec 式统一模型:`VectorRasterStyle`(面/线烘焙)、`FeatureRenderStyle`+`StyleExpression`(点/标注)、`SourceLayerRule`+`StyleFilter`(层过滤),外加 `style/OverlayStyle.h`(`Color`/`AltitudeMode`/`PointStyle` 一整套平行类型,旧 `VectorLayer` GeoJSON 路径,**仍在 demo 上线**——`addDemoVectorLayer`,不在任何 `kEnable*` 开关内)。
+2. **面/线两路运行期物理改不了**(比"要改四处"严重一个量级):
+
+   | 路 | 运行期能改? | 约束来源 |
+   |---|---|---|
+   | 点/符号 | ✅ | `FeatureRenderLayer::setStyle`(渲染线程写,worker 读) |
+   | 面 drape | ❌ | `VectorDrapeImageryProvider::Options` 构造期注入,**无 setter** |
+   | 线/场 | ❌ | `Engine::setRoadFieldSource` 注释:「**须在首帧渲染前调用**(页存储 lazy 初始化时快照 Config,之后注入不生效)」 |
+
+3. **无外置**:数据源模板、色值、ramp、封顶全是 `constexpr`(`MinimalGlobeDemoConfig.h`),全仓无 style.json 解析器;`GLESView.cpp` 仍有 ~90 行 `FeatureRenderStyle` 样式语句。
+   **已部分还**:面 drape 与线/场的分级规则已抽到 `MinimalGlobeDemoConfig.cpp`(`makeMvtDrapeStyle`/`makeMvtRoadFieldStyle`,321 行)且由 `test_mvt_basemap_grading` 守卫。
+
+**为什么现在才立这条判据(重要,别再重复)**:这条要求**已经丢过一轮**。
+`docs/issues/vector-data-system-design-2026-07-07.md` §12 写过方案草稿(MapLibre
+style-spec 子集),§15 决策 5 明确"标准 style.json + 表达式引擎**后置**"——
+之后 P4→P6、刀1/刀2、符号五刀、场专项全程再没提过,2026-08-16 写架构沉淀时
+以"**债**"的形式被重新发现,不是"按计划轮到它了"。
+**根因就是它当时没有判据编号**,三份文档各写一遍互不引用、各自漂移
+(2026-08-17 还发现两份仍写"三套")。V26 是这条要求的唯一锚点,
+`docs/mvt-vector-architecture.md` §7 #2/#5 与 `docs/architecture/*` 只做引用。
+
+---
+
 ## E. 已判死 / 勿再提(边界)
 
 **这一节的作用是防止日后重复提议已被否决的方案。** 要推翻需要新证据,不是新想法。
@@ -514,6 +545,7 @@ d=2 (92% 画面)
 | 分级宽度 ramp 停点与端点 | 现 z12(0.6css)→z16(1.8css);需你手势拉远拉近看观感 | V4 |
 | 线色与不透明度 | 现 (0.95,0.95,0.90,0.85) 米白 | V2 |
 | V9 dash 优先级 | 我建议押后:实线已可用,dash 是样式丰富度不是体验缺口 | V9 |
+| **V26 样式来源:自建精简子集 vs MapLibre style.json 子集** | **未定,待你拍板**。2026-07-07 §15 决策 5 曾定"自建子集先行、style.json 后置",但那是 P0-P6 分期下的排序,该分期已大部分被换代取代,决策需重新确认。<br>**我暂不押**——这条的方案空间还没调研过(按项目规则要先 `.ref/` 拉 maplibre style-spec 实现做基准,尚未做),现在给倾向是凭印象。<br>**但有一条与方案无关、必须先做的前置**:面 drape 与线/场的"样式可失效/重建"通路(见 D2 差距 #2)。无论最终选哪种样式来源,不补这条通路就只能重启进程换肤。建议开专项时**第一刀砍这里**,而不是先设计样式格式。 | V26 |
 
 ---
 

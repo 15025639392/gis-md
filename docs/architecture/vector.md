@@ -118,10 +118,10 @@ GeoJSON → GeoJsonParser → GeoJsonImporter::importInto → FeatureStore::addF
 
 架构层面:
 - **三条 MVT 消费路没有共同抽象层**,加新数据类型要从头决定走哪条路、从头接线;第四条(如 3D 建筑)出现会立刻暴露。
-- **样式系统割裂成三套**(`VectorRasterStyle` / `FeatureRenderStyle`+`StyleExpression` / `SourceLayerRule`+`StyleFilter`),没有统一样式模型。要做"运行期换肤/样式热加载"得同时改三处——**建议还债顺序里排最高优先**。
-- **线的样式表达力被 D2 场编码卡死**:无图层/分类通道,全图线只能一个颜色,卡住 V9(dash)与多色路网。
+- **样式系统割裂成四套**(`VectorRasterStyle` / `FeatureRenderStyle`+`StyleExpression` / `SourceLayerRule`+`StyleFilter` / `style/OverlayStyle.h`——后者是旧 `VectorLayer` GeoJSON 路径的平行模型,仍在 demo 上线),没有统一样式模型。且**面/线两路运行期物理改不了**(drape 无 setter、场配置首帧快照),不只是"要改四处"。判据与差距见 **northstar V26**;**建议还债顺序里排最高优先**。
+- **线的样式表达力被 D2 场编码卡死**:无图层/分类通道,全图线只能一个颜色 → 卡住多色路网;V9(dash)只被卡住"沿折线弧长"那半个语义(见 northstar V9)。
 - **zoom 三义无类型区分**,已踩两次。
-- **样式硬编码在 demo 代码里**(`GLESView.cpp` 几百行样式接线),换城市/数据源要改代码重编译。
+- **样式硬编码在 demo 代码里**(`GLESView.cpp` ~90 行 `FeatureRenderStyle` 样式语句),换城市/数据源要改代码重编译;分级规则已抽到 `MinimalGlobeDemoConfig.cpp` 并有守卫(债已部分还)。同属 **V26**。
 - **Metal 侧系统性滞后且无守卫**(V20 ❌):场解算 MSL 变体从未真机验证;instanced MSL 精简 uniform 缺场参数;符号 shader 无遮挡判定;守卫只查结构体字段同序,不查特性齐全。
 - **测试覆盖偏数据/算法,渲染状态与 shader 缺执行级守卫**:符号遮挡改动 host 188/188 全绿却真机首帧 abort。
 
