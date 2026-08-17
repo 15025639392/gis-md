@@ -28,10 +28,6 @@ void SceneRenderCommandUniformUpdater::apply(
     glm::dmat4 viewProj = projD * viewD;
 
     for (auto& cmd : commands) {
-        if (cmd.owner == "globe") {
-            continue;
-        }
-
         if (cmd.kind == RenderCommandKind::GltfPrimitive ||
             cmd.kind == RenderCommandKind::GltfPrimitiveInstanced) {
             // 北极星 Phase 2c 地形 GPU 位移：per-tile 全刚体 ENU→ECEF 帧承载
