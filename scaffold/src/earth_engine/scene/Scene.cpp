@@ -278,7 +278,7 @@ bool Scene::hasConvergingWork(const char** outReason) const {
 bool Scene::hasContinuousProducerWork(const char** outReason) const {
     // 账本外的连续生产者(见头文件)。与 hasConvergingWork 的判据①同源:相机
     // 自演进是"每帧改画面"而非"在途工作",故不发令牌,ledger 模式仍需它出帧。
-    // TODO(N):动态时钟/太阳同属此类,产品若支持运行时钟须在此并入。
+    // 动态时钟/太阳不在此:它走 Engine::advanceTime/setTime 的事件脏位路径。
     if (cameraSystem_ && cameraSystem_->isSelfAnimating()) {
         if (outReason) *outReason = "cameraAnimating";
         return true;

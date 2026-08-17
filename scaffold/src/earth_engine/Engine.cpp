@@ -272,8 +272,9 @@ constexpr int kShadowVerifySampleFrames = 20;
 /// 采用失败安全:即使为 true,也仅当宿主经 setFrameRequestCallback 注入了
 /// 平台级唤醒钩子时才真正走 ledger 判据,否则回落 hasConvergingWork(见
 /// needsFrame 的 useLedger)。故未接唤醒的平台(当前 iOS/macOS)零风险。
-/// 翻转前 TODO(时钟太阳并入/上传尾实测/真机 audit soak)详见
-/// docs/architecture/core-scene.md「还债路线」及 ledgerGatingNeedsFrame。
+/// 剩余 TODO(上传尾 settle 实测)详见 docs/architecture/core-scene.md
+/// 「还债路线」。时钟/太阳(N)已由 advanceTime/setTime 置事件脏位覆盖;
+/// 唤醒钩子 + 无冻屏 + 零 DIVERGE 已真机 soak 通过(debug)。
 constexpr bool kEnableWorkLedgerGating = true;
 }  // namespace
 
@@ -284,7 +285,8 @@ bool Engine::ledgerGatingNeedsFrame(const char** reason) {
     WorkLedger& ledger = WorkLedger::shared();
     if (ledger.consumeLanded(reason)) return true;   // 有产物落地 → 消费一帧
     if (ledger.hasPumpedWork(reason)) return true;   // Pumped → 必须持续出帧
-    // 账本外的连续生产者(相机自演进;TODO N:时钟/太阳待并入)。
+    // 账本外的连续生产者(相机自演进)。时钟/太阳走 advanceTime/setTime 的
+    // 事件脏位路径,不在此判据(见 setTime)。
     if (scene_ && scene_->hasContinuousProducerWork(reason)) return true;
     return false;
 }
@@ -1160,6 +1162,10 @@ void Engine::clearSelection() {
 
 void Engine::setTime(double julianDate) {
     scene_->setTime(julianDate);
+    // 时间变了 → 太阳方向/天空/大气随之变,须出一帧。gating 下不置脏位就会
+    // 冻在旧光照(N,§0 的时钟/太阳缺口)。事件脏位路径,两种 gating 模式通用;
+    // 固定钟的 demo 不调本 API,零影响。
+    requestRender("timeChanged");
 }
 
 void Engine::setSunsetTerrainTint(float warmth, float shadowScale) {
@@ -1172,6 +1178,10 @@ double Engine::time() const {
 
 void Engine::advanceTime(double seconds) {
     scene_->advanceTime(seconds);
+    // 见 setTime:动态时间是账本外的连续生产者,靠事件脏位保证出帧。若 host
+    // 每帧 advanceTime(连续动画),则每帧请求一帧=持续渲染,正确;调一次跳时=
+    // 出一帧后回睡。
+    requestRender("timeChanged");
 }
 
 Vec3 Engine::sunDirection() const {
