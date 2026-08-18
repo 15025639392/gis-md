@@ -410,20 +410,29 @@ bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
 
     if (isArray) {
         // 合成方案页上传:texSubImage3D 灌指定 layer,depth=1(单页单层)。
-        glBindTexture(GL_TEXTURE_2D_ARRAY, glTexture->glId());
-        glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-        glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
-                        0,
-                        x,
-                        y,
-                        layer,
-                        width,
-                        height,
-                        1,
-                        glTexture->glFormat(),
-                        GL_UNSIGNED_BYTE,
-                        data);
-        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+        // 优先经 PBO 异步上传(去 stall,见 uploadArrayLayerViaPbo);PBO 路
+        // 任一步失败(map 返回空/无法建 buffer)→ 回落下面的直传,永不静默丢页。
+        const size_t totalBytes = static_cast<size_t>(rowBytes) *
+                                  static_cast<size_t>(height);
+        if (uploadArrayLayerViaPbo(glTexture->glId(), x, y, layer, width, height,
+                                   glTexture->glFormat(), data, totalBytes)) {
+            // PBO 路已完成上传。
+        } else {
+            glBindTexture(GL_TEXTURE_2D_ARRAY, glTexture->glId());
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            glTexSubImage3D(GL_TEXTURE_2D_ARRAY,
+                            0,
+                            x,
+                            y,
+                            layer,
+                            width,
+                            height,
+                            1,
+                            glTexture->glFormat(),
+                            GL_UNSIGNED_BYTE,
+                            data);
+            glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+        }
     } else {
         glBindTexture(GL_TEXTURE_2D, glTexture->glId());
         glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
@@ -444,6 +453,52 @@ bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
 #else
     return true;
 #endif
+}
+
+bool RenderDeviceGLES::uploadArrayLayerViaPbo(unsigned int glId, int x, int y,
+                                              int layer, int width, int height,
+                                              unsigned int glFormat,
+                                              const uint8_t* data,
+                                              size_t totalBytes) {
+    if (totalBytes == 0 || data == nullptr) {
+        return false;
+    }
+    // 环上取下一个 PBO(orphan 后复用不 stall,环深只为多重驱动缓冲留裕度)。
+    const int slot = nextUploadPbo_;
+    nextUploadPbo_ = (nextUploadPbo_ + 1) % kUploadPboRing;
+    unsigned int& pbo = uploadPbos_[slot];
+    if (pbo == 0) {
+        glGenBuffers(1, &pbo);
+        if (pbo == 0) {
+            return false;  // 无法建 PBO → 调用者回落直传
+        }
+        uploadPboBytes_[slot] = 0;
+    }
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo);
+    // 孤儿化:重指定缓冲存储(NULL data)→ 驱动给全新后备,即使这个 PBO 上
+    // 一次的 DMA 未完也不 stall。GL_STREAM_DRAW = CPU 写一次、GPU 读一次。
+    glBufferData(GL_PIXEL_UNPACK_BUFFER, static_cast<GLsizeiptr>(totalBytes),
+                 nullptr, GL_STREAM_DRAW);
+    uploadPboBytes_[slot] = totalBytes;
+    void* mapped = glMapBufferRange(
+        GL_PIXEL_UNPACK_BUFFER, 0, static_cast<GLsizeiptr>(totalBytes),
+        GL_MAP_WRITE_BIT | GL_MAP_INVALIDATE_BUFFER_BIT);
+    if (mapped == nullptr) {
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+        return false;  // map 失败 → 回落直传(不丢页)
+    }
+    std::memcpy(mapped, data, totalBytes);
+    glUnmapBuffer(GL_PIXEL_UNPACK_BUFFER);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, glId);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    // data=偏移 0 → 从绑定的 UNPACK buffer 取像素;传输入 GPU 命令流异步执行,
+    // CPU 立即返回(不再等 GPU 放开正被采样的页数组)。
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, x, y, layer, width, height, 1,
+                    glFormat, GL_UNSIGNED_BYTE,
+                    reinterpret_cast<const void*>(static_cast<uintptr_t>(0)));
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+    return true;
 }
 
 std::unique_ptr<Buffer> RenderDeviceGLES::createBuffer(const BufferDesc& desc) {
@@ -2099,6 +2154,13 @@ void RenderDeviceGLES::onSurfaceDestroyed() {
         s.ticket = 0;
         s.inUse = false;
     }
+    // 异步上传环同理:context 失效只清 CPU id(PBO 随 context 销毁),
+    // 下次上传惰性重建。
+    for (int i = 0; i < kUploadPboRing; ++i) {
+        uploadPbos_[i] = 0;
+        uploadPboBytes_[i] = 0;
+    }
+    nextUploadPbo_ = 0;
 }
 
 } // namespace earth_engine

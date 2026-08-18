@@ -295,6 +295,11 @@ public:
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
     int lastVisiblePageCount() const { return lastVisiblePageCount_; }
 
+    // [pageStore churn 归因] 上一次 updateVisiblePages 内两个间接纹理
+    // updateTextureRegion(影像 indir + 场 indir)累计耗时。用于把
+    // "determination CPU" 与 "间接纹理上传阻塞" 分开(临时插桩)。
+    double lastIndirUploadMs() const { return lastIndirUploadMs_; }
+
     /// ==== V26 一期:运行期换样式的失效通路(渲染线程,与 tick 同线程)====
     /// Uniform 类:线色/宽度 ramp 直写 config_ 快照(applyToTerrainCommand
     /// 每帧从 config_ 读),下一帧命令构建即生效,零重建。
@@ -643,6 +648,9 @@ private:
     double winComposeMs_ = 0.0;
     double winUploadMs_ = 0.0;
     double winMaxTickMs_ = 0.0;
+    // [pageStore churn 归因] 临时插桩:每帧 determination 开头清零,累计两个
+    // 间接纹理 updateTextureRegion 的耗时(影像 indir + 场 indir)。
+    double lastIndirUploadMs_ = 0.0;
     int winInboxItems_ = 0;
     int winFieldUploads_ = 0;  // 刀2 诊断:真场层上传数(证明第二平面在工作)
     // [V24] 场洞诊断:kept cell 中"精确档 pending 且祖先回退也无存货"的数

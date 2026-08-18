@@ -339,6 +339,7 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
 | 字形图集 | 2048² / 32px ≈ 4096 字形 | 重庆 POI 实测 1036 唯一字符 |
 | MVT 瓦缓存 | **48 瓦**(面/线/符号三方共享,A.5 单一化后) | 冷启动重复拉取 34→25,剩余=容量置换 |
 | CPU worker | compose ~17ms/帧 @churn;场烘焙亚毫秒/页 | **均不占渲染线程** |
+| 页上传(渲染线程) | `glTexSubImage3D` 经 PBO 异步 DMA:~0.5ms/页,8/帧 ≤ 数 ms | P10:直写会在 GPU 积压时 stall ~23ms/页(弱机 churn 190ms),已改 PBO |
 
 ### C.4 性能判据
 
@@ -364,6 +365,7 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
 | **P8** | **opacity 回写重传整条标签顶点流**(8 float/顶点 = 32B/顶点),改一个标签的透明度要传整桶 | 未量化。maplibre 用独立 **1 字节/顶点** opacity buffer(32×),见 B.4 | **不修**(2026-08-15):稳态下 `appliedOpacity` 逐 entry 比较免写,只在 fade 推进期(~300ms 窗)真传;要修需拆独立 buffer + shader 加一路属性,动管线契约。真机见传输尖刺再启 |
 | **P9** | **crossTileIndex_ 只增不淘汰**(V29 刀4 债化,2026-08-18):单条 ~40B,16384 哨兵 ≈1MB;单城实测 entries≈400,距哨兵一个数量级 | 未触发 | **不预支**(P7 同型裁决):maplibre removeStaleBuckets 不可直接搬(它 per-tile 索引,我家 entry 被多代多瓦共享=继承本意),要做需时间戳 LRU + 漫游验证台,无真实负载先做=拍脑袋定容量,且淘汰误伤活跃 entry=漫游标注重 fade(V29 刚消灭的)。陈旧 entry 被匹配=跨时段继承是收益非危害(刀2 认领集已防双认领)。**触发条件=真机哨兵日志出现**(`crossTileIndex entries=... 考虑上 LRU`),触发即立刀4 |
 | **P6** | ~~**手势期慢帧 2.1%**~~ | — | **已结清(2026-08-15):2.1% → 0.38%**,进 <1% 预算(V23 同步转 ✅)。⚠️ 原记「时间不在引擎,嫌疑 gMvtSource->update()」**只对了一半** —— 加 `pre`/`mvt` 分段后慢帧分裂成两族:①尖峰 94-99ms **全在 mvt**(嫌疑属实)②抖动 26-32ms **全在 swap**(等 vsync,CPU 只 2-4ms,非缺陷)。再切 ①:`commit` 占 99%,而 commit 里 **`bake` 占 99%** —— 真因是 `GlyphAtlas::ensureGlyph` 的 **`stbtt_GetGlyphSDF` 同步跑在渲染线程**,实测 **3-7ms/新字形**(32px+6px padding,CJK);平移进新区域一张瓦带 34 个新字形 = 74ms。修=**时间预算**(4ms/帧,至少放行 1 个防复杂字形饿死),缺字形整桶推迟、每帧重试(bake 本就幂等)。顺带把我当天引入的重钳尖峰(一次重建 ~60 桶 = 27ms)也摊成 4 桶/帧 |
+| **P10** | ~~**pageStore churn 拖动期 130-196ms**~~(V1818T 特有;PHK110 同版仅 6-19ms) | — | **已结清(2026-08-18):190ms → 最坏 39ms**。⚠️ **原判「仅 3 瓦却每帧重建、纯 CPU 低效、与设备无关」错**——加 `psUvp`/`psTick`/`psIndir` 三段插桩后实测:CPU 段(determination `psUvp` <8ms、间接纹理 `psIndir` <1ms)本就极小,`pages=X/0(re)` **重建 0**(不是 churn 重建);190ms **全在 `psTick` = `drainReadyUploads` 的 `glTexSubImage3D` 直写页数组**——该数组正被积压的 Adreno512 采样,驱动强制 CPU↔GPU 串行,单次上传 ~23-29ms、`maxUploadsPerFrame=8`/帧 = ~190ms。**它与 swap 天花板是同一 GPU 积压的两个面,不是独立 CPU 问题**(PHK110 GPU 快、不积压 → 同路径 6-19ms)。修=`RenderDeviceGLES` 数组纹理上传改经 `GL_PIXEL_UNPACK_BUFFER`(孤儿化 PBO 环深 3):像素 memcpy 进 PBO(客户端不 stall)、`glTexSubImage3D` 从 PBO 走异步 DMA、渲染线程立即返回;任一步失败回落直传不丢页。真机对拍(同拖动手势):`upload` 窗口 **529ms/18项 → 17-68ms/100-120项**(每次 ~29ms → ~0.5ms)、`psTick` 最坏 **254ms → 39ms**、稳态 churn 帧 psTick **≈0**;渲染完整、零 ShadowVerify/GL error。**设备无关去 stall**,弱机收益最大。插桩(`psUvp`/`psTick`/`psIndir` + `lastIndirUploadMs_`)保留作回归信号 |
 
 ### C.6 P7 容量债量化(2026-08-15)
 

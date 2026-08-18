@@ -575,6 +575,7 @@ void TerrainPageStore::updateVisiblePages(
     // 放在最前而不是最后:本函数有多处早退,放末尾会被跳过。用上一帧的在途
     // 状态对账 —— 迟一帧只会多渲一帧(安全方向),而漏对账是永远停不下来。
     syncWorkTicket();
+    lastIndirUploadMs_ = 0.0;  // [churn 归因] 本帧两个间接纹理上传累计,逐帧清零
     ++pageDetFrameCounter_;
     // 逐帧重置合批资格判因:不重置的话 worstResidentRatio_ 会单调下降成历史最差值,
     // 报的就不再是"此刻",而 A/B 里最怕的正是把陈旧值当当前值读。
@@ -973,11 +974,13 @@ void TerrainPageStore::updateVisiblePages(
             // 尺寸与行距必须跟 **cell 网格**走。写成 gridN 而缓冲按 cellsX 排,
             // 行距差一格 → 每行递进错位 → 屏幕大片读到未初始化 texel(A=0)只剩
             // 零星正确块。真机截图立刻现形,host 测试看不到(不走纹理上传)。
+            const double indirUpStartMs = perf::nowMs();
             device_->updateTextureRegion(
                 indirArrayTexture_.get(), 0, 0,
                 p.placement.cellsX, p.placement.cellsY,
                 indirTexelsScratch_.data(),
                 static_cast<size_t>(p.placement.cellsX) * 4u, ind.layer);
+            lastIndirUploadMs_ += perf::nowMs() - indirUpStartMs;
 
             // ==== 步3 场平面(z 封顶解耦):逐 cell 求 z-封顶场页并重建场间接
             // 纹理(复用本瓦片的 ind.layer 层号)。场页 key 与影像页脱钩 →
@@ -1075,11 +1078,13 @@ void TerrainPageStore::updateVisiblePages(
                     ftexel[2] = static_cast<uint8_t>(useDf);
                     ftexel[3] = 255;
                 }
+                const double fieldIndirUpStartMs = perf::nowMs();
                 device_->updateTextureRegion(
                     fieldIndirArrayTexture_.get(), 0, 0,
                     p.placement.cellsX, p.placement.cellsY,
                     fieldIndirTexelsScratch_.data(),
                     static_cast<size_t>(p.placement.cellsX) * 4u, ind.layer);
+                lastIndirUploadMs_ += perf::nowMs() - fieldIndirUpStartMs;
 
                 // [V24 线闪根修·下半] 场锚页预暖(镜像影像锚页,同一课的
                 // 步3 补作业):拉远时新档比存货粗,df≥0 寻址不到细存货,

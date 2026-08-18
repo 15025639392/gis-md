@@ -185,6 +185,23 @@ private:
     ReadbackSlot readbackSlots_[kReadbackRing];
     uint64_t nextReadbackTicket_ = 1;
 
+    // 异步上传环(数组纹理页上传去 stall):真机 V1818T 实测,拖动期
+    // drainReadyUploads 的 glTexSubImage3D **直写**正被积压 GPU 采样的页数组,
+    // 驱动强制 CPU↔GPU 串行 → 单次 ~23ms、8 次/帧 = ~190ms 尖刺(psTick)。
+    // 改经 GL_PIXEL_UNPACK_BUFFER:像素先 memcpy 进孤儿化 PBO(客户端,不 stall),
+    // glTexSubImage3D 从 PBO 走异步 DMA,渲染线程立即返回。环深 3 + 每次
+    // orphan(glBufferData NULL)使复用不等前一次 DMA。设备无关:PHK110 也小赚。
+    // 惰性创建;context 失效时只清 CPU id(与 readbackSlots_ 同)。
+    static constexpr int kUploadPboRing = 3;
+    unsigned int uploadPbos_[kUploadPboRing] = {0, 0, 0};
+    size_t uploadPboBytes_[kUploadPboRing] = {0, 0, 0};
+    int nextUploadPbo_ = 0;
+    /// 数组纹理层上传经 PBO(非 stall);返回 false 表示 PBO 路不可用,调用者
+    /// 回落直传。data 连续排布(rowBytes==width*bpp,页上传恒满足)。
+    bool uploadArrayLayerViaPbo(unsigned int glId, int x, int y, int layer,
+                                int width, int height, unsigned int glFormat,
+                                const uint8_t* data, size_t totalBytes);
+
     // GPU 区间计时(测量台,默认关)。gpuRegionSubdivide_ 为假时 submit() 不按
     // 命令桶再切分 —— 深度 prepass 那种"整段一个数"的场景用。
     GpuRegionTimerGles gpuTimer_;
