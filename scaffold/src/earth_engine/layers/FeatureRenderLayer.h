@@ -21,6 +21,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace earth_engine {
@@ -594,8 +595,16 @@ public:
     /// fade/避让/提权账本按 id 记 —— 瓦片换代(z13→z14)时 id 连续,
     /// 标签不闪不重淡入。索引只增不淘汰:城市级 POI 总量 ~1.4k,全量
     /// 驻留字节级;超容量哨兵打日志再谈 LRU(同 GlyphAtlas 的取向)。
+    /// [V29 刀2] claimed = 本次匹配 pass(一次瓦 commit)内已认领的 id 集,
+    /// 1:1 贪心:一个既有 entry 每 pass 只许被一个符号继承(maplibre
+    /// zoomCrossTileIDs 同款,#5993)。不认领会双认领同一旧 entry(同名多
+    /// 实例 fade 互踩)+ hit 路的锚点参考升级被来回拉扯污染后续匹配 ——
+    /// 刀1 扩窗后必现,窄窗下亦属正确性。新建的 id 同样入 claimed(防同
+    /// pass 后续符号匹配到刚建的 entry 误并)。nullptr = 单条查询(测试/
+    /// 诊断),无认领语义。
     uint64_t crossTileIdFor(const std::string& name, double lonRad,
-                            double latRad, int tileZ);
+                            double latRad, int tileZ,
+                            std::unordered_set<uint64_t>* claimed = nullptr);
 
     /// 当前驻留的瓦片桶数(诊断)。
     size_t tileMeshCount() const { return tileBuckets_.size(); }

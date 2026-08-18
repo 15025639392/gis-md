@@ -1505,6 +1505,8 @@ void FeatureRenderLayer::buildTileSymbolGpu(
         anchorRing[0].emplace_back(s.lonRad, s.latRad, 0.0);
     }
     const AreaSampleFn groundSample = makeClampSampler(anchorRing);
+    // [V29 刀2] 本瓦 commit = 一次匹配 pass 的认领集(语义见 crossTileIdFor)。
+    std::unordered_set<uint64_t> claimedIds;
     for (const TileSymbolCpu& s : symbols) {
         double h = s.heightM;
         if (groundSample) {
@@ -1525,8 +1527,8 @@ void FeatureRenderLayer::buildTileSymbolGpu(
         // crossTileIdFor 跨瓦继承 —— 瓦片换代(z13→z14 同一 POI,MVT
         // 逐瓦量化坐标略异)时 placement 的 fade/避让账本连续,不闪。
         if (!s.name.empty()) {
-            const uint64_t id =
-                crossTileIdFor(s.name, s.lonRad, s.latRad, tileZ);
+            const uint64_t id = crossTileIdFor(s.name, s.lonRad, s.latRad,
+                                               tileZ, &claimedIds);
             labelSrc.push_back(
                 BucketGpu::TileLabelSource{relF, anchor, id, s.name});
         }
@@ -1573,22 +1575,27 @@ void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
     bakeTileBucketLabels(gpu);
 }
 
-uint64_t FeatureRenderLayer::crossTileIdFor(const std::string& name,
-                                            double lonRad, double latRad,
-                                            int tileZ) {
+uint64_t FeatureRenderLayer::crossTileIdFor(
+    const std::string& name, double lonRad, double latRad, int tileZ,
+    std::unordered_set<uint64_t>* claimed) {
     uint64_t nameHash = 1469598103934665603ull;
     for (unsigned char c : name) {
         nameHash ^= c;
         nameHash *= 1099511628211ull;
     }
-    // MVT 逐瓦量化:z 级瓦跨 2π/2^z rad,extent 4096 → 量化格
-    // 2π/(2^z·4096)。同一源 POI 在两个 zoom 的坐标差 ≤ 较粗格的一格,
-    // 容差取 1.5 格吸半格误差 + 数值边界(maplibre 的 ~4px 网格同量级)。
+    // [V29 刀1] 匹配窗 = 1/256 瓦(maplibre crossTileSymbolIndex 等效:
+    // roundingFactor=1/32·EXTENT → 4px 格,±1 格窗;z14 ≈ ±9.5m)。旧窗
+    // 1.5×MVT 量化格(z14 ≈ ±0.9m)只够吸逐瓦量化误差,吸不住换代锚点
+    // 漂移 —— 线标注锚点取瓦内几何弧长中点,瓦片切分一变中点米级挪,
+    // 真机量得同名匹配失败率 ≈22%(立项文档 §1)。窗按较粗方 zoom 取
+    // (粗格大),与 maplibre 粗代容差乘 2^Δz 同向。
     constexpr double kTwoPi = 6.283185307179586;
-    auto cellRad = [&](int z) { return kTwoPi / (4096.0 * std::exp2(z)); };
+    auto gridRad = [&](int z) { return kTwoPi / (256.0 * std::exp2(z)); };
     std::vector<CrossTileEntry>& entries = crossTileIndex_[nameHash];
     for (CrossTileEntry& e : entries) {
-        const double tol = 1.5 * cellRad(std::min(e.zoom, tileZ));
+        // [V29 刀2] 本 pass 已被认领的 entry 跳过(1:1 贪心,声明见 .h)。
+        if (claimed && claimed->count(e.id)) continue;
+        const double tol = gridRad(std::min(e.zoom, tileZ));
         if (std::abs(e.lonRad - lonRad) <= tol &&
             std::abs(e.latRad - latRad) <= tol) {
             if (tileZ > e.zoom) {
@@ -1597,11 +1604,15 @@ uint64_t FeatureRenderLayer::crossTileIdFor(const std::string& name,
                 e.latRad = latRad;
                 e.zoom = tileZ;
             }
+            if (claimed) claimed->insert(e.id);
             return e.id;
         }
     }
     entries.push_back(CrossTileEntry{lonRad, latRad, tileZ,
                                      nextCrossTileId_++});
+    // [V29 刀2] 新建的也认领:同 pass 后续符号不得匹配到刚建的 entry(两个
+    // 真实实例各自新建,不误并)。
+    if (claimed) claimed->insert(entries.back().id);
     ++crossTileEntryCount_;
     // 只增不淘汰的容量哨兵:城市级 POI 全量 ~1.4k,项字节级;跨大区域
     // 漫游把它顶过阈值时打一行,再谈 LRU(先观察,不预支复杂度)。

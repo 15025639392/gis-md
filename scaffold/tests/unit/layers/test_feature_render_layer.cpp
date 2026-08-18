@@ -286,6 +286,51 @@ TEST_F(FeatureRenderLayerTest, CrossTileIdInheritedAcrossZoomQuantization) {
     EXPECT_EQ(idAtZ14, idAgain);
 }
 
+// V29 刀2:同 pass 认领集 1:1 —— 同名多实例(路名多段)各持独立 id、换代
+// 各继承各的;双认领会让 fade 互踩 + 锚点参考被来回拉扯(设计文档 §4b)。
+TEST_F(FeatureRenderLayerTest, CrossTileClaimPreventsDoubleAssignment) {
+    const double lon = 106.55 * kDeg;
+    const double lat = 29.56 * kDeg;
+    // 两实例相距 ~3m(1e-7 rad·倍率)< 刀1 扩窗(z14 ≈ ±9.5m):无认领集
+    // 时第二个必误匹配第一个的 entry。
+    const double sep = 5e-7;  // ≈3.2m
+
+    // pass1(z13 commit):同名两实例 → 认领集下各自新建,id 不同。
+    std::unordered_set<uint64_t> pass1;
+    const uint64_t a13 = layer_->crossTileIdFor("民族路", lon, lat, 13, &pass1);
+    const uint64_t b13 =
+        layer_->crossTileIdFor("民族路", lon + sep, lat, 13, &pass1);
+    EXPECT_NE(a13, b13) << "同 pass 同名两实例不得共 id(误并)";
+
+    // pass2(z14 换代 commit,锚点各偏 ~1m):各继承各的,id 集合相等。
+    std::unordered_set<uint64_t> pass2;
+    const double drift = 1.5e-7;  // ≈1m,两窗都吸得住
+    const uint64_t a14 =
+        layer_->crossTileIdFor("民族路", lon + drift, lat, 14, &pass2);
+    const uint64_t b14 =
+        layer_->crossTileIdFor("民族路", lon + sep + drift, lat, 14, &pass2);
+    EXPECT_NE(a14, b14) << "换代后仍不得共 id";
+    EXPECT_TRUE((a14 == a13 && b14 == b13) || (a14 == b13 && b14 == a13))
+        << "换代应继承既有两 id(1:1),不得新建";
+}
+
+// V29 刀1:窗扩到 1/256 瓦(maplibre 4px 等效)—— 换代锚点米级漂移
+// (线标注弧长中点随瓦片切分挪)必须吸得住;远距同名仍不得误并。
+TEST_F(FeatureRenderLayerTest, CrossTileWindowAbsorbsGenerationDrift) {
+    const double lon = 106.55 * kDeg;
+    const double lat = 29.56 * kDeg;
+    const uint64_t id13 = layer_->crossTileIdFor("嘉陵江滨江路", lon, lat, 13);
+    // 漂移 ~5m(7.85e-7 rad):旧窗(z13 ≈ ±1.8m)吸不住 = 真机 22% 断链
+    // 的机制;新窗(z13 ≈ ±19m)必须吸住。
+    const uint64_t id14 =
+        layer_->crossTileIdFor("嘉陵江滨江路", lon + 7.85e-7, lat, 14);
+    EXPECT_EQ(id13, id14) << "米级换代漂移必须继承(刀1 判据)";
+    // 远距(>窗)同名 = 真不同实例,不得误并。z13 窗 ≈ 3e-6 rad,取 1e-4。
+    const uint64_t idFar =
+        layer_->crossTileIdFor("嘉陵江滨江路", lon + 1e-4, lat, 14);
+    EXPECT_NE(id13, idFar);
+}
+
 TEST_F(FeatureRenderLayerTest, OutOfHorizonBucketEmitsNoCommands) {
     // 视口桶裁剪:相机(星下点 0°E/0°N,高 ~8.6e6m,地平线角 ~65°)看不到
     // 的桶不出命令。视野内 polygon 出 fill+outline 两条;150°E 的桶被裁。
