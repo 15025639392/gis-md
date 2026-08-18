@@ -4,6 +4,8 @@
 
 #include "earth_engine/sdk/EarthSceneConfig.h"
 
+#include <string>
+
 namespace earth_engine::minimal_globe_demo {
 
 // 唯一地形源 = 规则栅格 raster-DEM 高度图地形（CPU 烘焙，TerrainSourceKind::Heightmap）。
@@ -302,6 +304,33 @@ constexpr bool kShadowVerifyIdle = true;
 // 上界参考:高度角 ≥51°(NdotL≥0.778)即重新进入饱和,勿再调回。
 constexpr double kFixedSimulationJulianDate = 2461188.75 + 0.12;
 
-earth_engine::EarthSceneConfig makeDefaultDemoSceneConfig();
+// ---- V26 尾项:数据源 URL 启动期外置(2026-08-18) ----
+//
+// 设备侧 sources.json(与 style-*.json 同目录约定)覆盖编译期 URL 模板,
+// 换城市/换源不再重编译。**只在启动装配时读一次**——运行期热切源刻意
+// 不做(provider 重建 + 缓存失效 + V28 换手扩面,是独立专项的体量)。
+// zoom 范围等源参数仍归编译期(fail-loud:文档出现未知键整份拒收)。
+//
+// JSON 形态(全部键可选,缺 = 用内置):
+//   { "mvtUrlTemplate":     "http://127.0.0.1:8092/{z}/{x}/{y}.pbf",
+//     "imageryUrlTemplate":  "...{x}...{y}...{z}...",
+//     "terrainUrlTemplate":  "...{z}/{x}/{y}.png" }
+struct DemoSourceOverrides {
+    std::string mvtUrlTemplate;      ///< 空 = 内置 kMvtBasemapUrlTemplate
+    std::string imageryUrlTemplate;  ///< 空 = 内置(高德/本地按既有 flag)
+    std::string terrainUrlTemplate;  ///< 空 = 内置(全球/本地按既有 flag)
+};
+
+/// 解析 sources.json。fail-loud 同 StyleDocument 课:未知键 / 非字符串值 /
+/// 坏 JSON → 返回 false 且 outError 给人话,out 不动(调用方回落内置)。
+bool parseDemoSourceOverrides(const std::string& jsonText,
+                              DemoSourceOverrides& out,
+                              std::string& outError);
+
+/// overrides 非空字段覆盖 terrain/imagery URL;传 nullptr = 全内置。
+/// (MVT URL 的消费点在 GLESView 的 fetch 闭包,不经 SceneConfig,由
+/// 调用方自取 mvtUrlTemplate。)
+earth_engine::EarthSceneConfig makeDefaultDemoSceneConfig(
+    const DemoSourceOverrides* overrides = nullptr);
 
 } // namespace earth_engine::minimal_globe_demo

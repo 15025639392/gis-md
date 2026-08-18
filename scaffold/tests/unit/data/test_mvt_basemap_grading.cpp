@@ -140,3 +140,70 @@ TEST(MvtBasemapGrading, MinorRoadsOnlyAtNearest) {
         EXPECT_TRUE(roadVisible(style, h, 15.0)) << "highway=" << h;
     }
 }
+
+// ---- V26 尾项:sources.json 解析契约(fail-loud) ----
+// 四态:全量覆盖 / 部分覆盖(缺键=内置)/ 未知键整份拒收 / 坏 JSON 拒收。
+// 拒收时 out 必须不动(半应用的源配置比没配置更难排查)。
+
+using earth_engine::minimal_globe_demo::DemoSourceOverrides;
+using earth_engine::minimal_globe_demo::parseDemoSourceOverrides;
+using earth_engine::minimal_globe_demo::makeDefaultDemoSceneConfig;
+
+TEST(DemoSourceOverridesParse, FullAndPartial) {
+    DemoSourceOverrides ov;
+    std::string err;
+    ASSERT_TRUE(parseDemoSourceOverrides(
+        R"({"mvtUrlTemplate":"http://h/{z}/{x}/{y}.pbf",)"
+        R"("imageryUrlTemplate":"http://i/{x}/{y}/{z}",)"
+        R"("terrainUrlTemplate":"http://t/{z}/{x}/{y}.png"})",
+        ov, err)) << err;
+    EXPECT_EQ("http://h/{z}/{x}/{y}.pbf", ov.mvtUrlTemplate);
+    EXPECT_EQ("http://i/{x}/{y}/{z}", ov.imageryUrlTemplate);
+    EXPECT_EQ("http://t/{z}/{x}/{y}.png", ov.terrainUrlTemplate);
+
+    DemoSourceOverrides partial;
+    ASSERT_TRUE(parseDemoSourceOverrides(
+        R"({"mvtUrlTemplate":"http://only-mvt/{z}/{x}/{y}.pbf"})", partial,
+        err)) << err;
+    EXPECT_EQ("http://only-mvt/{z}/{x}/{y}.pbf", partial.mvtUrlTemplate);
+    EXPECT_TRUE(partial.imageryUrlTemplate.empty());
+    EXPECT_TRUE(partial.terrainUrlTemplate.empty());
+}
+
+TEST(DemoSourceOverridesParse, FailLoudLeavesOutUntouched) {
+    DemoSourceOverrides ov;
+    ov.mvtUrlTemplate = "sentinel";  // 拒收时必须原样留住
+    std::string err;
+    // 未知键(zoom 参数不归文档)整份拒收。
+    EXPECT_FALSE(parseDemoSourceOverrides(
+        R"({"mvtUrlTemplate":"http://x/","mvtMaxZoom":14})", ov, err));
+    EXPECT_NE(std::string::npos, err.find("mvtMaxZoom")) << err;
+    EXPECT_EQ("sentinel", ov.mvtUrlTemplate);
+    // 非字符串值拒收。
+    EXPECT_FALSE(
+        parseDemoSourceOverrides(R"({"mvtUrlTemplate":42})", ov, err));
+    EXPECT_EQ("sentinel", ov.mvtUrlTemplate);
+    // 坏 JSON / 非对象拒收。
+    EXPECT_FALSE(parseDemoSourceOverrides("not json", ov, err));
+    EXPECT_FALSE(parseDemoSourceOverrides(R"(["array"])", ov, err));
+    EXPECT_EQ("sentinel", ov.mvtUrlTemplate);
+}
+
+TEST(DemoSourceOverridesParse, FactoryAppliesUrlOnly) {
+    // 工厂只换 URL,tileSize/zoom 等源参数不随文档动(外置源须与编译期
+    // 分支同构)。空字段 = 内置不动。
+    const auto base = makeDefaultDemoSceneConfig();
+    DemoSourceOverrides ov;
+    ov.terrainUrlTemplate = "http://alt-terrain/{z}/{x}/{y}.png";
+    const auto cfg = makeDefaultDemoSceneConfig(&ov);
+    EXPECT_EQ("http://alt-terrain/{z}/{x}/{y}.png", cfg.terrain.urlTemplate);
+    EXPECT_EQ(base.terrain.tileSize, cfg.terrain.tileSize);
+    EXPECT_EQ(base.terrain.minimumZoom, cfg.terrain.minimumZoom);
+    EXPECT_EQ(base.terrain.maximumZoom, cfg.terrain.maximumZoom);
+    ASSERT_EQ(base.rasterOverlays.size(), cfg.rasterOverlays.size());
+    if (!cfg.rasterOverlays.empty()) {
+        EXPECT_EQ(base.rasterOverlays[0].urlTemplate,
+                  cfg.rasterOverlays[0].urlTemplate)
+            << "imagery 未给 override 不该变";
+    }
+}

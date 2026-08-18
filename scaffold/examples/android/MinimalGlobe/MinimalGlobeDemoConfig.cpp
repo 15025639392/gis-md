@@ -2,7 +2,41 @@
 
 #include "earth_engine/data/StyleFilter.h"
 
+#include <nlohmann/json.hpp>
+
 namespace earth_engine::minimal_globe_demo {
+
+bool parseDemoSourceOverrides(const std::string& jsonText,
+                              DemoSourceOverrides& out,
+                              std::string& outError) {
+    // fail-loud(StyleDocument 同课):未知键 / 非字符串 / 坏 JSON 整份
+    // 拒收,out 不动 —— 半应用的源配置比没配置更难排查。
+    nlohmann::json doc = nlohmann::json::parse(jsonText, nullptr,
+                                               /*allow_exceptions=*/false);
+    if (doc.is_discarded() || !doc.is_object()) {
+        outError = "sources.json 不是合法 JSON 对象";
+        return false;
+    }
+    DemoSourceOverrides parsed;
+    for (const auto& [key, value] : doc.items()) {
+        std::string* dst = nullptr;
+        if (key == "mvtUrlTemplate") dst = &parsed.mvtUrlTemplate;
+        else if (key == "imageryUrlTemplate") dst = &parsed.imageryUrlTemplate;
+        else if (key == "terrainUrlTemplate") dst = &parsed.terrainUrlTemplate;
+        else {
+            outError = "未知键 \"" + key +
+                       "\"(zoom 等源参数归编译期,只认三个 *UrlTemplate)";
+            return false;
+        }
+        if (!value.is_string()) {
+            outError = "键 \"" + key + "\" 的值必须是字符串";
+            return false;
+        }
+        *dst = value.get<std::string>();
+    }
+    out = parsed;
+    return true;
+}
 
 VectorRasterStyle makeMvtDrapeStyle() {
     // 刀1:只配**面**层(水/建筑色块)。线(roads)不进 drape —— 线对
@@ -116,7 +150,8 @@ VectorRasterStyle makeMvtRoadFieldStyle() {
     return style;
 }
 
-EarthSceneConfig makeDefaultDemoSceneConfig() {
+EarthSceneConfig makeDefaultDemoSceneConfig(
+    const DemoSourceOverrides* overrides) {
     EarthSceneConfig config;
     if (kEnableInstancedI3dmDemo) {
         // 实例化基线:相机对准 tree.i3dm 真实位置(宾州),斜视(仰角 28°)俯瞰树阵,
@@ -183,6 +218,11 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
             config.terrain.attribution = "FABDEM Terrain-RGB (grid65)";
             config.terrain.ellipsoidFallbackMaxZoom = 12;
         }
+        // sources.json 覆盖只换 URL,tileSize/zoom 等源参数仍随编译期分支
+        // (外置源必须与所选分支同构;不同构走编译期分支切换,不硬掰)。
+        if (overrides && !overrides->terrainUrlTemplate.empty()) {
+            config.terrain.urlTemplate = overrides->terrainUrlTemplate;
+        }
     }
     config.tileset = {
         4.0,
@@ -215,6 +255,9 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
         RasterOverlaySourceConfig satellite;
         satellite.imageryKind = ImagerySourceKind::Xyz;
         satellite.urlTemplate = kGaodeSatelliteTemplate;
+        if (overrides && !overrides->imageryUrlTemplate.empty()) {
+            satellite.urlTemplate = overrides->imageryUrlTemplate;
+        }
         satellite.attribution = "Gaode/Amap satellite";
         satellite.minimumZoom = 0;
         satellite.maximumZoom = kMeasureImageryMaxZoom;

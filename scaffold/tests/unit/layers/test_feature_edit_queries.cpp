@@ -474,26 +474,32 @@ TEST_F(FeatureEditQueriesTest, ClampReclampsOnRevisionChangeThrottled) {
     layer_->setStyle(style);
     layer_->store().addFeature(smallSquare());
 
+    // 节流已改 wall-clock 2s(V27 家族:帧数节流在按需渲染下会饿死,
+    // 18dbe0b92)——本测试原钉 120 帧窗,随根修改判据为时间窗。
     frame_.frameId = 200;
+    frame_.deltaSeconds = 0.016;
     RenderCommandList first = build();
     ASSERT_EQ(2u, first.size());
     const int buffersAfterFirst = device_.createdBufferCount;
 
-    // 代次变化但节流窗内(首次重钳发生在 frame 200,窗=120 帧)→ 不重钳
+    // 代次变化但 2s 时间窗内 → 不重钳
     slope = 2.0e4;
     revision = 2;
     frame_.frameId = 250;
+    frame_.deltaSeconds = 0.5;
     build();
     EXPECT_EQ(buffersAfterFirst, device_.createdBufferCount);
 
-    // 过节流窗 → 重钳(新 buffer)
+    // 累计过 2s 窗 → 重钳(新 buffer)
     frame_.frameId = 400;
+    frame_.deltaSeconds = 2.5;
     build();
     const int buffersAfterReclamp = device_.createdBufferCount;
     EXPECT_GT(buffersAfterReclamp, buffersAfterFirst);
 
-    // 代次不再变化 → 稳定,不再重钳
+    // 代次不再变化 → 稳定,不再重钳(时间再走多久都不动)
     frame_.frameId = 600;
+    frame_.deltaSeconds = 5.0;
     build();
     EXPECT_EQ(buffersAfterReclamp, device_.createdBufferCount);
 }

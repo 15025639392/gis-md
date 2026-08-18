@@ -7,7 +7,8 @@
 > 判据与债不在本文重复,只引编号(如 V3 / P3)。本文写完即随架构变更更新,
 > 不是冻结档案(那是 `docs/issues/*`)。
 
-状态时点:2026-08-16(`e13de16f1`)。
+状态时点:2026-08-18(V26 样式系统三期收官 + §1b 驱动切面/七态 dump 后订正;
+上一时点 2026-08-16 `e13de16f1`)。
 
 ---
 
@@ -107,14 +108,17 @@ CLAUDE.md「帧收敛申报纪律」)。
 | ⑤-⑧ 符号收敛链 | 2026-08-18 起干净 | 五洞全在此段(原先零申报);终验 ShadowVerify「窗口干净」 |
 | drape/场失效路 | 干净 | V28 epoch 原子换手,真机自证 |
 | 帧门控申报机制 | **结构性弱点** | 申报是 opt-in 手写清单(五态谓词+三张票+一处 app 置脏);新环节漏报=静默饿死。兜底=ShadowVerify(demo 默认开)+ CLAUDE.md 纪律,非构造性保证 |
-| 跨代状态真源 | 可用但分散 | 标注可见=7 个分散状态合成(驻留×烘焙×placement×fade×回写×锚点代次×遮挡),无单一真源,诊断需逐层插探针 |
+| 跨代状态真源 | 分散但已有聚合视图(2026-08-18) | 标注可见=7 个分散状态合成(驻留×烘焙×placement×fade×回写×锚点代次×遮挡)。**分布是设计本质非事故**(fade 按 crossTileID 键存正是为跨桶换代存活,强行合一存储会杀掉 V29 继承)——正解是单一**视图**:`FeatureRenderLayer::dumpLabelLifecycle` 七态只读 dump(demo `setprop debug.ee.labeldump` 免重编译触发),诊断从"逐层插探针"降为"dump 一眼看谁说谎" |
 
 ### 下一步结构投资(触发制,不预支)
 
 优先级:**「队列即票」构造化**(队列/状态机构造时绑 ticket reconcile,消灭
-手写枚举)> 标注状态合一(7 态收进一个可 dump 的结构)。
-触发条件:再被"漏申报饿死"同族病咬一次,或符号管线新增异步环节
-(如位图图标异步加载)时顺手做。
+手写枚举)。触发条件:再被"漏申报饿死"同族病咬一次,或符号管线新增异步
+环节(如位图图标异步加载)时顺手做——凭单族样本抽原语大概率形状不对,
+等第二个真实用例定形。
+~~标注状态合一~~已重定性(2026-08-18):合一**存储**与 V29 跨代继承设计冲突
+(疑似判死方向,再有人提先过这一关);合一**视图**已落地
+(`dumpLabelLifecycle`,见上表)。
 
 ---
 
@@ -299,22 +303,18 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 1. **三条消费路没有共同抽象层**。加一个新数据类型要从头决定走哪条路、
    从头接线;三条路的产物类型、生命周期管理、失效机制各写一套。
    现状能工作是因为只有三条且都稳定了,**再加第四条(如 3D 建筑)会暴露**。
-2. **样式系统割裂成四套**:`VectorRasterStyle`(面/线烘焙)、
-   `FeatureRenderStyle` + `StyleExpression`(点/标注)、
-   `SourceLayerRule` + `StyleFilter`(层过滤),外加 `style/OverlayStyle.h`
-   (`Color` / `AltitudeMode` / `PointStyle` 一整套平行类型)—— 那是旧
-   `VectorLayer` GeoJSON 标注路径的样式模型,**仍在 demo 上线**
-   (`addDemoVectorLayer`,不在任何 `kEnable*` 开关内)。没有
-   mapbox-style-spec 式的统一样式模型。
-   **后果分两层,第二层更硬**:
-   - 要做"运行期换肤 / 样式热加载 / 用户自定义样式"得同时改四处,
-     而这正是矢量相对预烘影像的核心卖点;
-   - **面/线两路运行期物理改不了**,不只是"改起来麻烦":点/符号路有
-     `FeatureRenderLayer::setStyle`(渲染线程写,worker 读),但面 drape
-     的样式是 `VectorDrapeImageryProvider::Options` 构造期注入、**无 setter**,
-     线/场的 `Engine::setRoadFieldSource` 更是"**须在首帧渲染前调用**
-     (页存储 lazy 初始化时快照 Config,之后注入不生效)"。换肤要先给这两路
-     补"重建/失效"通路,不是抽一层公共样式结构就够。
+2. **样式系统割裂 —— V26 三期收官后大部分已还(2026-08-18 订正)**。
+   原文断言的两层后果均已失效:面 drape 补了
+   `VectorDrapeImageryProvider::setStyle`(加锁快照,可与 requestTile 并发),
+   场路补了 `RoadFieldSource::setStyle` + TerrainPageStore 失效原子换手
+   (V28),统一入口 `Engine::setStyleTargets` + `applyStyleDocument`
+   (StyleDocument A 案对象 JSON,fail-loud 契约 + Uniform/Re-bake/Re-tess
+   三档成本类失效路由,掩码合成防"文档没写的字段被洗")。真机热改闭环:
+   改设备 JSON→Skin→变色零重装;symbol 换肤 placement/fade 不重启
+   (dump 自证)。设计:`docs/issues/vector-style-architecture-2026-08-18.md`。
+   **残余**:`style/OverlayStyle.h` 平行类型系(旧 `VectorLayer` GeoJSON
+   编辑演示路)仍在 demo 上线且未并入 StyleDocument —— 判缓,唯一消费者
+   是编辑演示层,正路是日后退役合并进 FeatureRenderLayer(归用户拍板)。
 3. **线的样式表达力被编码格式卡死**:D2 场编码只有"距离 + 方向 + 端点余量",
    **没有图层/分类通道**,而且即便有位、颜色也在 uniform 侧(全局一个
    `u_roadFieldColor`,FS 里 `mix(base.rgb, roadFieldColor.rgb, roadCov)`),
@@ -330,15 +330,17 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
    即走场只能拿到降级形态,要同语义 dash 得走 E(几何线条带)——
    与 northstar 把 E 立为战略备选一致。
 4. **zoom 三义无类型区分**(§4.2),已踩两次。裸 `int` 传递,靠注释约束。
-5. **样式硬编码在 demo 代码里**:`GLESView.cpp` 仍有 ~90 行样式语句
-   (块跨度 420–499 / 504–696 / 725–944,合计约 490 行矢量接线),
-   数据源模板、色值、ramp、封顶全是 `constexpr` → 换城市/换数据源要改代码
-   重编译。没有样式文件或运行期配置(全仓无 style.json 解析器)。
-   **已部分还**:面 drape 与线/场的分级规则已抽到
-   `MinimalGlobeDemoConfig.cpp`(`makeMvtDrapeStyle` / `makeMvtRoadFieldStyle`,
-   321 行)且由 `test_mvt_basemap_grading` 守卫(测试直接读工厂,不复制分级
-   逻辑)。剩在 `GLESView.cpp` 的是 `FeatureRenderStyle` 那部分(符号/标注/
-   编辑层)。
+5. ~~**样式硬编码**~~ **已收官(2026-08-18)**:
+   面/线/符号样式走 StyleDocument 设备侧 JSON(见 #2),分级规则在
+   `MinimalGlobeDemoConfig.cpp` 工厂 + `test_mvt_basemap_grading` 守卫;
+   数据源 URL 走设备侧 `sources.json`(与 style-*.json 同目录约定,
+   `parseDemoSourceOverrides` fail-loud:未知键/非字符串整份拒收回落内置)
+   —— 换城市/换源改 JSON 重启即可,真机 A/B 自证(外置坏端口→矢量全缺席
+   `xt=0`,删配置→内置恢复 `xt=468`)。
+   **刻意的边界**:只做**启动期外置**(重启生效);运行期热切源不做——
+   涉及 provider 重建 + 缓存失效 + V28 换手扩面,是独立专项的体量。
+   zoom/tileSize 等源参数也不外置(外置源必须与编译期分支同构,fail-loud
+   拦截越界键)。
 6. **符号链是"复活的退役链",命名与职责脱节**:`kEnableMvtBasemap` 现在的
    真实职责是"点符号通路总开关",但名字、注释、`includeLayers`/`layerRules`
    的语义坑都是历史沉积。**新人按名字理解一定会错**。
@@ -353,7 +355,7 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 
 | 优先级 | 债 | 理由 |
 |---|---|---|
-| 高 | #2 样式统一 + #5 样式外置(**判据 = northstar `V26`**) | 挡住"运行期换样式"这个核心能力;越晚改成本越高(四套已各自长大)。**注意真正的工作量在面/线两路的"样式可失效"通路,不在公共结构**。样式来源(自建子集 vs style.json)未定,在 northstar F 节待拍板 |
+| ~~高~~ ✅ | #2 样式统一 + #5 样式外置(**判据 = northstar `V26`**) | **2026-08-18 三期收官**(StyleDocument + 双路 setStyle + 失效路由,真机热改闭环);同日收尾:symbol 换肤像素补验(placement 跨换肤存活)+ 数据源 URL 启动期外置(见 #5)。唯一残余:OverlayStyle 交互路退役合并(判缓,归用户拍板) |
 | 中 | #3 线分类通道 | 直接卡住**多色路网**;dash(V9)只被卡住"同语义"那一半(见 #3)。~~需与 P7 容量债一起算~~ —— P7 已于 2026-08-15 量化后**结清判定不修**,不再是前置 |
 | 中 | #6 命名/开关正名 | 纯清理,便宜,防止新人踩坑 |
 | 低 | #1 统一抽象 | 现在抽象是过早;等第四条路真出现时再抽 |

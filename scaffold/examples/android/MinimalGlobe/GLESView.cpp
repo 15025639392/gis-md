@@ -234,9 +234,57 @@ static MvtFetchInflight gMvtFetch;
 // MVT 瓦片拉取(E1 几何通路与 E4 影像通路共用)。⚠️ HttpRequest 取消句柄
 // 必须持有至完成,且**不能在 curl 回调线程析构** —— 完成 id 攒批,下次发
 // 请求时在调用线程剪除。
+// 样式/源配置文档候选目录,按序尝试。⚠️ external 那条只有 app 自建目录才
+// 可读:adb shell mkdir 建出来 owner=shell,app 读 Permission denied(真机
+// 踩过,scoped storage 语义)——debug 变体用 internal + run-as cp 注入最稳:
+//   adb push style-*.json sources.json /data/local/tmp/ &&
+//   adb shell run-as com.earthengine.minimalglobe sh -c \
+//     'mkdir -p files && cp /data/local/tmp/*.json files/'
+static constexpr const char* kStyleDocDirs[] = {
+    "/data/data/com.earthengine.minimalglobe/files",
+    "/sdcard/Android/data/com.earthengine.minimalglobe/files",
+};
+
+// V26 尾项:数据源 URL 启动期外置。sources.json 只在 createEngine 装配时
+// 读一次(运行期热切源刻意不做,见 MinimalGlobeDemoConfig.h)。MVT URL 的
+// 消费点是下方 fetch 闭包(不经 SceneConfig),故落一个装配期一次写、之后
+// 只读的全局;terrain/imagery 经 makeDefaultDemoSceneConfig(&ov) 走工厂。
+static std::string gMvtBasemapUrl =
+    minimal_globe_demo::kMvtBasemapUrlTemplate;
+
+static minimal_globe_demo::DemoSourceOverrides loadDemoSourceOverrides() {
+    minimal_globe_demo::DemoSourceOverrides ov;
+    for (const char* dir : kStyleDocDirs) {
+        const std::string path = std::string(dir) + "/sources.json";
+        std::ifstream in(path, std::ios::binary);
+        if (!in) continue;  // 文件缺席不是错误(内置兜底)
+        std::string text((std::istreambuf_iterator<char>(in)),
+                         std::istreambuf_iterator<char>());
+        std::string err;
+        if (minimal_globe_demo::parseDemoSourceOverrides(text, ov, err)) {
+            LOGI("DemoSources applied from %s: mvt=%s imagery=%s terrain=%s",
+                 path.c_str(),
+                 ov.mvtUrlTemplate.empty() ? "(builtin)"
+                                           : ov.mvtUrlTemplate.c_str(),
+                 ov.imageryUrlTemplate.empty() ? "(builtin)"
+                                               : ov.imageryUrlTemplate.c_str(),
+                 ov.terrainUrlTemplate.empty()
+                     ? "(builtin)"
+                     : ov.terrainUrlTemplate.c_str());
+            return ov;
+        }
+        // fail-loud:坏文档整份拒收回落内置,LOGE 后不再试下一路径
+        // (半坏配置静默换目录比报错更难排查)。
+        LOGE("DemoSources rejected %s: %s(回落内置 URL)", path.c_str(),
+             err.c_str());
+        return minimal_globe_demo::DemoSourceOverrides{};
+    }
+    return ov;
+}
+
 static void mvtFetchTile(const TileKey& key,
                          std::function<void(int, std::vector<uint8_t>)> cb) {
-    std::string url = minimal_globe_demo::kMvtBasemapUrlTemplate;
+    std::string url = gMvtBasemapUrl;
     auto replace = [&url](const char* token, int value) {
         size_t pos = url.find(token);
         if (pos != std::string::npos) {
@@ -418,6 +466,14 @@ static bool createEngine() {
                 *gEngine,
                 *gRenderDevice,
                 *gPlatformBridge);
+        // V26 尾项:sources.json 启动期读一次,MVT URL 写进 fetch 全局,
+        // terrain/imagery 传工厂。必须先于 drape/场安装(fetch 闭包已建)。
+        const minimal_globe_demo::DemoSourceOverrides sourceOverrides =
+            loadDemoSourceOverrides();
+        if (!sourceOverrides.mvtUrlTemplate.empty()) {
+            gMvtBasemapUrl = sourceOverrides.mvtUrlTemplate;
+        }
+
         // ---- 刀1 矢量**面** drape:MVT 面栅格化冒充影像进页存储合成。----
         // 必须在 installScene **之前**注册:pendingCustomOverlays_ 在
         // installScene 里消费,排在配置 overlay(卫星影像)之后 = 叠其上。
@@ -472,7 +528,7 @@ static bool createEngine() {
                 TileScheme::createXYZWebMercator(), oopts);
             LOGI("VectorDrape MVT face basemap overlay installed: %s "
                  "(data z%d-%d, advertised z%d, gcj=%d)",
-                 minimal_globe_demo::kMvtBasemapUrlTemplate,
+                 gMvtBasemapUrl.c_str(),
                  minimal_globe_demo::kMvtBasemapMinZoom,
                  minimal_globe_demo::kMvtBasemapMaxZoom,
                  minimal_globe_demo::kMeasureImageryMaxZoom,
@@ -517,7 +573,7 @@ static bool createEngine() {
         }
 
         gSdkFacade->installScene(
-            minimal_globe_demo::makeDefaultDemoSceneConfig());
+            minimal_globe_demo::makeDefaultDemoSceneConfig(&sourceOverrides));
 
         // ---- P4 MVT 只读底图:先于编辑演示层挂(先挂先画,垫底)。----
         if (minimal_globe_demo::kEnableMvtBasemap) {
@@ -712,7 +768,7 @@ static bool createEngine() {
             gEngine->setStyleTargets(gDrapeProviderRaw, gRoadFieldSource,
                                      gMvtBasemapLayer);
             LOGI("VectorP4 MVT basemap installed: %s (z%d-%d)",
-                 minimal_globe_demo::kMvtBasemapUrlTemplate,
+                 gMvtBasemapUrl.c_str(),
                  minimal_globe_demo::kMvtBasemapMinZoom,
                  minimal_globe_demo::kMvtBasemapMaxZoom);
         }
@@ -1296,7 +1352,9 @@ static void renderFrame() {
     // 七态标注 dump 按需触发(免重编译诊断口):
     //   adb shell setprop debug.ee.labeldump <值> && adb shell input tap 620 900
     // 值变化才触发一次(app 清不掉系统属性,记上次值去重;重触发换个值)。
-    // 值 "1"/"all" = 全量;其余值当作标注名过滤子串(可给 UTF-8 中文名)。
+    // 纯数字值或 "all" = 全量(去重要求每次换新值,固定 token 两次就用完
+    // ——实测踩过,故数字序列 1/2/3… 都算全量);其余值当作标注名过滤
+    // 子串(可给 UTF-8 中文名)。
     // 逐帧轮询而非 %N 节流:按需渲染下 tap 只给短帧串,跨不过 N 边界就
     // 永不触发(实测踩过);__system_property_get 是共享内存读,亚微秒。
     // 仍需至少一帧才会读到(idle 全停时先 tap 顶帧)——诊断口按帧驱动是
@@ -1307,8 +1365,11 @@ static void renderFrame() {
         __system_property_get("debug.ee.labeldump", prop);
         if (prop[0] != '\0' && lastLabelDumpProp != prop) {
             lastLabelDumpProp = prop;
+            const bool allDigits =
+                lastLabelDumpProp.find_first_not_of("0123456789") ==
+                std::string::npos;
             const std::string filter =
-                (lastLabelDumpProp == "1" || lastLabelDumpProp == "all")
+                (allDigits || lastLabelDumpProp == "all")
                     ? std::string()
                     : lastLabelDumpProp;
             for (FeatureRenderLayer* layer :
@@ -2592,20 +2653,8 @@ Java_com_earthengine_sdk_GLESView_nativeDebugFlyTo(
 // (成本类路由:只换线色不重烘场)→ 按 plan 分发三条通路。
 // 像素判据(归用户):水深蓝/楼暖棕/路网琥珀 ↔ 日版米白;瞬态=Re-bake 期间
 // 面短暂回落纯影像。
-namespace {
-
-// 样式文档候选目录,按序尝试。⚠️ external 那条只有 app 自建目录才可读:
-// adb shell mkdir 建出来 owner=shell,app 读 Permission denied(真机踩过,
-// scoped storage 语义)——debug 变体用 internal + run-as cp 注入最稳:
-//   adb push style-*.json /data/local/tmp/ &&
-//   adb shell run-as com.earthengine.minimalglobe sh -c \
-//     'mkdir -p files && cp /data/local/tmp/style-*.json files/'
-constexpr const char* kStyleDocDirs[] = {
-    "/data/data/com.earthengine.minimalglobe/files",
-    "/sdcard/Android/data/com.earthengine.minimalglobe/files",
-};
-
-}  // namespace
+// 样式文档候选目录 = kStyleDocDirs(已上移到 mvtFetchTile 前,与
+// sources.json 共用同一目录约定与注入方式)。
 
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeDebugRestyle(
