@@ -872,6 +872,12 @@ add_executable(test_camera_pose_trace
 target_link_libraries(test_camera_pose_trace PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_camera_pose_trace COMMAND test_camera_pose_trace)
 
+add_executable(test_pin_anchor_error
+    unit/camera/test_pin_anchor_error.cpp
+)
+target_link_libraries(test_pin_anchor_error PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_pin_anchor_error COMMAND test_pin_anchor_error)
+
 add_executable(test_earth_scene_config
     unit/sdk/test_earth_scene_config.cpp
 )

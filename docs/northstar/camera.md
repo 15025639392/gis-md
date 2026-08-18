@@ -37,8 +37,8 @@
 **现状定位(2026-08-18)**:pin 保锚已**真机闭环坐实**——平地 drag anchorErr 0.06px、
 增益 1.000(C-V1);近碰撞退化 regime 已压测有界(C-V3);轴隔离 zoom/rotate 已量化
 达成(C-V2);惯性收敛 flick + 近地**两条路径均已量化达成**(C-V4)。剩余唯一开放项是
-**tilt 的掠射退化/灵敏度**(C-V5 观感待拍板)。手势全链仍**零自动化回归**(C-P1)——
-改相机代码只能手动真机验;判据侧已全部有真机数字兜底。
+**tilt 的掠射退化/灵敏度**(C-V5 观感待拍板)。pin 解算已有 host 单测兜底
+(C-P3:anchorErr<0.5px 进 ctest);真机端到端闭环仍手动(C-P1)。判据侧已全部有数字兜底。
 
 ---
 
@@ -83,9 +83,9 @@
 
 | # | 债 | 影响 | 现状 |
 |---|---|---|---|
-| **C-P1** | **手势全链零自动化回归**:CAMPROBE 是手动真机工具,没进 ctest | 改相机代码(pin 解算/约束/惯性)只能手动注入+肉眼/手算验;回归靠人记得跑 | **未修,工具已就位**。做成"注入 pinch → 读 CAMPROBE → 断言 anchorErr<0.5px"需**真机在环**(host ctest 无 GPU/无相机窗口)。轻量替代:把 pin 解算/约束的纯数值部分抽出做 host 单测(不依赖真机),覆盖 C-V2/C-V4 的判据 |
+| **C-P1** | **手势真机全链无自动化回归**:CAMPROBE 闭环仍是手动 | 端到端(真触摸→渲染→投影)回归仍靠人手动注入验 | **部分缓解**:pin 解算已有 host 单测兜底(C-P3),核心 anchorErr 不变量进 ctest 了。**剩**真机在环的端到端闭环(注入→CAMPROBE→断言)——需设备,重,暂靠手动 `tools/cam_probe` |
 | **C-P2** | ~~轴隔离 / 惯性收敛判据未量化~~(已收敛) | — | **已修**:CAMPROBE 加 hdg/pit/range(C-V2)+ inertiaVel/nearVel(C-V4);注入台加 `oneFinger` 单指线性注入(触发近地惯性)。C-V2/C-V4 均已量化。**仅剩** tilt 的掠射退化度量(anchorErr 20px)——本属 C-V5 观感,非机制债 |
-| **C-P3** | **host ctest 不覆盖手势语义**:`tests/unit/camera/` 8 个测试(pose/flight/viewpoint/selector/tethered…)测的是位姿数学与控制器选择,**不碰 pin/anchorErr/惯性** | pin 正确性回归全压在真机手动上 | **部分可缓解**。pin 解算(`solveAnchorRotation`/`applyPinchPin`)、约束(`constrainEye` 沿线牛顿)是纯几何,**可脱离 GPU 做 host 单测**——给定 pose+finger 断言 anchor 投影落点。这是 C-P1 轻量替代的具体落点 |
+| **C-P3** | ~~host ctest 不覆盖 pin 语义~~(已补 pin) | — | **pin 已补**:`tests/unit/camera/test_pin_anchor_error.cpp`——直接构造 `FreeGlobeController`,高空 nadir(Space 良态)驱动 drag/pinch,**投影 grabbed 点断言 anchorErr<0.5px**(与真机 C-V1 同一不变量,脱 GPU)。区别于 `test_camera_pose_trace` 的整轨迹 hash——那是"没变",这是"钉对了"。**剩**:约束路径(`constrainEye` 沿线牛顿/径向 fallback)与惯性衰减暂无 host 断言,可照此扩 |
 
 ---
 
