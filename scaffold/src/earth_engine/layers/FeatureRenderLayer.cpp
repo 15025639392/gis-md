@@ -1789,15 +1789,21 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     }
 
     // 贴地重钳(P3 方案 A 过渡态):地形代次变化 → 节流重镶全部桶
-    // (LOD 细化/加载会改高度;不重钳则要素浮沉)。120 帧节流防加载期
-    // 重镶风暴;万级桶规模需配可见性门控(后续)。
+    // (LOD 细化/加载会改高度;不重钳则要素浮沉)。节流防加载期重镶风暴;
+    // 万级桶规模需配可见性门控(后续)。
+    // [V27 家族第四缺口] 节流由"120 帧"改**时间 2s**:帧数节流在按需渲染下
+    // 语义破产——冷启动帧门控只出几十帧就 idle,frameId 永远到不了 120,
+    // 重钳一次都没跑过(真机 lastClampRev 恒 0 而 terrRev 涨到 45),锚点
+    // 停在粗地形高度被细化后的山体埋掉 → T2 遮挡压到 0.2 = 冷启动 POI
+    // "applied=1 却无像素"。"代次落后"已进 hasPendingLabelWork 谓词供帧,
+    // 此处只管节流不管唤醒。
     if (style_.altitudeMode == FeatureAltitudeMode::ClampToGround &&
         terrainSampling_.revision) {
+        reclampCooldownSeconds_ -= frameState.deltaSeconds;
         const uint64_t rev = terrainSampling_.revision();
-        if (rev != lastClampRevision_ &&
-            frameState.frameId >= lastReclampFrameId_ + 120) {
+        if (rev != lastClampRevision_ && reclampCooldownSeconds_ <= 0.0) {
             lastClampRevision_ = rev;
-            lastReclampFrameId_ = frameState.frameId;
+            reclampCooldownSeconds_ = 2.0;
             std::vector<BucketKey> keys;
             keys.reserve(buckets_.size());
             for (const auto& entry : buckets_) keys.push_back(entry.first);
@@ -2055,6 +2061,7 @@ void FeatureRenderLayer::updateLabelPlacement(
     }
 
     applyLabelOpacity(visibleKeys);
+
 }
 
 void FeatureRenderLayer::applyLabelOpacity(
@@ -2102,6 +2109,17 @@ bool FeatureRenderLayer::hasPendingLabelWork() const {
     if (!renderDevice_) return false;
     // ② 换代待全量 placement / ③ fade 未收敛(便宜的先查)。
     if (labelsAwaitingPlacement_) return true;
+    // ④⑤ [V27 家族第四缺口] 贴地重钳在途:队列未消化 / 地形代次落后(重钳
+    // 触发与队列消化都只在渲染帧里跑,停帧=锚点停在粗地形高度被细化后的
+    // 山体埋掉→T2 遮挡压暗)。代次落后进谓词也堵"末帧竞态":地形最后一个
+    // 代次落地那帧若节流窗未到,之后停帧则永不触发——谓词持续供帧到重钳
+    // 跑完(lastClampRevision_ 追平即转假,地形代次有限收敛,有终止态)。
+    if (!pendingReclamp_.empty()) return true;
+    if (style_.altitudeMode == FeatureAltitudeMode::ClampToGround &&
+        terrainSampling_.revision &&
+        terrainSampling_.revision() != lastClampRevision_) {
+        return true;
+    }
     if (labelPlacement_.hasPendingFades()) return true;
     // ① 未烘桶(字形按预算逐帧补,依赖帧循环 drain)。仅 atlas 就绪时计:
     // 字体没注入时补帧也无法推进,计入会白烧(谓词必须有终止态)。

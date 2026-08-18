@@ -3038,12 +3038,12 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `rebuildBucket` | .cpp:1264-1333 | 单桶重建 |
 | `tessellateTileMesh` / `appendTileSymbol` / `commitTileMesh` / `buildTileSymbolGpu` / `reclampTileBucketSymbols` / `bakeTileBucketLabels` / `dropTileMesh` | .cpp:1340-1373 / :1374-1404 / :1405-1486 / :1487-1532 / :1533-1612 / :1613-1682 / :1683-1686 | MVT 底图路径:瓦片即桶,镶嵌在 worker 完成(E1)。贴地时产 stencil 体(与 fill/line 流**互斥**);点要素 worker 出 TileSymbolCpu 实例表,commit 采地面高+图集解析定型 quad(符号刀A);带 name 实例存标签源,bakeTileBucketLabels 在字体就绪时补烘 glyph quads+placement 登记(符号刀B,幂等)。⚠️ 锚点高度是采样当刻的地形代次,地形细化会把它埋掉 → reclampTileBucketSymbols 在代次变化时按 tileSymbolSources 重钳(V24/B.6)。⚠️ bake 里的新字形 SDF 栅格化 **2-3.5ms/字形**,故受 kGlyphRasterBudgetPerFrame 限流、缺字形整桶推迟(P6) |
 | `buildRenderCommands` | .cpp:1730-1891 | 出命令总入口 |
-| `visibleBucketKeys` | .cpp:1892-1961 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:1962-2041 | 标签避让 + fade + 地平线剔除(P5c) |
-| `appendTerrainOcclusion` | .cpp:2141-2156 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:2157-2452 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2453-2468 / :2469-2475 / :2476-2501 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
-| `pick` | .cpp:2545-2763 | 要素拾取 |
+| `visibleBucketKeys` | .cpp:1898-1967 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:1968-2066 | 标签避让 + fade + 地平线剔除(P5c) |
+| `appendTerrainOcclusion` | .cpp:2159-2174 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:2175-2470 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2471-2486 / :2487-2493 / :2494-2519 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
+| `pick` | .cpp:2563-2781 | 要素拾取 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
