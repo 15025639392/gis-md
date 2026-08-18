@@ -3040,10 +3040,10 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `buildRenderCommands` | .cpp:1730-1891 | 出命令总入口 |
 | `visibleBucketKeys` | .cpp:1892-1961 | 可见桶筛选 |
 | `updateLabelPlacement` | .cpp:1962-2041 | 标签避让 + fade + 地平线剔除(P5c) |
-| `appendTerrainOcclusion` | .cpp:2123-2138 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:2139-2434 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2435-2450 / :2451-2457 / :2458-2483 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
-| `pick` | .cpp:2527-2745 | 要素拾取 |
+| `appendTerrainOcclusion` | .cpp:2141-2156 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:2157-2452 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2453-2468 / :2469-2475 / :2476-2501 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
+| `pick` | .cpp:2545-2763 | 要素拾取 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。

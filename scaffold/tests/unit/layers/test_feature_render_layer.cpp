@@ -633,6 +633,62 @@ TEST_F(FeatureRenderLayerTest, TileSymbolLabelsBakeAfterLateFont) {
 // 符号刀D:placement 碰撞判定 ~300ms 节流 —— 节流窗内新候选不触发重算
 // (stats 不变),窗到期才重跑;渐变靠 advanceFades 逐帧平滑(fade 语义
 // 由既有 FadeIsGradual 测试钉住)。
+// V29 刀3:双代胜负 —— 换代双桶并存期,同一标注(刀1/2 后共享同一 id)的
+// 两份候选必须去重、细代胜;无去重则 targets[id] 被 placed/collided 后写
+// 覆盖 + sort 非稳定 → target 0/1 抖 = 换代闪(V27 残余机制)。判据 =
+// placed 恒 1、opacity 不重启、drop 旧桶后仍稳(placed ⊆ 现桶 entry)。
+TEST_F(FeatureRenderLayerTest, CrossGenerationDedupNewerWins) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();  // 缓存图集指针
+
+    auto commitNamed = [&](int z, int x, const char* name, double lonDeg,
+                           double latDeg) {
+        FeatureTileMesh mesh;
+        mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic(lonDeg * kDeg, latDeg * kDeg));
+        mesh.hasOrigin = true;
+        TileSymbolCpu s;
+        s.lonRad = lonDeg * kDeg;
+        s.latRad = latDeg * kDeg;
+        s.colorPacked = 1.0f;
+        s.name = name;
+        mesh.symbols.push_back(s);
+        layer_->commitTileMesh(
+            TileKey{SchemeId("XYZ-WebMercator"), z, x, 200}, std::move(mesh));
+    };
+
+    // 旧代 z13 commit,一帧收敛(dt > kFadeSeconds)。
+    commitNamed(13, 100, "GEN", 6.0, 29.0);
+    frame_.deltaSeconds = 0.35;
+    build();
+    ASSERT_EQ(1, layer_->labelPlacementStats().placed);
+
+    // 新代 z14 commit(锚点微漂,刀1 窗内 → 继承同 id),旧桶未 drop:
+    // 双代并存。placed 必须仍 =1(去重),且 opacity 不因"另一份 collided"
+    // 被打回 —— 那正是换代闪。
+    commitNamed(14, 200, "GEN", 6.0 + 1e-8, 29.0);
+    frame_.deltaSeconds = 0.016;
+    build();
+    EXPECT_EQ(1, layer_->labelPlacementStats().placed)
+        << "双代并存:同 id 去重后恒一份 placed(不是 0 也不是 2)";
+    EXPECT_EQ(1, layer_->labelPlacementStats().candidates)
+        << "同 id 两份 entry 去重成一个候选";
+
+    // drop 旧桶(换代完成)→ 立即重 placement(V27 drop 置位)→ 仍 1 且
+    // fade 已收敛的 opacity 不重启(id 继承 + fades_ 直通)。
+    layer_->dropTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 13, 100, 200});
+    frame_.deltaSeconds = 0.016;
+    build();
+    EXPECT_EQ(1, layer_->labelPlacementStats().placed)
+        << "drop 旧桶后 placed ⊆ 现桶 entry 且不闪(V27 残余收口判据)";
+    EXPECT_FALSE(layer_->hasPendingLabelWork())
+        << "无重 fade:opacity 已收敛,谓词应为假";
+}
+
 TEST_F(FeatureRenderLayerTest, PlacementThrottledBetweenIntervals) {
     std::vector<uint8_t> font = loadHostFont();
     if (font.empty()) GTEST_SKIP() << "no host font available";

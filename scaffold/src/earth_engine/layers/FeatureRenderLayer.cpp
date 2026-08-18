@@ -1987,8 +1987,17 @@ void FeatureRenderLayer::updateLabelPlacement(
     // collect:可见桶 + 预览的 LabelEntry → 候选。视野外桶不进候选:
     // 它们的 fade 状态由 placement 状态机按"消失要素"清扫,重入视野按
     // 新候选淡入;其顶点 opacity 停留旧值无妨——桶本身不出命令。
+    //
+    // [V29 刀3] 同 id 候选按代去重,细代(高 tileZ)胜(maplibre
+    // seenCrossTileIDs 最小版)。刀1/2 让换代双桶并存期的同一标注**共享
+    // 同一 id**,而 targets 按 id 键:两份候选一 placed 一 collided,后写
+    // 覆盖前写 + sort 非稳定 tie-break 又是同 id → target 在 0/1 间抖 =
+    // 换代闪。去重后同 id 恒一份进碰撞;旧桶 entry 的顶点 opacity 经
+    // applyLabelOpacity 按同 id 回写,与新代同亮度渐变(重叠期亚可见),
+    // drop 后自然消失 —— holdingForFade 的最小等价。
     std::vector<LabelCandidate> candidates;
-    auto collect = [&](const BucketGpu& gpu) {
+    std::unordered_map<FeatureId, std::pair<size_t, int>> dedup;  // id→(下标,代)
+    auto collect = [&](const BucketGpu& gpu, int generation) {
         for (const LabelEntry& e : gpu.labelEntries) {
             LabelCandidate c;
             c.featureId = e.featureId;
@@ -1997,18 +2006,27 @@ void FeatureRenderLayer::updateLabelPlacement(
             c.boxMinYPx = e.boxMinYPx;
             c.boxMaxXPx = e.boxMaxXPx;
             c.boxMaxYPx = e.boxMaxYPx;
-            candidates.push_back(c);
+            const auto [it, inserted] = dedup.try_emplace(
+                e.featureId, candidates.size(), generation);
+            if (inserted) {
+                candidates.push_back(c);
+            } else if (generation > it->second.second) {
+                candidates[it->second.first] = c;  // 细代替换粗代
+                it->second.second = generation;
+            }  // 同代/粗代:保留既有(先到先得,与 claim 先建序一致)
         }
     };
+    // store 桶/预览:非瓦片代际语义,恒最新(编辑层显示优先);其 id 空间
+    // 与 crossTile id 理论不重叠,generation 取 INT_MAX 仅作防御。
     for (BucketKey key : visibleKeys) {
         auto it = buckets_.find(key);
-        if (it != buckets_.end()) collect(it->second);
+        if (it != buckets_.end()) collect(it->second, std::numeric_limits<int>::max());
     }
     // 瓦片桶(符号刀B):驻留集即渲染集,无空间桶可见性判定(同
     // buildRenderCommands 的理由),标签候选全量进 placement——地平线/
-    // 视锥剔除由 placement 逐锚点做。
-    for (auto& entry : tileBuckets_) collect(entry.second);
-    if (previewGpuValid_) collect(previewGpu_);
+    // 视锥剔除由 placement 逐锚点做。代 = 瓦 z(细代胜)。
+    for (auto& entry : tileBuckets_) collect(entry.second, entry.first.z);
+    if (previewGpuValid_) collect(previewGpu_, std::numeric_limits<int>::max());
 
     const Camera& cam = *frameState.camera;
     LabelPlacement::FrameInput in;
