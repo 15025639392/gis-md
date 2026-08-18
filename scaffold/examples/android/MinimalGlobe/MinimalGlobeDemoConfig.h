@@ -277,7 +277,12 @@ constexpr bool kEnableSeamEdgeMismatchProbe = false;
 // ⚠️ 开之前先确认画面**真的**该静止:时钟已由 kFixedSimulationJulianDate
 //    冻住,但任何逐帧抖动/jitter 效果都会让它一直报警 —— 而"一直报警"比
 //    没有守卫更糟,人会学会无视它。
-constexpr bool kShadowVerifyIdle = false;
+// 2026-08-18 默认开启:V27 家族五洞(placement/fade/字形烘焙/重钳/换代)全是
+// "依赖帧循环的收敛没申报 → 停帧饿死"同构病,症状零报错。本自检是这类漏报
+// 的**构造性捕网**——任何子系统忘了申报,idle 前画面仍在变,它就报警
+// (ShadowVerify Error 行)。成本只在 idle 临界一次(20 帧采样),稳态零。
+// 真机验收流程应看它的 changedFrames 读数(健康=无 Error 行)。
+constexpr bool kShadowVerifyIdle = true;
 
 // 注:北极星 SVT 页存储(terrainPageStore)已随 decouple 升为生产主路径默认开
 // (见 MinimalGlobeDemoConfig.cpp 中 config.terrainPageStore = true 及 §15.3⑤),
