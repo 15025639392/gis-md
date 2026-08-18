@@ -950,3 +950,33 @@ TEST(TerrainPageStoreRestyle, InvalidateIsSafeOnEmptyAndUninitialized) {
     EXPECT_EQ(store.ledgerPageCount(), 0);
     EXPECT_EQ(store.ledgerFieldPageCount(), 0);
 }
+
+// V28 原子换手的 drain 换手判据真值表。端到端(旧合成顶住→新合成 complete→
+// 换手)要 RealTerrain 台跑不了 host,但换手判据本身是纯函数,这里钉死它:
+// 尤其"新代整页与旧完整合成源数相同、必须换手"这一条 —— 旧的按源单调闸会把
+// 它误判成"旧快照晚到"挡下(就是那个隐蔽 bug)。参数序:
+// (itemEpoch, itemComposedSources, targetEpoch, contentEpoch, uploadedSources)。
+TEST(TerrainPageStoreRestyle, UploadSupersedeTruthTable) {
+    using PS = TerrainPageStore;
+    // —— 无换肤(所有 epoch=0):逐字节等价于改造前的按源单调闸 ——
+    EXPECT_TRUE(PS::pageUploadSupersedes(0, 1, 0, 0, 0)) << "首源上屏";
+    EXPECT_TRUE(PS::pageUploadSupersedes(0, 2, 0, 0, 1)) << "源2接源1";
+    EXPECT_FALSE(PS::pageUploadSupersedes(0, 1, 0, 0, 2)) << "旧源快照晚到不回退";
+    EXPECT_FALSE(PS::pageUploadSupersedes(0, 2, 0, 0, 2)) << "同进度重复到达丢弃";
+
+    // —— 换肤后(targetEpoch 抬到 1)——
+    // 核心:新代整页(hold complete)与旧完整合成源数相同(都=2),必须换手。
+    // 旧单调闸判据 2<=2 会 DROP → 新样式永远上不了屏,epoch 闸在此救场。
+    EXPECT_TRUE(PS::pageUploadSupersedes(1, 2, 1, 0, 2))
+        << "新代整页换手(等源数,绕过单调闸)";
+    // 旧代 straggler(换肤前那代的迟到 drape,携旧样式)必须丢 —— 否则会把
+    // 旧样式覆盖到已顶住的旧完整合成之上制造一帧回退。无 epoch 闸时 2>1 会 APPLY。
+    EXPECT_FALSE(PS::pageUploadSupersedes(0, 2, 1, 0, 1))
+        << "旧代 straggler(epoch<target)丢弃";
+    // 新代已换手后,同代重复快照按源单调:等值丢、增值收。
+    EXPECT_FALSE(PS::pageUploadSupersedes(1, 2, 1, 1, 2)) << "换手后重复丢弃";
+    // 非 hold(失效时半成品)页:新代增量点亮仍在同代内单调推进。
+    EXPECT_TRUE(PS::pageUploadSupersedes(1, 1, 1, 0, 1))
+        << "半成品页新代首源换手(跨代,不受单调约束)";
+    EXPECT_TRUE(PS::pageUploadSupersedes(1, 2, 1, 1, 1)) << "新代同代源2接源1";
+}

@@ -245,6 +245,14 @@ struct TerrainPageStore::PageComposeState {
     std::mutex mutex;
     PageSourceAssembler assembler;
     std::atomic<bool> cancelled{false};
+    // V28:本 compose 属于哪一代样式(kick 时 = pe.targetEpoch)。随快照进
+    // ReadyUploadInbox,drain 的 epoch 闸靠它挡下旧代 straggler。kick 后不再变,
+    // 无需锁(worker 只读)。
+    uint64_t epoch = 0;
+    // V28:true = 重烘期不许部分点亮(base 先到会把正显示的旧完整合成覆写成
+    // 无矢量底图 = 那一跳),攒到 assembler.complete() 才发一次整页快照。
+    // false = 保持增量点亮(新建页 / 失效时本就半成品的页)。
+    bool holdUntilComplete = false;
 };
 
 /// worker 合成完毕的页快照投递箱(shared_ptr 持有,worker 任务可比页存储
@@ -255,6 +263,7 @@ struct TerrainPageStore::ReadyUploadInbox {
         uint64_t key = 0;
         int layer = 0;
         int composedSources = 0;           // 快照时的合成进度(源数)
+        uint64_t epoch = 0;                // V28:产此快照的样式代(drain epoch 闸)
         std::vector<uint8_t> texels;       // side²×4 快照
     };
     std::mutex mutex;
@@ -270,6 +279,7 @@ struct TerrainPageStore::RoadFieldInbox {
     struct Item {
         uint64_t key = 0;
         int layer = 0;
+        uint64_t epoch = 0;        // V28:产此场 R8 的样式代(drain epoch 闸)
         std::vector<uint8_t> r8;   // side²×1
     };
     std::mutex mutex;
@@ -853,14 +863,12 @@ void TerrainPageStore::updateVisiblePages(
                     if (!everCreatedPages_.insert(anchorPageKey).second) {
                         ++winPagesRecreated_;  // 建过又建 = 白干一整套
                     }
-                    pe.layer = anchorLayer;
-                    pe.compose = std::make_shared<PageComposeState>();
-                    pe.compose->assembler.configure(
-                        static_cast<int>(providers_.size()),
-                        config_.pageSizeTexels);
-                    pe.totalSources = static_cast<int>(providers_.size());
-                    pe.lastProgressFrame = frameId_;
-                    kickPageFetches(anchorKey, anchorPageKey, anchorLayer, pe);
+                    beginPageBake(anchorKey, anchorPageKey, anchorLayer, pe,
+                                  /*holdUntilComplete=*/false);
+                } else if (pe.needsRebake) {
+                    // V28 换肤重烘:旧合成仍上屏,烘新样式,complete 才换手。
+                    beginPageBake(anchorKey, anchorPageKey, anchorLayer, pe,
+                                  pe.holdUntilComplete);
                 }
             }
         }
@@ -895,14 +903,12 @@ void TerrainPageStore::updateVisiblePages(
                     if (!everCreatedPages_.insert(kc.pageKey).second) {
                         ++winPagesRecreated_;  // 建过又建 = 白干一整套
                     }
-                    pe.layer = layer;
-                    pe.compose = std::make_shared<PageComposeState>();
-                    pe.compose->assembler.configure(
-                        static_cast<int>(providers_.size()),
-                        config_.pageSizeTexels);
-                    pe.totalSources = static_cast<int>(providers_.size());
-                    pe.lastProgressFrame = frameId_;  // 建页即算一次进度
-                    kickPageFetches(kc.fetchKey, kc.pageKey, layer, pe);
+                    beginPageBake(kc.fetchKey, kc.pageKey, layer, pe,
+                                  /*holdUntilComplete=*/false);
+                } else if (pe.needsRebake) {
+                    // V28 换肤重烘:旧合成仍上屏,烘新样式,complete 才换手。
+                    beginPageBake(kc.fetchKey, kc.pageKey, layer, pe,
+                                  pe.holdUntilComplete);
                 }
             }
             // 沿祖先链取最细**影像就绪**页(ad 升序=细→粗;深度轴统一 =
@@ -1347,19 +1353,56 @@ void TerrainPageStore::setRoadFieldStyleUniforms(
     config_.roadFieldWidthRamp = widthRamp;
 }
 
-void TerrainPageStore::invalidateComposedPages() { clearAllComposedPages(); }
+void TerrainPageStore::invalidateComposedPages() {
+    // V28 原子换手:失效**不清账本、不动 layer / uploadedSources / 间接纹理**
+    // → 旧合成继续上屏。每页 ++targetEpoch + 标 needsRebake,determination 下帧
+    // beginPageBake 重建 compose 重 kick;hold 到 complete 才换手(仅当前显示
+    // 完整合成的页;半成品无旧画面可顶,直接重定向)。旧代在途 fetch/compose
+    // 作废(迟到快照由 drain 的 epoch 闸挡下)。
+    //
+    // 与"源列表变更"用的 clearAllComposedPages(仍清账本)分道:那条改的是源
+    // **数量**(旧合成层数就是错的,只能弃),此条只换源**内容**(旧像素仍是
+    // 合法画面,顶到新的就绪)。消灭的正是 V28 报告症状:清账本 → 间接纹理
+    // miss → 回落 mappedRaster 那一跳(卫星底图连坐换肤刷新)。
+    for (auto& [key, pe] : pages_) {
+        ++pe.targetEpoch;
+        pe.needsRebake = true;
+        pe.holdUntilComplete = pe.uploadComplete();
+        if (pe.compose) {
+            pe.compose->cancelled.store(true, std::memory_order_release);
+        }
+        for (CancellationToken& token : pe.fetchTokens) {
+            token.cancel();  // 旧代 fetch 作废(迟到经 drain epoch 闸丢弃)
+        }
+    }
+}
 
 void TerrainPageStore::invalidateFieldPages(int newFieldMaxZoom) {
-    for (auto& [key, entry] : fieldPages_) {
-        entry.token.cancel();  // 迟到 r8 经账本校验丢弃
-    }
-    fieldPages_.clear();
-    // 清跳烘门:不清则 determination 同 key 重建走"层内真场直接复用"分支,
-    // 旧样式内容原地复活(静默失效)。fieldLayerKey_ 未建(场平面关)时为空,
-    // fill 是 no-op,安全。
-    std::fill(fieldLayerKey_.begin(), fieldLayerKey_.end(), kInvalidFieldKey);
+    // V28 场路原子换手:**不清账本、不清 fieldLayerKey_** → 旧场线继续上屏顶住,
+    // 新场 R8 到达覆写同层完成换手(消灭旧 clear 路的"线整块灭→烘完再回"空洞,
+    // 真机换肤时 fhole 尖刺那半)。场是单源,无影像那种按源单调闸;epoch 仅挡
+    // 换肤前那代 straggler。与影像合成页路(invalidateComposedPages)同课。
+    const bool capChanged =
+        newFieldMaxZoom >= 0 && newFieldMaxZoom != config_.roadFieldMaxZoom;
     if (newFieldMaxZoom >= 0) {
         config_.roadFieldMaxZoom = newFieldMaxZoom;
+    }
+    if (capChanged) {
+        // 封顶变了(新样式分级档变化)→ 场页 key 整体重映射(fz 依赖
+        // roadFieldMaxZoom)。旧 key 页不再是 determination 会显示的 key,原地
+        // 重烘无意义;保留旧页顶住(不清),determination 按新封顶建新 key 页
+        // (fieldLayerKey_ 不匹配 → 走重烘拿新样式),旧页随 LRU 淘汰退场。
+        // 不清 → 换封顶也无空洞。日/夜仅换色时 capChanged=false,走下方原地换手。
+        return;
+    }
+    for (auto& [key, entry] : fieldPages_) {
+        ++entry.targetEpoch;         // 挡旧代 straggler(drain epoch 闸)
+        entry.pendingRebake = true;  // 顶帧到换手完成(hasWorkInFlight)
+        entry.token.cancel();        // 旧代生产停(迟到经 epoch 闸丢弃)
+        // unpackKey 还原 z/x/y(schemeId 缺省无碍:RoadFieldSource 只用 z/x/y,
+        // 见 requestField 的 tileToUnitRect)。resetDisplay=false 保旧线上屏。
+        const TileKey fieldKey = unpackKey(key);
+        kickFieldFetch(fieldKey, key, entry.layer, entry, /*resetDisplay=*/false);
     }
 }
 
@@ -1514,6 +1557,26 @@ void TerrainPageStore::tick() {
     }
 }
 
+void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
+                                     int layer, PageEntry& pe,
+                                     bool holdUntilComplete) {
+    pe.layer = layer;
+    if (pe.compose) {
+        // 旧 compose 省功早退(在途 worker 据此跳过;真正的安全线是 drain 的
+        // epoch 闸 —— 迟到快照 item.epoch < 新 targetEpoch 会被丢弃)。
+        pe.compose->cancelled.store(true, std::memory_order_release);
+    }
+    pe.compose = std::make_shared<PageComposeState>();
+    pe.compose->assembler.configure(static_cast<int>(providers_.size()),
+                                    config_.pageSizeTexels);
+    pe.compose->epoch = pe.targetEpoch;
+    pe.compose->holdUntilComplete = holdUntilComplete;
+    pe.totalSources = static_cast<int>(providers_.size());
+    pe.lastProgressFrame = frameId_;
+    pe.needsRebake = false;
+    kickPageFetches(fetchKey, pageKey, layer, pe);
+}
+
 void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
                                        uint64_t pageKey, int layer,
                                        PageEntry& entry) {
@@ -1557,18 +1620,23 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
 // ==== 步3 场平面:独立于影像页的场页生产/淘汰 ====
 void TerrainPageStore::kickFieldFetch(const TileKey& fieldKey,
                                       uint64_t fieldPacked, int layer,
-                                      FieldPageEntry& entry) {
+                                      FieldPageEntry& entry, bool resetDisplay) {
     if (!config_.roadFieldRequest || !fieldInbox_) {
         return;
     }
     const int side = config_.pageSizeTexels;
     entry.token = CancellationToken{};
-    entry.uploaded = false;
+    // V28:换肤原地重烘 resetDisplay=false → 不清 uploaded,旧场 R8 继续上屏顶住,
+    // 新场到达覆写同层完成换手。新建/churn 建页 resetDisplay=true → 无内容可显,置 false。
+    if (resetDisplay) {
+        entry.uploaded = false;
+    }
     entry.lastProgressFrame = frameId_;
+    const uint64_t epoch = entry.targetEpoch;  // 快照本代号进回调
     std::shared_ptr<RoadFieldInbox> fieldInbox = fieldInbox_;
     config_.roadFieldRequest(
         fieldKey, entry.token,
-        [fieldInbox, fieldPacked, layer, side](std::vector<uint8_t> r8) {
+        [fieldInbox, fieldPacked, layer, epoch, side](std::vector<uint8_t> r8) {
             if (r8.size() != static_cast<size_t>(side) *
                                  static_cast<size_t>(side) * 4u) {
                 return;  // 尺寸不符:丢弃(防生产者配置漂移写坏层)
@@ -1577,7 +1645,7 @@ void TerrainPageStore::kickFieldFetch(const TileKey& fieldKey,
             // 经账本校验丢弃。
             std::lock_guard<std::mutex> lock(fieldInbox->mutex);
             fieldInbox->items.push_back(
-                RoadFieldInbox::Item{fieldPacked, layer, std::move(r8)});
+                RoadFieldInbox::Item{fieldPacked, layer, epoch, std::move(r8)});
         });
 }
 
@@ -1639,17 +1707,25 @@ void TerrainPageStore::drainInbox() {
             std::vector<uint8_t> rgba;
             resamplePageSource(*sharedImage, depth, subX, subY, side, rgba);
             ReadyUploadInbox::Item out;
-            bool accepted = false;
+            bool emit = false;
             {
                 std::lock_guard<std::mutex> lock(compose->mutex);
                 // C-1:按源序合成;乱序早到进 stash、重复到达幂等丢弃 ——
                 // 多个 worker 线程的执行次序因此无关紧要(mutex 只保原子性,
                 // 次序正确性由 assembler 自身的 stash 语义保证)。
-                accepted = compose->assembler.accept(source, rgba.data());
+                const bool accepted = compose->assembler.accept(source, rgba.data());
                 if (accepted) {
-                    out.texels = compose->assembler.texels();  // 快照
-                    out.composedSources = compose->assembler.compositedCount();
-                    if (compose->assembler.complete()) {
+                    const bool done = compose->assembler.complete();
+                    // V28:hold 模式攒到 complete 才发一次整页快照 —— 否则 base 先
+                    // 到会把正显示的旧完整合成覆写成无矢量底图(换肤那一跳)。
+                    // 非 hold(新建页 / 半成品页)保持增量点亮:部分到达先上屏。
+                    if (!compose->holdUntilComplete || done) {
+                        out.texels = compose->assembler.texels();  // 快照
+                        out.composedSources = compose->assembler.compositedCount();
+                        out.epoch = compose->epoch;
+                        emit = true;
+                    }
+                    if (done) {
                         compose->assembler.releaseBuffers();  // 稳态零额外内存
                     }
                 }
@@ -1658,7 +1734,7 @@ void TerrainPageStore::drainInbox() {
                 static_cast<uint64_t>(
                     (perf::nowMs() - composeStartMs) * 1000.0),
                 std::memory_order_relaxed);
-            if (!accepted) {
+            if (!emit) {
                 return;
             }
             out.key = pageKey;
@@ -1701,6 +1777,11 @@ void TerrainPageStore::drainReadyUploads() {
             if (it == fieldPages_.end() || it->second.layer != item.layer) {
                 continue;  // 淘汰/换租后的迟到场:丢弃
             }
+            // V28 epoch 闸:换肤前那代的迟到场 R8 丢弃 —— 否则旧样式覆盖已换手的
+            // 新线且无后续再纠正(场单源、单次上传即整页,无按源单调可兜)。
+            if (item.epoch < it->second.targetEpoch) {
+                continue;
+            }
             const double uploadStartMs = perf::nowMs();
             device_->updateTextureRegion(
                 fieldArrayTexture_.get(), 0, 0, side, side, item.r8.data(),
@@ -1712,6 +1793,7 @@ void TerrainPageStore::drainReadyUploads() {
                 fieldLayerKey_[item.layer] = item.key;
             }
             it->second.uploaded = true;
+            it->second.pendingRebake = false;  // V28:原地重烘换手完成
             ++winFieldUploads_;
             it->second.lastProgressFrame = frameId_;
             ++uploaded;
@@ -1750,8 +1832,11 @@ void TerrainPageStore::drainReadyUploads() {
         if (pe.layer != item.layer) {
             continue;
         }
-        // 同页多快照乱序到达:进度只前进不后退(旧快照晚到不覆盖新画面)。
-        if (item.composedSources <= pe.uploadedSources) {
+        // V28 换手判据(epoch 闸 + 同代按源单调,纯函数见 pageUploadSupersedes):
+        // 旧代 straggler 丢弃;新代整页就绪直接换手(旧完整合成顶到此刻一次替换,
+        // 不经 mappedRaster 回落);同代内旧源快照晚到不覆盖新画面。
+        if (!pageUploadSupersedes(item.epoch, item.composedSources, pe.targetEpoch,
+                                  pe.contentEpoch, pe.uploadedSources)) {
             continue;
         }
         const double uploadStartMs = perf::nowMs();
@@ -1760,6 +1845,7 @@ void TerrainPageStore::drainReadyUploads() {
                                      static_cast<size_t>(side) * 4u,
                                      item.layer);
         winUploadMs_ += perf::nowMs() - uploadStartMs;
+        pe.contentEpoch = item.epoch;  // 上屏内容的样式代随之推进
         pe.uploadedSources = item.composedSources;
         pe.lastProgressFrame = frameId_;  // 上传推进 = 进度(见 kStalledPageFrames)
         ++uploadedLayerTotal_;

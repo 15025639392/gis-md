@@ -359,12 +359,23 @@ public:
     bool hasWorkInFlight() const {
         for (const auto& entry : pages_) {
             const PageEntry& pe = entry.second;
+            // V28:换肤重烘已标记但尚待 determination 派发(下一次 determination
+            // 才重建 compose + 重 kick)。此刻页仍是"完整已上传"态,
+            // pageCountsAsInFlight 会判其不在途 → 若据此停帧,determination 永不
+            // 再跑、重烘永不启动。needsRebake 顶住到派发那帧,之后真 fetch 在途接棒。
+            if (pe.needsRebake) {
+                return true;
+            }
             if (pageCountsAsInFlight(pe.uploadComplete(), frameId_,
                                      pe.lastProgressFrame)) {
                 return true;
             }
         }
         for (const auto& entry : fieldPages_) {
+            // V28:原地重烘在途(旧场仍 uploaded)——同影像 needsRebake,防停帧饿死换手。
+            if (entry.second.pendingRebake) {
+                return true;
+            }
             if (pageCountsAsInFlight(entry.second.uploaded, frameId_,
                                      entry.second.lastProgressFrame)) {
                 return true;
@@ -384,6 +395,25 @@ public:
         // 但 surface 重建会把 frameId_ 归零 —— 那时旧页也已随存储一起销毁。
         if (frameId < lastProgressFrame) return true;  // 防御:视作刚有进度
         return (frameId - lastProgressFrame) <= kStalledPageFrames;
+    }
+
+    /// V28 原子换手的 drain 换手判据(纯函数,可 host 单测证伪 —— 与
+    /// pageCountsAsInFlight 同理:这条一旦写错,症状是"换肤后新样式上不了屏"
+    /// 或"旧样式 straggler 覆盖新画面",都不会报错)。返回 true = 该快照应上屏
+    /// 并推进 (contentEpoch, uploadedSources)。
+    ///   - itemEpoch < targetEpoch:换肤前那代的迟到快照 → 丢弃(旧代 straggler)。
+    ///   - itemEpoch > contentEpoch:新代整页就绪 → **换手**(绕过按源单调闸 ——
+    ///     新旧代合成源数相同,单调闸会把换手误判成"旧快照晚到"而挡下,这正是
+    ///     epoch 闸要解决的核心)。
+    ///   - itemEpoch == contentEpoch:同代内按源单调(晚到的旧源快照不覆盖新画面)。
+    /// 不变量:itemEpoch ≤ targetEpoch(只有 kick 抬 targetEpoch 并同值打进 compose),
+    /// contentEpoch ≤ targetEpoch(apply 时 contentEpoch=itemEpoch≤当时 targetEpoch)。
+    static bool pageUploadSupersedes(uint64_t itemEpoch, int itemComposedSources,
+                                     uint64_t targetEpoch, uint64_t contentEpoch,
+                                     int uploadedSources) {
+        if (itemEpoch < targetEpoch) return false;   // 旧代 straggler
+        if (itemEpoch != contentEpoch) return true;  // 新代 → 换手
+        return itemComposedSources > uploadedSources;  // 同代按源单调
     }
 
     /// 在 applyPerFrameCommandState 里对每个 terrain 命令调用(**无相机,只 bind**):
@@ -468,6 +498,21 @@ private:
         /// 最近一次"上传进度前进"的帧号(建页时初始化为当帧)。
         /// **只服务于帧级按需渲染的在途判定**,不参与 resident/合成任何逻辑。
         uint64_t lastProgressFrame = 0;
+        /// V28 原子换手样式代。contentEpoch = 当前上屏 layer 的样式代;
+        /// targetEpoch = 正在烘的样式代(换肤时 invalidateComposedPages ++)。
+        /// 二者不等 = 重烘在途、旧合成仍上屏。drain 的换手判据见
+        /// pageUploadSupersedes。二者都为 0 时逐字节等价于改造前(无换肤)。
+        uint64_t contentEpoch = 0;
+        uint64_t targetEpoch = 0;
+        /// V28:determination 下一帧要为本页重建 compose + 重 kick(换肤置位;
+        /// beginPageBake 清位)。失效不即时重 kick 是因为影像 fetchKey 的
+        /// schemeId 不入 packKey,只有 determination 手里的 kc.fetchKey 带正确
+        /// schemeId(unpackKey 会还原成缺省 → 取错源)。
+        bool needsRebake = false;
+        /// V28:重烘要不要 hold 到 assembler.complete() 才发快照(= 失效时本页
+        /// 是否正显示完整合成)。true → 旧完整合成顶到新合成整页就绪一次换手;
+        /// false → 半成品无旧画面可顶,直接重定向、保持增量点亮(见点3分析)。
+        bool holdUntilComplete = false;
         bool uploadedTexels() const { return uploadedSources > 0; }
         bool uploadComplete() const {
             return totalSources > 0 && uploadedSources >= totalSources;
@@ -481,6 +526,15 @@ private:
         CancellationToken token;
         bool uploaded = false;
         uint64_t lastProgressFrame = 0;
+        /// V28 场路原子换手样式代。换肤时 `invalidateFieldPages` ++ 并**原地**重
+        /// kick(不清 uploaded、不清 fieldLayerKey_→旧线顶住),新场 R8 到达覆写
+        /// 同层完成换手。场是单源(无影像那种多源 alphaOver),故不需按源单调闸;
+        /// epoch 仅用于挡下换肤前那代的 straggler(`item.epoch < targetEpoch` 丢弃),
+        /// 否则旧样式 R8 迟到会覆盖已换的新线且无后续再纠正。恒 0 时逐字节等价改造前。
+        uint64_t targetEpoch = 0;
+        /// V28:原地重烘在途(旧线仍 uploaded 上屏)。hasWorkInFlight 据此不停帧
+        /// ——否则"uploaded=true 判不在途→停帧→新场 R8 永远排不到上传"。
+        bool pendingRebake = false;
     };
 
     /// 每个屏幕可见 capped 瓦片的稀疏间接纹理(gridN×gridN RGBA8)。
@@ -527,13 +581,22 @@ private:
     /// kick 单页的**全部源** fetch(worker 回调把解码影像投进 inbox,带
     /// pageKey+layer+源号)。每源一个 token,存进 entry.fetchTokens 供淘汰时 cancel。
     /// 步3:kick 单个场页的生产(roadFieldRequest → fieldInbox_)。
+    /// resetDisplay=true(新建/churn 建页):置 uploaded=false(在此之前无内容可显)。
+    /// resetDisplay=false(V28 换肤原地重烘):**不动 uploaded**——旧场 R8 仍上屏顶住,
+    /// 新场到达覆写同层完成原子换手。回调携 entry.targetEpoch,drain 的 epoch 闸用。
     void kickFieldFetch(const TileKey& fieldKey, uint64_t fieldPacked,
-                        int layer, FieldPageEntry& entry);
+                        int layer, FieldPageEntry& entry,
+                        bool resetDisplay = true);
     /// 步3:淘汰场页(cancel 在途生产 + 移除账本;fieldLayerKey_ 不清,
     /// 同 key 重建凭它跳烘)。
     void eraseFieldEntry(uint64_t fieldPacked);
     void kickPageFetches(const TileKey& pageTileKey, uint64_t pageKey, int layer,
                          PageEntry& entry);
+    /// V26/V28:为页建 compose、配 assembler、打 epoch(=pe.targetEpoch)/hold 标、
+    /// kick 全源 fetch,清 needsRebake。determination 首次建页(hold=false,增量点亮
+    /// 不变)与换肤重烘(hold=pe.holdUntilComplete)共用,setup 单一治理点。
+    void beginPageBake(const TileKey& fetchKey, uint64_t pageKey, int layer,
+                       PageEntry& pe, bool holdUntilComplete);
     void drainInbox();
     /// 取走 worker 已合成的页快照,按预算上传 + 叠画(渲染线程)。
     void drainReadyUploads();
