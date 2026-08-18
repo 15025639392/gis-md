@@ -985,11 +985,15 @@ void FreeGlobeController::logCameraProbe(const char* phase,
     const double* m = vp.data();  // 16 doubles，列主序
     Vec3 anchor(0.0, 0.0, 0.0);
     const bool hasAnchor = debugAnchorWorld(anchor);
+    // eyeAlt:相机椭球高。近碰撞压测用——证明 clampNow 真顶住地面(高度贴
+    // kMinAltitudeMeters)时 anchorErr 是否仍守住(现版保锚 clamp 应守住)。
+    const double eyeAlt =
+        Ellipsoid::WGS84().cartesianToCartographic(camera_->position()).height();
     platformLog(LogLevel::Info, "CAMPROBE",
-        "%s finger=(%.1f,%.1f) vp=%dx%d anchor=%d,%.9g,%.9g,%.9g "
+        "%s finger=(%.1f,%.1f) vp=%dx%d eyeAlt=%.2f anchor=%d,%.9g,%.9g,%.9g "
         "vpm=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,"
         "%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g",
-        phase, fingerX, fingerY, viewportWidth_, viewportHeight_,
+        phase, fingerX, fingerY, viewportWidth_, viewportHeight_, eyeAlt,
         hasAnchor ? 1 : 0, anchor.x(), anchor.y(), anchor.z(),
         m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7],
         m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);

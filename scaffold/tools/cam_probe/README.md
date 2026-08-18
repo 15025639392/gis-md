@@ -10,8 +10,9 @@
    单指 pan/fling 直接用 `adb shell input swipe`。
 
 2. **引擎吐数**(`FreeGlobeController::logCameraProbe`,tag=`CAMPROBE`):
-   手势 START/每 MOVE/END 各一行,含 `finger` 像素 + `viewport` +
-   当前锚点世界坐标 `anchor`(ECEF)+ `vpm`(view·proj 矩阵,16 doubles 列主序)。
+   手势 START/每 MOVE/END 各一行,含 `finger` 像素 + `viewport` + `eyeAlt`
+   (相机椭球高,m,近碰撞压测用)+ 当前锚点世界坐标 `anchor`(ECEF)+
+   `vpm`(view·proj 矩阵,16 doubles 列主序)。
    纯诊断,零行为改动。**debug 变体才吐**(Oplus 吞非 debuggable 应用 logcat)。
 
 3. **读出**(`camprobe.py`):用 `vpm` 把 `anchor` 投影到像素 = **实际落点**,
@@ -35,8 +36,11 @@ adb logcat -d -s CAMPROBE | python3 tools/cam_probe/camprobe.py   # 聚合峰值
 
 聚合行示例:
 ```
-[drag]  帧=43  anchorErr: 末=0.01px 峰=0.06px(@dragMove)  本该位移=445.5px 实际位移=445.5px 增益=1.000
+[drag]  帧=43  anchorErr: 末=0.01px 峰=0.06px(@dragMove)  本该位移=445.5px 实际位移=445.5px 增益=1.000 最低eyeAlt=1200.0m
 ```
+
+近碰撞压测实测:高俯仰贴底(eyeAlt≈350m)时 anchorErr 峰 ~0.4px(基线 0.06px),
+= constrainEye 的径向抬升 fallback 发火(gain<0.2 时保锚退化)。亚像素、自限,非 bug。
 
 ## 判据
 
