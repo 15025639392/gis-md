@@ -107,6 +107,13 @@ public:
     bool debugAnchorWorld(Vec3& outWorld) const;
 
 private:
+    /// CAMPROBE 诊断:在手势 START/每 MOVE/END 各吐一行 logcat(tag=CAMPROBE),含
+    /// 手指像素 + viewport + 当前锚点世界坐标(ECEF)+ view·proj 矩阵(16
+    /// doubles,列主序)。主机侧用 VP 投影 anchorWorld 得"实际落点",对比注入
+    /// 的手指像素("本该落点")→ 逐手势 anchorErr / 增益,把 pin 正确性从观感
+    /// 变机制自证。纯 dump,不改任何相机/手势行为。
+    void logCameraProbe(const char* phase, double fingerX, double fingerY) const;
+
     /// 单指拖拽反馈模式（契约 1.2）：起手判定一次，整段拖拽不切换。
     /// Space = 空间拖球（绕地心锚点旋转）；NearGround = 近地拖图（姿态锁定、
     /// 锚点钉在指下、Δpx 等量换算地表位移）。

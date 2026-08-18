@@ -4,6 +4,7 @@
 #include "../CameraPoseOps.h"
 #include "../../core/geodesy/Cartographic.h"
 #include "../../core/geodesy/Ellipsoid.h"
+#include "../../core/math/Mat4.h"
 #include "../../core/math/Ray.h"
 #include "../../debug/PlatformLog.h"
 #include "../../scene/Camera.h"
@@ -129,6 +130,8 @@ void FreeGlobeController::onDragStart(float xPixels, float yPixels,
         nearPixelsToHorizon_ = std::max(
             std::abs(static_cast<double>(yPixels) - nearHorizonY_), 1.0);
     }
+
+    logCameraProbe("dragStart", xPixels, yPixels);
 }
 
 void FreeGlobeController::onDragMove(float xPixels, float yPixels,
@@ -143,10 +146,14 @@ void FreeGlobeController::onDragMove(float xPixels, float yPixels,
 
     dragLastX_ = xPixels;
     dragLastY_ = yPixels;
+
+    logCameraProbe("dragMove", xPixels, yPixels);
 }
 
 void FreeGlobeController::onDragEnd() {
     if (!dragging_) return;
+    // 清状态前吐 END:此刻 debugAnchorWorld 仍有效,手指终点用最后一次 move。
+    logCameraProbe("dragEnd", dragLastX_, dragLastY_);
     dragging_ = false;
     hasGrabbedPoint_ = false;
 
@@ -570,6 +577,7 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
         platformLog(LogLevel::Info, "CameraCtrl",
             "pinchStart hasAnchor=%d center=(%.0f,%.0f)",
             hasPinchAnchor_, input.centroidX, input.centroidY);
+        logCameraProbe("pinchStart", input.centroidX, input.centroidY);
     }
 
     inertiaAngularVelocity_ = 0.0;
@@ -735,9 +743,13 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
     lastPinchCentroidX_ = input.centroidX;
     lastPinchCentroidY_ = input.centroidY;
     lastPinchTimestamp_ = input.timestamp;
+
+    logCameraProbe("pinchMove", input.centroidX, input.centroidY);
 }
 
 void FreeGlobeController::onPinchEnd() {
+    // 清状态前吐 END:pinching_/hasPinchAnchor_ 尚为真,锚点仍可读。
+    logCameraProbe("pinchEnd", lastPinchCentroidX_, lastPinchCentroidY_);
     pinching_ = false;
     // 契约 2.3：双指 pan 无惯性（直接操纵，松手即停）；仅当缩放留有足够
     // 动量时启动 zoom 惯性滑行（锚点仍需保留以沿视线朝它 dolly）。
@@ -961,6 +973,26 @@ bool FreeGlobeController::rotateCameraVerticalAroundPoint(
 
     camera_->setView(Vec3(nextEye), Vec3(nextDirection), Vec3(nextUp));
     return true;
+}
+
+void FreeGlobeController::logCameraProbe(const char* phase,
+                                         double fingerX,
+                                         double fingerY) const {
+    if (camera_ == nullptr) return;
+    const Mat4 vp = camera_->viewProjectionMatrix(
+        static_cast<double>(viewportWidth_),
+        static_cast<double>(viewportHeight_));
+    const double* m = vp.data();  // 16 doubles，列主序
+    Vec3 anchor(0.0, 0.0, 0.0);
+    const bool hasAnchor = debugAnchorWorld(anchor);
+    platformLog(LogLevel::Info, "CAMPROBE",
+        "%s finger=(%.1f,%.1f) vp=%dx%d anchor=%d,%.9g,%.9g,%.9g "
+        "vpm=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,"
+        "%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g",
+        phase, fingerX, fingerY, viewportWidth_, viewportHeight_,
+        hasAnchor ? 1 : 0, anchor.x(), anchor.y(), anchor.z(),
+        m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7],
+        m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
 }
 
 bool FreeGlobeController::debugAnchorWorld(Vec3& outWorld) const {
