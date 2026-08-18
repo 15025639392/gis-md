@@ -271,6 +271,17 @@ bool Scene::hasConvergingWork(const char** outReason) const {
         return hit("pageStoreInFlight");
     }
 
+    // ④ V27 标注收敛:字形烘焙/换代 placement/fade 三段全在渲染帧里推进,
+    //    停帧 = 新标注永远停在 opacity=0(冷启动 POI 隐形到用户缩放为止)。
+    //    ledger gating 路径由层内 Pumped 票(labelConverge)覆盖;本条是
+    //    回落判据的对应项 —— 两条判据必须口径一致,否则 auditWorkLedger
+    //    每帧报分歧。
+    for (const auto& layer : layers_->featureRenderLayers()) {
+        if (layer && layer->visible() && layer->hasPendingLabelWork()) {
+            return hit("labelConverge");
+        }
+    }
+
     if (outReason) *outReason = "idle";
     return false;
 }

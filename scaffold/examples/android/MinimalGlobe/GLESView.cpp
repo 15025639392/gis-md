@@ -1204,6 +1204,8 @@ static void renderFrame() {
             gMvtSource->hasTessellationInFlight()) {
             gEngine->requestRender("mvtPending");
         }
+        // V27 标注收敛的续帧申报在引擎层(FeatureRenderLayer 的 labelConverge
+        // Pumped 票 + Scene::hasConvergingWork ④),app 侧无需置脏。
         static uint64_t mvtLogCounter = 0;
         if (++mvtLogCounter % 120 == 1) {
             // cache 三数是 P2(容量)与 V18(内存有界)的共同判据:

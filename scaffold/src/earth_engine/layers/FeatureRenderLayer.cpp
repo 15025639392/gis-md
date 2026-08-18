@@ -1329,6 +1329,9 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
         return;
     }
     buckets_[key] = std::move(gpu);
+    // V27:重镶顶点 opacity 重置 0,新 entries 须即时全量 placement 置 target
+    // (等 300ms 节流窗撞上停帧 = 标注隐形)。
+    labelsAwaitingPlacement_ = true;
 }
 
 // ================= E1:MVT 瓦片桶(worker 全链镶嵌) =================
@@ -1562,6 +1565,7 @@ void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
     // labelIndexCount>0 早退,故先清零)
     gpu.tileLabelSources = std::move(labelSrc);
     gpu.labelIndexCount = 0;
+    gpu.labelBakeSettled = false;  // V27:重钳重烘,清稳态标志
     gpu.labelVertexBuffer.reset();
     gpu.labelIndexBuffer.reset();
     gpu.labelVertsCpu.clear();
@@ -1611,7 +1615,10 @@ uint64_t FeatureRenderLayer::crossTileIdFor(const std::string& name,
 }
 
 void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
-    if (gpu.labelIndexCount > 0 || gpu.tileLabelSources.empty()) return;
+    if (gpu.labelBakeSettled || gpu.labelIndexCount > 0 ||
+        gpu.tileLabelSources.empty()) {
+        return;
+    }
     if (!glyphAtlas_ || !glyphAtlas_->ready() || !renderDevice_) return;
     // P6:先按预算补齐本桶所需的新字形。补不齐 → 整桶推迟(本函数幂等,
     // 每帧的重试 drain 会再来)。**决不半烘**:半桶标签在屏上是缺字。
@@ -1649,7 +1656,11 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
                              src.anchorEcef, src.rel, src.name, labelVerts,
                              labelIndices, labelEntries);
     }
-    if (labelIndices.empty()) return;
+    if (labelIndices.empty()) {
+        // 无可显示字形 = 稳态(非在途),谓词不再计入(见 labelBakeSettled)。
+        gpu.labelBakeSettled = true;
+        return;
+    }
     // [V24 文字硬闪根修] 新桶顶点 opacity 初始 0,而回写只在 300ms 节流的
     // placement 或"有 fade 在推进"时发生 —— 稳态手势期换桶(瓦片 LOD 微跨
     // 级的原子换手)落在两个时机之间,同名标签(crossTileID 连续、fade 早已
@@ -1672,21 +1683,44 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
     auto ib = makeBuffer(renderDevice_, labelIndices.data(),
                          labelIndices.size() * sizeof(uint32_t),
                          BufferDesc::Type::Index);
-    if (!vb || !ib) return;  // 上传失败:下次翻转/重 commit 再试
+    if (!vb || !ib) {
+        // 上传失败:原语义即"下次翻转/重 commit 再试"(非每帧),置稳态
+        // 与之一致,顺带不让谓词恒真白烧。翻转/重钳清位。
+        gpu.labelBakeSettled = true;
+        return;
+    }
     gpu.labelVertexBuffer = std::move(vb);
     gpu.labelIndexBuffer = std::move(ib);
     gpu.labelIndexCount = static_cast<int>(labelIndices.size());
     gpu.labelVertsCpu = std::move(labelVerts);
     gpu.labelEntries = std::move(labelEntries);
+    gpu.labelBakeSettled = true;
+    // V27:本桶烘出一批新标注 —— 其中 fades_ 查不到的新 id 上面烘的是
+    // opacity=0,必须下一帧全量 placement 置 target(绕过 300ms 节流)。
+    // 冷启动首批 bake 时 fades_ 整个是空的,不置位 = 整屏标注隐形到
+    // 用户缩放为止(V27 报告的主复现态)。
+    labelsAwaitingPlacement_ = true;
 }
 
 void FeatureRenderLayer::dropTileMesh(const TileKey& key) {
-    tileBuckets_.erase(key);
+    const auto it = tileBuckets_.find(key);
+    if (it == tileBuckets_.end()) return;
+    // V27:drop 带标注的桶 = 碰撞格局变化(换代中间态里老 entry 靠 id 小
+    // tie-break 压住同名新 entry;老的退场后新 entry 的 target 还停在
+    // collided 的 0,不重跑 placement 它永远隐形)。与 commit/重镶同为
+    // 换代事件,一并置位。
+    if (!it->second.labelEntries.empty() ||
+        !it->second.tileLabelSources.empty()) {
+        labelsAwaitingPlacement_ = true;
+    }
+    tileBuckets_.erase(it);
 }
 
 void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                                              Renderer& renderer,
                                              RenderCommandList& commands) {
+    // V27:票据 reconcile 必须在任何早退之前(不然不可见层的票永不释放)。
+    syncLabelWorkTicket();
     if (!visible_ || !renderDevice_) return;
     if (!frameState.camera) return;
 
@@ -1710,6 +1744,8 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         // 内置形状,位图图标接入时须同构处理(明记的债)。
         if (atlasReady) {
             for (auto& entry : tileBuckets_) {
+                // 字体翻转:烘不出字/上传失败的稳态可能因新字体解除,清位重试。
+                entry.second.labelBakeSettled = false;
                 bakeTileBucketLabels(entry.second);
             }
         }
@@ -1721,7 +1757,8 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     glyphRasterBudgetMs_ = kGlyphRasterBudgetMs;
     if (atlasReady) {
         for (auto& entry : tileBuckets_) {
-            if (entry.second.labelIndexCount == 0 &&
+            if (!entry.second.labelBakeSettled &&
+                entry.second.labelIndexCount == 0 &&
                 !entry.second.tileLabelSources.empty()) {
                 bakeTileBucketLabels(entry.second);
             }
@@ -1834,6 +1871,11 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     if (previewFeatureId_ != kInvalidFeatureId && previewGpuValid_) {
         appendBucketCommands(previewGpu_, frameState, renderer, commands);
     }
+
+    // V27:帧尾再 reconcile 一次 —— 帧头那次覆盖不到本帧中段置位的换代
+    // (flip 重镶 / bake / drop),若那恰是最后一帧,谓词真而票没领 = 停帧
+    // 冻住新标注(原 bug 的缩小残留窗口)。幂等,µs 级。
+    syncLabelWorkTicket();
 }
 
 std::vector<BucketKey> FeatureRenderLayer::visibleBucketKeys(
@@ -1916,7 +1958,10 @@ void FeatureRenderLayer::updateLabelPlacement(
     placementCooldownSeconds_ -= frameState.deltaSeconds;
     const bool priorityChanged =
         labelPlacement_.priorityFeature() != lastPlacementPriority_;
-    const bool runFull = placementCooldownSeconds_ <= 0.0 || priorityChanged;
+    // V27:桶换代(bake 出新标注/重镶)即时全量 —— 新 entries 的 target 若等
+    // 300ms 节流窗,停帧(settle 仅 ~3 帧)会让它们永远停在 opacity=0。
+    const bool runFull = placementCooldownSeconds_ <= 0.0 || priorityChanged ||
+                         labelsAwaitingPlacement_;
     if (!runFull) {
         if (labelPlacement_.advanceFades(frameState.deltaSeconds)) {
             applyLabelOpacity(visibleKeys);
@@ -1966,6 +2011,7 @@ void FeatureRenderLayer::updateLabelPlacement(
     in.deltaSeconds = frameState.deltaSeconds;
     // 候选为空也要跑:fade 状态机清扫已消失要素。
     labelPlacement_.update(in, candidates);
+    labelsAwaitingPlacement_ = false;  // V27:换代 entries 已进本次全量
 
     // 容量哨兵:单次全量 placement 超 4ms = 候选规模逼近"单帧一口气跑"
     // 的边界,该上 maplibre 式时间片增量(getBucketParts/可暂停推进)了。
@@ -2020,6 +2066,42 @@ void FeatureRenderLayer::applyLabelOpacity(
     }
     for (auto& entry : tileBuckets_) apply(entry.second);
     if (previewGpuValid_) apply(previewGpu_);
+}
+
+bool FeatureRenderLayer::hasPendingLabelWork() const {
+    // 无 device 无法推进任何标注工作,计入只会白烧帧(谓词必须有终止态)。
+    if (!renderDevice_) return false;
+    // ② 换代待全量 placement / ③ fade 未收敛(便宜的先查)。
+    if (labelsAwaitingPlacement_) return true;
+    if (labelPlacement_.hasPendingFades()) return true;
+    // ① 未烘桶(字形按预算逐帧补,依赖帧循环 drain)。仅 atlas 就绪时计:
+    // 字体没注入时补帧也无法推进,计入会白烧(谓词必须有终止态)。
+    if (glyphAtlas_ && glyphAtlas_->ready()) {
+        for (const auto& entry : tileBuckets_) {
+            const BucketGpu& gpu = entry.second;
+            // labelBakeSettled 排除"不会再有产物"的桶(烘出空/上传失败等翻
+            // 转重试)—— 只有预算推迟的才算在途,否则谓词恒真白烧帧。
+            if (!gpu.labelBakeSettled && gpu.labelIndexCount == 0 &&
+                !gpu.tileLabelSources.empty()) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void FeatureRenderLayer::syncLabelWorkTicket() {
+    // 不可见层判不忙:不出命令的层不许扣住帧循环(否则隐藏层的半程 fade
+    // 让整机永不 idle)。层析构时票 RAII 自释放。口径 = visible &&
+    // hasPendingLabelWork,与 Scene::hasConvergingWork ④ 逐字一致(audit
+    // 每帧对拍两判据,口径漂移会刷分歧日志)。
+    const bool busy = visible_ && hasPendingLabelWork();
+    if (busy && !labelWorkTicket_.valid()) {
+        labelWorkTicket_ = WorkLedger::shared().acquire(
+            WorkLedger::Kind::Pumped, "labelConverge");
+    } else if (!busy && labelWorkTicket_.valid()) {
+        labelWorkTicket_.release();
+    }
 }
 
 // T2:把地形深度纹理与遮挡参数挂到符号命令上。

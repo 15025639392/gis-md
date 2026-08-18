@@ -63,6 +63,29 @@ TEST_F(LabelPlacementTest, SingleVisibleLabelPlacedAndConverges) {
     EXPECT_FALSE(placement.update(in, cands));
 }
 
+// V27:hasPendingFades 是"帧循环还得续帧"的判据 —— 它一旦漏报,冷启动瓦片
+// 加载完就停帧、标注 fade 冻在半程 = POI 首现要缩放催化的根因。钉死:半程时
+// 报 true,收敛后报 false;空态 false。
+TEST_F(LabelPlacementTest, HasPendingFadesGatesFrameContinuation) {
+    LabelPlacement fresh;
+    EXPECT_FALSE(fresh.hasPendingFades()) << "空态无待收敛 fade";
+
+    auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    in.deltaSeconds = 0.1;  // fade 0.3s → 每帧 1/3,首帧后停在 0.333(半程)
+    const std::vector<LabelCandidate> cands = {
+        makeCandidate(1, spherePoint(0.0))};
+
+    fresh.update(in, cands);
+    EXPECT_NEAR(0.333f, fresh.opacity(1), 0.01f);
+    EXPECT_TRUE(fresh.hasPendingFades()) << "半程:必须报 true,否则帧停 fade 冻死";
+
+    fresh.update(in, cands);  // 0.667
+    EXPECT_TRUE(fresh.hasPendingFades());
+    fresh.update(in, cands);  // 1.0 收敛
+    EXPECT_FLOAT_EQ(1.0f, fresh.opacity(1));
+    EXPECT_FALSE(fresh.hasPendingFades()) << "收敛后:报 false,续帧即止不空烧";
+}
+
 TEST_F(LabelPlacementTest, FadeIsGradualWithSmallDelta) {
     auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
     in.deltaSeconds = 0.1;  // fade 0.3s → 每帧 1/3

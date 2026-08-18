@@ -613,20 +613,29 @@ TEST_F(FeatureRenderLayerTest, PlacementThrottledBetweenIntervals) {
     };
 
     commitNamed(100, "AB", 6.0);
-    frame_.deltaSeconds = 0.35;  // 图集缓存帧已消耗初始冷却,先越窗
+    frame_.deltaSeconds = 0.016;  // 小步:AB 在屏内,fade 0→1 不可能一帧完
     build();
     ASSERT_EQ(1, layer_->labelPlacementStats().candidates);
+    // V27 谓词③:屏内新标注 fade 在途 → 谓词真(帧门控续帧依据)。
+    EXPECT_TRUE(layer_->hasPendingLabelWork())
+        << "新标注 fade 未收敛期间谓词必须为真(续帧依据)";
+    frame_.deltaSeconds = 0.35;  // 一帧越过 kFadeSeconds → 收敛
+    build();
+    frame_.deltaSeconds = 0.016;
+    build();  // 稳态帧
+    EXPECT_FALSE(layer_->hasPendingLabelWork())
+        << "全部收敛后谓词必须转假(终止态,不许白烧帧)";
 
     commitNamed(101, "CD", 6.3);
     frame_.deltaSeconds = 0.016;
-    build();  // 节流窗内:新候选不触发重算
-    EXPECT_EQ(1, layer_->labelPlacementStats().candidates)
-        << "节流窗内不该重跑全量 placement";
-
-    frame_.deltaSeconds = 0.35;  // 越过 300ms 窗
     build();
+    // V27 判据翻转(2026-08-18):此前钉的是"节流窗内新候选不触发重算"——
+    // 那正是 V27 根因的一半:桶换代若等 300ms 节流窗,而停帧 settle 只 ~3 帧,
+    // 新标注的 target 永远没人置 → 冷启动 POI 隐形到用户缩放为止。修复后
+    // 换代(bake 出新标注)置 labelsAwaitingPlacement_ → 下一帧即时全量
+    // (与 priorityChanged 同款)。无换代时节流照旧(cooldown 逻辑未动)。
     EXPECT_EQ(2, layer_->labelPlacementStats().candidates)
-        << "节流窗到期应重跑并纳入新候选";
+        << "桶换代应即时纳入新候选(绕过节流),不等 300ms 窗";
 }
 
 TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {

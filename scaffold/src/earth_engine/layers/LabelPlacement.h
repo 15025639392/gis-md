@@ -87,6 +87,17 @@ public:
     /// 当前渐变后透明度(0 = 隐藏或未知要素)。
     float opacity(FeatureId id) const;
 
+    /// 是否还有 fade 未收敛(current != target)。**纯查询,不推进**。
+    /// V27:帧循环据此判"还得再出帧"——fade 靠逐帧 advanceFades 推进,而
+    /// 引擎/应用的收敛判据本来看不见它,冷启动瓦片一加载完就停帧,标注 fade
+    /// 冻在半程(~0.15 透明度)= POI 首现必须缩放催化的真根因。
+    bool hasPendingFades() const {
+        for (const auto& [id, fade] : fades_) {
+            if (fade.current != fade.target) return true;
+        }
+        return false;
+    }
+
     const LabelPlacementStats& stats() const { return stats_; }
 
 private:

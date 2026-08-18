@@ -5,6 +5,7 @@
 #include "../data/StyleExpression.h"
 #include "../renderer/RenderCommand.h"
 #include "../renderer/SymbolShape.h"
+#include "../core/async/WorkLedger.h"
 #include "../core/math/Rectangle.h"
 #include "../debug/PlatformLog.h"
 #include "../core/math/Vec3.h"
@@ -236,6 +237,15 @@ public:
         return labelPlacement_.stats();
     }
 
+    /// V27:标注子系统是否仍在收敛(三态谓词,状态查询而非一次性事件)。
+    /// ① 未烘桶(字形按预算逐帧补,依赖帧循环 drain)
+    /// ② 换代后待全量 placement(labelsAwaitingPlacement_)
+    /// ③ fade 未收敛(current != target)
+    /// 三段链每段依赖帧循环推进却曾无一申报 —— 桶 commit 落在最后一次全量
+    /// placement 之后 + 停帧,新标注永远停在 opacity=0(V27 根因,竞态故
+    /// "不稳定")。帧门控经 syncLabelWorkTicket 领取 Pumped 票据此续帧。
+    bool hasPendingLabelWork() const;
+
     /// P4:上一次**全量** placement 的耗时与候选数。哨兵只在 >4ms 报,
     /// 拿不到低负载段的点 —— 判"线性还是超线性"需要整条曲线,不是两个点。
     double lastPlacementMs() const { return lastPlacementMs_; }
@@ -323,6 +333,12 @@ private:
             std::string name;
         };
         std::vector<TileLabelSource> tileLabelSources;
+        /// V27:标注烘焙已达稳态(成功 / 确认无可显示字形 / buffer 失败按
+        /// 原语义等翻转重试)。区分"在途(预算没补完,下帧继续)"与"不会
+        /// 再有产物"——谓词 hasPendingLabelWork 只把前者算作在途,否则
+        /// 一个烘不出字的桶让帧循环永不 idle(白烧)。atlas 翻转 / 重钳
+        /// 清位重试。
+        bool labelBakeSettled = false;
         /// 瓦片桶专属:符号实例源(**rank 截断后**,故容量同上屏上限
         /// 128/瓦)。留着是为了地形代次变化时重钳 —— 锚点高度是 commit
         /// 当刻的地形采样,冷启动时地形还粗,细化后山体升上来会把锚点埋
@@ -671,6 +687,12 @@ private:
     void updateLabelPlacement(const FrameState& frameState,
                               const std::vector<BucketKey>& visibleKeys);
 
+    /// V27:按 hasPendingLabelWork 谓词 acquire/release 标注收敛 Pumped 票。
+    /// 每帧在 buildRenderCommands **最前**调(该函数多处早退,放后面会被
+    /// 跳过 —— syncWorkTicket 同款注意事项);不可见层判不忙(不出命令的层
+    /// 不许扣住帧循环)。
+    void syncLabelWorkTicket();
+
     /// T2:给符号命令(点/标注)挂地形深度纹理 + 遮挡参数。纹理恒占
     /// textures[1],通路不可用时挂 nullptr 并把 enabled 置 0。
     void appendTerrainOcclusion(const Renderer& renderer,
@@ -740,6 +762,14 @@ private:
     /// ≤0 时下一帧跑全量 placement;初值 0 = 首帧即跑(标签不等节流窗)。
     double placementCooldownSeconds_ = 0.0;
     FeatureId lastPlacementPriority_ = kInvalidFeatureId;
+    /// V27:桶换代(bake 出新标注/重镶)→ 下一帧全量 placement 绕过 300ms
+    /// 节流(与 priorityChanged 即时重跑同款),runFull 后清位。不即时跑的
+    /// 话,新 entries 的 target 永远没人置,停帧窗口内 = 标注隐形。
+    bool labelsAwaitingPlacement_ = false;
+    /// V27:标注收敛 Pumped 票(placement/fade 只在渲染帧里推进,停帧 =
+    /// 永不收敛,Pumped 语义严合)。syncLabelWorkTicket 按 hasPendingLabelWork
+    /// 谓词 acquire/release,照抄 TerrainPageStore::syncWorkTicket 模式。
+    WorkLedger::Ticket labelWorkTicket_;
 
     // ---- 标签避让 placement(P5c) ----
     LabelPlacement labelPlacement_;
