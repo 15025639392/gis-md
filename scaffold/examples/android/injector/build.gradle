@@ -1,0 +1,27 @@
+// 独立的多点触控注入台模块。空壳 app + 自指 androidTest:
+// instrumentation 的 targetPackage = 本模块自身(com.earthengine.injector),
+// 跑完 AndroidJUnitRunner 只 force-stop 这个空壳,绝不碰 MinimalGlobe。
+// UiAutomation.injectInputEvent 是系统级,与 targetPackage 无关,照样把
+// 2 指 MotionEvent 打到前台的 MinimalGlobe 窗口。
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.earthengine.injector"
+    compileSdk 36
+
+    defaultConfig {
+        applicationId "com.earthengine.injector"
+        minSdk 26
+        targetSdk 36
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }
+}
+
+dependencies {
+    androidTestImplementation "androidx.test:runner:1.5.2"
+    androidTestImplementation "androidx.test.ext:junit:1.1.5"
+}

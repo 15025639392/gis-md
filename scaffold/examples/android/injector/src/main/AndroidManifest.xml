@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 空壳 app:无 Activity,仅承载自指 instrumentation。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="GestureInjector" />
+</manifest>
