@@ -36,9 +36,9 @@
 
 **现状定位(2026-08-18)**:pin 保锚已**真机闭环坐实**——平地 drag anchorErr 0.06px、
 增益 1.000(C-V1);近碰撞退化 regime 已压测有界(C-V3);轴隔离 zoom/rotate 已量化
-达成(C-V2);flick 惯性单调收敛已量化(C-V4 flick 路径)。剩余缺口收敛为两处:
-**tilt 的 range 耦合/掠射退化**(C-V5 观感待拍板)与**近地惯性受注入器局限没测到**
-(C-V4 近地路径)。手势全链仍**零自动化回归**(C-P1)——改相机代码只能手动真机验。
+达成(C-V2);惯性收敛 flick + 近地**两条路径均已量化达成**(C-V4)。剩余唯一开放项是
+**tilt 的掠射退化/灵敏度**(C-V5 观感待拍板)。手势全链仍**零自动化回归**(C-P1)——
+改相机代码只能手动真机验;判据侧已全部有真机数字兜底。
 
 ---
 
@@ -49,7 +49,7 @@
 | **C-V1** | **pin 保锚**:手指下世界点跟手,pan/pinch/rotate 全程 anchorErr ≤ 1px | 机制 | ✅ | CAMPROBE 探针仅 debug 变体、每手势 START/MOVE/END 各一行 logcat,release 零开销 | **真机闭环坐实(`16531b80c`)**:平地 drag 43 帧末 0.01px / 峰 0.06px、**本该位移=实际位移=445.5px、增益 1.000**;pinch/rotate 峰 <0.05px。pin 解算求"让 anchor 投到 finger 的 pose",clampNow 沿 eye→anchor 线退出保锚 |
 | **C-V2** | **轴隔离**:pinch 只动 range / rotate 只动 heading,不串轴(契约 2.2) | 机制 | ✅ | CAMPROBE 加 hdg/pit/range 字段(锚点 ENU 帧反解),debug-only | **真机量化(`camprobe.py` 轴Δ)**:**纯 zoom** → Δrange −55.9%、Δheading **+0.000°**、Δpitch **+0.000°**;**纯 rotate**(等距转)→ Δheading −33.6°、Δrange **0.00%**、Δpitch −0.028°。两个手势其余轴严格 <0.03°/0% = **隔离达成**。⚠️ **tilt 不在此判据**:tilt 的锚点在掠射退化区(anchorErr 峰 20px、range 度量爆表 +88km),轴隔离度量对它不适用 → 归 **C-V5**(tilt 是灵敏度设计非刚性锚) |
 | **C-V3** | **近碰撞保锚上界**:高俯仰贴地形时保锚退化有界,anchorErr ≤ ~0.5px | 机制 | ✅ | 无额外开销(径向 fallback 是既有兜底) | **压测坐实(`896edfc79`)**:俯冲触底稳定卡 eyeAlt≈350m(地形~300+`kMinClearanceMeters`50)。高俯仰贴底 anchorErr 峰 ~0.4px(基线 7×)= `constrainEye` 末行**径向抬升 fallback 发火**(eye→anchor 线近水平 `gain<kAnchorExitMinVerticalGain=0.2`)。**亚像素、自限**(远锚点下径向 Δh 换算像素角漂本就小;更极端即抓取 miss 退 spin)。**非 bug**,验证注释"该 regime 保锚判据本就不适用" |
-| **C-V4** | **惯性收敛**:fling 松手后**单调衰减**到停,不跑飞/不早停/不反向 | 机制 | ⚠️ | CAMPROBE tick 期吐 inertiaVel(flick)+ nearVel(近地),debug-only | **flick(Space 模式)路径 ✅ 量化**:高空 fling 角速度曲线 `1.430→1.295→…→0.005→0.000`(帧=29),**单调降=是、收敛停=是**(指数衰减 `exp(-kInertiaDampingPerSecond·t)`)。⚠️ **近地(NearGround)路径未测到**:`input swipe` 末端 ease-out 把释放像素速度压到 <100px/s 阈值下(契约 1.4)不触发——是**注入器局限**(需单指线性恒速注入),非引擎问题。见 **C-P2** |
+| **C-V4** | **惯性收敛**:fling 松手后**单调衰减**到停,不跑飞/不早停/不反向 | 机制 | ✅ | CAMPROBE tick 期吐 inertiaVel(flick)+ nearVel(近地),debug-only;注入台加 `oneFinger` 单指线性注入 | **两条路径均量化达成**:①**flick(Space,pitch<60°)**角速度 `1.430→…→0.000`(帧29),单调降、收敛停(指数 `exp(-kInertiaDampingPerSecond·t)`)。②**近地(NearGround,pitch≥60°)**像素速度 `200.4→175.4→…→11.8`(帧21),单调降、不回升、末 11.8px/s=0.2px/帧 <契约 1.4 停阈(0.5px/帧)→收敛停。近地触发需 `oneFinger`(单指线性恒速,`input swipe` 末端 ease-out 达不到 100px/s 释放阈值) |
 | **C-V5** | **tilt 灵敏度**:双指俯仰跟手、阻尼不过冲、灵敏度合适 | 观感 | 🔒 | — | **像素判断归你**。⚠️ 本轮观察「600px 拖动直接从俯视压到近掠视」疑**偏灵敏**,钉死场景待你拍板。**无几何 ground truth**:俯仰是"手指px→多少度 pitch"的灵敏度设计,非刚性锚约束,anchorErr 对它不适用 |
 | **C-V6** | **不穿地 / 不锁死病态俯仰**:碰撞守卫顶住地面,俯仰约束拒绝恶化净空的方向 | 机制 | ✅ | 廉价地形预判(滤波高,不重采样) | 俯冲触底稳定卡 eyeAlt≈350m 不再下沉(`constrainEye` 楼层 = `max(filteredTerrainHeight,0)+kMinAltitude`);`rotateCameraVerticalAroundPoint` 净空守卫拒绝"让净空更差"的 tilt(贴底时 tilt 压不满俯仰即此守卫)。**零死区离合**:反向立即响应 |
 | **C-V7** | **手势不崩**:双指手势不 crash、pose 无 NaN | 机制 | ✅ | — | 本轮全 6 手势注入无崩溃。⚠️ 排查记录:曾现"每次双指后 app 回桌面"**非引擎 crash**,是 instrumentation targetPackage 跑完 force-stop 的**测试框架伪影**(见记忆),自指独立注入模块已解 |
@@ -84,7 +84,7 @@
 | # | 债 | 影响 | 现状 |
 |---|---|---|---|
 | **C-P1** | **手势全链零自动化回归**:CAMPROBE 是手动真机工具,没进 ctest | 改相机代码(pin 解算/约束/惯性)只能手动注入+肉眼/手算验;回归靠人记得跑 | **未修,工具已就位**。做成"注入 pinch → 读 CAMPROBE → 断言 anchorErr<0.5px"需**真机在环**(host ctest 无 GPU/无相机窗口)。轻量替代:把 pin 解算/约束的纯数值部分抽出做 host 单测(不依赖真机),覆盖 C-V2/C-V4 的判据 |
-| **C-P2** | **近地惯性 / tilt 轴度量未量化**(剩余缺口) | 近地惯性跑飞/早停、tilt 耦合这类回归现在抓不到 | **大部分已修**:CAMPROBE 已加 hdg/pit/range(C-V2 zoom/rotate 达成)+ inertiaVel/nearVel(C-V4 flick 达成)。**剩两处**:①近地惯性触发需**单指线性恒速注入**(现注入台仅双指;`input swipe` ease-out 达不到 100px/s 释放阈值)②tilt 的掠射退化度量(anchorErr 20px)本属 C-V5 观感 |
+| **C-P2** | ~~轴隔离 / 惯性收敛判据未量化~~(已收敛) | — | **已修**:CAMPROBE 加 hdg/pit/range(C-V2)+ inertiaVel/nearVel(C-V4);注入台加 `oneFinger` 单指线性注入(触发近地惯性)。C-V2/C-V4 均已量化。**仅剩** tilt 的掠射退化度量(anchorErr 20px)——本属 C-V5 观感,非机制债 |
 | **C-P3** | **host ctest 不覆盖手势语义**:`tests/unit/camera/` 8 个测试(pose/flight/viewpoint/selector/tethered…)测的是位姿数学与控制器选择,**不碰 pin/anchorErr/惯性** | pin 正确性回归全压在真机手动上 | **部分可缓解**。pin 解算(`solveAnchorRotation`/`applyPinchPin`)、约束(`constrainEye` 沿线牛顿)是纯几何,**可脱离 GPU 做 host 单测**——给定 pose+finger 断言 anchor 投影落点。这是 C-P1 轻量替代的具体落点 |
 
 ---

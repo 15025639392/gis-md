@@ -106,8 +106,11 @@ for g in gestures:
               f"单调降={'是' if nm==0 else f'否({nm}处回升)'} 收敛停={'是' if flick[-1]==0 else '否'}")
         if SHOW_CURVE: print("       vel: " + " ".join(f"{v:.3f}" for v in flick))
     if near and max(near) > 0:
-        # 近地恒速:检查不回升(锁向只缩不放)+ 末帧后停(nearInertiaActive 转 false)
+        # 近地惯性:单调衰减(不回升/不反向),末速 <0.5px/帧(契约 1.4 停阈,
+        # 60fps 折合 30px/s)即视为收敛到停。
         rise = sum(1 for i in range(1, len(near)) if near[i] > near[i-1] + 1e-6)
+        conv = near[-1] < 30.0
         print(f"[{kind}→近地惯性] 帧={len(near)} 峰={max(near):.1f}px/s 末={near[-1]:.1f} "
-              f"不回升={'是' if rise==0 else f'否({rise}处)'} (恒速滑行→horizon裁剪停)")
+              f"单调降={'是' if rise==0 else f'否({rise}处回升)'} "
+              f"收敛停={'是' if conv else '否'}")
         if SHOW_CURVE: print("       vel: " + " ".join(f"{v:.1f}" for v in near))

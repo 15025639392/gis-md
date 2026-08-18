@@ -104,6 +104,50 @@ public class GestureInjector {
                 MotionEvent.ACTION_UP, 1, props, coords);
     }
 
+    /**
+     * 单指线性拖拽/fling。恒速(无 input swipe 的末端 ease-out),用合成恒 dt
+     * 时间戳,故引擎侧算得的**释放速度 = 总距/dur**,稳过近地惯性 100px/s 阈值
+     * (契约 1.4)。C-V4 近地惯性专用。
+     *   -e x0 .. -e y0 .. -e x1 .. -e y1 .. -e steps .. -e dur ..
+     */
+    @Test
+    public void oneFinger() throws InterruptedException {
+        Bundle a = InstrumentationRegistry.getArguments();
+        float x0 = argF(a, "x0", 0), y0 = argF(a, "y0", 0);
+        float x1 = argF(a, "x1", 0), y1 = argF(a, "y1", 0);
+        int steps = Math.max(1, argI(a, "steps", 20));
+        int dur = Math.max(steps, argI(a, "dur", 300));
+
+        UiAutomation ua = InstrumentationRegistry.getInstrumentation().getUiAutomation();
+        PointerProperties[] props = new PointerProperties[]{new PointerProperties()};
+        props[0].id = 0;
+        props[0].toolType = MotionEvent.TOOL_TYPE_FINGER;
+        PointerCoords[] coords = new PointerCoords[]{new PointerCoords()};
+        coords[0].pressure = 1f;
+        coords[0].size = 1f;
+
+        final long down = SystemClock.uptimeMillis();
+        final int perStep = dur / steps;
+
+        coords[0].x = x0; coords[0].y = y0;
+        inject(ua, down, down, MotionEvent.ACTION_DOWN, 1, props, coords);
+
+        // 线性 MOVE + 合成恒 dt 时间戳(down + s*perStep)⇒ 恒速,末段不减速
+        for (int s = 1; s <= steps; s++) {
+            float t = (float) s / steps;
+            coords[0].x = x0 + (x1 - x0) * t;
+            coords[0].y = y0 + (y1 - y0) * t;
+            inject(ua, down, down + (long) s * perStep,
+                    MotionEvent.ACTION_MOVE, 1, props, coords);
+            if (perStep > 0) Thread.sleep(perStep);
+        }
+
+        // UP 停在终点(释放速度由末几帧恒速样本决定)
+        coords[0].x = x1; coords[0].y = y1;
+        inject(ua, down, down + (long) (steps + 1) * perStep,
+                MotionEvent.ACTION_UP, 1, props, coords);
+    }
+
     private static void inject(UiAutomation ua, long downTime, long eventTime,
                                int action, int count,
                                PointerProperties[] props, PointerCoords[] coords) {
