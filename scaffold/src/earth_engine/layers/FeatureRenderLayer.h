@@ -247,6 +247,17 @@ public:
     /// "不稳定")。帧门控经 syncLabelWorkTicket 领取 Pumped 票据此续帧。
     bool hasPendingLabelWork() const;
 
+    /// 七态只读聚合 dump(诊断基建):给定标注,一行看齐全部宿主可见状态,
+    /// 把"跨会话逐层插探针"压成"dump 一眼看谁在说谎"(V27 一天五洞的
+    /// 排查成本教训)。七态 = 驻留(桶)× 烘焙(settled/indexCount)×
+    /// placement(target)× fade(current→target)× 回写(appliedOpacity)
+    /// × 锚点代次(clampRev/重钳队列)× 遮挡 —— 第七态是 shader 侧
+    /// (T2 eeSymbolTerrainVisibility),宿主读不到,不在本 dump。
+    /// nameFilter 非空 = 按标注名子串过滤(无名行只在空过滤时输出)。
+    /// 纯读、不推进任何状态;渲染线程调用(读桶表)。
+    std::string dumpLabelLifecycle(
+        const std::string& nameFilter = std::string()) const;
+
     /// P4:上一次**全量** placement 的耗时与候选数。哨兵只在 >4ms 报,
     /// 拿不到低负载段的点 —— 判"线性还是超线性"需要整条曲线,不是两个点。
     double lastPlacementMs() const { return lastPlacementMs_; }

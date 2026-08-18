@@ -689,6 +689,58 @@ TEST_F(FeatureRenderLayerTest, CrossGenerationDedupNewerWins) {
         << "无重 fade:opacity 已收敛,谓词应为假";
 }
 
+// 七态只读 dump(诊断基建):烘焙前后两个时点各 dump 一次 —— 前者必须
+// 暴露 SRC-ONLY(源在无产物,V27 家族"标注隐形"的高频形态),后者
+// entry 行 fade/applied 齐且与谓词口径一致;name 过滤命中/不命中。
+TEST_F(FeatureRenderLayerTest, DumpLabelLifecycleSevenStates) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    mesh.hasOrigin = true;
+    TileSymbolCpu s;
+    s.lonRad = 6.0 * kDeg;
+    s.latRad = 29.0 * kDeg;
+    s.colorPacked = 1.0f;
+    s.name = "AB";
+    mesh.symbols.push_back(s);
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+    build();
+
+    // 无字体:源已存、entry 未产 —— dump 能看见这个"隐形态"。
+    const std::string pre = layer_->dumpLabelLifecycle();
+    EXPECT_NE(std::string::npos, pre.find("srcs=1 entries=0"))
+        << "无字体阶段应是源在无 entry:\n" << pre;
+    EXPECT_NE(std::string::npos, pre.find("SRC-ONLY")) << pre;
+
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    frame_.deltaSeconds = 0.35;
+    build();  // 翻转帧:补烘 + 即时 placement
+    frame_.deltaSeconds = 0.35;
+    build();  // fade 收敛(0.35 > kFadeSeconds)
+
+    const std::string post = layer_->dumpLabelLifecycle();
+    EXPECT_NE(std::string::npos, post.find("name=AB")) << post;
+    EXPECT_NE(std::string::npos, post.find("fade=1.00->1.00"))
+        << "fade 应已收敛:\n" << post;
+    EXPECT_NE(std::string::npos, post.find("applied=1.00"))
+        << "回写值应与 fade 一致:\n" << post;
+    EXPECT_NE(std::string::npos, post.find("settled=1")) << post;
+    EXPECT_NE(std::string::npos, post.find("pending=0"))
+        << "dump 首行与 hasPendingLabelWork 谓词同口径:\n" << post;
+
+    // name 过滤:命中留行,不命中滤掉 entry 行(层级首行恒在)。
+    EXPECT_NE(std::string::npos,
+              layer_->dumpLabelLifecycle("AB").find("name=AB"));
+    EXPECT_EQ(std::string::npos,
+              layer_->dumpLabelLifecycle("ZZZ").find("name="));
+}
+
 TEST_F(FeatureRenderLayerTest, PlacementThrottledBetweenIntervals) {
     std::vector<uint8_t> font = loadHostFont();
     if (font.empty()) GTEST_SKIP() << "no host font available";

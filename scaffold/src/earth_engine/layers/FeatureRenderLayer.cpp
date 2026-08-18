@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <cstring>
@@ -2135,6 +2136,116 @@ bool FeatureRenderLayer::hasPendingLabelWork() const {
         }
     }
     return false;
+}
+
+std::string FeatureRenderLayer::dumpLabelLifecycle(
+    const std::string& nameFilter) const {
+    // 行协议:首行层级态,随后每桶一行 + 每标注一行(缩进两格)。逐行
+    // 独立可 grep(logcat 单条有截断上限,调用方按 \n 切开打)。
+    char buf[256];
+    std::string out;
+    const uint64_t clampRevCur =
+        terrainSampling_.revision ? terrainSampling_.revision() : 0;
+    const LabelPlacementStats& st = labelPlacement_.stats();
+    std::snprintf(
+        buf, sizeof(buf),
+        "LabelDump layer=%s vis=%d pending=%d await=%d fades=%d reclampQ=%zu "
+        "clampRev=%llu/%llu cdPlace=%.2f cdReclamp=%.2f atlas=%d xt=%zu "
+        "cand=%d placed=%d col=%d horiz=%d proj=%d\n",
+        layerId_.c_str(), visible_ ? 1 : 0, hasPendingLabelWork() ? 1 : 0,
+        labelsAwaitingPlacement_ ? 1 : 0,
+        labelPlacement_.hasPendingFades() ? 1 : 0, pendingReclamp_.size(),
+        static_cast<unsigned long long>(clampRevCur),
+        static_cast<unsigned long long>(lastClampRevision_),
+        placementCooldownSeconds_, reclampCooldownSeconds_,
+        (glyphAtlas_ && glyphAtlas_->ready()) ? 1 : 0, crossTileEntryCount_,
+        st.candidates, st.placed, st.collided, st.culledHorizon,
+        st.culledProjection);
+    out += buf;
+
+    // 每标注一行:fade 的 current→target 读 placement 账本(按 id 键,
+    // 跨桶换代存活),applied 读顶点流回写值 —— 三者不一致时谁在说谎
+    // 一眼可见。src 无对应 entry = 烘焙未产出(字形缺/预算推迟/空产物)。
+    auto emitEntry = [&](const LabelEntry& e, const std::string& name) {
+        if (!nameFilter.empty() &&
+            (name.empty() || name.find(nameFilter) == std::string::npos)) {
+            return;
+        }
+        std::snprintf(buf, sizeof(buf),
+                      "  id=%llu name=%s fade=%.2f->%.2f applied=%.2f\n",
+                      static_cast<unsigned long long>(e.featureId),
+                      name.empty() ? "-" : name.c_str(),
+                      labelPlacement_.opacity(e.featureId),
+                      labelPlacement_.fadeTarget(e.featureId),
+                      e.appliedOpacity);
+        out += buf;
+    };
+
+    // 瓦片桶按 key 排序输出(unordered_map 遍历序不稳定,dump 要可比对)。
+    std::vector<const std::pair<const TileKey, BucketGpu>*> tiles;
+    tiles.reserve(tileBuckets_.size());
+    for (const auto& entry : tileBuckets_) tiles.push_back(&entry);
+    std::sort(tiles.begin(), tiles.end(), [](const auto* a, const auto* b) {
+        const TileKey& ka = a->first;
+        const TileKey& kb = b->first;
+        if (ka.z != kb.z) return ka.z < kb.z;
+        if (ka.x != kb.x) return ka.x < kb.x;
+        return ka.y < kb.y;
+    });
+    for (const auto* entry : tiles) {
+        const TileKey& key = entry->first;
+        const BucketGpu& gpu = entry->second;
+        if (gpu.tileLabelSources.empty() && gpu.labelEntries.empty()) continue;
+        const bool reclampPend =
+            std::find(pendingReclamp_.begin(), pendingReclamp_.end(), key) !=
+            pendingReclamp_.end();
+        std::snprintf(buf, sizeof(buf),
+                      "LabelDump tile z=%d x=%d y=%d srcs=%zu entries=%zu "
+                      "idx=%d settled=%d reclampPend=%d\n",
+                      key.z, key.x, key.y, gpu.tileLabelSources.size(),
+                      gpu.labelEntries.size(), gpu.labelIndexCount,
+                      gpu.labelBakeSettled ? 1 : 0, reclampPend ? 1 : 0);
+        out += buf;
+        for (const LabelEntry& e : gpu.labelEntries) {
+            // entry 名字经 featureId(=crossTile id)回连烘焙源。
+            const std::string* name = nullptr;
+            for (const auto& src : gpu.tileLabelSources) {
+                if (src.featureId == e.featureId) { name = &src.name; break; }
+            }
+            emitEntry(e, name ? *name : std::string());
+        }
+        for (const auto& src : gpu.tileLabelSources) {
+            bool baked = false;
+            for (const LabelEntry& e : gpu.labelEntries) {
+                if (e.featureId == src.featureId) { baked = true; break; }
+            }
+            if (baked) continue;
+            if (!nameFilter.empty() &&
+                src.name.find(nameFilter) == std::string::npos) {
+                continue;
+            }
+            std::snprintf(buf, sizeof(buf),
+                          "  id=%llu name=%s SRC-ONLY(未烘出 entry)\n",
+                          static_cast<unsigned long long>(src.featureId),
+                          src.name.c_str());
+            out += buf;
+        }
+    }
+    // store 桶(编辑路径)只有 entries 无烘焙源,无名 —— 空过滤时才输出。
+    if (nameFilter.empty()) {
+        for (const auto& entry : buckets_) {
+            const BucketGpu& gpu = entry.second;
+            if (gpu.labelEntries.empty()) continue;
+            std::snprintf(buf, sizeof(buf),
+                          "LabelDump store entries=%zu idx=%d\n",
+                          gpu.labelEntries.size(), gpu.labelIndexCount);
+            out += buf;
+            for (const LabelEntry& e : gpu.labelEntries) {
+                emitEntry(e, std::string());
+            }
+        }
+    }
+    return out;
 }
 
 void FeatureRenderLayer::syncLabelWorkTicket() {

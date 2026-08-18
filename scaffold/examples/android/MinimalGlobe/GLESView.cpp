@@ -7,7 +7,9 @@
 #include <android/choreographer.h>
 #include <android/looper.h>
 #include <sched.h>
+#include <sys/system_properties.h>
 #include <cstdio>
+#include <sstream>
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -1289,6 +1291,34 @@ static void renderFrame() {
         if (cand > 0) {
             LOGI("PlaceCurve cand=%zu ms=%.3f", cand,
                  gMvtBasemapLayer->lastPlacementMs());
+        }
+    }
+    // 七态标注 dump 按需触发(免重编译诊断口):
+    //   adb shell setprop debug.ee.labeldump <值> && adb shell input tap 620 900
+    // 值变化才触发一次(app 清不掉系统属性,记上次值去重;重触发换个值)。
+    // 值 "1"/"all" = 全量;其余值当作标注名过滤子串(可给 UTF-8 中文名)。
+    // 逐帧轮询而非 %N 节流:按需渲染下 tap 只给短帧串,跨不过 N 边界就
+    // 永不触发(实测踩过);__system_property_get 是共享内存读,亚微秒。
+    // 仍需至少一帧才会读到(idle 全停时先 tap 顶帧)——诊断口按帧驱动是
+    // 故意的:dump 读桶表必须在渲染线程。
+    {
+        static std::string lastLabelDumpProp;
+        char prop[PROP_VALUE_MAX] = {0};
+        __system_property_get("debug.ee.labeldump", prop);
+        if (prop[0] != '\0' && lastLabelDumpProp != prop) {
+            lastLabelDumpProp = prop;
+            const std::string filter =
+                (lastLabelDumpProp == "1" || lastLabelDumpProp == "all")
+                    ? std::string()
+                    : lastLabelDumpProp;
+            for (FeatureRenderLayer* layer :
+                 {gMvtBasemapLayer, gDemoFeatureLayer}) {
+                if (!layer) continue;
+                // 逐行打(logcat 单条 ~4KB 截断,整段一条会被吞尾)。
+                std::istringstream ss(layer->dumpLabelLifecycle(filter));
+                std::string line;
+                while (std::getline(ss, line)) LOGI("%s", line.c_str());
+            }
         }
     }
     if (gDemoFeatureLayer && frameId % 120 == 0) {

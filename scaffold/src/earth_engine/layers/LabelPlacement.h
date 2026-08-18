@@ -87,6 +87,13 @@ public:
     /// 当前渐变后透明度(0 = 隐藏或未知要素)。
     float opacity(FeatureId id) const;
 
+    /// 该 id 的 fade 目标值(0 = 隐藏或未知要素)。**纯查询,不推进**。
+    /// 与 opacity() 的 current 配对读出在途方向(七态 dump 用)。
+    float fadeTarget(FeatureId id) const {
+        auto it = fades_.find(id);
+        return it == fades_.end() ? 0.0f : it->second.target;
+    }
+
     /// 是否还有 fade 未收敛(current != target)。**纯查询,不推进**。
     /// V27:帧循环据此判"还得再出帧"——fade 靠逐帧 advanceFades 推进,而
     /// 引擎/应用的收敛判据本来看不见它,冷启动瓦片一加载完就停帧,标注 fade
