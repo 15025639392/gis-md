@@ -1,6 +1,7 @@
 #include "FreeGlobeController.h"
 
 #include "../CameraConstraintSolver.h"
+#include "../CameraPose.h"
 #include "../CameraPoseOps.h"
 #include "../../core/geodesy/Cartographic.h"
 #include "../../core/geodesy/Ellipsoid.h"
@@ -342,6 +343,8 @@ void FreeGlobeController::applyNearGroundPan(float xPixels, float yPixels,
 
 void FreeGlobeController::tickNearGroundInertia(double deltaSeconds) {
     const double speed = std::hypot(nearVelocityX_, nearVelocityY_);
+    // C-V4 近地路径:每活跃帧吐 nearVel(恒速滑行,horizon 裁剪后停,不反向)。
+    logCameraProbe("inertiaNear", -1.0, -1.0);
     if (speed <= 1e-9) {
         nearInertiaActive_ = false;
         return;
@@ -807,6 +810,9 @@ void FreeGlobeController::tick(double deltaSeconds) {
                 inertiaAngularVelocity_ = 0.0;
             }
         }
+        // C-V4:每帧吐衰减中的 inertiaVel(此刻已 damp/归零)。主机侧验单调
+        // 衰减到 kMinInertiaAngularVelocity 后停,不跑飞/不早停。
+        logCameraProbe("inertia", -1.0, -1.0);
     }
 
     // 近地拖图惯性（契约 1.4）：像素速度沿锁定方向滑行，受地平线裁剪。
@@ -989,11 +995,36 @@ void FreeGlobeController::logCameraProbe(const char* phase,
     // kMinAltitudeMeters)时 anchorErr 是否仍守住(现版保锚 clamp 应守住)。
     const double eyeAlt =
         Ellipsoid::WGS84().cartesianToCartographic(camera_->position()).height();
+    // C-V2 轴隔离:在锚点 ENU 帧反解 (heading,pitch,roll,range)。锚点整段手势
+    // 固定 ⇒ 帧稳定,各手势前后取差即知只动了哪个轴(pinch→range / rotate→
+    // heading / tilt→pitch)。range=|eye−anchor|。无锚点(miss)时留 0。
+    // inertiaVel:flick 惯性角速度(rad/s),C-V4 衰减收敛用;非惯性期恒 0。
+    double hdgDeg = 0.0, pitDeg = 0.0, rollDeg = 0.0, range = 0.0;
+    if (hasAnchor) {
+        CameraPose pose;
+        pose.eye = camera_->position().raw();
+        pose.direction = camera_->direction().raw();
+        pose.up = camera_->up().raw();
+        const glm::dvec3 originEcef = anchor.raw();
+        double h = 0.0, p = 0.0, r = 0.0;
+        pose.toFrame(originEcef, CameraPose::enuFrameAt(originEcef),
+                     h, p, r, range);
+        const double kRadToDeg = 180.0 / glm::pi<double>();
+        hdgDeg = h * kRadToDeg;
+        pitDeg = p * kRadToDeg;
+        rollDeg = r * kRadToDeg;
+    }
+    // nearVel:近地拖图惯性像素速度(px/s)。flick(Space)走 inertiaVel 指数
+    // 衰减;近地(NearGround)走 nearVel 恒速滑行+horizon 裁剪停,两条 C-V4 路径。
+    const double nearVel = std::hypot(nearVelocityX_, nearVelocityY_);
     platformLog(LogLevel::Info, "CAMPROBE",
-        "%s finger=(%.1f,%.1f) vp=%dx%d eyeAlt=%.2f anchor=%d,%.9g,%.9g,%.9g "
+        "%s finger=(%.1f,%.1f) vp=%dx%d eyeAlt=%.2f "
+        "hdg=%.4f pit=%.4f roll=%.4f range=%.3f inertiaVel=%.6g nearVel=%.4g "
+        "anchor=%d,%.9g,%.9g,%.9g "
         "vpm=%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,"
         "%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g,%.9g",
         phase, fingerX, fingerY, viewportWidth_, viewportHeight_, eyeAlt,
+        hdgDeg, pitDeg, rollDeg, range, inertiaAngularVelocity_, nearVel,
         hasAnchor ? 1 : 0, anchor.x(), anchor.y(), anchor.z(),
         m[0], m[1], m[2], m[3], m[4], m[5], m[6], m[7],
         m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);

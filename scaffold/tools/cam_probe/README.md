@@ -44,9 +44,12 @@ adb logcat -d -s CAMPROBE | python3 tools/cam_probe/camprobe.py   # 聚合峰值
 
 ## 判据
 
-- **anchorErr**(px):被钉世界点当前投影离手指几像素。理想 0。pin 正确性核心判据。
+- **anchorErr**(px)【C-V1/C-V3】:被钉世界点当前投影离手指几像素。理想 0。pin 正确性核心判据。
 - **增益**:实际位移/本该位移(仅 drag 等质心有位移的手势有意义;纯缩放/对称旋转质心不动 → nan)。
-- ⚠️ **tilt 无几何 ground truth**:俯仰是"手指px→多少度 pitch"的灵敏度设计,不是刚性锚约束,anchorErr 对它不适用。
+- **轴Δ**【C-V2】:锚点 ENU 帧首→末 Δheading/Δpitch/Δrange。纯 zoom 只动 range、纯 rotate 只动 heading,余轴 ≈0=隔离。
+- **惯性**【C-V4】:`flick惯性`(Space 模式 inertiaVel 指数衰减,验单调降到停)/`近地惯性`(NearGround nearVel 恒速滑行,验不回升)。
+- ⚠️ **tilt 无几何 ground truth**:俯仰是"手指px→多少度 pitch"的灵敏度设计,不是刚性锚约束,anchorErr/轴Δ 均不适用(北极星 C-V5)。
+- ⚠️ **近地惯性触发需单指线性恒速注入**:`input swipe` 末端 ease-out 达不到 100px/s 释放阈值。
 
 ## 已知盲区
 
