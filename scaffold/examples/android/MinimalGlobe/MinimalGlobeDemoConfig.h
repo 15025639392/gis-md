@@ -282,9 +282,21 @@ constexpr bool kEnableSeamEdgeMismatchProbe = false;
 // 2026-08-18 默认开启:V27 家族五洞(placement/fade/字形烘焙/重钳/换代)全是
 // "依赖帧循环的收敛没申报 → 停帧饿死"同构病,症状零报错。本自检是这类漏报
 // 的**构造性捕网**——任何子系统忘了申报,idle 前画面仍在变,它就报警
-// (ShadowVerify Error 行)。成本只在 idle 临界一次(20 帧采样),稳态零。
-// 真机验收流程应看它的 changedFrames 读数(健康=无 Error 行)。
-constexpr bool kShadowVerifyIdle = true;
+// (ShadowVerify Error 行)。真机验收流程应看它的 changedFrames 读数(健康=无 Error 行)。
+//
+// ⚠️ 2026-08-19 改为 **仅 debug 构建默认开**(NDEBUG 未定义时)。上面 line 277
+// "严禁性能测量时开启"与"默认开启"本自相矛盾——性能测量/生产必须 release。
+// 且"成本只在 idle 一次、稳态零"是**快机直觉,弱机被真机推翻**:V1818T
+// (GPU 积压 ~124ms)上,验证窗口每帧的同步 glReadPixels 排空整条管线 = **261ms/帧
+// × 20 帧 = 松手后 ~5s 顿挫**(交互卡根因排查实测,readback 排的是 CPU 抢跑出来的
+// 多帧积压)。故:debug 保留捕网(dev 期抓收敛漏报),release/perf/production 关闭
+// (帧时/GPU 读数不被污染、交互无 readback 顿挫)。
+// **要在 release 上跑 ShadowVerify 验收**:编 debug 变体,或临时把本块改成恒 true。
+#ifdef NDEBUG
+constexpr bool kShadowVerifyIdle = false;  // release / perf / production:关
+#else
+constexpr bool kShadowVerifyIdle = true;   // debug / dev:开(帧收敛漏报捕网)
+#endif
 
 // 注:北极星 SVT 页存储(terrainPageStore)已随 decouple 升为生产主路径默认开
 // (见 MinimalGlobeDemoConfig.cpp 中 config.terrainPageStore = true 及 §15.3⑤),

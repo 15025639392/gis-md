@@ -71,6 +71,8 @@ V27 家族一天连出五洞(placement 供给/fade/字形烘焙预算/贴地重�
 配套禁令与兜底:
 - **禁止帧数节流**(`frameId >= last + N`):按需渲染下帧是稀缺资源,帧数
   不再是时间的代理,改 wall-clock 秒。
-- **兜底网 = ShadowVerify**(demo 已默认开):idle 判定后画面仍在变即报
-  Error——漏申报的构造性捕网。真机验收流程看它无 Error 行;
-  它报警时先怀疑"谁忘了申报",再怀疑画面本身。
+- **兜底网 = ShadowVerify**(**debug 构建默认开,release/perf/production 关**——
+  2026-08-19 改,见 `MinimalGlobeDemoConfig.h` NDEBUG 门控;弱机上验证窗口的
+  同步 glReadPixels 每帧排空管线=松手后数秒顿挫,污染帧时,故 release 关):
+  idle 判定后画面仍在变即报 Error——漏申报的构造性捕网。真机验收要跑它时编 debug
+  变体(或临时改恒开);它报警时先怀疑"谁忘了申报",再怀疑画面本身。
