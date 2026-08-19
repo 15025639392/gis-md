@@ -16,8 +16,7 @@
 - `terrain.md`(地形:几何质感 / 加载期 / 源覆盖兜底 / 跨平台 / 性能债)
 - `lighting.md`(光照/颜色:天空 / 大气雾 / 日落着色 / HDR 线性管线 / 技术债)
 - `camera.md`(相机/手势:pin 保锚 / 轴隔离 / 惯性 / 碰撞约束 / tilt 灵敏度 / 真机闭环基建)
-
-imagery 待补。
+- `imagery.md`(影像:缺失退化祖先兜底 / 缓存网络 / GCJ 配准 / 合规 / 性能债)
 
 **编号命名空间**:`vector.md` 用无前缀 `V*`/`P*`(历史既有,不动);
 `terrain.md` 用 `T-V*`/`T-P*`;`lighting.md` 用 `L-V*`/`L-P*`;`camera.md` 用 `C-V*`/`C-P*`;
