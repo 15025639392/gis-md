@@ -53,6 +53,7 @@
 | **C-V5** | **tilt 灵敏度**:双指俯仰跟手、阻尼不过冲、灵敏度合适 | 观感 | 🔒 | — | **像素判断归你**。⚠️ 本轮观察「600px 拖动直接从俯视压到近掠视」疑**偏灵敏**,钉死场景待你拍板。**无几何 ground truth**:俯仰是"手指px→多少度 pitch"的灵敏度设计,非刚性锚约束,anchorErr 对它不适用 |
 | **C-V6** | **不穿地 / 不锁死病态俯仰**:碰撞守卫顶住地面,俯仰约束拒绝恶化净空的方向 | 机制 | ✅ | 廉价地形预判(滤波高,不重采样) | 俯冲触底稳定卡 eyeAlt≈350m 不再下沉(`constrainEye` 楼层 = `max(filteredTerrainHeight,0)+kMinAltitude`);`rotateCameraVerticalAroundPoint` 净空守卫拒绝"让净空更差"的 tilt(贴底时 tilt 压不满俯仰即此守卫)。**零死区离合**:反向立即响应 |
 | **C-V7** | **手势不崩**:双指手势不 crash、pose 无 NaN | 机制 | ✅ | — | 本轮全 6 手势注入无崩溃。⚠️ 排查记录:曾现"每次双指后 app 回桌面"**非引擎 crash**,是 instrumentation targetPackage 跑完 force-stop 的**测试框架伪影**(见记忆),自指独立注入模块已解 |
+| **C-V8** | **输入跟手时延(latch 新鲜度)**:拖动时地图不慢半拍,手指→光子滞后不被流水线深度放大 | 观感(带机制子信号) | ⚠️ | fence 门控,吞吐不掉(cadence 两模式同为 ~6-8fps) | **2026-08-19 立并做**:弱机 GPU-bound 时 CPU 领跑 GPU,latch 到的 pose 要过多帧才上屏 → 观感慢半拍。**机制子信号已达成(真机 A/B,V1818T)**:OFF 时 GPU 阻塞落在 `swap=84-144ms`(latch 之后);ON 时整段搬到 `latch=120-158ms`(fence,latch 之前)、swap 塌到 0.8-1.5ms → **latch 到的指位新鲜 ~130ms、render-ahead 压到深度 1**。`FrameLoop latch=` 是判据锚:≈单帧 GPU=方案成立(本次坐实);≈0=深度已是 1、无收益。**实现**:fence 门控 late-latch(`GLESView` 渲染线程,把驱动内隐式 GPU 等待挪到 latch 前,`debug.ee.latelatch` 运行期 A/B,默认开),零外推无抖动;深度 1 对深度 2 有 ~6ms/帧 GPU 气泡(可调 fence[N-2] 换零气泡但少一帧收益,默认取跟手)。**⚠️ 观感(跟手感)判断归你**——真机拖动对拍待你验:是否更跟手、有无副作用。剩余 render 本身 ~100ms 那部分需预测层才能遮,留作第二刀 |
 
 ---
 

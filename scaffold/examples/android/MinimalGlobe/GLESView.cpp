@@ -432,8 +432,18 @@ static bool initEGL(ANativeWindow* window) {
     return true;
 }
 
+// C-V8 late-latch:上一帧 GPU 完成栅栏(仅渲染线程访问)。声明于此因 destroyEGL
+// 在 teardown 处先引用它;创建/等待逻辑见 renderFrame 前的 late-latch 段。
+static GLsync gPrevFrameFence = nullptr;
+
 static void destroyEGL() {
     clearDemoEngineObjects();
+
+    // C-V8 late-latch fence 随 context 失效,趁 context 仍 current 回收。
+    if (gPrevFrameFence) {
+        glDeleteSync(gPrevFrameFence);
+        gPrevFrameFence = nullptr;
+    }
 
     eglMakeCurrent(gDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
     if (gContext != EGL_NO_CONTEXT) eglDestroyContext(gDisplay, gContext);
@@ -1212,6 +1222,44 @@ static void refreshClusterDisplay() {
          clusters.size());
 }
 
+// ── 输入 late-latch:fence 门控的 render-ahead cap(C-V8)────────────────
+// 弱机 GPU-bound 时 CPU 领跑 GPU 2-3 帧,latch 到的 pose 要等多帧才上屏 →
+// 手指→光子滞后 = 流水线深度 × 帧时,而非 latch 时机。把驱动内那段隐式 GPU
+// 等待用显式 fence 挪到 latch **之前**:等完再排输入 → latch 到更新鲜的指位,
+// 同时把 render-ahead 压到深度 1。等待总量不变(GPU-bound),不掉吞吐;快机
+// fence 立即返回 → 0 成本、自适应,无需按机型开关。
+// 运行期 A/B:`adb shell setprop debug.ee.latelatch 0` 关(默认开)。
+// (gPrevFrameFence 声明上移至 destroyEGL 之前,因其在 teardown 处先被引用。)
+static double gFenceWaitMs = 0.0;          // 上一次门控等待耗时(探针)
+
+static bool lateLatchEnabled() {
+    char prop[PROP_VALUE_MAX] = {0};
+    __system_property_get("debug.ee.latelatch", prop);
+    return prop[0] != '0';  // 未设或非 "0" → 开
+}
+
+// onFrame 顶部、drainTasks 之前调用:等上一帧 GPU 完成(render-ahead≤1),
+// 使随后排空的输入尽量新鲜。带超时,GPU 丢失时不挂死。
+static void waitPrevFrameFenceForLatch() {
+    gFenceWaitMs = 0.0;
+    if (!gPrevFrameFence) return;
+    if (!lateLatchEnabled()) {
+        // 关闭时不等待,但仍回收 fence,避免句柄泄漏(A/B 切换即时生效)。
+        glDeleteSync(gPrevFrameFence);
+        gPrevFrameFence = nullptr;
+        return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    // GL_SYNC_FLUSH_COMMANDS_BIT:确保 fence 已 flush,否则弱驱动下可能永不 signal。
+    // 超时 200ms > 单帧 GPU 上界:正常必在此前 signal;超时则放行不挂死。
+    glClientWaitSync(gPrevFrameFence, GL_SYNC_FLUSH_COMMANDS_BIT,
+                     200ull * 1000ull * 1000ull);
+    gFenceWaitMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now() - t0).count();
+    glDeleteSync(gPrevFrameFence);
+    gPrevFrameFence = nullptr;
+}
+
 static void renderFrame() {
     if (!gEngineReady) return;
 
@@ -1303,6 +1351,13 @@ static void renderFrame() {
         gEngine->render(0.0);  // auto-delta（内部 update；必要时 beginFrame→render→endFrame）
     const double engineMs = std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now() - engineStart).count();
+
+    // C-V8 late-latch:scene draw 提交后打栅栏,下一帧顶部 waitPrevFrameFenceForLatch
+    // 等它 → render-ahead≤1。仅真出帧时打;旧栅栏理应已在本帧顶部回收,防御性再清。
+    if (presented) {
+        if (gPrevFrameFence) glDeleteSync(gPrevFrameFence);
+        gPrevFrameFence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    }
 
     const auto postEngineStart = std::chrono::steady_clock::now();
     gHeadingRadians = static_cast<float>(gEngine->cameraHeadingRadians());
@@ -1397,7 +1452,7 @@ static void renderFrame() {
         const auto& stageDiag = gEngine->diagnostics();
         LOGI(
             "FrameLoop frame=%llu total=%.3f pre=%.3f mvt=%.3f engine=%.3f "
-            "post=%.3f swap=%.3f callback=%.3f cpu=%d hint=%d presented=%d swapOk=%d "
+            "post=%.3f swap=%.3f latch=%.2f callback=%.3f cpu=%d hint=%d presented=%d swapOk=%d "
             "upd=%.2f build=%.2f submit=%.2f terrUpd=%.2f",
             static_cast<unsigned long long>(frameId),
             frameTotalMs,
@@ -1406,6 +1461,9 @@ static void renderFrame() {
             engineMs,
             postEngineMs,
             swapMs,
+            // C-V8 late-latch 门控等待:≈单帧 GPU 时长 → render-ahead 曾≥2、方案成立;
+            // ≈0 → 深度已是 1、这条无收益(该转预测)。engine 会相应从阻塞变纯 CPU。
+            gFenceWaitMs,
             callbackIntervalMs,
             // 渲染线程当前所在核心。这条线程是裸 std::thread(无优先级/无亲和/
             // 无 ADPF 提示),Android 不知道它有显示截止期,实测 ~91% 的帧被放在
@@ -1790,6 +1848,9 @@ private:
     void onFrame() {
         framePending_ = false;
         if (!running_.load() || paused_.load()) return;
+        // C-V8 late-latch:先等上一帧 GPU 完成(render-ahead≤1),再排输入,
+        // 使 latch 到的指位尽量新鲜。等待被从驱动内 draw 提交处挪到此处。
+        waitPrevFrameFenceForLatch();
         drainTasks();   // 输入先于渲染，保证事件同帧生效
         renderFrame();
         // 帧级按需渲染:引擎说不用再画就不排下一次 vsync 回调,线程回到
