@@ -104,9 +104,19 @@ public:
     /// （因而无测试覆盖），并入出口是后续的事。
     static constexpr double kMaxDistanceEarthRadii = 30.0;
 
+    /// 碰撞抬升**每帧**上限（米）：低空接近山脊/悬崖时，前瞻地板会把"相机
+    /// 高度"一步抬到崖顶（实测单帧 +950m/1779m）。限速后把弹跳摊成受控爬升。
+    /// 按**帧**而非按事件计：同一帧内多次 constrainEye（近地爬升保锚的重钉
+    /// 循环、pinch 每帧两轮解算）共享该预算，避免 2×25m/帧 的叠加弹跳。
+    /// 真穿地（低于脚下地形）/扫掠跨脊不设上限，立即抬满保 C-V6。
+    static constexpr double kMaxCollisionClimbPerFrameMeters = 25.0;
+
     /// 探针"每帧至多重建一次"的帧时钟推进。每帧恰好调一次（含手势事件内的
     /// update(0.0)——高频手势事件因此共享同帧探针）。
-    void beginFrame() { ++frameIndex_; }
+    void beginFrame() {
+        ++frameIndex_;
+        frameClimbRemainingMeters_ = kMaxCollisionClimbPerFrameMeters;
+    }
 
     /// 地形碰撞解算：把 eye 钳到滤波后地形高 + 视觉下限之上（仅抬升，不下压），
     /// 途中刷新探针/滤波与 groundState。
@@ -176,6 +186,9 @@ private:
     TerrainProbe terrainProbe_;
     uint64_t frameIndex_ = 0;
     uint64_t lastProbeRebuildFrame_ = ~0ull;
+    /// 本帧剩余爬升预算（米）：beginFrame 重置为每帧上限；constrainEye 的
+    /// 限速分支按 min(上限, 剩余) 截断并消耗。见 kMaxCollisionClimbPerFrameMeters。
+    double frameClimbRemainingMeters_ = kMaxCollisionClimbPerFrameMeters;
 
     // 上次解算落定的位姿：eye 作扫掠基准，(eye, dir) 作帧末指纹。见 commitPose。
     bool hasLastResolvedPose_ = false;

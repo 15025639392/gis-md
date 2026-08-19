@@ -524,6 +524,13 @@ struct TilesetTile {
     uint64_t appliedChildTopologyRevision = 0;
     uint64_t appliedChildMaterializationConfiguration = 0;
     bool childMaterializationStateValid = false;
+    // 非完成态背压(2026-08-20:子瓦片加载中 → materializationComplete=false →
+    // state 恒 invalid → 每帧全量重走 ensureChildren,真机 4 瓦/帧白跑)。
+    // 上次非完成尝试时的输入/拓扑 revision;两者都未变 ⇒ 内容没到,重试无意义,
+    // TileChildFrameMaterializer 直接早退。子瓦片内容/包围体到达会经
+    // notifyChildMaterializationStateChanged bump 输入 revision → 自动恢复重试。
+    uint64_t lastChildMaterializationAttemptInputRevision = 0;
+    uint64_t lastChildMaterializationAttemptTopology = 0;
 
     // Provider metadata is immutable by default. Providers that explicitly
     // publish a metadata revision may refresh an existing Unloaded tile once

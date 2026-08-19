@@ -42,12 +42,6 @@ constexpr double kProbeDriftRebuildFraction = 0.0375;
 // 锚点退出方向的最小竖直增益:|dot(unit(eye−anchor), n̂)| 低于此值时后退
 // 换不来高度,退回径向抬升(该位姿下锚点已在掠射病态区,保锚判据不适用)。
 constexpr double kAnchorExitMinVerticalGain = 0.2;
-// 碰撞抬升单事件上限(米):低空接近山脊/悬崖时,前瞻地板会把"相机高度"一步
-// 抬到崖顶高度(实测单帧 +950m/1779m 位移)。限速后把弹跳摊成受控爬升,锚点
-// 仍沿 eye→anchor 线保持;真穿地(低于脚下地形)不设上限,立即抬出保 C-V6。
-// 取值是真机标定项:过大回到弹跳,过小低帧率下爬得慢。
-constexpr double kMaxCollisionClimbPerEventMeters = 25.0;
-
 } // namespace
 
 void CameraConstraintSolver::setTerrainHeightFunc(TerrainHeightFunc func) {
@@ -231,14 +225,18 @@ glm::dvec3 CameraConstraintSolver::constrainEye(
     const double targetHeight =
         ellipsoid.cartesianToCartographic(Vec3(target)).height();
     const double altDelta = targetHeight - cart.height();
-    if (!belowUnderFloor && !sweepDrivesFloor &&
-        altDelta > kMaxCollisionClimbPerEventMeters) {
+    // 每帧预算共享(见 kMaxCollisionClimbPerFrameMeters):同帧多次 constrainEye
+    // 只累计消耗一次预算,消除"单事件 25m × 多次解算"的帧内叠加弹跳。
+    const double climbCap = std::min(
+        kMaxCollisionClimbPerFrameMeters, frameClimbRemainingMeters_);
+    if (!belowUnderFloor && !sweepDrivesFloor && altDelta > climbCap) {
         const glm::dvec3 exitVec = target - eye;
         const double exitLen = glm::length(exitVec);
         if (exitLen > 1e-9) {
-            target = eye + exitVec *
-                (kMaxCollisionClimbPerEventMeters / altDelta);
+            target = eye + exitVec * (climbCap / altDelta);
         }
+        frameClimbRemainingMeters_ = std::max(
+            0.0, frameClimbRemainingMeters_ - climbCap);
     }
     return target;
 }

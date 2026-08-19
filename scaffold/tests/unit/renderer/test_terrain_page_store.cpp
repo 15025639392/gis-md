@@ -841,6 +841,50 @@ TEST(TerrainPageStoreInFlight, FrameCounterResetIsTreatedAsProgress) {
     EXPECT_TRUE(TerrainPageStore::pageCountsAsInFlight(false, 0, 5000));
 }
 
+// ---- compose 派发门(2026-08-20:拖动期 196 items/60tick 无上限入队把共享
+// 8 线程池撑爆,渲染线程单次入队被拖 23.4ms)----
+// 每帧至多入队 maxComposeDispatchesPerFrame 个,超出的留在待派队列,后续 tick
+// 先派积压再派新到 —— 只限渲染线程入队量,不改变 worker 吞吐。
+TEST(TerrainPageStoreComposeBudget, DispatchCappedPerFrameAndQueueDrains) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 8;
+    cfg.pageSizeTexels = 4;
+    cfg.maxComposeDispatchesPerFrame = 2;
+    cfg.composeWorkers = &AsyncSystem::pool();
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    const TileKey pageTileKey{"Geographic-TMS", 3, 1, 1};
+    const uint64_t pageKey =
+        TerrainPageStore::packKeyForTest(pageTileKey);
+    store.debugCreatePageForTest(pageKey, 0);
+
+    auto makeImage = []() {
+        auto img = std::make_unique<DecodedImage>();
+        img->width = 4;
+        img->height = 4;
+        img->channels = 4;
+        img->pixels.assign(4u * 4u * 4u, 128);
+        return img;
+    };
+    for (int i = 0; i < 5; ++i) {
+        store.debugDeliverDecodedImage(pageKey, 0, i, 0, 0, 0, makeImage());
+    }
+
+    store.tick();  // 5 个到货,预算 2 → 2 入队、3 待派
+    EXPECT_EQ(store.composeDispatchedThisFrame(), 2);
+    EXPECT_EQ(store.pendingComposeCount(), 3);
+
+    store.tick();  // 待派 3 → 2 入队、1 待派(先派积压,无新到)
+    EXPECT_EQ(store.composeDispatchedThisFrame(), 2);
+    EXPECT_EQ(store.pendingComposeCount(), 1);
+
+    store.tick();  // 待派 1 → 1 入队、0 待派
+    EXPECT_EQ(store.composeDispatchedThisFrame(), 1);
+    EXPECT_EQ(store.pendingComposeCount(), 0);
+}
+
 // ===== [瓦界对齐] computeGeomAffine:几何 UV → 源格逐瓦仿射 =====
 // 背景:instanced 管线的 psUv 是共享模板几何 UV,GCJ 下喂给 details-UV 标定的
 // origin/span 会差出瓦包围矩形翘曲量(真机瓦界错缝 ~30m,肇事瓦对

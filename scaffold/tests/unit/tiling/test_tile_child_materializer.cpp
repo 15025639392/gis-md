@@ -687,6 +687,75 @@ TEST(TileChildMaterializerTest,
 }
 
 TEST(TileChildMaterializerTest,
+     IncompleteMaterializationBacksOffUntilInputChanges) {
+    auto scheme = TileScheme::createGeographicTMS();
+    const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile parent(parentKey, scheme->tileToRectangle(parentKey));
+    parent.geometricError = 100.0;
+
+    std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
+    bool childAvailable = false;
+    int ensureCalls = 0;
+    auto ensure = [&tiles, &scheme, &childAvailable, &ensureCalls](
+                      const TileKey& key) -> TilesetTile* {
+        ++ensureCalls;
+        if (!childAvailable) {
+            return nullptr;  // 子瓦片未就绪 → linkContentChildren 判不完成
+        }
+        const std::string cacheKey = cacheKeyFor(key);
+        auto it = tiles.find(cacheKey);
+        if (it == tiles.end()) {
+            it = tiles.emplace(
+                cacheKey,
+                std::make_unique<TilesetTile>(
+                    key, scheme->tileToRectangle(key)))
+                     .first;
+        }
+        return it->second.get();
+    };
+    auto availability = [](const TileKey&) {
+        return TileAvailabilityState::Available;
+    };
+    TileChildFrameMaterializeInput input{
+        parent,
+        {TileKey{"Geographic-TMS", 1, 0, 0}},
+        2,
+        true,
+        false,
+        true,
+        nullptr,
+        7};
+
+    const TileChildFrameMaterializeResult first =
+        TileChildFrameMaterializer::ensureChildren(
+            input, ensure, availability);
+    EXPECT_FALSE(first.fastPath);
+    EXPECT_EQ(1, ensureCalls);
+    EXPECT_FALSE(parent.childMaterializationStateValid);
+
+    // 输入/拓扑 revision 未变 → 背压早退,不再每帧全量重走。
+    const TileChildFrameMaterializeResult second =
+        TileChildFrameMaterializer::ensureChildren(
+            input, ensure, availability);
+    EXPECT_FALSE(second.fastPath);
+    EXPECT_FALSE(second.changed);
+    EXPECT_EQ(1, ensureCalls) << "内容未变:背压应阻止每帧重走 ensureChildren";
+
+    // 子瓦片就绪 + 输入 revision 变化(真实路径=子瓦片内容/包围体到达经
+    // notifyChildMaterializationStateChanged bump)→ 恢复重试并完成物化。
+    childAvailable = true;
+    parent.invalidateChildMaterialization();
+    const TileChildFrameMaterializeResult third =
+        TileChildFrameMaterializer::ensureChildren(
+            input, ensure, availability);
+    EXPECT_TRUE(third.changed);
+    EXPECT_EQ(2, ensureCalls);
+    ASSERT_EQ(1u, parent.children.size());
+    EXPECT_EQ((TileKey{"Geographic-TMS", 1, 0, 0}),
+              parent.children.front()->key);
+}
+
+TEST(TileChildMaterializerTest,
      ChildTopologyRevisionInvalidatesStableMaterialization) {
     auto scheme = TileScheme::createGeographicTMS();
     const TileKey parentKey{"Geographic-TMS", 0, 0, 0};
@@ -849,6 +918,10 @@ TEST(TileChildMaterializerTest,
     EXPECT_EQ(4, availabilityChecks);
 
     allowEnsure = true;
+    // 子瓦片变可创建 = 输入变化:真实路径里 ensureTile 建子瓦片/内容到达会经
+    // notifyChildMaterializationStateChanged bump 父瓦片输入 revision,背压据此
+    // 恢复重试(见 IncompleteMaterializationBacksOffUntilInputChanges)。
+    parent.invalidateChildMaterialization();
     const TileChildFrameMaterializeResult second =
         TileChildFrameMaterializer::ensureChildren(
             input,

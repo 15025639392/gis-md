@@ -49,6 +49,20 @@ public:
             return TileChildFrameMaterializeResult{false, false, true};
         }
 
+        // 非完成态背压:上次尝试因子瓦片未就绪而未完成,此后输入/拓扑 revision
+        // 都没变 ⇒ 内容没到,重走结果必然相同。直接早退(不跑 ensure/availability,
+        // 不建任务),等子瓦片内容/包围体到达 bump 输入 revision 再恢复 ——
+        // 消灭「加载中瓦片每帧全量重走」的白跑(真机 4 瓦/帧)。availability
+        // boundary 分支(等待内容解析)不走这里:它每次都要重新排队 urgent 加载。
+        if (hasReliableTopologyVersion &&
+            !input.tile.childMaterializationStateValid &&
+            input.tile.lastChildMaterializationAttemptInputRevision ==
+                input.tile.childMaterializationInputRevision &&
+            input.tile.lastChildMaterializationAttemptTopology ==
+                input.childTopologyRevision) {
+            return TileChildFrameMaterializeResult{false, false, false};
+        }
+
         TileChildFrameMaterializeResult result;
         bool materializationComplete = true;
         if (!input.contentChildKeys.empty()) {
@@ -91,6 +105,15 @@ public:
             input.tile.childMaterializationStateValid = true;
         } else {
             input.tile.childMaterializationStateValid = false;
+            // 记录本次尝试的 revision:下次进来若仍未变则被上方背压早退。
+            // 仅可靠拓扑版本走背压(无版本时保持旧行为:每帧重试,防旧 provider
+            // 不 bump revision 导致子瓦片永不物化)。
+            if (hasReliableTopologyVersion) {
+                input.tile.lastChildMaterializationAttemptInputRevision =
+                    input.tile.childMaterializationInputRevision;
+                input.tile.lastChildMaterializationAttemptTopology =
+                    input.childTopologyRevision;
+            }
         }
         return result;
     }

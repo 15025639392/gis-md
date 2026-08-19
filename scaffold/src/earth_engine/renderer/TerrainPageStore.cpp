@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -567,6 +568,41 @@ void TerrainPageStore::enumerateSubtileKeys(const TileKey& tileKey,
     }
 }
 
+TerrainPageStore::DeterminationSignature
+TerrainPageStore::makeDeterminationSignature(
+    const SelectorView& view,
+    const std::vector<TilesetTile*>& visibleTiles,
+    double terrainMaxScreenSpaceError) {
+    DeterminationSignature sig;
+    sig.position = view.position.raw();
+    sig.direction = view.direction.raw();
+    const double* m = view.projectionMatrix.data();
+    for (int i = 0; i < 16; ++i) {
+        sig.proj[static_cast<size_t>(i)] = m[i];
+    }
+    sig.viewportHeight = view.viewportHeightPixels;
+    sig.sseThreshold = std::max(1e-3, terrainMaxScreenSpaceError);
+    // FNV-1a:packKey(瓦片 key) + SSE 位模式。SSE 随内容加载/几何变化,
+    // 包含它 = LOD 换代/细化必然改变签名(该跑就跑),稳态不变(该跳就跳)。
+    uint64_t h = 0xcbf29ce484222325ULL;
+    for (TilesetTile* tile : visibleTiles) {
+        if (!tile) {
+            continue;
+        }
+        const uint64_t k = packKey(tile->key);
+        uint64_t sseBits = 0;
+        static_assert(sizeof(sseBits) == sizeof(double));
+        std::memcpy(&sseBits, &tile->selectionFrameState.screenSpaceError,
+                    sizeof(sseBits));
+        h ^= k;
+        h *= 0x100000001b3ULL;
+        h ^= sseBits;
+        h *= 0x100000001b3ULL;
+    }
+    sig.visibleTilesHash = h;
+    return sig;
+}
+
 void TerrainPageStore::updateVisiblePages(
     const SelectorView& view,
     const std::vector<TilesetTile*>& visibleTiles,
@@ -576,12 +612,6 @@ void TerrainPageStore::updateVisiblePages(
     // 状态对账 —— 迟一帧只会多渲一帧(安全方向),而漏对账是永远停不下来。
     syncWorkTicket();
     lastIndirUploadMs_ = 0.0;  // [churn 归因] 本帧两个间接纹理上传累计,逐帧清零
-    ++pageDetFrameCounter_;
-    // 逐帧重置合批资格判因:不重置的话 worstResidentRatio_ 会单调下降成历史最差值,
-    // 报的就不再是"此刻",而 A/B 里最怕的正是把陈旧值当当前值读。
-    residencyCheckedTiles_ = 0;
-    fullyResidentTiles_ = 0;
-    worstResidentRatio_ = 1.0f;
     if (!arrayTexture_ || providers.empty() || providers.front() == nullptr ||
         visibleTiles.empty()) {
         return;
@@ -597,6 +627,32 @@ void TerrainPageStore::updateVisiblePages(
         providers_ = detProvidersScratch_;
         clearAllComposedPages();
     }
+
+    // ==== 静止帧跳过(2026-08-20:settle 期 psUvp 2.8-9ms 的构成是分类+驻留
+    // 编码+双间接纹理上传,全部每帧无条件重跑)====
+    // 分类只依赖视图签名(position/direction/投影矩阵/视口高/SSE 阈值);
+    // 驻留编码只依赖页状态(建/淘汰/上传/换肤,由 determinationDirtyRevision_
+    // 跟踪)。二者同时未变 ⇒ 本帧结果与上帧逐位相同,整段跳过。页上传到达会
+    // bump 脏版本 → 下一帧照常重编码点亮;LRU 的 touch/淘汰只发生在循环内,
+    // 跳过期间无任何 acquire,故不会漏 touch 导致可见页被误淘汰。
+    const DeterminationSignature signature =
+        makeDeterminationSignature(view, visibleTiles,
+                                   terrainMaxScreenSpaceError);
+    if (hasLastDeterminationSignature_ &&
+        lastDeterminationSignature_ == signature &&
+        lastDeterminationDirtyRevision_ == determinationDirtyRevision_) {
+        ++determinationSkippedFrames_;
+        return;
+    }
+    hasLastDeterminationSignature_ = true;
+    lastDeterminationSignature_ = signature;
+    lastDeterminationDirtyRevision_ = determinationDirtyRevision_;
+    ++pageDetFrameCounter_;
+    // 逐帧重置合批资格判因:不重置的话 worstResidentRatio_ 会单调下降成历史最差值,
+    // 报的就不再是"此刻",而 A/B 里最怕的正是把陈旧值当当前值读。
+    residencyCheckedTiles_ = 0;
+    fullyResidentTiles_ = 0;
+    worstResidentRatio_ = 1.0f;
     RasterOverlayTileProvider* provider = providers.front();
     const TileScheme& scheme = provider->getTileScheme();
     const int providerMaxLevel = provider->getMaximumLevel();
@@ -1227,11 +1283,11 @@ void TerrainPageStore::updateVisiblePages(
         platformLog(LogLevel::Warning, "PageDet",
                     "uniquePages=%d residentPages=%d uploadedTotal=%d "
                     "visibleCappedTiles=%d zMin=%d zMax=%d maxTileSse=%.0f "
-                    "coarseFarCells=%d sources=%d complete=%d partial=%d "
+                    "coarseFarCells=%d skipped=%d sources=%d complete=%d partial=%d "
                     "fullyResident=%d/%d worstCellRatio=%.2f",
                     lastVisiblePageCount_, pool_.residentCount(),
                     uploadedLayerTotal_, visibleCappedTiles, logZMin, logZMax,
-                    maxTileSse, coarseFarCells,
+                    maxTileSse, coarseFarCells, determinationSkippedFrames_,
                     static_cast<int>(providers_.size()), completePages,
                     partialPages,
                     fullyResidentTiles_, residencyCheckedTiles_,
@@ -1350,6 +1406,7 @@ void TerrainPageStore::clearAllComposedPages() {
     pages_.clear();
     // pool_ 的槽位不清:key 仍驻留 → 下次 acquire 返回同一 layer、try_emplace 报
     // inserted → 重新 kick。槽位有界不泄漏,且省一轮 LRU 抖动。
+    ++determinationDirtyRevision_;  // 全部页作废 → 静止帧跳过立即失效
 }
 
 void TerrainPageStore::setRoadFieldStyleUniforms(
@@ -1380,6 +1437,7 @@ void TerrainPageStore::invalidateComposedPages() {
             token.cancel();  // 旧代 fetch 作废(迟到经 drain epoch 闸丢弃)
         }
     }
+    ++determinationDirtyRevision_;  // 换肤重烘在途 → 下帧必须重编码/重 kick
 }
 
 void TerrainPageStore::invalidateFieldPages(int newFieldMaxZoom) {
@@ -1392,6 +1450,7 @@ void TerrainPageStore::invalidateFieldPages(int newFieldMaxZoom) {
     if (newFieldMaxZoom >= 0) {
         config_.roadFieldMaxZoom = newFieldMaxZoom;
     }
+    ++determinationDirtyRevision_;  // 换肤/封顶变更 → 场间接纹理下帧必须重编码
     if (capChanged) {
         // 封顶变了(新样式分级档变化)→ 场页 key 整体重映射(fz 依赖
         // roadFieldMaxZoom)。旧 key 页不再是 determination 会显示的 key,原地
@@ -1424,6 +1483,7 @@ void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
         it->second.compose->cancelled.store(true, std::memory_order_release);
     }
     pages_.erase(it);
+    ++determinationDirtyRevision_;  // 淘汰 → 引用该层的 cell 下帧必须重编码为 miss
 }
 
 void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
@@ -1544,10 +1604,13 @@ void TerrainPageStore::tick() {
     if (frameId_ % 60u == 0u) {
         platformLog(LogLevel::Info, "PageStore",
                     "tick60 compose=%.1fms upload=%.1fms "
-                    "maxTick=%.1fms items=%d fields=%d fhole=%d ffall=%d "
+                    "maxTick=%.1fms items=%d disp=%d pend=%d fields=%d "
+                    "fhole=%d ffall=%d "
                     "pages=%d/%d(re)",
                     winComposeMs_, winUploadMs_,
-                    winMaxTickMs_, winInboxItems_, winFieldUploads_,
+                    winMaxTickMs_, winInboxItems_, composeDispatchedThisFrame_,
+                    static_cast<int>(pendingComposeTasks_.size()),
+                    winFieldUploads_,
                     winFieldHoleCells_, winFieldFallbackCells_,
                     winPagesCreated_, winPagesRecreated_);
         winComposeMs_ = 0.0;
@@ -1580,6 +1643,7 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
     pe.lastProgressFrame = frameId_;
     pe.needsRebake = false;
     kickPageFetches(fetchKey, pageKey, layer, pe);
+    ++determinationDirtyRevision_;  // 新建/重烘 → 状态变了,静止帧跳过失效
 }
 
 void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
@@ -1661,6 +1725,7 @@ void TerrainPageStore::eraseFieldEntry(uint64_t fieldPacked) {
     }
     it->second.token.cancel();  // 迟到 r8 经账本校验丢弃
     fieldPages_.erase(it);
+    ++determinationDirtyRevision_;  // 场页淘汰 → 引用该层的 cell 下帧重编码
 }
 
 void TerrainPageStore::drainInbox() {
@@ -1674,6 +1739,19 @@ void TerrainPageStore::drainInbox() {
         arrived.swap(inbox_->pages);
     }
     const int side = config_.pageSizeTexels;
+    // 派发门(2026-08-20):每帧至多入队 maxComposeDispatchesPerFrame 个合成
+    // 任务,超出留在待派队列(先派上帧积压,再派新到)。与 maxUploadsPerFrame
+    // 同构 —— 只限渲染线程每帧的入队量,防共享池被单帧大burst撑爆/入队被拖。
+    const int budget = std::max(0, config_.maxComposeDispatchesPerFrame);
+    int dispatched = 0;
+    while (!pendingComposeTasks_.empty() && dispatched < budget &&
+           config_.composeWorkers) {
+        std::function<void()> task =
+            std::move(pendingComposeTasks_.front());
+        pendingComposeTasks_.pop_front();
+        config_.composeWorkers->enqueue(std::move(task));
+        ++dispatched;
+    }
     for (auto& item : arrived) {
         // C-1b:**不再要求源尺寸等于页边长**。resamplePageSource 按 image 自身
         // 尺寸重采样,任意 tileSize 的 provider 都能进页。旧护栏「非 256² 跳过」
@@ -1748,11 +1826,39 @@ void TerrainPageStore::drainInbox() {
             readyInbox->items.push_back(std::move(out));
         };
         if (config_.composeWorkers) {
-            config_.composeWorkers->enqueue(std::move(task));
+            if (dispatched < budget) {
+                config_.composeWorkers->enqueue(std::move(task));
+                ++dispatched;
+            } else {
+                pendingComposeTasks_.push_back(std::move(task));
+            }
         } else {
             task();
         }
     }
+    composeDispatchedThisFrame_ = dispatched;
+}
+
+void TerrainPageStore::debugCreatePageForTest(uint64_t pageKey, int layer) {
+    auto [it, inserted] = pages_.try_emplace(pageKey);
+    PageEntry& pe = it->second;
+    if (inserted) {
+        // beginPageBake:providers_ 为空 → kickPageFetches 零次,assembler
+        // 源数=0;只建账本与 compose 状态,供派发门计数测试。
+        beginPageBake(unpackKey(pageKey), pageKey, layer, pe,
+                      /*holdUntilComplete=*/false);
+    }
+}
+
+void TerrainPageStore::debugDeliverDecodedImage(
+    uint64_t pageKey, int layer, int source, int depth, int subX, int subY,
+    std::unique_ptr<DecodedImage> image) {
+    if (!inbox_ || !image) {
+        return;
+    }
+    std::lock_guard<std::mutex> lock(inbox_->mutex);
+    inbox_->pages.push_back(
+        {pageKey, layer, source, depth, subX, subY, std::move(image)});
 }
 
 void TerrainPageStore::drainReadyUploads() {
@@ -1811,6 +1917,7 @@ void TerrainPageStore::drainReadyUploads() {
                 std::make_move_iterator(fieldReady.end()));
         }
     }
+    const int uploadedAfterFields = uploaded;
 
     std::vector<ReadyUploadInbox::Item> ready;
     {
@@ -1818,6 +1925,9 @@ void TerrainPageStore::drainReadyUploads() {
         ready.swap(readyInbox_->items);
     }
     if (ready.empty()) {
+        if (uploaded > 0) {
+            ++determinationDirtyRevision_;  // 仅场上传 → 下帧重编码点亮
+        }
         return;
     }
     size_t requeueFrom = 0;
@@ -1855,6 +1965,9 @@ void TerrainPageStore::drainReadyUploads() {
         pe.lastProgressFrame = frameId_;  // 上传推进 = 进度(见 kStalledPageFrames)
         ++uploadedLayerTotal_;
         ++uploaded;
+    }
+    if (uploaded > uploadedAfterFields) {
+        ++determinationDirtyRevision_;  // 影像上传推进 → 下帧重编码点亮
     }
     // 未处理完的项(超预算)放回下帧继续。
     if (requeueFrom < ready.size()) {

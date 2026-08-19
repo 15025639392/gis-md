@@ -105,6 +105,9 @@ public:
     /// 当前手势锚点世界坐标(ECEF)。有活动 drag/pinch 锚点时返回 true 并
     /// 写出 outWorld；否则返回 false。测试用查询（锚点获取/重试行为断言）。
     bool debugAnchorWorld(Vec3& outWorld) const;
+    /// 近地拖图/惯性的等效手指(起手 + 已施加偏移;诊断/测试)。非近地路径
+    /// 返回 false —— 爬升保锚断言按等效手指比,不被地平线裁剪的 raw 差污染。
+    bool debugNearEffectiveFinger(float& fx, float& fy) const;
 
 private:
     /// CAMPROBE 诊断:在手势 START/每 MOVE/END 各吐一行 logcat(tag=CAMPROBE),含
@@ -133,6 +136,15 @@ private:
     /// 近地惯性：松手后按 iOS 衰减（v *= 0.998/ms）沿锁定方向滑行，
     /// 停止判据 = 折合屏幕位移 < 0.5px/帧（与空间模式同规则）。
     void tickNearGroundInertia(double deltaSeconds);
+    /// 爬升保锚（2026-08-20,C-V1 扩展）：clampNow 在近地掠射下因 eye→anchor
+    /// 近水平退径向抬升,锚点像素被抬离等效手指(真机 anchorErr 峰 374px)。
+    /// 用抬升后的相机重投影补正(平移量=锚点−射线∩切平面),再 clamp 收残差,
+    /// 相机沿墙"边进边升";每帧爬升预算由 constrainEye 共享(25m/帧),循环不
+    /// 叠加弹跳。最多 2 轮,残差几何收缩,超界即停;真穿地紧急抬满路径 C-V6
+    /// 优先,锚点临时让位。
+    void repinNearGroundAnchor(float fX, float fY,
+                               const glm::dvec3& planeNormal,
+                               const glm::dvec3& anchorWorld);
     /// 当前相机姿态下地平线在屏幕上的 y（契约 1.2 地平线几何约束）。
     double horizonScreenY() const;
     /// 键盘平移（契约 3.3）：空间=转台旋转，近地=切平面平移（带地平线裁剪）。
@@ -238,6 +250,11 @@ private:
     bool nearInertiaActive_ = false;
     Vec3 nearAnchorWorld_{0.0, 0.0, 6378137.0};
     Vec3 nearAnchorNormal_{0.0, 0.0, 1.0};
+    /// 惯性期 CAMPROBE 保留锚点(诊断):onDragEnd 存最后抓取点,惯性活跃帧由
+    /// debugAnchorWorld 返回,让探针能算真实锚点屏幕速度(2026-08-20 判
+    /// H-G1/H-G2)。不进任何生产逻辑。
+    Vec3 debugInertiaAnchorWorld_{0.0, 0.0, 6378137.0};
+    bool debugHasInertiaAnchor_ = false;
     float nearStartX_ = 0.0f;   // 起手手指像素（锚点初始指下位置）
     float nearStartY_ = 0.0f;
     double nearHorizonY_ = 1.0e9;        // 地平线屏幕 y（近地模式起手时算一次）

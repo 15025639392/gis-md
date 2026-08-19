@@ -1995,16 +1995,16 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 | `GroundState` | .h:53 | 一次解算快照:`terrainHeightMeters` / `heightAboveTerrain` / `nearestGeometryMeters` / `hasTerrainData`。纯读,动态 near 与诊断消费 |
 | 净空↔near 耦合契约 | .h:76 | `kMinClearanceMeters`=50 / `kNearFloorMeters`=5 / `kNearSafetyRatio`=0.5,`static_assert` 锁定「near 下限 ≤ 净空×安全比」。**禁止单独改动其一** |
 | `kMaxTerrainHeightMeters` | .h:88 | 9000m。eye 高于此 + 净空 ⇒ 钳位恒不触发,跳过昂贵的逐瓦片地形查询(否则 >150ms/帧) |
-| `beginFrame` | .h:92 | 探针「每帧至多重建一次」的帧时钟。每帧恰好一次,手势期高频事件因此共享同帧探针 |
-| `TerrainProbe` | .h:133 | 探针缓存:中心/半径/代次/`collisionMaxHeight`(碰撞口径)/`samplePointsEcef`(near 口径) |
+| `beginFrame` | .h:116 | 探针「每帧至多重建一次」的帧时钟。每帧恰好一次,手势期高频事件因此共享同帧探针;同时重置**每帧爬升预算**(`kMaxCollisionClimbPerFrameMeters`=25) |
+| `TerrainProbe` | .h:166 | 探针缓存:中心/半径/代次/`collisionMaxHeight`(碰撞口径)/`samplePointsEcef`(near 口径) |
 
 | 方法 | 行 | 算法 |
 |---|---|---|
-| `setTerrainAreaSampleFunc` | .cpp:57 | 注入区域采样并使探针缓存失效 |
-| `commitPose` | .cpp:68 | 记录约束出口落定的 eye 作扫掠基准。⚠️**必须由编排层在出口末尾恰好调一次**,不能塞进 `constrainEye`:orbit 分支一次解算调两轮,两轮须共用同一个(上一帧的)基准 |
-| `constrainEye` | .cpp:82 | 高空快速路径早退 → 探针/单点采样 → 非对称滤波 → `nearestGeometryMeters`(采样点三维最小距离 ∧ 盘外墙下界) → 钳位。有锚点时退出方向沿 eye→anchor 直线牛顿迭代三轮(**保锚:径向抬升会泄漏 anchorErr**),近水平时退回径向。**碰撞抬升单事件限速**(`kMaxCollisionClimbPerEventMeters`=25,内环前瞻=接近未跨越才限速;低于脚下地板/真穿地/扫掠路径跨脊立即抬满,保 C-V6 与防隧穿)。**穿地守卫脚下高优先单点新鲜采样**(与探针同源 `RenderGridConsistent`,一次 O(档数);探针中心样本有"每帧至多重建一次"的跨崖滞后窗口,Space 快速推进实测 AGL −200m) |
-| `refreshTerrainProbeIfNeeded` | .cpp:246 | 中心漂移/半径变化/代次变化触发重建,每帧至多 1 次。几何 = 中心点 + 同心三环×8 方位(旋转对称,故意不做视线前向偏置)+ **扫掠走廊**(朝上帧位置密采,盖住单帧跨越的山脊——环是离散圆,山脊落在环间会被漏掉)。碰撞口径拆两半:`ringMaxHeight`(内环前瞻,限速爬升)/ `sweepMaxHeight`(路径跨脊,立即抬满) |
-| `updateFilteredTerrainHeight` | .cpp:358 | 非对称突变滤波:用户驱动/上升/小变动**立即**(新瓦片证明脚下是山,延迟=穿模,这正是 Cesium 对称 10% 规则的缺陷);仅数据驱动的大幅下降按 τ=0.5s 指数逼近(它不影响相机——钳位只抬不压——平滑的是动态 near 看到的地面) |
+| `setTerrainAreaSampleFunc` | .cpp:51 | 注入区域采样并使探针缓存失效 |
+| `commitPose` | .cpp:62 | 记录约束出口落定的 eye 作扫掠基准。⚠️**必须由编排层在出口末尾恰好调一次**,不能塞进 `constrainEye`:orbit 分支一次解算调两轮,两轮须共用同一个(上一帧的)基准 |
+| `constrainEye` | .cpp:76 | 高空快速路径早退 → 探针/单点采样 → 非对称滤波 → `nearestGeometryMeters`(采样点三维最小距离 ∧ 盘外墙下界) → 钳位。有锚点时退出方向沿 eye→anchor 直线牛顿迭代三轮(**保锚:径向抬升会泄漏 anchorErr**),近水平时退回径向。**碰撞抬升按帧限速预算**(`kMaxCollisionClimbPerFrameMeters`=25,`beginFrame` 重置;同帧多次解算共享,近地重钉循环/pinch 两轮不再叠加弹跳;内环前瞻=接近未跨越才限速;低于脚下地板/真穿地/扫掠路径跨脊立即抬满,保 C-V6 与防隧穿)。**穿地守卫脚下高优先单点新鲜采样**(与探针同源 `RenderGridConsistent`,一次 O(档数);探针中心样本有"每帧至多重建一次"的跨崖滞后窗口,Space 快速推进实测 AGL −200m) |
+| `refreshTerrainProbeIfNeeded` | .cpp:244 | 中心漂移/半径变化/代次变化触发重建,每帧至多 1 次。几何 = 中心点 + 同心三环×8 方位(旋转对称,故意不做视线前向偏置)+ **扫掠走廊**(朝上帧位置密采,盖住单帧跨越的山脊——环是离散圆,山脊落在环间会被漏掉)。碰撞口径拆两半:`ringMaxHeight`(内环前瞻,限速爬升)/ `sweepMaxHeight`(路径跨脊,立即抬满) |
+| `updateFilteredTerrainHeight` | .cpp:356 | 非对称突变滤波:用户驱动/上升/小变动**立即**(新瓦片证明脚下是山,延迟=穿模,这正是 Cesium 对称 10% 规则的缺陷);仅数据驱动的大幅下降按 τ=0.5s 指数逼近(它不影响相机——钳位只抬不压——平滑的是动态 near 看到的地面) |
 
 调优常量(.cpp:25 起,匿名 namespace):`kTerrainFilterAbsStepMeters`=10 / `kTerrainFilterRelStep`=0.1(绝对项防海面 h≈0 时相对判据退化)、`kTerrainFilterDecayTauSeconds`=0.5、探针 `kProbeRingFractions`={0.15,0.40,1.0} × `kProbeRingAzimuths`=8、半径 `clamp(max(2·AGL, 0.6·单帧水平位移), 200m, 20km)`、`kProbeCollisionFraction`=0.15(碰撞口径=内环+走廊)、`kProbeDriftRebuildFraction`=0.0375、`kAnchorExitMinVerticalGain`=0.2、`kMaxCollisionClimbPerEventMeters`=25(碰撞抬升单事件限速)。
 
@@ -2237,24 +2237,25 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 |---|---|---|
 | `anchorExactWeight` (anon) | .cpp:78 | 病态区混合权重:入射余弦 c≥0.35 全精确,≤0.10 全转台,中间 smoothstep。精确解增益 ∝1/c 掠射时爆炸,而硬切换必然跳变或死锁——连续混合 + 退化区整点重取锚点是唯一同时消掉两者的做法 |
 | `onDragStart` |  .cpp:125  | `grabSurfacePoint`;清零惯性;起手判定模式(契约 1.2:海拔<150km 且 pitch≥60° → 近地拖图,否则空间拖球),近地模式建立地平线基线 |
-| `resolveDragMode` | .cpp:258 | 单指模式判据:WGS84 海拔 <150km(Cesium `minimumPickingTerrainHeight`)且 pitch ≥60°(MapLibre issue #6111 高倾斜病态起点) |
-| `horizonScreenY` |  .cpp:274  | 地平线在屏幕上的 y:俯角 δ=acos(R/(R+h)),视线仰角 90°−pitch,按 fov/height 换算像素(契约 1.2 地平线几何约束) |
-| `applyNearGroundPan` |  .cpp:298  | 近地拖图(契约 1.3):总偏移 ≤0.75×地平线像素距离(按向量长度缩放,绝不反向);姿态锁定 ⇒ 射线∩锚点切平面交点唯一,平移量=锚点−交点(平面平行位移,锚点保持指下);收集像素速度样本 |
-| `tickNearGroundInertia` |  .cpp:374  | 近地惯性(契约 1.4):方向锁定、v*=0.998/ms 衰减、折合屏幕位移 <0.5px/帧或到达地平线边界即停(不反向)。**2026-08-19 起速度样本采原始手指位移**(不被地平线裁剪裁掉释放速度) |
-| `onKeyCommand` / `panByPixels` / `zoomByLevels` |  .cpp:440  / :468 / :509 | 键盘(契约 3.3):方向键平移 100px(空间=转台,近地=切平面,中心射线 miss 时取下半屏地表)、+/- 缩放 ±1 级(Shift 加倍)、Shift+方向键旋转 15°/倾斜 10°;入口先 `clearGlideInertia`;**仅 Free 模式生效**(CameraSystem 侧先查 active 控制器) |
-| `onPinchGesture`(新契约) |  .cpp:581  | 契约 2.2 组合:①dolly 仅 `zoomEngaged` 时(阈值 0.1 log2,精确保锚;滚轮 `smoothZoom` 只并入目标不瞬时施加) → ②twist 仅 `rotateEngaged` 时(25px 弧长,绕锚点法线) → ③Pitch 锁启用时绕锚点竖转(反 wind-up:被守卫拒绝时重取基线) → ④`applyPinchPin`(**唯一产生横向世界运动的通道**;Undecided 钉起手质心,激活后钉当前质心=平移随动) |
-| `onPinchEnd` |   .cpp:792   | **契约 2.3:双指 pan 无惯性**——不再种 pan 角速度;仅缩放动量足够时启动 zoom 惯性滑行 |
-| `tick` |   .cpp:823   | pan 惯性(视角角速度制,指数阻尼 **exp(-2.0/s)=iOS 0.998/ms**,停止判据用视角等效屏幕位移 <0.5px/帧;应用旋转按视差增益换算成绕地心角速度——修复前直接采绕地心率,低空被视差压小 ~1/4000,第一帧就判停) → 近地惯性(像素速度,同规则) → **滚轮平滑缩放(契约 3.1:指数收敛 ~300ms,单帧上限 ±ln(2),不越目标不反向)** → zoom 惯性(对数距离空间指数逼近,数学上永不越过锚点)。⚠️全部要求 `deltaSeconds > 0` ⇒ `tick(0.0)` 是完全空转 |
-| `clampNow` | .cpp:984 | `solver->constrainEye(userDriven=true, dt=0, anchor)` → 写回 → `commitPose`。恒 user-driven 是因为调用方刚刚显式动过相机 |
-| `blendViewTowardGlobeCenter` | .cpp:953 | **2026-08-19 新增,契约 2.4**:拉远到高空(≥1.5R)后,缩放路径把视轴按高度 smoothstep 转向地心,让球心自然回到屏幕中心(3.4R 偏移 393px→3px);4R 以上完全对准。只由缩放路径调用(捏合拉远/滚轮 settle/zoom 惯性),近地(<1.5R)不干预,平移/倾斜不抢方向 |
-| `rotateCameraVerticalAroundPoint` |   .cpp:999   | 绕 `camera_->right()` 在竖直面内转。三重守卫:up 翻转、`minSlope`、地形净空预判(用滤波高度,不重采样)。**拒绝而非事后顶起**——顶起要么破坏 Pitch 的锚点不变量,要么(Cesium 式旋转补偿)偷偷改 direction |
-| `solveAnchorRotation` |   .cpp:1122   | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
-| `pointOnGrabSphere` |   .cpp:1160   | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
-| `turntableDeltaFromPixels` |   .cpp:1185   | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
-| `tryAcquirePinchAnchor` |   .cpp:1208   | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变)。**2026-08-19 加两道拒绝**:掠射锚点(条件数<0.1)与远锚(距离>max(2×海拔,2km))起手即拒——低空近水平视线下远锚会让退化区"转台+整点重取"把锚点沿球面甩出(跳远);中途"每事件重试获取"同样受此守卫 |
-| `applyPinchPin` |   .cpp:1266   | 把锚点钉到目标像素;病态区连续混入质心转台并整点重取锚点;末尾走 `clampNow`(pin 是唯一横向通道,山区横移可能把 eye 转进地形)。**契约 2.3:双指 pan 无惯性**,pin 增量不再累积速度。**2026-08-19:病态区转台经 `scaleTurntableToAnchor` 按锚点距/地心距缩放**——低空绕地心转台(手指角速度×R)单步可甩出数百公里(跳远),缩放到锚点尺度后相机位移≈角度×锚点距,高空自动退化为原转台 |
-| `grabSurfacePoint` |  .cpp:1366  | 抓取锚点。⚠️锚点必须落在拾取射线上——生产 `pickTerrain` 已改射线行进(命中点在射线上,2026-08-19),此处 `pointOnGrabSphere` 重投影保留为对任意 surfacePicker 的防御(旧 off-ray 落差会被首个 move 一次性补掉 = 起手跳变,真机实测 227~471px)。**半径钳到 eye 以下**(锚点高于相机=仰视峰顶时防抓取球包住相机致射线命中背面疯转;低空朝下坡/崖时射线行进命中点在相机下方,不再触发钳制) |
-| `applyAnchorDrag` |   .cpp:1405   | 良态区精确锚定;病态区 slerp 混入转台 + 应用后整点重取锚点(**永不渐近混合**——混出的锚点不属于任何真实几何,会积欠账);末尾按事件时间戳收集最近 ≤3 个惯性样本,松手时 iOS 权重 0.6/0.35/0.05 合成。**2026-08-19 修正:样本率 = 手指视角角速度**(原始像素位移×radPerPixel/dt),不是相机绕地心角速度——后者被视差压小,松手惯性第一帧就判停;并记录 `inertiaGain_`=|eye−anchor|/|eye| 供 tick 换算。**病态区转台同 `applyPinchPin` 经 `scaleTurntableToAnchor` 缩放**(防低空绕地心甩出) |
+| `resolveDragMode` | .cpp:266 | 单指模式判据:WGS84 海拔 <150km(Cesium `minimumPickingTerrainHeight`)且 pitch ≥60°(MapLibre issue #6111 高倾斜病态起点) |
+| `horizonScreenY` |  .cpp:282  | 地平线在屏幕上的 y:俯角 δ=acos(R/(R+h)),视线仰角 90°−pitch,按 fov/height 换算像素(契约 1.2 地平线几何约束) |
+| `applyNearGroundPan` |  .cpp:306  | 近地拖图(契约 1.3):总偏移 ≤0.75×地平线像素距离(按向量长度缩放,绝不反向);姿态锁定 ⇒ 射线∩锚点切平面交点唯一,平移量=锚点−交点(平面平行位移,锚点保持指下);收集像素速度样本 |
+| `tickNearGroundInertia` |  .cpp:384  | 近地惯性(契约 1.4):方向锁定、v*=0.998/ms 衰减、折合屏幕位移 <0.5px/帧或到达地平线边界即停(不反向)。**2026-08-19 起速度样本采原始手指位移**(不被地平线裁剪裁掉释放速度);每步撞墙 clamp 后经 `repinNearGroundAnchor` 重钉保锚 |
+| `repinNearGroundAnchor` | .cpp:452 | **2026-08-20 新增,爬升保锚(C-V1 扩展)**:近地掠射下 clampNow 保锚 dolly 因 eye→anchor 近水平退径向抬升,锚点像素被抬离等效手指(真机 anchorErr 峰 374px)。用抬升后相机重投影(平移量=锚点−射线∩切平面)把锚点补回指下,再 clamp 收残差;每帧爬升预算由 constrainEye 共享(25m/帧),循环不叠加弹跳,最多 2 轮 |
+| `onKeyCommand` / `panByPixels` / `zoomByLevels` |  .cpp:498  / :542 / :583 | 键盘(契约 3.3):方向键平移 100px(空间=转台,近地=切平面,中心射线 miss 时取下半屏地表)、+/- 缩放 ±1 级(Shift 加倍)、Shift+方向键旋转 15°/倾斜 10°;入口先 `clearGlideInertia`;**仅 Free 模式生效**(CameraSystem 侧先查 active 控制器) |
+| `onPinchGesture`(新契约) |  .cpp:639  | 契约 2.2 组合:①dolly 仅 `zoomEngaged` 时(阈值 0.1 log2,精确保锚;滚轮 `smoothZoom` 只并入目标不瞬时施加) → ②twist 仅 `rotateEngaged` 时(25px 弧长,绕锚点法线) → ③Pitch 锁启用时绕锚点竖转(反 wind-up:被守卫拒绝时重取基线) → ④`applyPinchPin`(**唯一产生横向世界运动的通道**;Undecided 钉起手质心,激活后钉当前质心=平移随动) |
+| `onPinchEnd` |   .cpp:850   | **契约 2.3:双指 pan 无惯性**——不再种 pan 角速度;仅缩放动量足够时启动 zoom 惯性滑行 |
+| `tick` |   .cpp:881   | pan 惯性(视角角速度制,指数阻尼 **exp(-2.0/s)=iOS 0.998/ms**,停止判据用视角等效屏幕位移 <0.5px/帧;应用旋转按视差增益换算成绕地心角速度——修复前直接采绕地心率,低空被视差压小 ~1/4000,第一帧就判停) → 近地惯性(像素速度,同规则) → **滚轮平滑缩放(契约 3.1:指数收敛 ~300ms,单帧上限 ±ln(2),不越目标不反向)** → zoom 惯性(对数距离空间指数逼近,数学上永不越过锚点)。⚠️全部要求 `deltaSeconds > 0` ⇒ `tick(0.0)` 是完全空转 |
+| `clampNow` | .cpp:1042 | `solver->constrainEye(userDriven=true, dt=0, anchor)` → 写回 → `commitPose`。恒 user-driven 是因为调用方刚刚显式动过相机 |
+| `blendViewTowardGlobeCenter` | .cpp:1011 | **2026-08-19 新增,契约 2.4**:拉远到高空(≥1.5R)后,缩放路径把视轴按高度 smoothstep 转向地心,让球心自然回到屏幕中心(3.4R 偏移 393px→3px);4R 以上完全对准。只由缩放路径调用(捏合拉远/滚轮 settle/zoom 惯性),近地(<1.5R)不干预,平移/倾斜不抢方向 |
+| `rotateCameraVerticalAroundPoint` |   .cpp:1057   | 绕 `camera_->right()` 在竖直面内转。三重守卫:up 翻转、`minSlope`、地形净空预判(用滤波高度,不重采样)。**拒绝而非事后顶起**——顶起要么破坏 Pitch 的锚点不变量,要么(Cesium 式旋转补偿)偷偷改 direction |
+| `solveAnchorRotation` |   .cpp:1193   | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
+| `pointOnGrabSphere` |   .cpp:1231   | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
+| `turntableDeltaFromPixels` |   .cpp:1256   | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
+| `tryAcquirePinchAnchor` |   .cpp:1279   | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变)。**2026-08-19 加两道拒绝**:掠射锚点(条件数<0.1)与远锚(距离>max(2×海拔,2km))起手即拒——低空近水平视线下远锚会让退化区"转台+整点重取"把锚点沿球面甩出(跳远);中途"每事件重试获取"同样受此守卫 |
+| `applyPinchPin` |   .cpp:1337   | 把锚点钉到目标像素;病态区连续混入质心转台并整点重取锚点;末尾走 `clampNow`(pin 是唯一横向通道,山区横移可能把 eye 转进地形)。**契约 2.3:双指 pan 无惯性**,pin 增量不再累积速度。**2026-08-19:病态区转台经 `scaleTurntableToAnchor` 按锚点距/地心距缩放**——低空绕地心转台(手指角速度×R)单步可甩出数百公里(跳远),缩放到锚点尺度后相机位移≈角度×锚点距,高空自动退化为原转台 |
+| `grabSurfacePoint` |  .cpp:1437  | 抓取锚点。⚠️锚点必须落在拾取射线上——生产 `pickTerrain` 已改射线行进(命中点在射线上,2026-08-19),此处 `pointOnGrabSphere` 重投影保留为对任意 surfacePicker 的防御(旧 off-ray 落差会被首个 move 一次性补掉 = 起手跳变,真机实测 227~471px)。**半径钳到 eye 以下**(锚点高于相机=仰视峰顶时防抓取球包住相机致射线命中背面疯转;低空朝下坡/崖时射线行进命中点在相机下方,不再触发钳制) |
+| `applyAnchorDrag` |   .cpp:1476   | 良态区精确锚定;病态区 slerp 混入转台 + 应用后整点重取锚点(**永不渐近混合**——混出的锚点不属于任何真实几何,会积欠账);末尾按事件时间戳收集最近 ≤3 个惯性样本,松手时 iOS 权重 0.6/0.35/0.05 合成。**2026-08-19 修正:样本率 = 手指视角角速度**(原始像素位移×radPerPixel/dt),不是相机绕地心角速度——后者被视差压小,松手惯性第一帧就判停;并记录 `inertiaGain_`=|eye−anchor|/|eye| 供 tick 换算。**病态区转台同 `applyPinchPin` 经 `scaleTurntableToAnchor` 缩放**(防低空绕地心甩出) |
 
 调优常量(.cpp:26 起,匿名 namespace):惯性 `kMaxInertiaAngularVelocityRadPerSec`=5(视角角速度上限)/ `kInertiaDampingPerSecond`=2(=iOS 0.998/ms)/ `kVelocitySmoothing`=0.35(zoom 惯性 EMA 用);近地模式 `kNearModeMaxAltitudeMeters`=150000(Cesium) / `kNearModeMinPitchRadians`=60°(MapLibre) / `kNearHorizonClampFactor`=0.75(PR #6345) / `kNearMinInertiaVelocityPxPerSec`=100(Mapbox+Flutter) / `kNearPlaneGrazingEpsilon`=1e-4;`kTouchJerkLimit`=0.3 / `kMaxPinchScaleResidualLog`=1.0;`kTouchMinSlope`=0.1;`kPinchTiltRadiansPerPixel`=0.00873(=Mapbox 0.5°/px,保留质心绝对值映射);`kGrabSphereEyeMarginMeters`=25;病态带 `kAnchorConditioningLo/Hi`=0.10/0.35;`kMaxPinchAnchorAltitudeScale`=2.0 / `kMinPinchAnchorDistanceMeters`=2000(捏合锚点距离上限,海拔自适应);zoom 惯性 `kZoomInertiaDampingPerSecond`=6 / `kMaxZoomInertiaLogRate`=6 / `kMinZoomInertiaLogRate`=0.08;滚轮平滑(类内常量)`kZoomSettleRatePerSecond`=8(~0.3s 收敛 91%) / `kMaxZoomLevelsPerFrame`=1(单帧上限 ±ln(2),Mapbox maxScalePerFrame=2)。相机包络三常量(净空/最大地形高/地心距上限)不在这里,读 `CameraConstraintSolver`。
 
@@ -2613,15 +2614,15 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:1253-1339 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
-| `updateVisiblePages(view, ...)` | .cpp:569-1235 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1429-1522 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1523-1564 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1666-1757 / :1580-1620 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1758-1868 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1414-1428 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
-| `resamplePageSource` | .cpp:288-356 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
-| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:404-411 / :550-569 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
+| `initialize(device, Config)` | .cpp:1309-1395 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=3(涓流,勿在拖动期冻结)、`maxComposeDispatchesPerFrame`=8(每帧 compose 入队上限,2026-08-20 派发门) |
+| `updateVisiblePages(view, ...)` | .cpp:606-1308 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1489-1582 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1583-1627 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1731-1841 / :1649-1689 | 解码结果派发 worker 合成(渲染线程只做账本校验,每帧入队 ≤ `maxComposeDispatchesPerFrame`,超出进待派队列) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1864-1981 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1473-1488 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `resamplePageSource` | .cpp:289-357 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
+| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:404-507 / :550-584 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:411-506 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
 | `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:365-345 / :346-351 / :352-355 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
 | `packKey` / `unpackKey` (static) | .cpp:391-402 / :383-390 | TileKey ↔ uint64 页键 |

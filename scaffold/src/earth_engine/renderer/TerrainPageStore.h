@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <memory>
@@ -156,6 +157,13 @@ public:
         // 3 为经验值(≈PBO 环深,每槽至多一个在途 DMA)。页面进场相应延后,
         // 由祖先回退兜底。
         int maxUploadsPerFrame = 3;
+        /// 每帧最多向 compose worker 池派发多少个合成任务。⚠️ 2026-08-20
+        /// 真机:拖动期 196 items/60tick 无上限入队,共享 8 线程池被撑爆,
+        /// 渲染线程单次入队被拖 23.4ms(tickSlow inbox=16.7)。超出的到货
+        /// 留在待派队列(pendingComposeTasks_),后续 tick 继续派发 —— 页仍
+        /// 驻留最终会合成,祖先回退兜底显示;与 maxUploadsPerFrame 同构,
+        /// 只限渲染线程每帧的入队量,不改变 worker 总吞吐。
+        int maxComposeDispatchesPerFrame = 8;
         /// 合成(重采样+按序 alphaOver)下放的 worker 池。真机测得 compose 是
         /// tick 的支配成本且单帧尖刺 33-37ms(2026-08-07 三段插桩),下放后渲染
         /// 线程只剩上传+叠画。null = 就地同步合成(host 测试确定性;行为与
@@ -483,9 +491,51 @@ public:
     // --- 诊断(单测/日志用)---
     int residentPageCount() const { return pool_.residentCount(); }
     int uploadedLayerTotal() const { return uploadedLayerTotal_; }
+    /// 待派 compose 任务数(渲染线程独占;tick60 诊断/真机验收)。
+    int pendingComposeCount() const {
+        return static_cast<int>(pendingComposeTasks_.size());
+    }
+    /// 本帧实际入队的 compose 任务数(诊断;≤ maxComposeDispatchesPerFrame)。
+    int composeDispatchedThisFrame() const { return composeDispatchedThisFrame_; }
+    /// 静止帧跳过计数(诊断:determination 因视图与状态均未变而整段跳过)。
+    int determinationSkippedFrames() const { return determinationSkippedFrames_; }
+
+    /// 仅测试:为 pageKey 建一个最小页账本(providers_ 为空 → 不 kick fetch,
+    /// assembler 源数=0;供 compose 派发预算/待派队列的 host 测试用)。
+    void debugCreatePageForTest(uint64_t pageKey, int layer);
+    /// 仅测试:向 inbox 投递一张解码影像(模拟 provider 回调;drainInbox 的
+    /// 页/层/账本校验照常走,不做捷径)。
+    void debugDeliverDecodedImage(uint64_t pageKey, int layer, int source,
+                                  int depth, int subX, int subY,
+                                  std::unique_ptr<DecodedImage> image);
 
 private:
     struct PendingInbox;  // 定义在 .cpp:worker 回调安全投递解码影像
+
+    /// 静止帧跳过用的视图签名:determination 分类只依赖 position/direction/
+    /// 投影矩阵/视口高/SSE 阈值;逐位相等 ⇒ 分类结果与上帧逐位相同。
+    struct DeterminationSignature {
+        glm::dvec3 position{0.0};
+        glm::dvec3 direction{0.0};
+        std::array<double, 16> proj{};
+        int viewportHeight = 0;
+        double sseThreshold = 0.0;
+        // 可见瓦片指纹:选择/细化可能不随相机变化(地形加载完成 → LOD 换代),
+        // 但可见瓦片列表变了就必须重跑 determination —— 新瓦片的间接纹理
+        // 条目不存在,跳过会让他们永久回落 mappedRaster。
+        uint64_t visibleTilesHash = 0;
+        bool operator==(const DeterminationSignature& o) const {
+            return position == o.position && direction == o.direction &&
+                   proj == o.proj && viewportHeight == o.viewportHeight &&
+                   sseThreshold == o.sseThreshold &&
+                   visibleTilesHash == o.visibleTilesHash;
+        }
+    };
+    /// 从 SelectorView + 阈值构建签名(纯函数,供静止帧判定)。
+    static DeterminationSignature makeDeterminationSignature(
+        const SelectorView& view,
+        const std::vector<TilesetTile*>& visibleTiles,
+        double terrainMaxScreenSpaceError);
 
     /// 页粒度账本(B2b):每个屏幕可见影像页 (z,x,y) 一层 + 异步 fetch 状态。
     /// pool.acquire 得 layer → 建 PageEntry → **逐源** kick fetch → 到达按源序合成上传。
@@ -679,6 +729,21 @@ private:
     std::shared_ptr<PendingInbox> inbox_;            // 跨线程投递箱(存活于回调)
     struct ReadyUploadInbox;  // 定义在 .cpp:worker 合成完毕的快照投递箱
     std::shared_ptr<ReadyUploadInbox> readyInbox_;   // 同上,存活于 worker 任务
+
+    // compose 派发门:本帧到达但超 maxComposeDispatchesPerFrame 的任务留在
+    // 待派队列(渲染线程独占,无需锁),后续 tick 先派积压再派新到。任务自持有
+    // compose/页状态 shared_ptr,页淘汰后由 compose->cancelled 早退。
+    std::deque<std::function<void()>> pendingComposeTasks_;
+    int composeDispatchedThisFrame_ = 0;  // 诊断:本帧实际入队数
+
+    // 静止帧跳过:determination 的"状态脏版本"。任何会让间接纹理内容变化或
+    // 需要重新 walk 的状态改变(建页/淘汰/上传/换肤/源列表)都 bump 它;
+    // 与视图签名同时未变 ⇒ 分类+编码+上传结果与上帧逐位相同,整段跳过。
+    uint64_t determinationDirtyRevision_ = 1;
+    uint64_t lastDeterminationDirtyRevision_ = 0;
+    DeterminationSignature lastDeterminationSignature_{};
+    bool hasLastDeterminationSignature_ = false;
+    int determinationSkippedFrames_ = 0;
 
     // 门② determination:子瓦片相对 capped 瓦片的最大细分深度上限
     // (屏幕驱动一般 ≤5;cap 防远景/病态 zoom 枚举爆量,gridN ≤ 1<<cap)。

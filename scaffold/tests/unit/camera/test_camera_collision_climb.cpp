@@ -134,6 +134,20 @@ struct CliffHarness {
     }
 };
 
+// 世界点 → 屏幕像素(与 tools/cam_probe/camprobe.py 同一投影:VP·p,透视除,
+// NDC→像素,y 翻转)。返回 false = 在相机后方。
+bool projectToScreen(const Camera& cam, const glm::dvec3& world,
+                     glm::dvec2& outPx) {
+    const glm::dmat4 vp =
+        cam.viewProjectionMatrix(double(kW), double(kH)).raw();
+    const glm::dvec4 clip = vp * glm::dvec4(world, 1.0);
+    if (clip.w <= 1e-9) return false;
+    const glm::dvec3 ndc = glm::dvec3(clip) / clip.w;
+    outPx.x = (ndc.x * 0.5 + 0.5) * kW;
+    outPx.y = (1.0 - (ndc.y * 0.5 + 0.5)) * kH;
+    return true;
+}
+
 }  // namespace
 
 // 近地(NearGround,pitch≥60°)拖向 1500m 悬崖:碰撞抬升必须受控爬升,不得
@@ -219,5 +233,54 @@ TEST(CollisionClimb, NearGroundFarCliffDragNotFrozen) {
     // 修复前:增益崩塌,相机基本不动(dEast≈24.7m、eyeAlt 恒 600)。
     EXPECT_GT(dEast, 150.0) << "相机仍被冻住:锚点贴眼/增益崩塌(P1)未修复";
     EXPECT_LE(maxFrameDAlt, 30.0) << "单帧弹跳回潮";
+    EXPECT_GT(minAgl, -1.0) << "相机穿模";
+}
+
+// 近地拖向悬崖:碰撞抬升期间锚点必须钉在**等效手指**下(爬升保锚,C-V1 扩展)。
+// 修复前:clampNow 在掠射下退径向抬升,锚点被抬离手指(真机 anchorErr 峰
+// 374px)。等效手指 = 起手 + 已施加偏移(地平线裁剪的 raw 差不算泄漏)。
+TEST(CollisionClimb, NearGroundCliffDragKeepsAnchorUnderFinger) {
+    CliffHarness h;
+    h.placeCamera(0.001, 600.0, 30.0);  // lookDown=30° ⇒ code pitch=60° ⇒ NearGround
+    h.ctrl.onDragStart(400.0f, 300.0f, 0.0);
+
+    const double startAlt = h.eyeAlt();
+    double peakErr = 0.0;
+    double maxFrameDAlt = 0.0;
+    double minAgl = 1e18;
+    double prevAlt = startAlt;
+    for (int i = 1; i <= 60; ++i) {
+        h.solver.beginFrame();
+        h.ctrl.onDragMove(400.0f, 300.0f + 10.0f * i, i * 0.016);
+
+        Vec3 anchor;
+        ASSERT_TRUE(h.ctrl.debugAnchorWorld(anchor))
+            << "第 " << i << " 步锚点丢失";
+        float efx = 0.0f, efy = 0.0f;
+        ASSERT_TRUE(h.ctrl.debugNearEffectiveFinger(efx, efy))
+            << "第 " << i << " 步不在近地路径";
+        glm::dvec2 px;
+        ASSERT_TRUE(projectToScreen(h.cam, anchor.raw(), px))
+            << "第 " << i << " 步锚点投影失败";
+        peakErr = std::max(
+            peakErr, std::hypot(px.x - static_cast<double>(efx),
+                                px.y - static_cast<double>(efy)));
+
+        const double alt = h.eyeAlt();
+        maxFrameDAlt = std::max(maxFrameDAlt, std::abs(alt - prevAlt));
+        prevAlt = alt;
+        const double terr = cliffHeightAt(h.cam.position().raw());
+        minAgl = std::min(minAgl, alt - terr);
+    }
+
+    // 场景有效性:碰撞真的发火(相机被抬升了,不是空转)。
+    EXPECT_GT(h.eyeAlt() - startAlt, 50.0)
+        << "场景失效:碰撞钳位没抬升相机,探针/帧时钟路径没走到";
+    // 核心回归:锚点钉在等效手指下(修复前 anchorErr 峰 374px)。
+    EXPECT_LT(peakErr, 5.0)
+        << "爬升保锚失效:锚点被 clamp 抬离等效手指(peakErr=" << peakErr
+        << "px)";
+    // 每帧爬升预算共享:重钉循环不得叠加出 >30m/帧 的弹跳。
+    EXPECT_LE(maxFrameDAlt, 30.0) << "重钉循环叠加了每帧爬升预算";
     EXPECT_GT(minAgl, -1.0) << "相机穿模";
 }

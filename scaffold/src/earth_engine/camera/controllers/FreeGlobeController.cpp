@@ -127,6 +127,7 @@ void FreeGlobeController::onDragStart(float xPixels, float yPixels,
     // 抓取起始地表点；miss（按在地平线外/空白处）不再放弃整段拖拽，
     // 而是进入 spin 回退。grabSurfacePoint 内部已设置 hasGrabbedPoint_。
     grabSurfacePoint(xPixels, yPixels);
+    debugHasInertiaAnchor_ = false;  // 新拖拽:清掉上一段惯性保留的锚点
     dragging_ = true;
     dragStartX_ = xPixels;
     dragStartY_ = yPixels;
@@ -179,6 +180,13 @@ void FreeGlobeController::onDragEnd() {
     if (!dragging_) return;
     // 清状态前吐 END:此刻 debugAnchorWorld 仍有效,手指终点用最后一次 move。
     logCameraProbe("dragEnd", dragLastX_, dragLastY_);
+    // CAMPROBE 复核锚:松手后 hasGrabbedPoint_ 会清空,debugAnchorWorld 将拿不到
+    // 真实抓取点 → 探针只能投影地心(绕地心旋转时恒定点,正是"只滚不滑"假象
+    // 的来源)。这里把最后抓取点保留下来,惯性活跃帧让探针能算真实锚点屏幕速度。
+    if (hasGrabbedPoint_) {
+        debugInertiaAnchorWorld_ = grabbedPoint_;
+        debugHasInertiaAnchor_ = true;
+    }
     dragging_ = false;
     hasGrabbedPoint_ = false;
 
@@ -346,6 +354,8 @@ void FreeGlobeController::applyNearGroundPan(float xPixels, float yPixels,
     camera_->setView(Vec3(camera_->position().raw() + trans),
                      camera_->direction(), camera_->up());
     clampNow(&a);
+    // 爬升保锚:clamp 抬升把锚点抬离等效手指,同帧重钉(见 repinNearGroundAnchor)。
+    repinNearGroundAnchor(fX, fY, n, a);
 
     nearAppliedOffsetX_ = appliedX;
     nearAppliedOffsetY_ = appliedY;
@@ -428,6 +438,8 @@ void FreeGlobeController::tickNearGroundInertia(double deltaSeconds) {
     camera_->setView(Vec3(camera_->position().raw() + trans),
                      camera_->direction(), camera_->up());
     clampNow(&a);
+    // 惯性滑行撞墙同理:重钉保锚。
+    repinNearGroundAnchor(fX, fY, n, a);
     nearAppliedOffsetX_ = nextX;
     nearAppliedOffsetY_ = nextY;
 
@@ -435,6 +447,52 @@ void FreeGlobeController::tickNearGroundInertia(double deltaSeconds) {
     const double decay = std::exp(-kInertiaDampingPerSecond * deltaSeconds);
     nearVelocityX_ *= decay;
     nearVelocityY_ *= decay;
+}
+
+void FreeGlobeController::repinNearGroundAnchor(
+    float fX, float fY, const glm::dvec3& planeNormal,
+    const glm::dvec3& anchorWorld) {
+    // 爬升保锚(2026-08-20):近地掠射下 clampNow 的保锚 dolly 因 eye→anchor
+    // 近水平退径向抬升,锚点像素被抬离等效手指。这里用抬升后的相机重投影:
+    // 平移量 = 锚点 − 射线∩切平面(与主平移同一公式),把锚点补回指下,再
+    // clamp 一次收残差。每帧爬升预算由 constrainEye 按帧共享,循环不叠加
+    // 弹跳;残差按轮次几何收缩,最多 2 轮,超界即停不振荡。
+    for (int i = 0; i < 2; ++i) {
+        const Ray ray = camera_->getPickRay(
+            static_cast<double>(fX), static_cast<double>(fY),
+            static_cast<double>(viewportWidth_),
+            static_cast<double>(viewportHeight_));
+        const glm::dvec3 o = ray.origin().raw();
+        const glm::dvec3 d = ray.direction().raw();
+        const double denom = glm::dot(d, planeNormal);
+        if (std::abs(denom) < kNearPlaneGrazingEpsilon) {
+            return;  // 射线近平行/朝平面背面:不重钉(与主平移同一守卫)
+        }
+        const double t = glm::dot(anchorWorld - o, planeNormal) / denom;
+        if (t <= 0.0) {
+            return;  // 交点已在相机后方
+        }
+        const glm::dvec3 p = o + d * t;
+        const glm::dvec3 trans = anchorWorld - p;
+        if (glm::length(trans) < 1e-6) {
+            return;  // 锚点已在指下:收敛
+        }
+        camera_->setView(Vec3(camera_->position().raw() + trans),
+                         camera_->direction(), camera_->up());
+        if (!clampNow(&anchorWorld)) {
+            return;  // clamp 不再动 → 已收敛
+        }
+    }
+}
+
+bool FreeGlobeController::debugNearEffectiveFinger(float& fx,
+                                                   float& fy) const {
+    if (dragMode_ != DragMode::NearGround && !nearInertiaActive_) {
+        return false;
+    }
+    fx = nearStartX_ + static_cast<float>(nearAppliedOffsetX_);
+    fy = nearStartY_ + static_cast<float>(nearAppliedOffsetY_);
+    return true;
 }
 
 void FreeGlobeController::onKeyCommand(
@@ -1114,6 +1172,19 @@ bool FreeGlobeController::debugAnchorWorld(Vec3& outWorld) const {
     if (dragging_ && hasGrabbedPoint_) {
         outWorld = grabbedPoint_;
         return true;
+    }
+    // 惯性期(松手后)保留锚点:Space fling 用最后抓取点,近地惯性用
+    // nearAnchorWorld_(整段手势固定)。只供 CAMPROBE/调试,不进任何生产逻辑。
+    if (!dragging_ && !pinching_) {
+        if (debugHasInertiaAnchor_ &&
+            inertiaAngularVelocity_ > kMinInertiaAngularVelocity) {
+            outWorld = debugInertiaAnchorWorld_;
+            return true;
+        }
+        if (nearInertiaActive_) {
+            outWorld = nearAnchorWorld_;
+            return true;
+        }
     }
     return false;
 }
