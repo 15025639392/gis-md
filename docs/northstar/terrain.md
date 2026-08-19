@@ -170,7 +170,7 @@ zoom 维度**,判定却留在旧维度 —— 这是 T-V7 此前失效的成因,
 - **逐瓦片高度量化**:破坏无缝所需的逐位相等。正解是**全局固定格点**,不要再提逐瓦片方案。
 - **隐式瓦片(implicit tiling)**:零引用,但**你已裁决保留**,不要再提议删。
 - **地形 draping 走影像路径**(矢量 E4-4):根因已重定位,正解是矢量进页存储,不是继续修 drape。
-- **V1818T(Adreno512/720p)GPU 帧率优化**(2026-08-19 专会,4 build ablation 真机):**别再查**。churn 修复后 7fps 只剩 GPU ~140ms/帧,是**真实 fill/带宽地板**非低效——GpuPass 拆:terrain 86ms(61%)+ env 35ms(25%,structural offscreen store,shader compute=0)+ fog 12ms,每块都必需零冗余。四杠杆全死:①天空散射→LUT(compute 实测 0)②雾折进终端(拆 pass 净 0 反更慢,默认 FB 是 MSAA)③场空邻域哨兵(gather 早被 `PageStoreSamplingGLSL.h:112` 的 own-check 门住;21ms 是基础 fetch 非 gather)④满驻留丢 mappedRaster(`GltfUniformBlock.h:122` count 默认 0,合批已不采)。唯一剩 MSAA/分辨率=**观感**,归你。PHK110 50-60fps 是正常档。详见记忆 [[gpu-ceiling-fill-bound-null-result-2026-08-19]]。
+- **V1818T(Adreno512/720p)GPU 帧率优化**(2026-08-19 专会,4 build ablation 真机 + 同日等价重写专会补正):churn 修复后 GPU ~140ms/帧。**ALU/pass 层四杠杆全死**:①天空散射→LUT(compute 实测 0)②雾折进终端(拆 pass 净 0 反更慢)③场空邻域哨兵(gather 早被 own-check 门住)④满驻留丢 mappedRaster(合批已 count=0)。MSAA 4x/2x/1x 全同帧时(TBDR 片上 resolve 免费,**勿关**)。**补正:第四层 = texop 计数**——校准单次全屏 texelFetch≈3.3ms/bilinear≈6.3ms,terrain 是 texop-bound;**T1 已收**(`a744801c2`,法线场 4 fetch→1 硬件双线性):terrain 86→77ms、总帧 140→**131ms**;**T2(两张间接纹理合 RGBA16UI)真机证伪勿重试**——功能正确但 +3.5ms(Adreno512 宽 texel fetch 半速)。**texop 层也已到底,现地板 131ms**;再往下只剩分辨率=观感。PHK110 50-60fps 正常档。详见记忆 [[gpu-ceiling-fill-bound-null-result-2026-08-19]]。
 
 ---
 
