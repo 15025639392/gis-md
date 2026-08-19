@@ -98,6 +98,7 @@
 | Cesium 式旋转补偿(俯仰/碰撞时偷改 direction 保锚点像素) | 会破坏 anchorErr 起手不变量、偷改视线;现设计选择"停住/拒绝"而非"事后顶起"(见 `rotateCameraVerticalAroundPoint` 注释与 [camera-constraint-chokepoint](记忆)) |
 | move 期重 pick 地形定锚点高度 | 指下地形高≠抓取点高,法线对齐后锚点投影偏离手指(起伏越大/越斜越明显)=不跟手;正解=锚定在抓取球面同半径,一次旋转精确放回 |
 | 用 sendevent/screenrecord 在真机自动化双指手势 | 零售 Oplus 无 root,`/dev/input`、`/sdcard`、`/data/local/tmp` 全被 SELinux 挡;正解=UiAutomation 注入(injector 模块) |
+| 输入位姿预测/外推遮 render 延迟(C-V8 第二刀,2026-08-19 用户拍死) | 猜未来无 ground truth,限幅/速度低通/减速收敛全是启发式=把过冲换成收敛滞后、把抖动换成钝感,没有"对"的解,只是挑个没那么难看的错。为跟手感引入"结构上就可能错"的行为不划算。**正解=让帧变快**(降 render 延迟是实打实的,不赌),归 GPU fill/texop ~124ms 地板战线,与输入无关。late-latch(C-V8,`52d2c22a3`)是零风险那半,已拿 |
 
 ---
 
