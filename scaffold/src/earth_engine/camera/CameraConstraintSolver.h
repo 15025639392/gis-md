@@ -156,11 +156,20 @@ private:
     struct TerrainProbe {
         bool valid = false;
         bool hasData = false;
+        /// 中心(offset 0,0)样本是否有效:相机正下方的地形高,穿地守卫用。
+        bool hasCenterSample = false;
         glm::dvec3 centerSurfaceEcef{0.0};
         double radiusMeters = 0.0;
         uint64_t revision = 0;
+        /// 相机正下方(offset 0,0)的地形高(米)。与 collisionMaxHeight 分离:
+        /// 前者是"脚下真值"(穿地守卫),后者是"前瞻最大高"(防隧穿)。
+        double centerHeightMeters = 0.0;
         /// 碰撞口径:内环(r≤0.15R)+扫掠走廊采样的最大地形高。
         double collisionMaxHeight = 0.0;
+        /// 碰撞口径拆两半:内环最大高(前瞻,接近未跨越→限速爬升)与扫掠走廊
+        /// 最大高(本帧路径真跨过山脊→防隧穿必须立即抬满,不限速)。
+        double ringMaxHeight = 0.0;
+        double sweepMaxHeight = 0.0;
         /// near 口径:全部有效采样的三维地形点(动态 near 消费)。
         std::vector<glm::dvec3> samplePointsEcef;
     };

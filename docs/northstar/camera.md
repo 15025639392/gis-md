@@ -40,6 +40,15 @@
 **tilt 的掠射退化/灵敏度**(C-V5 观感待拍板)。pin 解算已有 host 单测兜底
 (C-P3:anchorErr<0.5px 进 ctest);真机端到端闭环仍手动(C-P1)。判据侧已全部有数字兜底。
 
+**2026-08-19 追加**:① 低空松手惯性已修(采样改视角角速度+视差增益,见 C-V4 行);
+② 双指倾斜"有概率跳远"已修——低空近水平视线下拾取远锚(或退化带条件数)会让
+pin 的绕地心转台单步甩出数百公里,修复 = 起手/重试拒绝掠射与远锚
+(条件数<0.35 或距离>max(1.5×海拔,600m))+ 病态区转台按锚点距/地心距缩放
+(`scaleTurntableToAnchor`,高空自动退化为原转台)。真机复测:远锚/掠射态倾斜零位移,
+45° 近地倾斜平滑(单步眼高 ≤6m)。③ **高空球心回中(契约 2.4)已实现**:拉远到
+≥1.5R 后缩放路径把视轴随高度 smoothstep 转向地心(4R 以上完全对准),真机 3.4R
+地心偏移 393px→3px;近地(<1.5R)不干预,平移/倾斜不抢方向。
+
 ---
 
 ## A. 体验判据(C-V)
@@ -49,9 +58,9 @@
 | **C-V1** | **pin 保锚**:手指下世界点跟手,pan/pinch/rotate 全程 anchorErr ≤ 1px | 机制 | ✅ | CAMPROBE 探针仅 debug 变体、每手势 START/MOVE/END 各一行 logcat,release 零开销 | **真机闭环坐实(`16531b80c`)**:平地 drag 43 帧末 0.01px / 峰 0.06px、**本该位移=实际位移=445.5px、增益 1.000**;pinch/rotate 峰 <0.05px。pin 解算求"让 anchor 投到 finger 的 pose",clampNow 沿 eye→anchor 线退出保锚 |
 | **C-V2** | **轴隔离**:pinch 只动 range / rotate 只动 heading,不串轴(契约 2.2) | 机制 | ✅ | CAMPROBE 加 hdg/pit/range 字段(锚点 ENU 帧反解),debug-only | **真机量化(`camprobe.py` 轴Δ)**:**纯 zoom** → Δrange −55.9%、Δheading **+0.000°**、Δpitch **+0.000°**;**纯 rotate**(等距转)→ Δheading −33.6°、Δrange **0.00%**、Δpitch −0.028°。两个手势其余轴严格 <0.03°/0% = **隔离达成**。⚠️ **tilt 不在此判据**:tilt 的锚点在掠射退化区(anchorErr 峰 20px、range 度量爆表 +88km),轴隔离度量对它不适用 → 归 **C-V5**(tilt 是灵敏度设计非刚性锚) |
 | **C-V3** | **近碰撞保锚上界**:高俯仰贴地形时保锚退化有界,anchorErr ≤ ~0.5px | 机制 | ✅ | 无额外开销(径向 fallback 是既有兜底) | **压测坐实(`896edfc79`)**:俯冲触底稳定卡 eyeAlt≈350m(地形~300+`kMinClearanceMeters`50)。高俯仰贴底 anchorErr 峰 ~0.4px(基线 7×)= `constrainEye` 末行**径向抬升 fallback 发火**(eye→anchor 线近水平 `gain<kAnchorExitMinVerticalGain=0.2`)。**亚像素、自限**(远锚点下径向 Δh 换算像素角漂本就小;更极端即抓取 miss 退 spin)。**非 bug**,验证注释"该 regime 保锚判据本就不适用" |
-| **C-V4** | **惯性收敛**:fling 松手后**单调衰减**到停,不跑飞/不早停/不反向 | 机制 | ✅ | CAMPROBE tick 期吐 inertiaVel(flick)+ nearVel(近地),debug-only;注入台加 `oneFinger` 单指线性注入 | **两条路径均量化达成**:①**flick(Space,pitch<60°)**角速度 `1.430→…→0.000`(帧29),单调降、收敛停(指数 `exp(-kInertiaDampingPerSecond·t)`)。②**近地(NearGround,pitch≥60°)**像素速度 `200.4→175.4→…→11.8`(帧21),单调降、不回升、末 11.8px/s=0.2px/帧 <契约 1.4 停阈(0.5px/帧)→收敛停。近地触发需 `oneFinger`(单指线性恒速,`input swipe` 末端 ease-out 达不到 100px/s 释放阈值) |
+| **C-V4** | **惯性收敛**:fling 松手后**单调衰减**到停,不跑飞/不早停/不反向 | 机制 | ✅ | CAMPROBE tick 期吐 inertiaVel(flick)+ nearVel(近地),debug-only;注入台加 `oneFinger` 单指线性注入 | **两条路径均量化达成**:①**flick(Space,pitch<60°)**角速度 `1.430→…→0.000`(帧29),单调降、收敛停(指数 `exp(-kInertiaDampingPerSecond·t)`)。②**近地(NearGround,pitch≥60°)**像素速度 `200.4→175.4→…→11.8`(帧21),单调降、不回升、末 11.8px/s=0.2px/帧 <契约 1.4 停阈(0.5px/帧)→收敛停。近地触发需 `oneFinger`(单指线性恒速,`input swipe` 末端 ease-out 达不到 100px/s 释放阈值)。**2026-08-19 修:锚定在地表的 Space 拖拽松手惯性此前恒为 0**——采样取相机绕地心角速度,低空被视差压小 ~1/4000,第一帧就被 0.5px/帧 判停。改为采样**视角角速度**(手指感知),应用旋转按视差增益换算;真机复测:1500m 甩动 36 帧 iv `1.48→0.014`、351m 低空 51 帧 iv `1.32→0.017`,均单调收敛。近地路径采样改**原始手指位移**(不再被地平线裁剪把释放速度裁没),真机近地甩动松手 nearVel `4264px/s` 触发;滑行仍受 0.75×地平线边界约束(契约 1.3,设计如此) |
 | **C-V5** | **tilt 灵敏度**:双指俯仰跟手、阻尼不过冲、灵敏度合适 | 观感 | 🔒 | — | **像素判断归你**。⚠️ 本轮观察「600px 拖动直接从俯视压到近掠视」疑**偏灵敏**,钉死场景待你拍板。**无几何 ground truth**:俯仰是"手指px→多少度 pitch"的灵敏度设计,非刚性锚约束,anchorErr 对它不适用 |
-| **C-V6** | **不穿地 / 不锁死病态俯仰**:碰撞守卫顶住地面,俯仰约束拒绝恶化净空的方向 | 机制 | ✅ | 廉价地形预判(滤波高,不重采样) | 俯冲触底稳定卡 eyeAlt≈350m 不再下沉(`constrainEye` 楼层 = `max(filteredTerrainHeight,0)+kMinAltitude`);`rotateCameraVerticalAroundPoint` 净空守卫拒绝"让净空更差"的 tilt(贴底时 tilt 压不满俯仰即此守卫)。**零死区离合**:反向立即响应 |
+| **C-V6** | **不穿地 / 不锁死病态俯仰**:碰撞守卫顶住地面,俯仰约束拒绝恶化净空的方向 | 机制 | ✅ | 廉价地形预判(滤波高,不重采样) | 俯冲触底稳定卡 eyeAlt≈350m 不再下沉(`constrainEye` 楼层 = `max(filteredTerrainHeight,0)+kMinAltitude`);`rotateCameraVerticalAroundPoint` 净空守卫拒绝"让净空更差"的 tilt(贴底时 tilt 压不满俯仰即此守卫)。**零死区离合**:反向立即响应。**2026-08-19 补**:① 低空接近山脊时前瞻地板(内环最大高)会把相机一步抬到崖顶(实测单帧 +950m/1779m)——已加碰撞抬升单事件限速(`kMaxCollisionClimbPerEventMeters`=25,内环前瞻场景),低于脚下地板/真穿地/扫掠路径跨脊仍立即抬满;② **穿地守卫脚下高改单点新鲜采样**(与探针同源 `RenderGridConsistent`;探针中心样本"每帧至多重建一次"在跨崖/越脊帧有滞后窗口,Space 快速推进实测 AGL −200m);③ 起手拾取 `pickTerrain` 改射线 vs 地形行进,命中可见面且在射线上——低空锚点不再被"椭球交点+抬升"的山后点钳到眼旁(拖不动/增益崩塌) |
 | **C-V7** | **手势不崩**:双指手势不 crash、pose 无 NaN | 机制 | ✅ | — | 本轮全 6 手势注入无崩溃。⚠️ 排查记录:曾现"每次双指后 app 回桌面"**非引擎 crash**,是 instrumentation targetPackage 跑完 force-stop 的**测试框架伪影**(见记忆),自指独立注入模块已解 |
 | **C-V8** | **输入跟手时延(latch 新鲜度)**:拖动时地图不慢半拍,手指→光子滞后不被流水线深度放大 | 观感(带机制子信号) | ⚠️ | fence 门控,吞吐不掉(cadence 两模式同为 ~6-8fps) | **2026-08-19 立并做**:弱机 GPU-bound 时 CPU 领跑 GPU,latch 到的 pose 要过多帧才上屏 → 观感慢半拍。**机制子信号已达成(真机 A/B,V1818T)**:OFF 时 GPU 阻塞落在 `swap=84-144ms`(latch 之后);ON 时整段搬到 `latch=120-158ms`(fence,latch 之前)、swap 塌到 0.8-1.5ms → **latch 到的指位新鲜 ~130ms、render-ahead 压到深度 1**。`FrameLoop latch=` 是判据锚:≈单帧 GPU=方案成立(本次坐实);≈0=深度已是 1、无收益。**实现**:fence 门控 late-latch(`GLESView` 渲染线程,把驱动内隐式 GPU 等待挪到 latch 前,`debug.ee.latelatch` 运行期 A/B,默认开),零外推无抖动;深度 1 对深度 2 有 ~6ms/帧 GPU 气泡(可调 fence[N-2] 换零气泡但少一帧收益,默认取跟手)。**⚠️ 观感(跟手感)判断归你**——真机拖动对拍待你验:是否更跟手、有无副作用。剩余 render 本身 ~100ms 那部分需预测层才能遮,留作第二刀 |
 

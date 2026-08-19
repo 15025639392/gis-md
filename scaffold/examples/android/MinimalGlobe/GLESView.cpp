@@ -1238,6 +1238,32 @@ static bool lateLatchEnabled() {
     return prop[0] != '0';  // 未设或非 "0" → 开
 }
 
+// 影子自检运行时开关(debug 构建默认开 = 收敛漏报捕网,但同步回读会让交互
+// 卡——每 idle 段 20 帧 glReadPixels 排空 GPU 管线,见 kShadowVerifyIdle 注释)。
+// 运行期切换:`adb shell setprop debug.ee.shadowverify 0` 关 / `1` 开 /
+// 清空回落到构建默认。逐帧读(共享内存,亚微秒,与 latelatch 同模式),值变化
+// 才调 setShadowVerifyEnabled。
+static bool gLastShadowVerifySetting =
+    earth_engine::minimal_globe_demo::kShadowVerifyIdle;
+static void applyShadowVerifyRuntimeSwitch() {
+    char prop[PROP_VALUE_MAX] = {0};
+    __system_property_get("debug.ee.shadowverify", prop);
+    bool desired = earth_engine::minimal_globe_demo::kShadowVerifyIdle;
+    if (prop[0] == '0') {
+        desired = false;
+    } else if (prop[0] == '1') {
+        desired = true;
+    }
+    if (desired != gLastShadowVerifySetting) {
+        gLastShadowVerifySetting = desired;
+        if (gEngine) {
+            gEngine->setShadowVerifyEnabled(desired);
+            LOGI("ShadowVerify runtime switch -> %s",
+                 desired ? "on" : "off");
+        }
+    }
+}
+
 // onFrame 顶部、drainTasks 之前调用:等上一帧 GPU 完成(render-ahead≤1),
 // 使随后排空的输入尽量新鲜。带超时,GPU 丢失时不挂死。
 static void waitPrevFrameFenceForLatch() {
@@ -1453,7 +1479,8 @@ static void renderFrame() {
         LOGI(
             "FrameLoop frame=%llu total=%.3f pre=%.3f mvt=%.3f engine=%.3f "
             "post=%.3f swap=%.3f latch=%.2f callback=%.3f cpu=%d hint=%d presented=%d swapOk=%d "
-            "upd=%.2f build=%.2f submit=%.2f terrUpd=%.2f",
+            "upd=%.2f build=%.2f submit=%.2f terrUpd=%.2f "
+            "cam=%.2f env=%.2f base=%.2f srender=%.2f endf=%.2f",
             static_cast<unsigned long long>(frameId),
             frameTotalMs,
             preMs,
@@ -1479,7 +1506,12 @@ static void renderFrame() {
             stageDiag.sceneUpdateMs,
             stageDiag.renderCommandBuildMs,
             stageDiag.renderSubmitMs,
-            stageDiag.terrainUpdateMs);
+            stageDiag.terrainUpdateMs,
+            stageDiag.cameraUpdateMs,
+            stageDiag.environmentUpdateMs,
+            stageDiag.basemapStackUpdateMs,
+            stageDiag.sceneRenderMs,
+            stageDiag.engineEndFrameMs);
         // 北极星 Phase 0 测量台:每帧(采样)打相机真实位姿,消除"nadir/oblique"
         // 猜测——用它标注每个 measure stop 的实际视角。
         const auto& camTrace = gEngine->presentationTrace().camera;
@@ -1848,6 +1880,7 @@ private:
     void onFrame() {
         framePending_ = false;
         if (!running_.load() || paused_.load()) return;
+        applyShadowVerifyRuntimeSwitch();
         // C-V8 late-latch:先等上一帧 GPU 完成(render-ahead≤1),再排输入,
         // 使 latch 到的指位尽量新鲜。等待被从驱动内 draw 提交处挪到此处。
         waitPrevFrameFenceForLatch();

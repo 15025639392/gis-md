@@ -42,6 +42,11 @@ constexpr double kProbeDriftRebuildFraction = 0.0375;
 // 锚点退出方向的最小竖直增益:|dot(unit(eye−anchor), n̂)| 低于此值时后退
 // 换不来高度,退回径向抬升(该位姿下锚点已在掠射病态区,保锚判据不适用)。
 constexpr double kAnchorExitMinVerticalGain = 0.2;
+// 碰撞抬升单事件上限(米):低空接近山脊/悬崖时,前瞻地板会把"相机高度"一步
+// 抬到崖顶高度(实测单帧 +950m/1779m 位移)。限速后把弹跳摊成受控爬升,锚点
+// 仍沿 eye→anchor 线保持;真穿地(低于脚下地形)不设上限,立即抬出保 C-V6。
+// 取值是真机标定项:过大回到弹跳,过小低帧率下爬得慢。
+constexpr double kMaxCollisionClimbPerEventMeters = 25.0;
 
 } // namespace
 
@@ -150,16 +155,48 @@ glm::dvec3 CameraConstraintSolver::constrainEye(
 
     const double minHeight = std::max(filteredTerrainHeight_, 0.0) +
                              kMinAltitudeMeters;
+    // 脚下地形高(穿地守卫真值):优先单点新鲜采样——探针中心样本每帧至多重建
+    // 一次,跨崖/越脊帧存在滞后窗口(Space 快速推进实测 AGL −200m),而单点口
+    // 与探针同源(同一 TerrainHeightService::RenderGridConsistent),一次查询
+    // O(档数),不进渲染循环;无单点口时用探针中心样本;再无数据用滤波现值
+    // (保守)。
+    double underHeight = filteredTerrainHeight_;
+    if (terrainHeightFunc_) {
+        const std::optional<double> under = terrainHeightFunc_(surface);
+        if (under) {
+            underHeight = *under;
+        }
+    } else if (terrainProbe_.valid && terrainProbe_.hasData &&
+               terrainProbe_.hasCenterSample) {
+        underHeight = terrainProbe_.centerHeightMeters;
+    } else if (sampledThisCall) {
+        underHeight = rawHeight;
+    }
+    const double underFloor = std::max(underHeight, 0.0) + kMinAltitudeMeters;
+    const double clampHeight = std::max(minHeight, underFloor);
+    // 真穿地 = 相机已低于脚下原始地形(不是低于"地形+净空")。这种状态必须
+    // 立即抬出:径向、不设爬升上限、不保锚(C-V6 硬不变量;正常路径由前进门控
+    // 或前瞻地板阻止进入,这是兜底)。
+    const bool penetrating = cart.height() < std::max(underHeight, 0.0);
+    // 低于"脚下地形+净空"(净空硬不变量,系留/俯冲触底/外部裸写场景):同样
+    // 必须立即抬满,不限速——C-V6 的 floor 不是可协商的。
+    const bool belowUnderFloor = cart.height() < underFloor;
+    // 扫掠走廊驱动 = 本帧移动路径真跨过山脊(防隧穿):即使落点脚下是平地,
+    // 路径上越过的高地也必须立即计入并抬满,不限速(限速=跨脊那一帧"穿模")。
+    const bool sweepDrivesFloor =
+        terrainProbe_.valid && terrainProbe_.hasData &&
+        terrainProbe_.sweepMaxHeight >
+            terrainProbe_.ringMaxHeight + 1.0;
 
-    if (cart.height() >= minHeight) return eye;
-    groundState_.heightAboveTerrain = minHeight - filteredTerrainHeight_;
+    if (cart.height() >= clampHeight) return eye;
+    groundState_.heightAboveTerrain = clampHeight - filteredTerrainHeight_;
 
-    // 退出方向:有锚点时沿 eye→anchor 直线反向 dolly——eye→anchor 方向与
-    // dir/up 全不变 ⇒ 锚点像素严格不动(径向抬升会泄漏 anchorErr,是旧实现
-    // 唯一的保锚漏洞)。大地高沿该直线非线性,牛顿式迭代三轮收敛到厘米级。
-    // 直线近水平(后退换不来高度)时退回径向抬升——该位姿下锚点已在掠射
-    // 病态区,pin 走转台混合,保锚判据本就不适用。
-    if (pinnedAnchorWorld) {
+    // 退出方向:有锚点且未真穿地时沿 eye→anchor 直线反向 dolly——方向与
+    // dir/up 全不变 ⇒ 锚点像素严格不动(径向抬升会泄漏 anchorErr)。大地高
+    // 沿该直线非线性,牛顿式迭代三轮收敛到厘米级。直线近水平(后退换不来
+    // 高度)或真穿地时退回径向抬升——掠射/穿地 regime 保锚判据不适用。
+    glm::dvec3 target = (surface + normal * clampHeight).raw();
+    if (pinnedAnchorWorld && !penetrating) {
         const glm::dvec3 away = eye - *pinnedAnchorWorld;
         const double awayLen = glm::length(away);
         if (awayLen > 1e-6) {
@@ -170,7 +207,7 @@ glm::dvec3 CameraConstraintSolver::constrainEye(
                 for (int i = 0; i < 3; ++i) {
                     const Cartographic c =
                         ellipsoid.cartesianToCartographic(Vec3(candidate));
-                    const double deficit = minHeight - c.height();
+                    const double deficit = clampHeight - c.height();
                     if (deficit <= 1e-3) break;
                     const glm::dvec3 n =
                         ellipsoid.geodeticSurfaceNormal(
@@ -180,13 +217,30 @@ glm::dvec3 CameraConstraintSolver::constrainEye(
                     candidate += u * (deficit / gain);
                 }
                 if (ellipsoid.cartesianToCartographic(Vec3(candidate))
-                        .height() >= minHeight - 1e-2) {
-                    return candidate;
+                        .height() >= clampHeight - 1e-2) {
+                    target = candidate;
                 }
             }
         }
     }
-    return (surface + normal * minHeight).raw();
+
+    // 限速爬升:前瞻地板(内环,接近但未跨越)一步抬到崖顶是"低空猛地弹起"的
+    // 直接来源。只有"高于脚下地板、且非路径跨脊"时按单事件上限截断(方向
+    // 保留:沿线保锚或径向),下一事件继续爬;低于脚下地板/真穿地/路径跨脊
+    // 都立即抬满,不设上限。
+    const double targetHeight =
+        ellipsoid.cartesianToCartographic(Vec3(target)).height();
+    const double altDelta = targetHeight - cart.height();
+    if (!belowUnderFloor && !sweepDrivesFloor &&
+        altDelta > kMaxCollisionClimbPerEventMeters) {
+        const glm::dvec3 exitVec = target - eye;
+        const double exitLen = glm::length(exitVec);
+        if (exitLen > 1e-9) {
+            target = eye + exitVec *
+                (kMaxCollisionClimbPerEventMeters / altDelta);
+        }
+    }
+    return target;
 }
 
 void CameraConstraintSolver::refreshTerrainProbeIfNeeded(const glm::dvec3& eye,
@@ -245,7 +299,9 @@ void CameraConstraintSolver::refreshTerrainProbeIfNeeded(const glm::dvec3& eye,
         }
     }
     // 扫掠走廊:朝上次位置方向补采样,盖住单帧跨越的山脊(环是离散圆,
-    // 山脊落在环间会被漏掉;走廊沿位移线段密采)。
+    // 山脊落在环间会被漏掉;走廊沿位移线段密采)。sweepStart 记录走廊在
+    // offsets 里的起点,样本循环据此区分"内环前瞻"与"路径跨脊"。
+    size_t sweepStart = offsets.size();
     if (sweep > kProbeCollisionFraction * radius) {
         const glm::dvec2 back(-glm::dot(sweepVec, east),
                               -glm::dot(sweepVec, north));
@@ -263,23 +319,40 @@ void CameraConstraintSolver::refreshTerrainProbeIfNeeded(const glm::dvec3& eye,
     terrainProbe_.centerSurfaceEcef = surface.raw();
     terrainProbe_.radiusMeters = radius;
     terrainProbe_.hasData = false;
+    terrainProbe_.hasCenterSample = false;
     terrainProbe_.samplePointsEcef.clear();
     double collisionMax = -std::numeric_limits<double>::infinity();
+    double ringMax = -std::numeric_limits<double>::infinity();
+    double sweepMax = -std::numeric_limits<double>::infinity();
     double anyMax = -std::numeric_limits<double>::infinity();
     const size_t n = std::min(samples.size(), offsets.size());
     for (size_t i = 0; i < n; ++i) {
         if (!samples[i].valid) continue;
         terrainProbe_.hasData = true;
+        // offsets[0] 恒为 (0,0)(中心),i==0 即相机正下方样本。
+        if (i == 0) {
+            terrainProbe_.hasCenterSample = true;
+            terrainProbe_.centerHeightMeters = samples[i].heightMeters;
+        }
         terrainProbe_.samplePointsEcef.push_back(samples[i].surfaceEcef.raw());
         anyMax = std::max(anyMax, samples[i].heightMeters);
         if (collisionScope[i]) {
             collisionMax = std::max(collisionMax, samples[i].heightMeters);
+            if (i >= sweepStart) {
+                sweepMax = std::max(sweepMax, samples[i].heightMeters);
+            } else {
+                ringMax = std::max(ringMax, samples[i].heightMeters);
+            }
         }
     }
     // 碰撞口径内无有效样本而外环有(局部数据洞):保守取全部样本最大高。
     terrainProbe_.collisionMaxHeight =
         std::isfinite(collisionMax) ? collisionMax
         : (std::isfinite(anyMax) ? anyMax : 0.0);
+    terrainProbe_.ringMaxHeight =
+        std::isfinite(ringMax) ? ringMax : 0.0;
+    terrainProbe_.sweepMaxHeight =
+        std::isfinite(sweepMax) ? sweepMax : 0.0;
 }
 
 void CameraConstraintSolver::updateFilteredTerrainHeight(double rawHeightMeters,

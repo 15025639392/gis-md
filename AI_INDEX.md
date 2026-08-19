@@ -2000,13 +2000,13 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 | 方法 | 行 | 算法 |
 |---|---|---|
-| `setTerrainAreaSampleFunc` | .cpp:52 | 注入区域采样并使探针缓存失效 |
-| `commitPose` | .cpp:63 | 记录约束出口落定的 eye 作扫掠基准。⚠️**必须由编排层在出口末尾恰好调一次**,不能塞进 `constrainEye`:orbit 分支一次解算调两轮,两轮须共用同一个(上一帧的)基准 |
-| `constrainEye` | .cpp:77 | 高空快速路径早退 → 探针/单点采样 → 非对称滤波 → `nearestGeometryMeters`(采样点三维最小距离 ∧ 盘外墙下界) → 钳位。有锚点时退出方向沿 eye→anchor 直线牛顿迭代三轮(**保锚:径向抬升会泄漏 anchorErr**),近水平时退回径向 |
-| `refreshTerrainProbeIfNeeded` | .cpp:192 | 中心漂移/半径变化/代次变化触发重建,每帧至多 1 次。几何 = 中心点 + 同心三环×8 方位(旋转对称,故意不做视线前向偏置)+ **扫掠走廊**(朝上帧位置密采,盖住单帧跨越的山脊——环是离散圆,山脊落在环间会被漏掉) |
-| `updateFilteredTerrainHeight` | .cpp:285 | 非对称突变滤波:用户驱动/上升/小变动**立即**(新瓦片证明脚下是山,延迟=穿模,这正是 Cesium 对称 10% 规则的缺陷);仅数据驱动的大幅下降按 τ=0.5s 指数逼近(它不影响相机——钳位只抬不压——平滑的是动态 near 看到的地面) |
+| `setTerrainAreaSampleFunc` | .cpp:57 | 注入区域采样并使探针缓存失效 |
+| `commitPose` | .cpp:68 | 记录约束出口落定的 eye 作扫掠基准。⚠️**必须由编排层在出口末尾恰好调一次**,不能塞进 `constrainEye`:orbit 分支一次解算调两轮,两轮须共用同一个(上一帧的)基准 |
+| `constrainEye` | .cpp:82 | 高空快速路径早退 → 探针/单点采样 → 非对称滤波 → `nearestGeometryMeters`(采样点三维最小距离 ∧ 盘外墙下界) → 钳位。有锚点时退出方向沿 eye→anchor 直线牛顿迭代三轮(**保锚:径向抬升会泄漏 anchorErr**),近水平时退回径向。**碰撞抬升单事件限速**(`kMaxCollisionClimbPerEventMeters`=25,内环前瞻=接近未跨越才限速;低于脚下地板/真穿地/扫掠路径跨脊立即抬满,保 C-V6 与防隧穿)。**穿地守卫脚下高优先单点新鲜采样**(与探针同源 `RenderGridConsistent`,一次 O(档数);探针中心样本有"每帧至多重建一次"的跨崖滞后窗口,Space 快速推进实测 AGL −200m) |
+| `refreshTerrainProbeIfNeeded` | .cpp:246 | 中心漂移/半径变化/代次变化触发重建,每帧至多 1 次。几何 = 中心点 + 同心三环×8 方位(旋转对称,故意不做视线前向偏置)+ **扫掠走廊**(朝上帧位置密采,盖住单帧跨越的山脊——环是离散圆,山脊落在环间会被漏掉)。碰撞口径拆两半:`ringMaxHeight`(内环前瞻,限速爬升)/ `sweepMaxHeight`(路径跨脊,立即抬满) |
+| `updateFilteredTerrainHeight` | .cpp:358 | 非对称突变滤波:用户驱动/上升/小变动**立即**(新瓦片证明脚下是山,延迟=穿模,这正是 Cesium 对称 10% 规则的缺陷);仅数据驱动的大幅下降按 τ=0.5s 指数逼近(它不影响相机——钳位只抬不压——平滑的是动态 near 看到的地面) |
 
-调优常量(.cpp:24 起,匿名 namespace):`kTerrainFilterAbsStepMeters`=10 / `kTerrainFilterRelStep`=0.1(绝对项防海面 h≈0 时相对判据退化)、`kTerrainFilterDecayTauSeconds`=0.5、探针 `kProbeRingFractions`={0.15,0.40,1.0} × `kProbeRingAzimuths`=8、半径 `clamp(max(2·AGL, 0.6·单帧水平位移), 200m, 20km)`、`kProbeCollisionFraction`=0.15(碰撞口径=内环+走廊)、`kProbeDriftRebuildFraction`=0.0375、`kAnchorExitMinVerticalGain`=0.2。
+调优常量(.cpp:25 起,匿名 namespace):`kTerrainFilterAbsStepMeters`=10 / `kTerrainFilterRelStep`=0.1(绝对项防海面 h≈0 时相对判据退化)、`kTerrainFilterDecayTauSeconds`=0.5、探针 `kProbeRingFractions`={0.15,0.40,1.0} × `kProbeRingAzimuths`=8、半径 `clamp(max(2·AGL, 0.6·单帧水平位移), 200m, 20km)`、`kProbeCollisionFraction`=0.15(碰撞口径=内环+走廊)、`kProbeDriftRebuildFraction`=0.0375、`kAnchorExitMinVerticalGain`=0.2、`kMaxCollisionClimbPerEventMeters`=25(碰撞抬升单事件限速)。
 
 ### camera/CameraSystem.h / .cpp
 
@@ -2235,27 +2235,28 @@ Note: the shared `TileAvailabilityState` enum (NotAvailable / Available / Unknow
 
 | 方法 | 行 | 算法 |
 |---|---|---|
-| `anchorExactWeight` (anon) | .cpp:68 | 病态区混合权重:入射余弦 c≥0.35 全精确,≤0.10 全转台,中间 smoothstep。精确解增益 ∝1/c 掠射时爆炸,而硬切换必然跳变或死锁——连续混合 + 退化区整点重取锚点是唯一同时消掉两者的做法 |
-| `onDragStart` | .cpp:101 | `grabSurfacePoint`;清零惯性;起手判定模式(契约 1.2:海拔<150km 且 pitch≥60° → 近地拖图,否则空间拖球),近地模式建立地平线基线 |
-| `resolveDragMode` | .cpp:234 | 单指模式判据:WGS84 海拔 <150km(Cesium `minimumPickingTerrainHeight`)且 pitch ≥60°(MapLibre issue #6111 高倾斜病态起点) |
-| `horizonScreenY` | .cpp:250 | 地平线在屏幕上的 y:俯角 δ=acos(R/(R+h)),视线仰角 90°−pitch,按 fov/height 换算像素(契约 1.2 地平线几何约束) |
-| `applyNearGroundPan` | .cpp:274 | 近地拖图(契约 1.3):总偏移 ≤0.75×地平线像素距离(按向量长度缩放,绝不反向);姿态锁定 ⇒ 射线∩锚点切平面交点唯一,平移量=锚点−交点(平面平行位移,锚点保持指下);收集像素速度样本 |
-| `tickNearGroundInertia` | .cpp:344 | 近地惯性(契约 1.4):方向锁定、v*=0.998/ms 衰减、折合屏幕位移 <0.5px/帧或到达地平线边界即停(不反向) |
-| `onKeyCommand` / `panByPixels` / `zoomByLevels` | .cpp:410 / :454 / :495 | 键盘(契约 3.3):方向键平移 100px(空间=转台,近地=切平面,中心射线 miss 时取下半屏地表)、+/- 缩放 ±1 级(Shift 加倍)、Shift+方向键旋转 15°/倾斜 10°;入口先 `clearGlideInertia`;**仅 Free 模式生效**(CameraSystem 侧先查 active 控制器) |
-| `onPinchGesture`(新契约) | .cpp:551 | 契约 2.2 组合:①dolly 仅 `zoomEngaged` 时(阈值 0.1 log2,精确保锚;滚轮 `smoothZoom` 只并入目标不瞬时施加) → ②twist 仅 `rotateEngaged` 时(25px 弧长,绕锚点法线) → ③Pitch 锁启用时绕锚点竖转(反 wind-up:被守卫拒绝时重取基线) → ④`applyPinchPin`(**唯一产生横向世界运动的通道**;Undecided 钉起手质心,激活后钉当前质心=平移随动) |
-| `onPinchEnd` | .cpp:753 | **契约 2.3:双指 pan 无惯性**——不再种 pan 角速度;仅缩放动量足够时启动 zoom 惯性滑行 |
-| `tick` | .cpp:784 | pan 惯性(角速度制,指数阻尼 **exp(-2.0/s)=iOS 0.998/ms**,折合屏幕位移 <0.5px/帧即停) → 近地惯性(像素速度,同规则) → **滚轮平滑缩放(契约 3.1:指数收敛 ~300ms,单帧上限 ±ln(2),不越目标不反向)** → zoom 惯性(对数距离空间指数逼近,数学上永不越过锚点)。⚠️全部要求 `deltaSeconds > 0` ⇒ `tick(0.0)` 是完全空转 |
-| `clampNow` | .cpp:909 | `solver->constrainEye(userDriven=true, dt=0, anchor)` → 写回 → `commitPose`。恒 user-driven 是因为调用方刚刚显式动过相机 |
-| `rotateCameraVerticalAroundPoint` | .cpp:924 | 绕 `camera_->right()` 在竖直面内转。三重守卫:up 翻转、`minSlope`、地形净空预判(用滤波高度,不重采样)。**拒绝而非事后顶起**——顶起要么破坏 Pitch 的锚点不变量,要么(Cesium 式旋转补偿)偷偷改 direction |
-| `solveAnchorRotation` | .cpp:1046 | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
-| `pointOnGrabSphere` | .cpp:1084 | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
-| `turntableDeltaFromPixels` | .cpp:1109 | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
-| `tryAcquirePinchAnchor` | .cpp:1132 | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变) |
-| `applyPinchPin` | .cpp:1163 | 把锚点钉到目标像素;病态区连续混入质心转台并整点重取锚点;末尾走 `clampNow`(pin 是唯一横向通道,山区横移可能把 eye 转进地形)。**契约 2.3:双指 pan 无惯性**,pin 增量不再累积速度 |
-| `grabSurfacePoint` | .cpp:1256 | 抓取锚点。⚠️锚点必须落在拾取射线上——`pickTerrain` 返回点不在射线上,落差会被首个 move 一次性补掉 = 起手跳变(真机实测 227~471px) |
-| `applyAnchorDrag` | .cpp:1295 | 良态区精确锚定;病态区 slerp 混入转台 + 应用后整点重取锚点(**永不渐近混合**——混出的锚点不属于任何真实几何,会积欠账);末尾按事件时间戳收集最近 ≤3 个惯性样本,松手时 iOS 权重 0.6/0.35/0.05 合成 |
+| `anchorExactWeight` (anon) | .cpp:78 | 病态区混合权重:入射余弦 c≥0.35 全精确,≤0.10 全转台,中间 smoothstep。精确解增益 ∝1/c 掠射时爆炸,而硬切换必然跳变或死锁——连续混合 + 退化区整点重取锚点是唯一同时消掉两者的做法 |
+| `onDragStart` |  .cpp:125  | `grabSurfacePoint`;清零惯性;起手判定模式(契约 1.2:海拔<150km 且 pitch≥60° → 近地拖图,否则空间拖球),近地模式建立地平线基线 |
+| `resolveDragMode` | .cpp:258 | 单指模式判据:WGS84 海拔 <150km(Cesium `minimumPickingTerrainHeight`)且 pitch ≥60°(MapLibre issue #6111 高倾斜病态起点) |
+| `horizonScreenY` |  .cpp:274  | 地平线在屏幕上的 y:俯角 δ=acos(R/(R+h)),视线仰角 90°−pitch,按 fov/height 换算像素(契约 1.2 地平线几何约束) |
+| `applyNearGroundPan` |  .cpp:298  | 近地拖图(契约 1.3):总偏移 ≤0.75×地平线像素距离(按向量长度缩放,绝不反向);姿态锁定 ⇒ 射线∩锚点切平面交点唯一,平移量=锚点−交点(平面平行位移,锚点保持指下);收集像素速度样本 |
+| `tickNearGroundInertia` |  .cpp:374  | 近地惯性(契约 1.4):方向锁定、v*=0.998/ms 衰减、折合屏幕位移 <0.5px/帧或到达地平线边界即停(不反向)。**2026-08-19 起速度样本采原始手指位移**(不被地平线裁剪裁掉释放速度) |
+| `onKeyCommand` / `panByPixels` / `zoomByLevels` |  .cpp:440  / :468 / :509 | 键盘(契约 3.3):方向键平移 100px(空间=转台,近地=切平面,中心射线 miss 时取下半屏地表)、+/- 缩放 ±1 级(Shift 加倍)、Shift+方向键旋转 15°/倾斜 10°;入口先 `clearGlideInertia`;**仅 Free 模式生效**(CameraSystem 侧先查 active 控制器) |
+| `onPinchGesture`(新契约) |  .cpp:581  | 契约 2.2 组合:①dolly 仅 `zoomEngaged` 时(阈值 0.1 log2,精确保锚;滚轮 `smoothZoom` 只并入目标不瞬时施加) → ②twist 仅 `rotateEngaged` 时(25px 弧长,绕锚点法线) → ③Pitch 锁启用时绕锚点竖转(反 wind-up:被守卫拒绝时重取基线) → ④`applyPinchPin`(**唯一产生横向世界运动的通道**;Undecided 钉起手质心,激活后钉当前质心=平移随动) |
+| `onPinchEnd` |   .cpp:792   | **契约 2.3:双指 pan 无惯性**——不再种 pan 角速度;仅缩放动量足够时启动 zoom 惯性滑行 |
+| `tick` |   .cpp:823   | pan 惯性(视角角速度制,指数阻尼 **exp(-2.0/s)=iOS 0.998/ms**,停止判据用视角等效屏幕位移 <0.5px/帧;应用旋转按视差增益换算成绕地心角速度——修复前直接采绕地心率,低空被视差压小 ~1/4000,第一帧就判停) → 近地惯性(像素速度,同规则) → **滚轮平滑缩放(契约 3.1:指数收敛 ~300ms,单帧上限 ±ln(2),不越目标不反向)** → zoom 惯性(对数距离空间指数逼近,数学上永不越过锚点)。⚠️全部要求 `deltaSeconds > 0` ⇒ `tick(0.0)` 是完全空转 |
+| `clampNow` | .cpp:984 | `solver->constrainEye(userDriven=true, dt=0, anchor)` → 写回 → `commitPose`。恒 user-driven 是因为调用方刚刚显式动过相机 |
+| `blendViewTowardGlobeCenter` | .cpp:953 | **2026-08-19 新增,契约 2.4**:拉远到高空(≥1.5R)后,缩放路径把视轴按高度 smoothstep 转向地心,让球心自然回到屏幕中心(3.4R 偏移 393px→3px);4R 以上完全对准。只由缩放路径调用(捏合拉远/滚轮 settle/zoom 惯性),近地(<1.5R)不干预,平移/倾斜不抢方向 |
+| `rotateCameraVerticalAroundPoint` |   .cpp:999   | 绕 `camera_->right()` 在竖直面内转。三重守卫:up 翻转、`minSlope`、地形净空预判(用滤波高度,不重采样)。**拒绝而非事后顶起**——顶起要么破坏 Pitch 的锚点不变量,要么(Cesium 式旋转补偿)偷偷改 direction |
+| `solveAnchorRotation` |   .cpp:1122   | 把「像素射线∩抓取球的点」转到 `anchorNormal` 的绕地心旋转 + 条件数 |
+| `pointOnGrabSphere` |   .cpp:1160   | 真交点,或 miss 时取**最近接近点**(相切处与真交点重合 ⇒ 跨球缘 C0 连续) |
+| `turntableDeltaFromPixels` |   .cpp:1185   | 转台回退:屏幕像素按 fov/height 换算角度(水平垂直同增益,aspect 抵消) |
+| `tryAcquirePinchAnchor` |   .cpp:1208   | pick → 半径钳到 eye 以下(**防抓取球包住相机致射线命中背面疯转**)→ 方向换成射线∩钳位球(防起手跳变)。**2026-08-19 加两道拒绝**:掠射锚点(条件数<0.1)与远锚(距离>max(2×海拔,2km))起手即拒——低空近水平视线下远锚会让退化区"转台+整点重取"把锚点沿球面甩出(跳远);中途"每事件重试获取"同样受此守卫 |
+| `applyPinchPin` |   .cpp:1266   | 把锚点钉到目标像素;病态区连续混入质心转台并整点重取锚点;末尾走 `clampNow`(pin 是唯一横向通道,山区横移可能把 eye 转进地形)。**契约 2.3:双指 pan 无惯性**,pin 增量不再累积速度。**2026-08-19:病态区转台经 `scaleTurntableToAnchor` 按锚点距/地心距缩放**——低空绕地心转台(手指角速度×R)单步可甩出数百公里(跳远),缩放到锚点尺度后相机位移≈角度×锚点距,高空自动退化为原转台 |
+| `grabSurfacePoint` |  .cpp:1366  | 抓取锚点。⚠️锚点必须落在拾取射线上——生产 `pickTerrain` 已改射线行进(命中点在射线上,2026-08-19),此处 `pointOnGrabSphere` 重投影保留为对任意 surfacePicker 的防御(旧 off-ray 落差会被首个 move 一次性补掉 = 起手跳变,真机实测 227~471px)。**半径钳到 eye 以下**(锚点高于相机=仰视峰顶时防抓取球包住相机致射线命中背面疯转;低空朝下坡/崖时射线行进命中点在相机下方,不再触发钳制) |
+| `applyAnchorDrag` |   .cpp:1405   | 良态区精确锚定;病态区 slerp 混入转台 + 应用后整点重取锚点(**永不渐近混合**——混出的锚点不属于任何真实几何,会积欠账);末尾按事件时间戳收集最近 ≤3 个惯性样本,松手时 iOS 权重 0.6/0.35/0.05 合成。**2026-08-19 修正:样本率 = 手指视角角速度**(原始像素位移×radPerPixel/dt),不是相机绕地心角速度——后者被视差压小,松手惯性第一帧就判停;并记录 `inertiaGain_`=|eye−anchor|/|eye| 供 tick 换算。**病态区转台同 `applyPinchPin` 经 `scaleTurntableToAnchor` 缩放**(防低空绕地心甩出) |
 
-调优常量(.cpp:22 起,匿名 namespace):惯性 `kMaxInertiaAngularVelocityRadPerSec`=5 / `kInertiaDampingPerSecond`=2(=iOS 0.998/ms)/ `kVelocitySmoothing`=0.35(zoom 惯性 EMA 用);近地模式 `kNearModeMaxAltitudeMeters`=150000(Cesium) / `kNearModeMinPitchRadians`=60°(MapLibre) / `kNearHorizonClampFactor`=0.75(PR #6345) / `kNearMinInertiaVelocityPxPerSec`=100(Mapbox+Flutter) / `kNearPlaneGrazingEpsilon`=1e-4;`kTouchJerkLimit`=0.3 / `kMaxPinchScaleResidualLog`=1.0;`kTouchMinSlope`=0.1;`kPinchTiltRadiansPerPixel`=0.00873(=Mapbox 0.5°/px,保留质心绝对值映射);`kGrabSphereEyeMarginMeters`=25;病态带 `kAnchorConditioningLo/Hi`=0.10/0.35;zoom 惯性 `kZoomInertiaDampingPerSecond`=6 / `kMaxZoomInertiaLogRate`=6 / `kMinZoomInertiaLogRate`=0.08;滚轮平滑(类内常量)`kZoomSettleRatePerSecond`=8(~0.3s 收敛 91%) / `kMaxZoomLevelsPerFrame`=1(单帧上限 ±ln(2),Mapbox maxScalePerFrame=2)。相机包络三常量(净空/最大地形高/地心距上限)不在这里,读 `CameraConstraintSolver`。
+调优常量(.cpp:26 起,匿名 namespace):惯性 `kMaxInertiaAngularVelocityRadPerSec`=5(视角角速度上限)/ `kInertiaDampingPerSecond`=2(=iOS 0.998/ms)/ `kVelocitySmoothing`=0.35(zoom 惯性 EMA 用);近地模式 `kNearModeMaxAltitudeMeters`=150000(Cesium) / `kNearModeMinPitchRadians`=60°(MapLibre) / `kNearHorizonClampFactor`=0.75(PR #6345) / `kNearMinInertiaVelocityPxPerSec`=100(Mapbox+Flutter) / `kNearPlaneGrazingEpsilon`=1e-4;`kTouchJerkLimit`=0.3 / `kMaxPinchScaleResidualLog`=1.0;`kTouchMinSlope`=0.1;`kPinchTiltRadiansPerPixel`=0.00873(=Mapbox 0.5°/px,保留质心绝对值映射);`kGrabSphereEyeMarginMeters`=25;病态带 `kAnchorConditioningLo/Hi`=0.10/0.35;`kMaxPinchAnchorAltitudeScale`=2.0 / `kMinPinchAnchorDistanceMeters`=2000(捏合锚点距离上限,海拔自适应);zoom 惯性 `kZoomInertiaDampingPerSecond`=6 / `kMaxZoomInertiaLogRate`=6 / `kMinZoomInertiaLogRate`=0.08;滚轮平滑(类内常量)`kZoomSettleRatePerSecond`=8(~0.3s 收敛 91%) / `kMaxZoomLevelsPerFrame`=1(单帧上限 ±ln(2),Mapbox maxScalePerFrame=2)。相机包络三常量(净空/最大地形高/地心距上限)不在这里,读 `CameraConstraintSolver`。
 
 ### camera/CameraPoseOps.h / .cpp
 
@@ -3508,7 +3509,7 @@ Ray-picking service. Generates ray via `Camera::getPickRay()`, tests against ell
 | — Polygon path | .cpp:103-138 | ECEF-projects ring[0], fan-triangulates around v0, ray-triangle test |
 | — LineString path | .cpp:139-246 | Ray-segment shortest-distance (constrained Eberly variant); dynamic per-pixel tolerance × 10 (.cpp:143-149); **`kEpsSeg`** = 1e-12 (.cpp:178) |
 | `pickEllipsoid()` | .cpp:253-281 | Ray-ellipsoid only; sets Ellipsoid hit + cartographic/distance |
-| `pickTerrain()` | .cpp:283-319 | Ellipsoid hit then `terrainSampler(lngRad,latRad)→height`; recomputes ECEF + distance. Note: sampler callback-injected, decoupled from tile/GPU terrain (async terrain GPU-upload path with 32-byte `TerrainGpuVertex` draws via the wired terrain shader path) |
+| `pickTerrain()` | .cpp:283-386 | 射线 vs 地形高度场行进:自适应步长(相机海拔 1/4,钳 [10m,800m])从相机出发找首个 rayHeight<terrainHeight 区间,二分精修,命中点**在射线上且是可见面**(低空朝坡/崖不再返回"椭球交点+抬升"的山后点——起手锚点贴眼/增益崩塌的根源);未命中地形时返回椭球入口点(平地/海面与旧行为一致);射线碰不到椭球返回 None。每次手势/点选一次,~O(20-40) 次采样器调用,不进渲染循环。Note: sampler callback-injected (`terrainTileset->sampleHeight`, `RenderGridConsistent`), decoupled from tile/GPU terrain |
 
 ### SelectionManager.h / .cpp
 
@@ -3545,19 +3546,19 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:76-82 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:83-120 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
 | `render(deltaSeconds=0)` | .h:57, .cpp:533-1119 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:533). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:533-1119). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:533-1119). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:615-616). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:1131-1134 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:1135-1143 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:1145-1148 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:1149-1157 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1202-1205 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1210-1213 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1216-1219 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1224-1227 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1231-1236 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1245-1250 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1313-1320 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1321-1324 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:1160-1163, 1318-1322 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:1327-1334 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1335-1338 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:1174-1177, 1343-1347 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:692-740 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 

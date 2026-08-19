@@ -132,4 +132,217 @@ TEST_F(PinAnchorErrorTest, PinchKeepsAnchorAtCentroid) {
     }
 }
 
+// 近地正常锚点倾斜:45° 下俯、锚点 ~1.4km(在海拔自适应上限 2×1km=2km 内),
+// 锚点被接受,双指倾斜正常工作且不跑飞。
+TEST_F(PinAnchorErrorTest, NearGroundAcceptedAnchorTiltWorksNoRunaway) {
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 ground = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, 0.0));
+    const glm::dvec3 up = e.geodeticSurfaceNormal(ground).raw();
+    const glm::dvec3 eye = ground.raw() + up * 1000.0;  // 1km AGL
+    const glm::dvec3 east =
+        glm::normalize(glm::cross(glm::dvec3(0, 0, 1), up));
+    const glm::dvec3 dir = glm::normalize(
+        east * std::cos(glm::radians(45.0)) - up * std::sin(glm::radians(45.0)));
+    const glm::dvec3 camUp =
+        glm::normalize(glm::cross(dir, glm::cross(up, dir)));
+    camera_->setView(Vec3(eye), Vec3(dir), Vec3(camUp));
+
+    // 拾取返回椭球入口(远处低半径点 → 抓取球半径≈R → 锚点远)。
+    controller_->setSurfacePicker(
+        [this](float x, float y, Vec3& out) -> bool {
+            const Ray ray = camera_->getPickRay(
+                double(x), double(y), double(kW), double(kH));
+            const auto& ell = Ellipsoid::WGS84();
+            const std::optional<Vec3> hit =
+                ell.rayIntersection(ray.origin(), ray.direction());
+            if (!hit) return false;
+            out = *hit;
+            return true;
+        });
+
+    PinchInput in{};
+    in.centroidX = 400.0f;
+    in.centroidY = 300.0f;
+    in.scaleFromStart = 1.0f;
+    in.timestamp = 0.0;
+    in.mode = PinchMode::Undecided;
+    controller_->onPinchGesture(in);  // 起手钉锚
+
+    Vec3 anchor;
+    ASSERT_TRUE(controller_->debugAnchorWorld(anchor));
+    const double anchorDist =
+        glm::length(anchor.raw() - camera_->position().raw());
+    ASSERT_GT(anchorDist, 500.0)
+        << "场景失效:锚点太近,倾斜位移无意义";
+    ASSERT_LT(anchorDist, 2500.0)
+        << "场景失效:锚点应被海拔自适应上限接受(2km 内)";
+
+    // Pitch 模式,质心逐步下移触发倾斜。
+    in.mode = PinchMode::Pitch;
+    const glm::dvec3 eyeBefore = camera_->position().raw();
+    glm::dvec3 prevEye = camera_->position().raw();
+    double maxSwing = 0.0;
+    for (int i = 1; i <= 12; ++i) {
+        in.centroidY = 300.0f + 20.0f * i;
+        in.timestamp = i * 0.016;
+        controller_->onPinchGesture(in);
+        const glm::dvec3 now = camera_->position().raw();
+        maxSwing = std::max(maxSwing, glm::length(now - prevEye));
+        prevEye = now;
+    }
+    // 倾斜确实发生了(绕锚点转 ⇒ 相机位置有位移;避免场景空转)。
+    EXPECT_GT(glm::length(camera_->position().raw() - eyeBefore), 5.0)
+        << "场景失效:倾斜没发生(锚点被拒/守卫拒绝)";
+    // 近锚倾斜单步位移由 0.08 rad 步长上限决定:1.4km×0.08≈112m/步,
+    // 断言 ≤200m 防止退化区跑飞(修复前远锚单步 200km)。
+    EXPECT_LE(maxSwing, 200.0)
+        << "近锚倾斜单步位移过大:退化区跑飞(跳远)";
+}
+
+// 掠射/远锚拒绝:近水平视线(2° 下俯)下拾取点 ~30km 外、条件数≈0.03<0.1,
+// 起手必须拒绝;中途质心下移让射线变陡、重试获取也不得把远锚(>2×海拔)
+// 拉回来——修复前单步 200km=跳远。拒绝后走无锚路径,捏合(不缩放)不动相机。
+TEST_F(PinAnchorErrorTest, GrazingOrFarAnchorRejectedNoRunaway) {
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 ground = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, 0.0));
+    const glm::dvec3 up = e.geodeticSurfaceNormal(ground).raw();
+    const glm::dvec3 eye = ground.raw() + up * 1000.0;
+    const glm::dvec3 east =
+        glm::normalize(glm::cross(glm::dvec3(0, 0, 1), up));
+    const glm::dvec3 dir = glm::normalize(
+        east * std::cos(glm::radians(2.0)) - up * std::sin(glm::radians(2.0)));
+    const glm::dvec3 camUp =
+        glm::normalize(glm::cross(dir, glm::cross(up, dir)));
+    camera_->setView(Vec3(eye), Vec3(dir), Vec3(camUp));
+
+    controller_->setSurfacePicker(
+        [this](float x, float y, Vec3& out) -> bool {
+            const Ray ray = camera_->getPickRay(
+                double(x), double(y), double(kW), double(kH));
+            const auto& ell = Ellipsoid::WGS84();
+            const std::optional<Vec3> hit =
+                ell.rayIntersection(ray.origin(), ray.direction());
+            if (!hit) return false;
+            out = *hit;
+            return true;
+        });
+
+    PinchInput in{};
+    in.centroidX = 400.0f;
+    in.centroidY = 300.0f;
+    in.scaleFromStart = 1.0f;
+    in.timestamp = 0.0;
+    in.mode = PinchMode::Undecided;
+    controller_->onPinchGesture(in);
+
+    // 掠射锚点必须被拒绝:无锚可钉。
+    Vec3 anchor;
+    EXPECT_FALSE(controller_->debugAnchorWorld(anchor))
+        << "掠射锚点没被拒绝(条件数≈0.03 仍接受,会跳远)";
+
+    // Pitch 手势(不缩放):起手拒绝 + 中途重试也不得拉回远锚,相机不得移动。
+    in.mode = PinchMode::Pitch;
+    const glm::dvec3 eyeBefore = camera_->position().raw();
+    double maxSwing = 0.0;
+    glm::dvec3 prevEye = eyeBefore;
+    for (int i = 1; i <= 8; ++i) {
+        in.centroidY = 300.0f + 20.0f * i;
+        in.timestamp = i * 0.016;
+        controller_->onPinchGesture(in);
+        const glm::dvec3 now = camera_->position().raw();
+        maxSwing = std::max(maxSwing, glm::length(now - prevEye));
+        prevEye = now;
+    }
+    EXPECT_LE(maxSwing, 55.0)
+        << "掠射/远锚态捏合仍产生大位移:锚点拒绝或重试守卫没生效";
+    EXPECT_FALSE(controller_->debugAnchorWorld(anchor))
+        << "中途重试把远锚拉回来了";
+}
+
+// 高空球心回中(契约 2.4):拉远到地球可见(≥1.5R)后,捏合拉远应把视轴转向地心,
+// 让球心自然回到屏幕中心;4R 以上完全对准。
+TEST_F(PinAnchorErrorTest, ZoomOutGlobeCentersAboveThreshold) {
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 surface = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, 0.0));
+    const glm::dvec3 up = e.geodeticSurfaceNormal(surface).raw();
+    const glm::dvec3 eye = surface.raw() + up * 4.0 * 6378137.0;  // 4R
+    const glm::dvec3 dir =
+        glm::normalize(surface.raw() - eye);  // 指向地表点,偏离地心方向
+    const glm::dvec3 camUp =
+        glm::normalize(glm::cross(dir, glm::cross(up, dir)));
+    camera_->setView(Vec3(eye), Vec3(dir), Vec3(camUp));
+
+    controller_->setSurfacePicker(
+        [this](float x, float y, Vec3& out) -> bool {
+            const Ray ray = camera_->getPickRay(
+                double(x), double(y), double(kW), double(kH));
+            const auto& ell = Ellipsoid::WGS84();
+            const std::optional<Vec3> hit =
+                ell.rayIntersection(ray.origin(), ray.direction());
+            if (!hit) return false;
+            out = *hit;
+            return true;
+        });
+
+    PinchInput in{};
+    in.centroidX = 400.0f;
+    in.centroidY = 300.0f;
+    in.scaleFromStart = 1.0f;
+    in.timestamp = 0.0;
+    controller_->onPinchGesture(in);  // 起手
+    in.scaleFromStart = 0.5f;          // 拉远 2×
+    in.timestamp = 0.016;
+    controller_->onPinchGesture(in);
+
+    const glm::dvec3 dirAfter = camera_->direction().raw();
+    const glm::dvec3 toCenter =
+        glm::normalize(-camera_->position().raw());
+    EXPECT_GT(glm::dot(dirAfter, toCenter), 0.999)
+        << "4R 拉远后视轴未对准地心:高空球心回中没生效";
+}
+
+// 近地(<1.5R)缩放不得改变视轴方向(锚点钉指语义保持,不回中)。
+TEST_F(PinAnchorErrorTest, ZoomNearGroundKeepsViewDirection) {
+    const auto& e = Ellipsoid::WGS84();
+    const Vec3 surface = e.cartographicToCartesian(
+        Cartographic::fromDegrees(106.5, 29.6, 0.0));
+    const glm::dvec3 up = e.geodeticSurfaceNormal(surface).raw();
+    const glm::dvec3 eye = surface.raw() + up * 1000.0;  // 1km AGL
+    const glm::dvec3 dir =
+        glm::normalize(surface.raw() - eye);
+    const glm::dvec3 camUp =
+        glm::normalize(glm::cross(dir, glm::cross(up, dir)));
+    camera_->setView(Vec3(eye), Vec3(dir), Vec3(camUp));
+
+    controller_->setSurfacePicker(
+        [this](float x, float y, Vec3& out) -> bool {
+            const Ray ray = camera_->getPickRay(
+                double(x), double(y), double(kW), double(kH));
+            const auto& ell = Ellipsoid::WGS84();
+            const std::optional<Vec3> hit =
+                ell.rayIntersection(ray.origin(), ray.direction());
+            if (!hit) return false;
+            out = *hit;
+            return true;
+        });
+
+    PinchInput in{};
+    in.centroidX = 400.0f;
+    in.centroidY = 300.0f;
+    in.scaleFromStart = 1.0f;
+    in.timestamp = 0.0;
+    controller_->onPinchGesture(in);
+    const glm::dvec3 dirBefore = camera_->direction().raw();
+    in.scaleFromStart = 0.5f;  // 拉远
+    in.timestamp = 0.016;
+    controller_->onPinchGesture(in);
+
+    const glm::dvec3 dirAfter = camera_->direction().raw();
+    EXPECT_GT(glm::dot(dirBefore, dirAfter), 0.9999)
+        << "近地缩放改变了视轴方向:回中混入低空,破坏锚点钉指";
+}
+
 }  // namespace

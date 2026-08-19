@@ -79,8 +79,13 @@ public:
                               double viewportWidthPixels,
                               double viewportHeightPixels) const;
 
-    /// 带地形高度的椭球拾取。
-    /// 命中椭球后，通过 terrainSampler 查询高度。
+    /// 带地形的射线拾取。
+    /// 从相机沿拾取射线做自适应步长行进，返回射线与地形高度场
+    /// (terrainSampler: lngRad, latRad → heightMeters) 的第一个交点。命中点
+    /// 在射线上且是用户看到的地表——低空朝坡/崖时不再返回"椭球交点+抬升"
+    /// 的山后点(那是起手锚点贴眼/拖拽增益崩塌的来源)。射线未碰到地形时
+    /// 返回椭球入口点(平地/海面与旧行为一致)；射线碰不到椭球(仰视天空)
+    /// 返回 None。
     /// @param terrainSampler 地形高度查询函数（lngRad, latRad）→ heightMeters
     PickResult pickTerrain(float screenXPixels, float screenYPixels,
                             const Camera& camera,

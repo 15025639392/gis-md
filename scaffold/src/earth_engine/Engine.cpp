@@ -539,6 +539,7 @@ bool Engine::render(double deltaSeconds) {
         return false;
     }
     const double frameStartMs = perf::nowMs();
+    const double g0StartMs = frameStartMs;  // 帧首缝:frameStart→sceneUpdate
 
     // 自动计时
     if (deltaSeconds <= 0.0) {
@@ -587,6 +588,10 @@ bool Engine::render(double deltaSeconds) {
             Scene::EngineTimingScope::SceneUpdate,
             perf::nowMs() - startMs);
     }
+    const double g0Ms = perf::nowMs() - g0StartMs;
+    // 页存储等"update 之后、beginFrame 之前"的段:2026-08-19 帧时归因发现
+    // 引擎仍有 ~30ms 无名差值,加缝计时定位(该段≈页存储,已确认)。
+    const double gapAStartMs = perf::nowMs();
     // 层1:本帧的太阳方向已由 update 定稿。记为时间驱动重画门控的基准
     // (「上次真渲染那帧的太阳」),供 advanceTime/setTime 判越阈(见
     // requestRenderIfSunMoved)。零向量(未定)不更新,避免 normalize NaN。
@@ -805,6 +810,7 @@ bool Engine::render(double deltaSeconds) {
             Scene::EngineTimingScope::BeginFrame,
             perf::nowMs() - startMs);
     }
+    const double gapAMs = perf::nowMs() - gapAStartMs;
     bool scenePresented = false;
     {
         const double startMs = perf::nowMs();
@@ -813,6 +819,7 @@ bool Engine::render(double deltaSeconds) {
             Scene::EngineTimingScope::SceneRender,
             perf::nowMs() - startMs);
     }
+    const double gapBStartMs = perf::nowMs();  // sceneRender→endFrame 缝
     {
         const double startMs = perf::nowMs();
         device_->endPass();
@@ -868,6 +875,8 @@ bool Engine::render(double deltaSeconds) {
             Scene::EngineTimingScope::EndFrame,
             perf::nowMs() - startMs);
     }
+    const double gapBMs = perf::nowMs() - gapBStartMs;
+    const double g4StartMs = perf::nowMs();  // 帧尾缝:endFrame→finishEngineFrame
 
     lastFramePresented_ = scenePresented;
     // 黑块探针(漏底/黑块诊断):swap 前逐帧降采样回读,统计近黑像素占比。
@@ -999,6 +1008,7 @@ bool Engine::render(double deltaSeconds) {
             shadowVerifyWorstDelta_ = 0;
         }
     }
+    const double g4Ms = perf::nowMs() - g4StartMs;  // 帧尾缝实测
     scene_->finishEngineFrame(perf::nowMs() - frameStartMs);
     const Diagnostics& diag = scene_->diagnostics();
     // 北极星 VT PoC 头行段(仅在 PoC 活跃时追加,默认关时为空 → 零污染):
@@ -1042,7 +1052,7 @@ bool Engine::render(double deltaSeconds) {
     }
     char detail[800];
     std::snprintf(detail, sizeof(detail),
-        "begin=%.2f update=%.2f pageStore=%.2f psUvp=%.2f psTick=%.2f psIndir=%.2f render=%.2f submit=%.2f end=%.2f draw=%d tiles=%d hold=%d%s%s%s",
+        "begin=%.2f update=%.2f pageStore=%.2f psUvp=%.2f psTick=%.2f psIndir=%.2f render=%.2f submit=%.2f end=%.2f gapA=%.2f gapB=%.2f g0=%.2f g4=%.2f draw=%d tiles=%d hold=%d%s%s%s",
         diag.engineBeginFrameMs,
         diag.sceneUpdateMs,
         pageStoreMs,
@@ -1052,6 +1062,10 @@ bool Engine::render(double deltaSeconds) {
         diag.sceneRenderMs,
         diag.renderSubmitMs,
         diag.engineEndFrameMs,
+        gapAMs,
+        gapBMs,
+        g0Ms,
+        g4Ms,
         diag.drawCalls,
         diag.visibleTiles,
         scenePresented ? 0 : 1,

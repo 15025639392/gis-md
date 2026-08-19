@@ -183,10 +183,11 @@ protected:
 TEST_F(PoseTraceTest, TraceA_AnchorDragThenInertia) {
     step(1);  // 冷启动帧
 
-    // ① 低空拖拽:走良态锚定路径。注意这里**不会**种下惯性——默认位姿在重庆
-    // (纬度 29.6°),地心距 ~6374km 小于赤道半径 6378km,相机落在标准抓取球
-    // 之内,半径被钳到 |eye|−25m ⇒ 相机贴着抓取球面,30px 只转出 ~2e-7 rad,
-    // 远低于 kMinInertiaAngularVelocity。低空慢拖不产生惯性是设计正确。
+    // ① 低空拖拽:走良态锚定路径。⚠️ 2026-08-19 修正:惯性采样改**视角角速度**
+    // (手指感知),低空快拖会种下惯性——修复前采相机绕地心角速度,被视差
+    // (锚点距/地心距 ~1/4000)压到 ~2e-7 rad,松手第一帧就被 0.5px/帧 判停,
+    // "低空拖拽无惯性"是 bug 不是设计。这里 30px/16ms ≈ 1875px/s,视角率
+    // ~3.7 rad/s,惯性应启动;随后的 viewDistance 清掉它,② 重新种惯性。
     controller_->onDragStart(400.0f, 300.0f, 0.0);
     trace_.record(*camera_, controller_->groundState());
     for (int i = 1; i <= 8; ++i) {
@@ -225,7 +226,9 @@ TEST_F(PoseTraceTest, TraceA_AnchorDragThenInertia) {
     ASSERT_FALSE(controller_->isSelfAnimating())
         << "场景失效:惯性未自清零,没走到清零分支";
 
-    EXPECT_TRACE_HASH(trace_, 0xdcf961f06118a4efull);
+    // 2026-08-19:惯性采样改视角角速度后,① 低空拖拽也会种下惯性并多滑几帧,
+    // 轨迹 hash 更新(行为见上方注释)。
+    EXPECT_TRACE_HASH(trace_, 0x2a9a122bce4477e5ull);
 }
 
 // ---------------------------------------------------------------------------
@@ -411,7 +414,9 @@ TEST_F(PoseTraceTest, TraceD_HighAltitudeRecenterAndSentinel) {
     camera_->setView(Vec3(eye * 1.0001), camera_->direction(), camera_->up());
     step(4);
 
-    EXPECT_TRACE_HASH(trace_, 0x10f1c10311c00f2full);
+    // 2026-08-19:高空球心回中(契约 2.4)——拉远越过 1.5R 后视轴随高度转向地心,
+    // TraceD 的偏心 zoom-out 轨迹随之变化,hash 更新。
+    EXPECT_TRACE_HASH(trace_, 0x2073982d83de5871ull);
 }
 
 // ---------------------------------------------------------------------------
@@ -444,7 +449,10 @@ TEST_F(PoseTraceTest, TraceE_LimbAndOffGlobeDrag) {
     trace_.record(*camera_, controller_->groundState());
     step(10);
 
-    EXPECT_TRACE_HASH(trace_, 0x7468198d2a01bccaull);
+    // 2026-08-19:spin 路径采样率改为手指视角角速度(与 anchor 路径同语义);
+    // 且退化带转台按"锚点距/地心距"缩放到锚点尺度(防低空绕地心甩出=跳远),
+    // 球缘拖拽轨迹随之变化,hash 更新。
+    EXPECT_TRACE_HASH(trace_, 0x1b0609ea643220cull);
 }
 
 }  // namespace

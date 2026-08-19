@@ -43,6 +43,11 @@ public:
     bool providesTerrainQuadtree() const override { return true; }
     TileAvailabilityState availabilityState(
         const TileKey& key) const override;
+    // 高度图地形四叉树拓扑由 scheme/zoom 静态决定(子瓦片集合不变),发布
+    // 非零常量版本号让 TileChildFrameMaterializer 的 fast path 生效——否则
+    // hasReliableTopologyVersion=false,物化检查每帧全量重跑(17 次调用/帧,
+    // selTrav 7.6ms 里 refine 占 1-2.5ms 的浪费,2026-08-20 专项实测)。
+    uint64_t childTopologyRevision() const override { return 1; }
 
     void requestTileContent(const TileKey& key,
                             CancellationToken token,

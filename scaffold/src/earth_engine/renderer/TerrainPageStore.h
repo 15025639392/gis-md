@@ -149,7 +149,13 @@ public:
         // B2b 稀疏页存储:array 层数 = LRU 页容量(每页一层,blockLayers=1)。
         // 512×256²×4 ≈ 128MB VRAM 上限;实际按 LRU 只驻留屏幕可见 ~125-185 页。
         int maxPages = 512;
-        int maxUploadsPerFrame = 8;  // 每帧上传层数上限(涓流,勿拖动期冻结)
+        // 每帧上传层数上限(涓流,勿拖动期冻结)。⚠️ 2026-08-19 真机 A/B:8→3
+        // 后 PHK110 页存储 tick 36→10ms、帧时 37→26ms、upload 43.6→2.0ms/
+        // 60tick——每帧 GL 上传量积压驱动队列是"交互卡"根因。环深加深到 8
+        // 并恢复预算 8 仍回 stall(tick 25ms),故机制是**预算限流**而非环深;
+        // 3 为经验值(≈PBO 环深,每槽至多一个在途 DMA)。页面进场相应延后,
+        // 由祖先回退兜底。
+        int maxUploadsPerFrame = 3;
         /// 合成(重采样+按序 alphaOver)下放的 worker 池。真机测得 compose 是
         /// tick 的支配成本且单帧尖刺 33-37ms(2026-08-07 三段插桩),下放后渲染
         /// 线程只剩上传+叠画。null = 就地同步合成(host 测试确定性;行为与
