@@ -1923,12 +1923,12 @@ geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDe
 | `acquire` | .cpp:52-115 | 取(或建)一份模板几何 |
 | `heightCacheKey` | .cpp:160-128 | 高度纹理缓存键 |
 | `findHeightArray` / `ensureHeightArray` | .cpp:173-134 / :136-162 | 按 gridSize 取/建高度 texture array |
-| `bakeTerrainHeightNormalTexels` | .cpp:208-341 | 烘高度 + **切空间法线到 B/A 通道** |
-| `acquireHeightTexture` | .cpp:344-459 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
-| `ensureBakeResources` | .cpp:460-476 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
-| `flushHeightBakes` | .cpp:477-556 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer),然后清空。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
-| `updateEdgeLutRows` | .cpp:557-572 | 写本帧边吸附的邻居高度差表(①-1)。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
-| `touchHeightTexture` | .cpp:573-582 | LRU 触碰 |
+| `bakeTerrainHeightNormalTexels` | .cpp:212-347 | 烘高度 + **切空间法线到 B/A 通道** |
+| `acquireHeightTexture` | .cpp:348-463 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
+| `ensureBakeResources` | .cpp:464-480 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
+| `flushHeightBakes` | .cpp:481-560 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer),然后清空。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
+| `updateEdgeLutRows` | .cpp:561-576 | 写本帧边吸附的邻居高度差表(①-1)。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
+| `touchHeightTexture` | .cpp:577-586 | LRU 触碰 |
 
 ### HeightmapTerrainContentProvider.h / .cpp
 
@@ -2612,13 +2612,13 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:1249-1335 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
+| `initialize(device, Config)` | .cpp:1253-1339 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=8(涓流,勿在拖动期冻结) |
 | `updateVisiblePages(view, ...)` | .cpp:569-1235 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下) |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1424-1517 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1518-1559 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1661-1752 / :1580-1620 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1753-1863 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1409-1423 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1429-1522 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1523-1564 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1666-1757 / :1580-1620 | 解码结果派发 worker 合成(渲染线程只做账本校验) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1758-1868 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1414-1428 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:288-356 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:404-411 / :550-569 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:411-506 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
@@ -2733,17 +2733,17 @@ OpenGL ES 3.0 backend implementing `renderer/RenderDevice.h`. Assumes caller own
 | Capability queries | .cpp:214-206 | `maxTextureSize`/`maxDrawBuffers` via `glGetIntegerv`; `supportsFloatTextures`/`supportsInstancing` hardcoded `true` (GLES 3.0 core); `rendererString` from `GL_RENDERER` |
 | `createTexture` | .cpp:239-365 | Format map RGBA8/RGB8/R8/Depth32F/RGBA16F(HDR,`GL_HALF_FLOAT`); anisotropy via `GL_EXT_texture_filter_anisotropic` (ext-guarded, .cpp:239-365,163-171); wrap map (.cpp:239-365); mipmap gen |
 | `updateTextureRegion` | .cpp:381-431 | Bounds-checked `glTexSubImage2D`; rejects `rowBytes != width*4`; returns `glGetError()==GL_NO_ERROR` |
-| `createBuffer` / `updateBuffer` | .cpp:449-450 | Index→`GL_ELEMENT_ARRAY_BUFFER` else `GL_ARRAY_BUFFER`; Dynamic→`GL_DYNAMIC_DRAW`; `updateBuffer` bounds-checked `glBufferSubData` |
-| `createShader` | .cpp:490-550 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
-| `createFramebuffer` | .cpp:614-688 | Returns `nullptr` (MVP uses default FBO) |
-| `beginFrame` | .cpp:774-726 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:774-725) |
-| `submit` | .cpp:1064-1639 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1403-1403). Perf log every 120 submits or ≥25ms (.cpp:1467). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
-| `endFrame` | .cpp:1993-1955 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
-| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2043-2026 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
+| `createBuffer` / `updateBuffer` | .cpp:504-522 | Index→`GL_ELEMENT_ARRAY_BUFFER` else `GL_ARRAY_BUFFER`; Dynamic→`GL_DYNAMIC_DRAW`; `updateBuffer` bounds-checked `glBufferSubData` |
+| `createShader` | .cpp:545-626 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
+| `createFramebuffer` | .cpp:669-795 | Returns `nullptr` (MVP uses default FBO) |
+| `beginFrame` | .cpp:829-833 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:829-833) |
+| `submit` | .cpp:1119-1749 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1403-1403). Perf log every 120 submits or ≥25ms (.cpp:1467). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
+| `endFrame` | .cpp:2051-2065 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
+| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2101-2136 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
 
-Per-command command-kind counters in `submit` (.cpp:1064-1639) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
+Per-command command-kind counters in `submit` (.cpp:1119-1749) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
 
-**Stride-based vertex-layout dispatch** in `submit` (.cpp:1064-1639) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
+**Stride-based vertex-layout dispatch** in `submit` (.cpp:1119-1749) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
 - stride 32 OR glTF (kind `GltfPrimitive[Instanced]` && stride==**120**): attrib0 POSITION, 1 NORMAL, 2 TEXCOORD (4 floats for glTF, else 2); glTF adds attribs 10-14 (COLOR_0/TANGENT/TEXCOORD sets 2-7) (.cpp:476-524)
 - `GltfPrimitiveInstanced` + `instanceStride==kGltfInstanceMatrixStride` (100): attribs 3-9 from `instanceBuffer` with `glVertexAttribDivisor(...,1)` — instance model matrix (4×vec4) + normal matrix (3×vec3) (.cpp:525-575)
 - `GltfPrimitiveInstanced` + `vertexStride==32` + `instanceStride==kTerrainInstanceStride` (96): the **terrain batch** layout — per-vertex attribs 0-3 from the shared template, attribs 4-9 = 6×vec4 per-instance with divisor 1 (rel×3 / dispMorph / clipUv / layers) (.cpp:1047-1051 selects, :1687-1697 sets up)
@@ -3545,19 +3545,19 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:76-82 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:83-120 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
 | `render(deltaSeconds=0)` | .h:57, .cpp:533-1119 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:533). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:533-1119). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:533-1119). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:615-616). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:1120-1123 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:1124-1132 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:1131-1134 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:1135-1143 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1191-1194 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1199-1202 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1202-1205 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1210-1213 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1220-1225 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1231-1236 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1302-1309 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1310-1313 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:1149-1152, 1318-1322 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:1313-1320 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1321-1324 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:1160-1163, 1318-1322 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:692-740 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 

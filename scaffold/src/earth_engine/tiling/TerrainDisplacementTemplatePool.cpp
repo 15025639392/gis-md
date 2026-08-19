@@ -189,8 +189,12 @@ TerrainDisplacementTemplatePool::ensureHeightArray(int gridSize) {
     desc.arrayLayers = layers;
     desc.format = TextureDesc::Format::RGBA8;
     desc.mipmap = false;
-    desc.minFilter = TextureDesc::Filter::Nearest;
-    desc.magFilter = TextureDesc::Filter::Nearest;
+    // [T1 texop 消冗余] LINEAR:只为 FS 法线场 B/A 通道的硬件双线性
+    // (eeTerrainNormalFromHeightTex,4 texelFetch → 1 textureLod)。
+    // R/G 打包 16bit 高度的全部消费点(VS 高度/边 LUT)都是 texelFetch,
+    // 规范定义 texelFetch 不经滤波 → 打包安全,滤波状态对它们不可见。
+    desc.minFilter = TextureDesc::Filter::Linear;
+    desc.magFilter = TextureDesc::Filter::Linear;
     desc.wrapS = TextureDesc::Wrap::Clamp;
     desc.wrapT = TextureDesc::Wrap::Clamp;
     std::unique_ptr<Texture> tex = device_->createTexture(desc);

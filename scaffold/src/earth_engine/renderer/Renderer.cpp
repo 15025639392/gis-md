@@ -1100,15 +1100,17 @@ bool eeTerrainNormalFromHeightTex(
     float lv = length(tv);
     if (lu < 1e-6 || lv < 1e-6) return false;
 
-    vec2 g = clamp(uv, 0.0, 1.0) * gridN;
-    vec2 f = fract(g);
-    ivec2 i0 = max(ivec2(floor(g)), ivec2(0));
-    ivec2 i1 = min(i0 + ivec2(1), ivec2(int(gridN)));
-    vec2 n00 = texelFetch(tex, ivec3(i0.x, i0.y, layer), 0).ba;
-    vec2 n10 = texelFetch(tex, ivec3(i1.x, i0.y, layer), 0).ba;
-    vec2 n01 = texelFetch(tex, ivec3(i0.x, i1.y, layer), 0).ba;
-    vec2 n11 = texelFetch(tex, ivec3(i1.x, i1.y, layer), 0).ba;
-    vec2 nxy = mix(mix(n00, n10, f.x), mix(n01, n11, f.x), f.y) * 2.0 - 1.0;
+    // [T1 texop 消冗余] B/A 法线通道改**硬件双线性**(纹理滤波已改 LINEAR):
+    // 4 texelFetch + 手工 mix → 1 textureLod(真机实测 terrain pass 86→77ms)。
+    // 数学与手工双线性同构,差异仅硬件 8bit 子纹素权重量化(法线 xy ≤1 LSB)。
+    // R/G 打包高度**不受影响**——其全部消费点是 texelFetch,规范定义 texelFetch
+    // 无视滤波状态。textureLod(lod=0) 显式 LOD:免非一致控制流下隐式导数未定义。
+    // 底部 edge-LUT 行守卫:g 钳到 gridN−ε,双线性脚永不跨进 LUT 首行
+    // (v 权重在 g.y=gridN 处本就为 0,ε 只是把浮点尾差挡在构造安全侧)。
+    vec2 g = min(clamp(uv, 0.0, 1.0) * gridN, vec2(gridN - 1.0e-4));
+    vec2 ts = vec2(textureSize(tex, 0).xy);
+    vec2 nxy =
+        textureLod(tex, vec3((g + 0.5) / ts, float(layer)), 0.0).ba * 2.0 - 1.0;
     float nz = sqrt(max(0.0, 1.0 - dot(nxy, nxy)));
     outNormal = normalize(nxy.x * (tu / lu) + nxy.y * (tv / lv) + nz * up);
     return true;
@@ -1503,15 +1505,12 @@ bool eeTerrainNormalFromHeightTex(
     float lu = length(tu);
     float lv = length(tv);
     if (lu < 1e-6 || lv < 1e-6) return false;
-    vec2 g = clamp(uv, 0.0, 1.0) * gridN;
-    vec2 f = fract(g);
-    ivec2 i0 = max(ivec2(floor(g)), ivec2(0));
-    ivec2 i1 = min(i0 + ivec2(1), ivec2(int(gridN)));
-    vec2 n00 = texelFetch(tex, ivec3(i0.x, i0.y, layer), 0).ba;
-    vec2 n10 = texelFetch(tex, ivec3(i1.x, i0.y, layer), 0).ba;
-    vec2 n01 = texelFetch(tex, ivec3(i0.x, i1.y, layer), 0).ba;
-    vec2 n11 = texelFetch(tex, ivec3(i1.x, i1.y, layer), 0).ba;
-    vec2 nxy = mix(mix(n00, n10, f.x), mix(n01, n11, f.x), f.y) * 2.0 - 1.0;
+    // [T1 texop 消冗余] 同 kTerrainFragmentGLSL 那份(两份必须同步):B/A 走
+    // 硬件双线性 1 textureLod;R/G texelFetch 消费点不受滤波状态影响。
+    vec2 g = min(clamp(uv, 0.0, 1.0) * gridN, vec2(gridN - 1.0e-4));
+    vec2 ts = vec2(textureSize(tex, 0).xy);
+    vec2 nxy =
+        textureLod(tex, vec3((g + 0.5) / ts, float(layer)), 0.0).ba * 2.0 - 1.0;
     float nz = sqrt(max(0.0, 1.0 - dot(nxy, nxy)));
     outNormal = normalize(nxy.x * (tu / lu) + nxy.y * (tv / lv) + nz * up);
     return true;
