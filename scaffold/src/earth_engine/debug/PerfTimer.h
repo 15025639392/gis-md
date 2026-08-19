@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <ctime>
 
 #include "PlatformLog.h"
 
@@ -11,6 +12,21 @@ namespace perf {
 inline double nowMs() {
     return std::chrono::duration<double, std::milli>(
         std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+/// 当前线程的 CPU 时间(毫秒)。Linux/Android 用 CLOCK_THREAD_CPUTIME_ID,
+/// 其余平台回落墙钟 —— 墙钟会被同机线程抢占膨胀,CPU 时间才是真成本。
+/// 2026-08-20 交互瓶颈专项:判 19ms prepareCpuWork 是纯 CPU 还是被共享池
+/// 抢占的墙钟伪影。
+inline double cpuThreadMs() {
+#if defined(__linux__) || defined(__ANDROID__)
+    struct timespec ts;
+    if (clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts) == 0) {
+        return static_cast<double>(ts.tv_sec) * 1000.0 +
+               static_cast<double>(ts.tv_nsec) / 1e6;
+    }
+#endif
+    return nowMs();
 }
 
 inline bool shouldLog(uint64_t frameId) {

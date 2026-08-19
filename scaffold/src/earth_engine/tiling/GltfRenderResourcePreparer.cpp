@@ -371,14 +371,45 @@ void GltfRenderResourcePreparer::prepare(TilesetTile& tile,
     if (!device) {
         return;
     }
+    // [interaction-bottleneck-2 诊断] 拆 prepareCpuWork / uploadToGpu 两段墙钟
+    // + 顶点数,判 18.7ms terrainUpload 是 CPU 网格构建(H-T1)还是 GPU 上传背压
+    // (H-T2)。只打慢段(≥2ms),tag=EarthPerf;判定后可保留为诊断或回滚。
+    const double cpuStartMs = perf::nowMs();
+    const double cpuStartCpuMs = perf::cpuThreadMs();
     std::optional<GpuReadyData> ready = prepareCpuWork(
         tile, currentFrameTimeSeconds, sharedTemplateGeometryActive);
+    const double cpuMs = perf::nowMs() - cpuStartMs;
+    const double cpuCpuMs = perf::cpuThreadMs() - cpuStartCpuMs;
+    if (cpuMs >= 2.0) {
+        const GltfModel* model =
+            tile.content.renderContent.gltfModelForRead();
+        size_t verts = 0;
+        size_t indices = 0;
+        if (model) {
+            for (const GltfPrimitive& p : model->primitives) {
+                verts += p.vertices.size();
+                indices += p.indices.size();
+            }
+        }
+        platformLog(LogLevel::Info, "EarthPerf",
+                    "GltfPrepare.cpuWork ms=%.2f cpu=%.2f z=%d x=%d y=%d "
+                    "verts=%zu indices=%zu",
+                    cpuMs, cpuCpuMs, tile.key.z, tile.key.x, tile.key.y,
+                    verts, indices);
+    }
     if (!ready) {
         tile.content.renderContent.clearGltfGpuResources();
         tile.markRenderContentFailedTemporarily();
         return;
     }
+    const double gpuStartMs = perf::nowMs();
     uploadToGpu(tile, device, std::move(*ready));
+    const double gpuMs = perf::nowMs() - gpuStartMs;
+    if (gpuMs >= 2.0) {
+        platformLog(LogLevel::Info, "EarthPerf",
+                    "GltfPrepare.uploadToGpu ms=%.2f z=%d x=%d y=%d",
+                    gpuMs, tile.key.z, tile.key.x, tile.key.y);
+    }
 }
 
 // ============================================================

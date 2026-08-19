@@ -1,6 +1,11 @@
 #!/bin/bash
-# 构建并安装 Android Debug APK
+# 构建并安装 Android Release APK(-O2 / RelWithDebInfo native)。
 # 从 earth-md/scaffold 目录运行：bash build_and_install.sh
+#
+# ⚠️ 性能/手感验证必须用 release 变体:debug(assembleDebug)是 -O0,glm 双精度
+# 数学不内联,会把 compose/update 性能膨胀 2.5-32×(2026-08-20 真机 A/B:
+# compose CPU 4270→131ms/60tick、单任务 46→1.2ms),得出错误的瓶颈画面。
+# release 用 debug key 签名仅为本地可安装,严禁分发。
 
 set -e
 
@@ -13,9 +18,9 @@ echo "=== Cleaning CMake cache ==="
 rm -rf app/.cxx earthsdk/.cxx app/build earthsdk/build
 
 echo "=== Building APK ==="
-./gradlew assembleDebug --no-daemon --console=plain
+./gradlew assembleRelease --no-daemon --console=plain
 
-APK="app/build/outputs/apk/debug/app-debug.apk"
+APK="app/build/outputs/apk/release/app-release.apk"
 if [ ! -f "$APK" ]; then
     echo "ERROR: APK not found at $APK"
     exit 1

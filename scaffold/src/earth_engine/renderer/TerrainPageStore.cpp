@@ -270,6 +270,9 @@ struct TerrainPageStore::ReadyUploadInbox {
     std::mutex mutex;
     std::vector<Item> items;
     std::atomic<uint64_t> composeMicros{0};
+    /// 线程 CPU 时钟版(2026-08-20 交互瓶颈专项):墙钟会被同机 8 线程池
+    /// 抢占膨胀,CPU 时间才是纯成本 —— 判 compose 46ms 是真空还是墙钟伪影。
+    std::atomic<uint64_t> composeCpuMicros{0};
 };
 
 /// 刀2 场平面投递箱(shared_ptr:场生产者回调可比页存储活得久)。
@@ -1596,6 +1599,10 @@ void TerrainPageStore::tick() {
         static_cast<double>(readyInbox_->composeMicros.exchange(
             0, std::memory_order_relaxed)) /
         1000.0;
+    winComposeCpuMs_ +=
+        static_cast<double>(readyInbox_->composeCpuMicros.exchange(
+            0, std::memory_order_relaxed)) /
+        1000.0;
     winMaxTickMs_ = std::max(winMaxTickMs_, perf::nowMs() - tickStartMs);
     // 220ms 归属拆分:每 60 tick 报窗口累计与单帧峰值。**看的是归属比例**:
     // compose 占大头 → 下 worker;upload 占大头 → 降 maxUploadsPerFrame/换
@@ -1603,17 +1610,18 @@ void TerrainPageStore::tick() {
     // 持续 >0 = 在做无谓重合成(maplibre 式源集合指纹是下一步)。
     if (frameId_ % 60u == 0u) {
         platformLog(LogLevel::Info, "PageStore",
-                    "tick60 compose=%.1fms upload=%.1fms "
+                    "tick60 compose=%.1fms composeCpu=%.1fms upload=%.1fms "
                     "maxTick=%.1fms items=%d disp=%d pend=%d fields=%d "
                     "fhole=%d ffall=%d "
                     "pages=%d/%d(re)",
-                    winComposeMs_, winUploadMs_,
+                    winComposeMs_, winComposeCpuMs_, winUploadMs_,
                     winMaxTickMs_, winInboxItems_, composeDispatchedThisFrame_,
                     static_cast<int>(pendingComposeTasks_.size()),
                     winFieldUploads_,
                     winFieldHoleCells_, winFieldFallbackCells_,
                     winPagesCreated_, winPagesRecreated_);
         winComposeMs_ = 0.0;
+        winComposeCpuMs_ = 0.0;
         winUploadMs_ = 0.0;
         winMaxTickMs_ = 0.0;
         winInboxItems_ = 0;
@@ -1787,8 +1795,10 @@ void TerrainPageStore::drainInbox() {
                 return;  // 页已淘汰:省功(安全线在 drainReadyUploads 校验)
             }
             const double composeStartMs = perf::nowMs();
+            const double composeStartCpuMs = perf::cpuThreadMs();
             std::vector<uint8_t> rgba;
             resamplePageSource(*sharedImage, depth, subX, subY, side, rgba);
+            const double resampleCpuMs = perf::cpuThreadMs() - composeStartCpuMs;
             ReadyUploadInbox::Item out;
             bool emit = false;
             {
@@ -1813,10 +1823,26 @@ void TerrainPageStore::drainInbox() {
                     }
                 }
             }
+            const double acceptCpuMs = perf::cpuThreadMs() - composeStartCpuMs;
             readyInbox->composeMicros.fetch_add(
                 static_cast<uint64_t>(
                     (perf::nowMs() - composeStartMs) * 1000.0),
                 std::memory_order_relaxed);
+            readyInbox->composeCpuMicros.fetch_add(
+                static_cast<uint64_t>(
+                    (perf::cpuThreadMs() - composeStartCpuMs) * 1000.0),
+                std::memory_order_relaxed);
+            // [interaction-bottleneck-2 诊断] resample vs accept 的 CPU 归属;
+            // 单任务 >10ms 才打(正常应 <2ms)。结论后保留或回滚。
+            if (acceptCpuMs >= 10.0) {
+                platformLog(LogLevel::Info, "PageStore",
+                            "composeSlow cpu=%.2f resample=%.2f accept=%.2f "
+                            "side=%d img=%dx%d src=%d",
+                            acceptCpuMs, resampleCpuMs,
+                            acceptCpuMs - resampleCpuMs,
+                            side, sharedImage->width, sharedImage->height,
+                            source);
+            }
             if (!emit) {
                 return;
             }

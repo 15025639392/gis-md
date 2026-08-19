@@ -702,6 +702,8 @@ private:
     // 每 60 tick 打一行窗口累计 + 单帧峰值后清零 —— 分不开归属就没法回答
     // "220ms 花在哪",也没法查纯运动期是否在做无谓重合成(items 应趋 0)。
     double winComposeMs_ = 0.0;
+    /// CPU 时钟版 compose 窗口累计(墙钟-CPU 差值 = 共享池抢占膨胀)。
+    double winComposeCpuMs_ = 0.0;
     double winUploadMs_ = 0.0;
     double winMaxTickMs_ = 0.0;
     // [pageStore churn 归因] 临时插桩:每帧 determination 开头清零,累计两个
