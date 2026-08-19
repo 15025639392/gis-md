@@ -435,6 +435,11 @@ static bool initEGL(ANativeWindow* window) {
 // C-V8 late-latch:上一帧 GPU 完成栅栏(仅渲染线程访问)。声明于此因 destroyEGL
 // 在 teardown 处先引用它;创建/等待逻辑见 renderFrame 前的 late-latch 段。
 static GLsync gPrevFrameFence = nullptr;
+/// 有待处理的输入事件(UI 线程置位,渲染线程 onFrame 顶部消费)。C-V8 的
+/// fence 等待只为 latch 新鲜输入;惯性/无输入帧没有 latch 收益,跳过等待
+/// 让 CPU 与 GPU 重叠,避免帧率塌陷(2026-08-20 PHK110:GPU≈16ms 贴预算,
+/// 无条件等待+CPU 4.4ms=20ms>16.7ms → 30fps)。
+static std::atomic<bool> gInputPending{false};
 
 static void destroyEGL() {
     clearDemoEngineObjects();
@@ -1473,7 +1478,10 @@ static void renderFrame() {
                  ls.culledProjection);
         }
     }
-    if (frameId <= 3 || frameId % 120 == 0 ||
+    char perflogProp[4] = {0};
+    __system_property_get("debug.ee.perflog", perflogProp);
+    const bool perFrameLog = perflogProp[0] == '1';
+    if (perFrameLog || frameId <= 3 || frameId % 120 == 0 ||
         frameTotalMs >= 25.0 || swapMs >= 8.0) {
         const auto& stageDiag = gEngine->diagnostics();
         LOGI(
@@ -1883,7 +1891,18 @@ private:
         applyShadowVerifyRuntimeSwitch();
         // C-V8 late-latch:先等上一帧 GPU 完成(render-ahead≤1),再排输入,
         // 使 latch 到的指位尽量新鲜。等待被从驱动内 draw 提交处挪到此处。
-        waitPrevFrameFenceForLatch();
+        // ⚠️ 2026-08-20 输入门控:只有本帧确有输入要 latch 才等;惯性/无输入
+        // 帧直接回收 fence 不等待,CPU 与 GPU 重叠保帧率(PHK110 实测无条件
+        // 等待 30fps,门控后 60fps)。
+        if (gInputPending.exchange(false, std::memory_order_acq_rel)) {
+            waitPrevFrameFenceForLatch();
+        } else {
+            if (gPrevFrameFence) {
+                glDeleteSync(gPrevFrameFence);
+                gPrevFrameFence = nullptr;
+            }
+            gFenceWaitMs = 0.0;
+        }
         drainTasks();   // 输入先于渲染，保证事件同帧生效
         renderFrame();
         // 帧级按需渲染:引擎说不用再画就不排下一次 vsync 回调,线程回到
@@ -1986,6 +2005,7 @@ static float gDisplayDensity = 1.0f;
 static void postInputEvent(const InputEvent& event) {
     InputEvent stamped = event;
     stamped.devicePixelRatio = gDisplayDensity;
+    gInputPending.store(true, std::memory_order_release);
     gRenderThread.post([stamped]() {
         if (gEngine) {
             gEngine->onInputEvent(stamped);

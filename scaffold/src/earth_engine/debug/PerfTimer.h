@@ -6,8 +6,32 @@
 
 #include "PlatformLog.h"
 
+#if defined(__ANDROID__)
+#include <sys/system_properties.h>
+#endif
+
 namespace earth_engine {
 namespace perf {
+
+#if defined(__ANDROID__)
+// 运行时逐帧日志开关:adb shell setprop debug.ee.perflog 1 → 每帧都打 EarthPerf
+// (默认只打 frame≤3 与 %120 节拍帧)。2026-08-20:25ms 慢帧阈值漏掉了 17-24ms
+// 的"越 60Hz 预算帧"(每帧差 2-7ms → 掉到 30fps,惯性滑动卡)。
+inline bool perFrameLogEnabled() {
+    static int cached = -1;
+    char prop[4] = {0};
+    if (__system_property_get("debug.ee.perflog", prop) > 0) {
+        const int v = prop[0] - '0';
+        if (v != cached) {
+            cached = v;
+        }
+        return cached == 1;
+    }
+    return false;
+}
+#else
+inline bool perFrameLogEnabled() { return false; }
+#endif
 
 inline double nowMs() {
     return std::chrono::duration<double, std::milli>(
@@ -31,6 +55,7 @@ inline double cpuThreadMs() {
 
 inline bool shouldLog(uint64_t frameId) {
     if (frameId == 0) return false;
+    if (perFrameLogEnabled()) return true;
     return frameId <= 3 || (frameId % 120) == 0;
 }
 
