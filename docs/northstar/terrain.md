@@ -170,6 +170,7 @@ zoom 维度**,判定却留在旧维度 —— 这是 T-V7 此前失效的成因,
 - **逐瓦片高度量化**:破坏无缝所需的逐位相等。正解是**全局固定格点**,不要再提逐瓦片方案。
 - **隐式瓦片(implicit tiling)**:零引用,但**你已裁决保留**,不要再提议删。
 - **地形 draping 走影像路径**(矢量 E4-4):根因已重定位,正解是矢量进页存储,不是继续修 drape。
+- **V1818T(Adreno512/720p)GPU 帧率优化**(2026-08-19 专会,4 build ablation 真机):**别再查**。churn 修复后 7fps 只剩 GPU ~140ms/帧,是**真实 fill/带宽地板**非低效——GpuPass 拆:terrain 86ms(61%)+ env 35ms(25%,structural offscreen store,shader compute=0)+ fog 12ms,每块都必需零冗余。四杠杆全死:①天空散射→LUT(compute 实测 0)②雾折进终端(拆 pass 净 0 反更慢,默认 FB 是 MSAA)③场空邻域哨兵(gather 早被 `PageStoreSamplingGLSL.h:112` 的 own-check 门住;21ms 是基础 fetch 非 gather)④满驻留丢 mappedRaster(`GltfUniformBlock.h:122` count 默认 0,合批已不采)。唯一剩 MSAA/分辨率=**观感**,归你。PHK110 50-60fps 是正常档。详见记忆 [[gpu-ceiling-fill-bound-null-result-2026-08-19]]。
 
 ---
 
