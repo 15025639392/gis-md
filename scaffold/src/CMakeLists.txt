@@ -566,6 +566,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/RasterOverlayTileProvider.h
     earth_engine/providers/RasterOverlayTileProvider.cpp
     earth_engine/providers/RasterOverlayImageCompositing.cpp
+    earth_engine/providers/RasterOverlayTileProviderBudget.cpp
 )
 
 # ============================================================

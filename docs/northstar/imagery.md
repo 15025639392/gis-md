@@ -86,7 +86,7 @@
 | **I-P1** | `HttpCache` 无过期 / 无 ETag 重验 | 影像一旦缓存永不刷新;源端更新用户看不到 | 未做。**TTL 口径是跨会话共享约定,须你先拍**再实现 |
 | **I-P2** | `FrameResourceBudget::canIssue` 忽略 `FrameResourcePriority` | 预算紧张的那一帧,urgent 可能被 preload 占满名额而 Blocked | 未做。影响被 HTTP 层动态优先级 cell 部分兜底(下一帧重试时排在前面),**是帧级延迟不是持续饥饿** |
 | **I-P3** | 空洞瓦每帧重走完整 `update()`(state 非 `Attached`,`hasStableUpdateState()` false) | 洞区瓦片的 per-frame CPU;无网络无合成 | **未量化**。洞区通常少,但没测过 |
-| **I-P4** | `RasterOverlayTileProvider.cpp` 4785 行,四路失效逻辑互调 | 可维护性,不是运行期成本 | ⚠️ 互调重复已解耦:提 `eraseCachedTilesMatching`(谓词+beforeErase)/ `erasePendingUploadsMatchingLocked`(谓词,持锁清 pendingUpload→enforce budget)两工具函数,四路失效 + `setCoverageRectangle` 五处重复循环收敛为组合调用(行为等价,3 个 raster ctest 全绿)。**剩物理拆文件(嵌套 struct 挪 TU)未做**——那是「4785 行长度」这条独立症状,风险/收益另判,单独立债 |
+| **I-P4** | `RasterOverlayTileProvider.cpp` 4785 行,四路失效逻辑互调 | 可维护性,不是运行期成本 | ✅ 已拆完(2026-08-22 第三刀):主文件 4785→4171(投影+合成簇)→3122(depot 嵌套 struct)→**2829**(状态预算簿记 `RasterOverlayTileProviderBudget.cpp`)。每刀逐字搬移(第二刀起用 `git show HEAD | sed` 提取,一次全绿);互调解耦仍靠前序两工具函数。raster ctest + 全量 199/199 绿。剩 2829 行主体为 provider 加载/派发/上传核心,依赖闭包交错,拆前须再确认,暂不动 |
 
 ---
 

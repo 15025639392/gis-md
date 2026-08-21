@@ -1863,29 +1863,30 @@ Resource-prep boundary: provider owns tile lifecycle + decoded CPU imagery; uplo
 | `RasterTextureUploadOptions` | .h:10-12 | `generateMipmaps` only. |
 | `RasterTextureUploader` iface | .h:25-34 | `maxTextureSize`, `uploadRasterTexture(DecodedImage, options)` → `unique_ptr<Texture>` |
 
-### RasterOverlayTileProvider.h / .cpp (~4170 lines) + RasterOverlayImageCompositing.h / .cpp
+### RasterOverlayTileProvider.h / .cpp (~2829 lines) + RasterOverlayImageCompositing.h / .cpp + RasterOverlayTileProviderBudget.cpp
 
 cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, async load dispatch, GPU-upload scheduling, throttling, source-tile depot, and frame-based trimming. Maps geometry rectangles → provider quadtree source imagery (cesium-native `mapRasterTilesToGeometryTile`). Provider still stops at CPU imagery; GPU upload delegated to injected `RasterTextureUploader`.
 
 | Method | Lines | Description |
 |---|---|---|
-| ctor / dtor | .h:51-55 / .cpp:1140-1152 | Takes `ImageryProvider&`, `TileScheme&`, optional uploader (null = headless test); dtor drains async state |
-| `getTile` | .cpp:1669-1703 | Get/create cached tile by key; returns shared placeholder when not ready; stamps `frameNumber_` |
-| `mapRasterTilesToGeometryTile` | .cpp:1704-1811 | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, else composed mapped tile |
+| ctor / dtor | .h:51-55 / .cpp:847-859 | Takes `ImageryProvider&`, `TileScheme&`, optional uploader (null = headless test); dtor drains async state |
+| `getTile` | .cpp:1376-1410 | Get/create cached tile by key; returns shared placeholder when not ready; stamps `frameNumber_` |
+| `mapRasterTilesToGeometryTile` | .cpp:1411-1518 | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, else composed mapped tile |
 | `buildQuadtreeSourcePlan` | .cpp:722... | Choose source zoom (SSE/texture-size driven) + source-key rectangle |
-| `resolveTile` | .cpp:1812-1837 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
-| `loadTile` / `loadTileThrottled` | .cpp:1910-1978 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
-| `loadMappedRasterTile` / `loadSourceTileList` / `loadSourceImageSet` | .cpp:1979 / :2100 / :2117 | Fetch/compose overlapping source quadtree tiles for a mapped tile |
-| `issueMappedSourceImageSet` | .cpp:2358-2430 | Dispatch source-tile requests through shared depot |
+| `resolveTile` | .cpp:1519-1544 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
+| `loadTile` / `loadTileThrottled` | .cpp:1617-1685 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
+| `loadMappedRasterTile` / `loadSourceTileList` / `loadSourceImageSet` | .cpp:1686 / :1807 / :1824 | Fetch/compose overlapping source quadtree tiles for a mapped tile |
+| `issueMappedSourceImageSet` | .cpp:2065-2137 | Dispatch source-tile requests through shared depot |
 | `composeQuadtreeSourceImagesWithDetails` | .cpp:803-838 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
 | `projectedVForLatitude` | .cpp:839-845 | Latitude → projected V within bounds |
-| `processPendingUploads` | .cpp:2612-2947 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
-| `hasPendingWork` | .cpp:2948-2962 | HTTP/source-fanout/upload outstanding |
-| `trimUnusedTiles` | .cpp:3062-3122 | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
-| `refreshSourceAssetDepot` | .cpp:1373-1381 | Rebuild shared source-tile depot on option change |
-| `requestDiagnostics` | .cpp:1838-1864 | Aggregates imagery-provider + raster-source request counters |
+| `processPendingUploads` | .cpp:2319-2654 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
+| `hasPendingWork` | .cpp:2655-2669 | HTTP/source-fanout/upload outstanding |
+| `trimUnusedTiles` | .cpp:2769-2829 | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
+| `refreshSourceAssetDepot` | .cpp:1080-1088 | Rebuild shared source-tile depot on option change |
+| `requestDiagnostics` | .cpp:1545-1571 | Aggregates imagery-provider + raster-source request counters |
 | 投影+合成簇 | **RasterOverlayImageCompositing.cpp** | I-P4 拆出:投影工具(`projectionForSourceScheme`/`projectionForScheme`/`webMercatorY`/`projectedSouth/North/Height` 等 .cpp:298-381)+ 像素合成(`unsafeBlitImage`/`unsafeBilinearResize` .cpp:186-296、`blitImage` .cpp:384、`combineQuadtreeSourceImages` .cpp:480、`composeMappedSourceImageSet` .cpp:609)+ `RasterSourceResult`(h)+ 通用判断(`isDecodedImageUploadable`/`decodedImageSizeBytes` 等) |
 | depot 嵌套 struct | **RasterOverlaySourceDepot.h** | I-P4 第二刀:QuadtreeSourceAssetDepot(源瓦片共享缓存/in-flight/条件请求,约 670 行)+ MappedSourceImageSet(映射源集合派发/合成回调,约 290 行);依赖 ProviderAsyncState 私有状态,嵌套类定义在头文件使主文件成员访问可见 |
+| 状态预算簿记 | **RasterOverlayTileProviderBudget.cpp** | I-P4 第三刀:静态成员函数,pending-upload 字节记账/backpressure(`pendingUploadSizeBytes`/`retain|releasePendingUploadImageBytesLocked` 等)+ source-depot 预算/LRU(`enforceSourceDepotBudgetLocked`/`compactSourceDepotCacheLruLocked`)+ 失效清空(`clearSourceDepotCacheLocked`/`clearPendingUploadsLocked`);只依赖头文件完整类型与 `RasterOverlayImageCompositing.h` 共享自由函数,零匿名 helper |
 
 | State/struct | Lines | Description |
 |---|---|---|
