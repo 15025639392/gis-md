@@ -54,6 +54,11 @@ struct HttpRequestOptions {
 
     HttpRequestPriority priority = HttpRequestPriority::Normal;
     std::vector<Header> headers;
+    /// 可选响应头输出（I-P1）：非空时，请求完成回调触发前填充响应头列表，
+    /// 供上层 HttpCache 解析 Cache-Control/Expires/ETag 计算过期与重验。
+    /// 为空 = 不收集（行为与旧版完全一致，零额外开销）。
+    /// 由网络线程填充；回调返回后调用方可在任意线程读取。
+    std::shared_ptr<std::vector<Header>> responseHeaders;
     /// 外部取消旗标(通常来自 CancellationToken::sharedFlag)。置位后调度器
     /// 工作线程在下一轮 wake(≤50ms)中止传输/丢弃排队项;回调仍恰好一次
     /// (以 code=-1 触发)——上层的 retired-token 清账依赖这一点。

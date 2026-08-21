@@ -91,6 +91,17 @@ std::unique_ptr<HttpRequest> IosPlatformBridge::get(
             if ([response isKindOfClass:[NSHTTPURLResponse class]]) {
                 NSHTTPURLResponse* httpResp = (NSHTTPURLResponse*)response;
                 status = (int)httpResp.statusCode;
+                // I-P1:响应头输出(HttpCache 计算过期/ETag 重验)。
+                if (options.responseHeaders) {
+                    NSDictionary* allHeaders = [httpResp allHeaderFields];
+                    options.responseHeaders->reserve(allHeaders.count);
+                    for (NSString* key in allHeaders) {
+                        NSString* value = [allHeaders objectForKey:key];
+                        options.responseHeaders->emplace_back(
+                            std::string([key UTF8String]),
+                            std::string([value UTF8String]));
+                    }
+                }
             }
             std::vector<uint8_t> body;
             if (data && !error) {

@@ -1665,9 +1665,9 @@ Standard XYZ/`{z}{x}{y}{s}` provider; base class for TMS/WMS/WMTS/Bing/Google. H
 | `substituteUrlTemplateParameters` | .cpp:197-230 | `{...}` scan, case-insensitive names, `[UNKNOWN PLACEHOLDER]` on miss |
 | scheme tile counts | .cpp:74-85 | `Geographic-TMS` x = `2^(z+1)`; else `2^z`; y = `2^z` |
 | degrees/projected rects | .cpp:124-187 | Per-scheme (Geographic-TMS / TMS-WebMercator / default WebMercator) rectangle math; **`kWgs84MaximumRadius`** = 6378137.0 (.cpp:117,173) |
-| `tryServeFromHttpCache` / `requestTile` | .cpp:371-395 / :396-566 | **P1**:先查 `HttpCache`(影像此前完全没接,地形早就接了 —— 真机同轮对照:地形 0 重复、影像 14.9%),命中则**下沉 worker 解码**(同步 decode 会成分发尖刺,地形侧踩过)。未命中走 Bridge(.cpp:407-490)或 CurlMulti(.cpp:492-565),200 体入缓存;decode 经 `AsyncSystem::run` |
-| `decodeTile` | .cpp:582-609 | Prefers `PlatformBridge::decodeImage`, else `stbi_load_from_memory(...,4)` → RGBA |
-| `requestDiagnostics` | .cpp:567-581 | Atomics started/completed + transport max active |
+| `tryServeFromHttpCache` / `requestTile` | .cpp:371-401 / :403-670 | **P1**:先查 `HttpCache`(影像此前完全没接,地形早就接了 —— 真机同轮对照:地形 0 重复、影像 14.9%),命中则**下沉 worker 解码**(同步 decode 会成分发尖刺,地形侧踩过)。I-P1:过期条目保留,由 requestTile 带 If-None-Match/If-Modified-Since 条件请求重验,304 用缓存体刷新;200 带响应头写缓存(无缓存指令且无验证器不缓存)。未命中走 Bridge(.cpp:421-590)或 CurlMulti(.cpp:596-668),decode 经 `AsyncSystem::run` |
+| `requestDiagnostics` | .cpp:673-687 | Atomics started/completed + transport max active |
+| `decodeTile` | .cpp:688-715 | Prefers `PlatformBridge::decodeImage`, else `stbi_load_from_memory(...,4)` → RGBA |
 | Android failure log cap | .cpp:42 | **`kMaxAndroidFailureLogs`** = 24 |
 
 ### TileMapServiceImageryProvider.h / .cpp
@@ -2802,11 +2802,11 @@ macOS `PlatformBridge`: NSURLSession network / Keychain auth / CoreGraphics deco
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| `get` | .mm:57-99 | `dataTaskWithURL` completion handler; `shared_ptr` callback; `-1` on bad URL |
-| `cacheDirectory`/`documentsDirectory` | .mm:101-117 | `NSSearchPathForDirectoriesInDomains`, fallback `/tmp` |
-| `decodeImage` | .mm:119-149 | `CGImageSource` → RGBA8 via `CGBitmapContext` (`kCGImageAlphaPremultipliedLast`) |
-| `deviceInfo`/`log` | .mm:156-160 | `NSLog`; `platform="macOS"` |
-| `getToken` | .mm:162-182 | Keychain `SecItemCopyMatching`, service `com.earthengine.provider.<id>` |
+| `get` | .mm:56-109 | `dataTaskWithURL` completion handler; `shared_ptr` callback; `-1` on bad URL; I-P1 `allHeaderFields` → `options.responseHeaders` |
+| `cacheDirectory`/`documentsDirectory` | .mm:111-128 | `NSSearchPathForDirectoriesInDomains`, fallback `/tmp` |
+| `decodeImage` | .mm:129-160 | `CGImageSource` → RGBA8 via `CGBitmapContext` (`kCGImageAlphaPremultipliedLast`) |
+| `deviceInfo`/`log` | .mm:161-171 | `NSLog`; `platform="macOS"` |
+| `getToken` | .mm:172-194 | Keychain `SecItemCopyMatching`, service `com.earthengine.provider.<id>` |
 
 Note: `post` not overridden (header only declares `get`, .h:21-24) — inherits `PlatformBridge` default that immediately calls back `-1` (`bridge/PlatformBridge.h:112-122`).
 
@@ -2834,23 +2834,24 @@ Cross-platform `PlatformBridge` on libcurl + stb_image (desktop dev + Android/iO
 
 ### bridge/CurlMultiRequestScheduler.h / .cpp
 
-Process-wide singleton (`shared()`, .cpp:817-820) owning one libcurl `multi` handle + dedicated worker thread. **`kDefaultMaximumActiveRequests`** = 20 (.h:15). Public: `get`/`post`/`getBlocking`/`cancelQueuedRequests`/`shutdown`/`maximumActiveRequests` (.h:26-44).
+Process-wide singleton (`shared()`, .cpp:880-889) owning one libcurl `multi` handle + dedicated worker thread. **`kDefaultMaximumActiveRequests`** = 20 (.h:15). Public: `get`/`post`/`getBlocking`/`cancelQueuedRequests`/`shutdown`/`maximumActiveRequests` (.h:26-44).
 
 | Item | Lines | Description |
 | --- | --- | --- |
 | `CurlGlobalLifetime` | .cpp:41-54 | Function-local static → one `curl_global_init`/`_cleanup` per process |
-| `RequestState` | .cpp:59-75 | Per-request: seq, method, upload/response body, headers, `errorBuffer` (`CURL_ERROR_SIZE`), atomic `cancelled` |
-| `WakeState` | .cpp:77-82 | Mutex-guarded cv+multi+alive; `weak_ptr` from `RequestHandle` to wake worker safely after shutdown |
-| `RequestHandle` | .cpp:84-115 | `HttpRequest` impl; dtor cancels; `wake()` calls `curl_multi_wakeup` |
-| `Impl` ctor / dtor | .cpp:117-132 | `curl_multi_init`, spawns `run()` worker; dtor → `shutdown` |
-| `request` | .cpp:134-171 | Enqueues into `pending[priorityBucket]` (3 buckets 0-2); immediate `(-1,{})` if stopping |
-| `cancelQueuedRequests` | .cpp:898-901 | Swaps out pending buckets, fires `(-1,{})` callbacks |
-| `shutdown` | .cpp:902-905 | Idempotent; cancels pending+active, joins worker (guards self-join), fires deferred callbacks |
+| `RequestState` | .cpp:52-87 | Per-request: seq, method, upload/response body, headers (+I-P1 `responseHeaders` 输出), `errorBuffer` (`CURL_ERROR_SIZE`), atomic `cancelled` |
+| `WakeState` | .cpp:88-94 | Mutex-guarded cv+multi+alive; `weak_ptr` from `RequestHandle` to wake worker safely after shutdown |
+| `RequestHandle` | .cpp:95-127 | `HttpRequest` impl; dtor cancels; `wake()` calls `curl_multi_wakeup` |
+| `writeBody` / `writeHeader` | .cpp:128-156 / .cpp:157-205 | 响应体收集(Content-Length 预 reserve) / I-P1 响应头逐行解析(状态行跳过、obs-fold 折行、大小写原样保留) |
+| `Impl` ctor / dtor | .cpp:207-222 | `curl_multi_init`, spawns `run()` worker; dtor → `shutdown` |
+| `request` | .cpp:224-295 | Enqueues into `pending[priorityBucket]` (3 buckets 0-2); immediate `(-1,{})` if stopping |
+| `cancelQueuedRequests` | .cpp:961-964 | Swaps out pending buckets, fires `(-1,{})` callbacks |
+| `shutdown` | .cpp:965-968 | Idempotent; cancels pending+active, joins worker (guards self-join), fires deferred callbacks |
 | priority scheduling | .cpp:297-308 | `popNextPendingLocked` drains highest bucket first (High=2→Low=0) |
 | `run` (worker loop) | .cpp:310-353 | start→cancel→start→`curl_multi_perform`→drain; `curl_multi_wait` 50ms timeout; cv-waits when idle |
-| `startRequest` | .cpp:385-443 | Configures easy handle: timeout 15s, connect 5s, follow redirects (max 3), UA `earth-md/0.1`, `NOSIGNAL`; POST fields + Content-Type header |
-| `drainCompletedRequests` | .cpp:470-536 | Reads `CURLMSG_DONE`; status = httpCode or `-1`; body moved to callback only if status==200; Android-only failure log |
-| `getBlocking` | .cpp:849-897 | Sync wrapper over async `get` (default 20s timeout); polls `shouldCancel` every 20ms; cancels on timeout/cancel |
+| `startRequest` | .cpp:591-700 | Configures easy handle: timeout 15s, connect 5s, follow redirects (max 3), UA `earth-md/0.1`, `NOSIGNAL`; POST fields + Content-Type header; I-P1 条件挂 `HEADERFUNCTION` |
+| `drainCompletedRequests` | .cpp:730-878 | Reads `CURLMSG_DONE`; status = httpCode or `-1`; body moved to callback only if status==200; Android-only failure log |
+| `getBlocking` | .cpp:912-960 | Sync wrapper over async `get` (default 20s timeout); polls `shouldCancel` every 20ms; cancels on timeout/cancel |
 
 ### threading/RenderThreadPlacement.h + android/RenderThreadPlacementAndroid.cpp (+ threading/RenderThreadPlacementNoop.cpp)
 
@@ -2963,8 +2964,8 @@ iOS 平台桥(225 行)。`PlatformBridge` 的 Apple 实现,网络走 `NSURLSessi
 | `IosPlatformBridgeImpl` | .h:5 | pImpl |
 | ctor | .mm:38 | |
 | `onEnterBackground` / `onEnterForeground` | .mm:51 / :52 | **均为空实现** —— 与 Android 侧会取消排队 curl 请求不同。⚠️ `onMemoryPressure` 已于 2026-08-07 全平台删除(纯虚 + 4 个后端空实现,零调用点)。 |
-| `get` | .mm:55 | HTTP GET |
-| `cacheDirectory` | .mm:111 | |
+| `get` | .mm:54 | HTTP GET; I-P1 响应头输出(`allHeaderFields` → `options.responseHeaders`) |
+| `cacheDirectory` | .mm:121 | |
 
 平台层是 ports-and-adapters:中间层零平台宏,日志一律走 `platformLog()`。
 

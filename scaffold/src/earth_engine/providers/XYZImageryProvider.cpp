@@ -372,14 +372,21 @@ bool XYZImageryProvider::tryServeFromHttpCache(const TileKey& key,
                                                const CancellationToken& token,
                                                const TileCallback& callback,
                                                const std::string& url) {
-    auto cached = HttpCache::shared().get(url);
-    if (cached.empty()) return false;
-    if (!looksLikeImageTileBody(cached)) {
+    bool stale = false;
+    auto cached = HttpCache::shared().getResponse(url, &stale);
+    if (!cached) return false;
+    if (stale) {
+        // I-P1:过期条目保留(不删),由 requestTile 拿验证器发条件请求;
+        // 这里按未命中走网络,304 回调里会用缓存 body。
+        return false;
+    }
+    if (!looksLikeImageTileBody(cached->body)) {
         // 历史坏体自愈(CDN 负缓存的 XML 错误体),清掉按未命中走网络。
         HttpCache::shared().remove(url);
         return false;
     }
-    auto bodyPtr = std::make_shared<std::vector<uint8_t>>(std::move(cached));
+    auto bodyPtr =
+        std::make_shared<std::vector<uint8_t>>(cached->body);
     auto tokenPtr = std::make_shared<CancellationToken>(token);
     auto callbackPtr = std::make_shared<TileCallback>(callback);
     AsyncSystem::pool().enqueue([this, key, tokenPtr, callbackPtr, bodyPtr]() {
@@ -418,6 +425,19 @@ void XYZImageryProvider::requestTile(const TileKey& key,
         // 桥接真取消(见 HttpRequestOptions.cancelFlag)。
         HttpRequestOptions httpOptions{priority};
         httpOptions.cancelFlag = token.sharedFlag();
+        // I-P1:过期缓存条目带验证器 → 条件请求(If-None-Match /
+        // If-Modified-Since);同时请求响应头,供 200 写缓存 / 304 刷新。
+        bool cacheStale = false;
+        auto cachedEntry = HttpCache::shared().getResponse(url, &cacheStale);
+        auto responseHeaders =
+            std::make_shared<std::vector<HttpRequestOptions::Header>>();
+        httpOptions.responseHeaders = responseHeaders;
+        if (cacheStale && cachedEntry) {
+            if (auto reval =
+                    HttpCache::revalidationHeader(cachedEntry->headers)) {
+                httpOptions.headers.push_back(std::move(*reval));
+            }
+        }
         *requestHandle = platformBridge_->get(
             url,
             [this,
@@ -425,7 +445,11 @@ void XYZImageryProvider::requestTile(const TileKey& key,
              url,
              token = std::move(token),
              callback = std::move(callback),
-             requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+             requestHandle,
+             cachedEntry,
+             cacheStale,
+             responseHeaders](int statusCode,
+                              std::vector<uint8_t> body) mutable {
                 (void)requestHandle;
                 auto tokenPtr =
                     std::make_shared<CancellationToken>(std::move(token));
@@ -440,19 +464,43 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                      tokenPtr,
                      callbackPtr,
                      statusCode,
-                     bodyPtr]() mutable {
+                     bodyPtr,
+                     cachedEntry,
+                     cacheStale,
+                     responseHeaders]() mutable {
                         noteRequestCompleted(requestsCompleted_);
-                        if (tokenPtr->isCancelled() ||
-                            statusCode != 200 ||
-                            bodyPtr->empty()) {
-                            if (!tokenPtr->isCancelled()) {
+                        if (tokenPtr->isCancelled()) {
+                            (*callbackPtr)(key, nullptr);
+                            return;
+                        }
+                        // I-P1:304 Not-Modified → 缓存体仍有效,按 304 响应头
+                        // 刷新过期时刻后直接解码缓存体(省整瓦下载)。
+                        if (statusCode == 304 && cacheStale && cachedEntry) {
+                            HttpCache::shared().refreshExpiry(
+                                url,
+                                HttpCache::computeExpiryTime(
+                                    304, *responseHeaders));
+                            auto image = decodeTile(cachedEntry->body.data(),
+                                                    cachedEntry->body.size());
+                            if (!image) {
                                 logAndroidXyzFailure(
-                                    "http",
+                                    "decode",
                                     key,
                                     statusCode,
-                                    bodyPtr->size(),
+                                    cachedEntry->body.size(),
                                     url);
                             }
+                            (*callbackPtr)(key, std::move(image));
+                            return;
+                        }
+                        if (statusCode != 200 ||
+                            bodyPtr->empty()) {
+                            logAndroidXyzFailure(
+                                "http",
+                                key,
+                                statusCode,
+                                bodyPtr->size(),
+                                url);
                             (*callbackPtr)(key, nullptr);
                             return;
                         }
@@ -468,7 +516,20 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                             (*callbackPtr)(key, nullptr);
                             return;
                         }
-                        HttpCache::shared().put(url, *bodyPtr);
+                        // I-P1:200 响应带响应头写入缓存;无缓存指令且无验证器
+                        // 的响应不缓存(cesium shouldCacheRequest 同语义,否则
+                        // 又退化成"永不刷新")。
+                        CachedResponse resp;
+                        resp.statusCode = statusCode;
+                        resp.headers = *responseHeaders;
+                        resp.body = *bodyPtr;
+                        resp.expiryTime = HttpCache::computeExpiryTime(
+                            statusCode, resp.headers);
+                        if (resp.expiryTime != 0 ||
+                            HttpCache::hasRevalidationHeader(resp.headers)) {
+                            HttpCache::shared().putResponse(url,
+                                                            std::move(resp));
+                        }
                         auto image =
                             decodeTile(bodyPtr->data(), bodyPtr->size());
                         if (!image) {
@@ -499,6 +560,18 @@ void XYZImageryProvider::requestTile(const TileKey& key,
     // 桥接真取消(见 HttpRequestOptions.cancelFlag)。
     HttpRequestOptions httpOptions{priority};
     httpOptions.cancelFlag = token.sharedFlag();
+    // I-P1:同 bridge 分支 —— stale 缓存条目的条件请求头 + 响应头输出。
+    bool cacheStale = false;
+    auto cachedEntry = HttpCache::shared().getResponse(url, &cacheStale);
+    auto responseHeaders =
+        std::make_shared<std::vector<HttpRequestOptions::Header>>();
+    httpOptions.responseHeaders = responseHeaders;
+    if (cacheStale && cachedEntry) {
+        if (auto reval =
+                HttpCache::revalidationHeader(cachedEntry->headers)) {
+            httpOptions.headers.push_back(std::move(*reval));
+        }
+    }
     *requestHandle = CurlMultiRequestScheduler::shared().get(
         url,
          [this,
@@ -506,7 +579,11 @@ void XYZImageryProvider::requestTile(const TileKey& key,
           url,
           token = std::move(token),
           callback = std::move(callback),
-          requestHandle](int statusCode, std::vector<uint8_t> body) mutable {
+          requestHandle,
+          cachedEntry,
+          cacheStale,
+          responseHeaders](int statusCode,
+                           std::vector<uint8_t> body) mutable {
             (void)requestHandle;
             auto tokenPtr =
                 std::make_shared<CancellationToken>(std::move(token));
@@ -521,19 +598,41 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                  tokenPtr,
                  callbackPtr,
                  statusCode,
-                 bodyPtr]() mutable {
+                 bodyPtr,
+                 cachedEntry,
+                 cacheStale,
+                 responseHeaders]() mutable {
                     noteRequestCompleted(requestsCompleted_);
-                    if (tokenPtr->isCancelled() ||
-                        statusCode != 200 ||
-                        bodyPtr->empty()) {
-                        if (!tokenPtr->isCancelled()) {
+                    if (tokenPtr->isCancelled()) {
+                        (*callbackPtr)(key, nullptr);
+                        return;
+                    }
+                    if (statusCode == 304 && cacheStale && cachedEntry) {
+                        HttpCache::shared().refreshExpiry(
+                            url,
+                            HttpCache::computeExpiryTime(
+                                304, *responseHeaders));
+                        auto image = decodeTile(cachedEntry->body.data(),
+                                                cachedEntry->body.size());
+                        if (!image) {
                             logAndroidXyzFailure(
-                                "http",
+                                "decode",
                                 key,
                                 statusCode,
-                                bodyPtr->size(),
+                                cachedEntry->body.size(),
                                 url);
                         }
+                        (*callbackPtr)(key, std::move(image));
+                        return;
+                    }
+                    if (statusCode != 200 ||
+                        bodyPtr->empty()) {
+                        logAndroidXyzFailure(
+                            "http",
+                            key,
+                            statusCode,
+                            bodyPtr->size(),
+                            url);
                         (*callbackPtr)(key, nullptr);
                         return;
                     }
@@ -548,7 +647,16 @@ void XYZImageryProvider::requestTile(const TileKey& key,
                         (*callbackPtr)(key, nullptr);
                         return;
                     }
-                    HttpCache::shared().put(url, *bodyPtr);
+                    CachedResponse resp;
+                    resp.statusCode = statusCode;
+                    resp.headers = *responseHeaders;
+                    resp.body = *bodyPtr;
+                    resp.expiryTime = HttpCache::computeExpiryTime(
+                        statusCode, resp.headers);
+                    if (resp.expiryTime != 0 ||
+                        HttpCache::hasRevalidationHeader(resp.headers)) {
+                        HttpCache::shared().putResponse(url, std::move(resp));
+                    }
                     auto image = decodeTile(bodyPtr->data(), bodyPtr->size());
                     if (!image) {
                         logAndroidXyzFailure(

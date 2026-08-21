@@ -14,7 +14,7 @@
 AndroidPlatformBridge.cpp:32:-  # JNI 辅助块起点,32 行是空行、真正的定义在 42(detachJniAtThreadExit)—— 文档给的是块起点,可接受
 AndroidPlatformBridge.cpp:60:-  # 函数体内语句 gJvm->AttachCurrentThread —— 已回读,正确
 BoundingCylinderRegion.cpp:79:-  # 构造函数,索引不建范围 —— 已回读,79 行确是 ctor 首行
-CurlMultiRequestScheduler.cpp:117:-  # 函数体内语句 const size_t total —— 已回读,正确
+CurlMultiRequestScheduler.cpp:207:-  # Impl 构造函数缩进在结构体内,索引不建范围 —— 已回读,207 行确为 explicit Impl 首行
 EarthEngineSdkFacade.cpp:402:-  # 函数体内语句 bingOptions.subdomains —— 已回读,正确
 RasterMappedToTilesetTile.cpp:221:-  # 指向 `// Step 2:` 分段注释,非函数定义 —— 已回读,正确
 RasterMappedToTilesetTile.cpp:371:-  # 同上,指向分段注释 —— 已回读,正确

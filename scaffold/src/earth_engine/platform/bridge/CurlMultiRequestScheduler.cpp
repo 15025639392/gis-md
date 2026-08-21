@@ -56,6 +56,10 @@ struct CurlMultiRequestScheduler::Impl {
         std::vector<uint8_t> uploadBody;
         std::string contentType;
         std::vector<HttpRequestOptions::Header> requestHeaders;
+        /// I-P1:可选响应头输出(HttpRequestOptions.responseHeaders 转移来)。
+        /// 由 writeHeader 在传输线程逐行填充,完成回调触发前已写满 —— 回调
+        /// 与 writeHeader 同线程,天然 happens-before,无需额外同步。
+        std::shared_ptr<std::vector<HttpRequestOptions::Header>> responseHeaders;
         std::function<void(int, std::vector<uint8_t>)> callback;
         HttpRequestPriority priority = HttpRequestPriority::Normal;
         std::vector<uint8_t> body;
@@ -147,6 +151,59 @@ struct CurlMultiRequestScheduler::Impl {
         return total;
     }
 
+    /// I-P1:响应头收集(libcurl 保证每次回调恰好一整行,含 CRLF)。
+    /// 状态行("HTTP/1.1 200 OK")与 HTTP/2 伪头(":status")跳过;obs-fold
+    /// (行首空白续行)折进上一行值 —— 按 RFC 7230 最小实现,真实 CDN 极少用。
+    static size_t writeHeader(void* contents,
+                              size_t size,
+                              size_t nmemb,
+                              void* userp) {
+        auto* state = static_cast<RequestState*>(userp);
+        const size_t total = size * nmemb;
+        if (!state->responseHeaders || total == 0) {
+            return total;
+        }
+        std::string line(static_cast<const char*>(contents), total);
+        while (!line.empty() &&
+               (line.back() == '\r' || line.back() == '\n')) {
+            line.pop_back();
+        }
+        if (line.empty()) {
+            return total;  // 空行 = 头部结束
+        }
+        auto trim = [](std::string& s) {
+            const size_t b = s.find_first_not_of(" \t");
+            const size_t e = s.find_last_not_of(" \t");
+            if (b == std::string::npos) {
+                s.clear();
+            } else {
+                s = s.substr(b, e - b + 1);
+            }
+        };
+        if (line.front() == ' ' || line.front() == '\t') {
+            // obs-fold:续行追加到上一条值(真实源罕见,保底不丢语义)。
+            if (!state->responseHeaders->empty()) {
+                trim(line);
+                state->responseHeaders->back().second += " " + line;
+            }
+            return total;
+        }
+        const size_t colon = line.find(':');
+        if (colon == std::string::npos || colon == 0) {
+            return total;  // 状态行 / 伪头
+        }
+        std::string name = line.substr(0, colon);
+        std::string value = line.substr(colon + 1);
+        trim(name);
+        trim(value);
+        if (name.empty()) {
+            return total;
+        }
+        state->responseHeaders->emplace_back(std::move(name),
+                                             std::move(value));
+        return total;
+    }
+
     explicit Impl(int maximumActiveRequestsValue)
         : maximumActiveRequests(std::max(1, maximumActiveRequestsValue)) {
         (void)curlGlobalLifetime();
@@ -179,6 +236,7 @@ struct CurlMultiRequestScheduler::Impl {
         state->uploadBody = std::move(uploadBody);
         state->contentType = std::move(contentType);
         state->requestHeaders = std::move(options.headers);
+        state->responseHeaders = std::move(options.responseHeaders);
         state->callback = std::move(callback);
         state->priority = options.priority;
         state->externalCancel = std::move(options.cancelFlag);
@@ -542,6 +600,11 @@ private:
         curl_easy_setopt(easy, CURLOPT_URL, request->url.c_str());
         curl_easy_setopt(easy, CURLOPT_WRITEFUNCTION, &Impl::writeBody);
         curl_easy_setopt(easy, CURLOPT_WRITEDATA, request.get());
+        if (request->responseHeaders) {
+            // I-P1:仅在调用方请求收集时才挂回调,避免每个请求多一层 header 拷贝。
+            curl_easy_setopt(easy, CURLOPT_HEADERFUNCTION, &Impl::writeHeader);
+            curl_easy_setopt(easy, CURLOPT_HEADERDATA, request.get());
+        }
         curl_easy_setopt(easy, CURLOPT_TIMEOUT, 15L);
         curl_easy_setopt(easy, CURLOPT_CONNECTTIMEOUT, 5L);
         curl_easy_setopt(easy, CURLOPT_USERAGENT, "earth-md/0.1");
