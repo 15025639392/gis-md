@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include <functional>
 #include <vector>
@@ -206,6 +207,7 @@ TerrainDisplacementTemplatePool::ensureHeightArray(int gridSize) {
     a.gridSize = gridSize;
     a.layerPool.configure(layers, 1);
     a.layerEpochs.assign(static_cast<size_t>(layers), 0u);
+    a.layerEdgeLutBytes.assign(static_cast<size_t>(layers), {});
     return &a;
 }
 
@@ -384,6 +386,10 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
         ++heightFrameStats_.evicted;
         arr->index.erase(evicted);
         ++arr->layerEpochs[static_cast<size_t>(layer)];
+        // 层被重分配:旧 LUT 字节作废,下帧照常上传。
+        if (static_cast<size_t>(layer) < arr->layerEdgeLutBytes.size()) {
+            arr->layerEdgeLutBytes[static_cast<size_t>(layer)].clear();
+        }
     }
 
     // u 用 i/gridSize(mercator-x 线性于经度,精确);v 用 j/gridSize(线性纬度近似
@@ -568,10 +574,25 @@ bool TerrainDisplacementTemplatePool::updateEdgeLutRows(const TileKey& key,
     auto it = arr->index.find(heightCacheKey(key));
     if (it == arr->index.end() || it->second.layer < 0) return false;
     const int n = gridSize + 1;
-    return device_->updateTextureRegion(arr->texture.get(), 0, n, n,
-                                        kEdgeLutRows, bytes,
-                                        static_cast<size_t>(n) * 4,
-                                        it->second.layer);
+    const size_t byteCount =
+        static_cast<size_t>(n) * static_cast<size_t>(kEdgeLutRows) * 4u;
+    const size_t layer = static_cast<size_t>(it->second.layer);
+    // H-B1 内容变更检测:边 LUT 只依赖邻居地形高,不随相机平滑移动变 ——
+    // 惯性期每帧重算但值相同,跳过 GPU 上传(108 瓦 × ~50-80μs/次 =
+    // frameState 6.8-11.4ms)。层被重分配时缓存已清,照常上传。
+    if (layer < arr->layerEdgeLutBytes.size() &&
+        arr->layerEdgeLutBytes[layer].size() == byteCount &&
+        std::memcmp(arr->layerEdgeLutBytes[layer].data(), bytes, byteCount) ==
+            0) {
+        return true;  // 已是最新,无需上传
+    }
+    const bool ok = device_->updateTextureRegion(
+        arr->texture.get(), 0, n, n, kEdgeLutRows, bytes,
+        static_cast<size_t>(n) * 4, it->second.layer);
+    if (ok && layer < arr->layerEdgeLutBytes.size()) {
+        arr->layerEdgeLutBytes[layer].assign(bytes, bytes + byteCount);
+    }
+    return ok;
 }
 
 void TerrainDisplacementTemplatePool::touchHeightTexture(const TileKey& key,

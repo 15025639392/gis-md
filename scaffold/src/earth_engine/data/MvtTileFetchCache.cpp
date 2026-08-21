@@ -1,6 +1,10 @@
 #include "MvtTileFetchCache.h"
 
+#include "../debug/PerfTimer.h"
+#include "../tiling/TileRetryBackoffPolicy.h"
+
 #include <algorithm>
+#include <limits>
 #include <list>
 #include <mutex>
 #include <unordered_map>
@@ -56,6 +60,19 @@ struct MvtTileFetchCache::State {
     };
     std::list<CacheEntry> order;  // 头新尾旧
     std::unordered_map<uint64_t, std::list<CacheEntry>::iterator> map;
+    /// 失败账本(2026-08-20 有界重试):失败瓦片不占 L1/L2,单独记
+    /// retryNotBeforeMs + 失败次数;请求命中此账本时按
+    /// TileRetryBackoffPolicy 决定跳过(退避中/用尽)或放行重试。
+    struct FailureEntry {
+        double retryNotBeforeMs = 0.0;
+        int failureCount = 0;
+        uint64_t seq = 0;
+    };
+    std::unordered_map<uint64_t, FailureEntry> failures;
+    uint64_t failureSeq = 0;
+    /// 失败账本容量上限(满则挤最旧,旧 key 到期后允许重新探测=自愈)。
+    size_t maxFailures = 2048;
+    uint64_t failureSkips = 0;
     /// L2:压缩字节层。L1 淘汰时降级到此,命中则重解码(见类注释)。
     struct RawEntry {
         uint64_t key;
@@ -130,39 +147,60 @@ void MvtTileFetchCache::request(const TileKey& key, TileCallback callback) {
     }
     const uint64_t dk = packDataKey(key.z, key.x, key.y);
     bool needFetch = false;
+    bool failImmediately = false;
     std::shared_ptr<const MvtTile> hit;
     std::shared_ptr<const std::vector<uint8_t>> rawHit;
     {
         std::lock_guard<std::mutex> lock(state_->mutex);
-        auto it = state_->map.find(dk);
-        if (it != state_->map.end()) {
-            state_->order.splice(state_->order.begin(), state_->order,
-                                 it->second);
-            hit = it->second->tile;
-            ++state_->hits;
-        } else {
-            auto inIt = state_->inflight.find(dk);
-            if (inIt != state_->inflight.end()) {
-                inIt->second.push_back(std::move(callback));
+        // 失败账本闸:用尽(不再重试)或退避中(未到期)→ 不发网络,直接失败
+        // 回调(调用方照画透明/回退);到期才放行一次重试。
+        auto fit = state_->failures.find(dk);
+        if (fit != state_->failures.end() &&
+            (fit->second.failureCount >
+                 TileRetryBackoffPolicy::kMaxSourceRetries ||
+             !TileRetryBackoffPolicy::isRetryDue(
+                 fit->second.retryNotBeforeMs, perf::nowMs()))) {
+            ++state_->failureSkips;
+            failImmediately = true;
+        }
+        if (!failImmediately) {
+            auto it = state_->map.find(dk);
+            if (it != state_->map.end()) {
+                state_->order.splice(state_->order.begin(), state_->order,
+                                     it->second);
+                hit = it->second->tile;
+                ++state_->hits;
             } else {
-                // L2:字节还在 → 免网络,重解码即可(见类注释的两层取舍)。
-                auto rawIt = state_->rawMap.find(dk);
-                if (rawIt != state_->rawMap.end()) {
-                    state_->rawOrder.splice(state_->rawOrder.begin(),
-                                            state_->rawOrder, rawIt->second);
-                    rawHit = rawIt->second->body;
-                    ++state_->rawHits;
-                    // 与网络路径同样走 inflight:重解码期间的并发请求搭车,
-                    // 不重复解码(解码 5-17ms,并发重复会成倍烧 worker)。
-                    state_->inflight[dk].push_back(std::move(callback));
+                auto inIt = state_->inflight.find(dk);
+                if (inIt != state_->inflight.end()) {
+                    inIt->second.push_back(std::move(callback));
                 } else {
-                    state_->inflight[dk].push_back(std::move(callback));
-                    needFetch = true;
-                    ++state_->fetches;
-                    if (++state_->fetchCount[dk] > 1) ++state_->refetches;
+                    // L2:字节还在 → 免网络,重解码即可(见类注释的两层取舍)。
+                    auto rawIt = state_->rawMap.find(dk);
+                    if (rawIt != state_->rawMap.end()) {
+                        state_->rawOrder.splice(state_->rawOrder.begin(),
+                                                state_->rawOrder,
+                                                rawIt->second);
+                        rawHit = rawIt->second->body;
+                        ++state_->rawHits;
+                        // 与网络路径同样走 inflight:重解码期间的并发请求搭车,
+                        // 不重复解码(解码 5-17ms,并发重复会成倍烧 worker)。
+                        state_->inflight[dk].push_back(std::move(callback));
+                    } else {
+                        state_->inflight[dk].push_back(std::move(callback));
+                        needFetch = true;
+                        ++state_->fetches;
+                        if (++state_->fetchCount[dk] > 1) {
+                            ++state_->refetches;
+                        }
+                    }
                 }
             }
         }
+    }
+    if (failImmediately) {
+        callback(nullptr);
+        return;
     }
     if (hit) {
         callback(std::move(hit));
@@ -218,8 +256,35 @@ void MvtTileFetchCache::request(const TileKey& key, TileCallback callback) {
             }
             if (tile) {
                 state->insertDecoded(dk, tile, std::move(shared));
+                // 成功:复位失败账本,后续直接命中缓存。
+                state->failures.erase(dk);
+            } else {
+                // 失败:记入账本 —— 第 1 次失败后 500ms 重试,第 2 次 1s,
+                // 超过 kMaxSourceRetries 用尽不再重试(有界,防死源风暴)。
+                auto& f = state->failures[dk];
+                f.failureCount =
+                    std::min(f.failureCount + 1,
+                             TileRetryBackoffPolicy::kMaxSourceRetries + 1);
+                if (f.failureCount >
+                    TileRetryBackoffPolicy::kMaxSourceRetries) {
+                    f.retryNotBeforeMs = std::numeric_limits<double>::max();
+                } else {
+                    f.retryNotBeforeMs =
+                        perf::nowMs() +
+                        TileRetryBackoffPolicy::backoffMs(f.failureCount);
+                }
+                f.seq = ++state->failureSeq;
+                if (state->failures.size() > state->maxFailures) {
+                    auto oldest = state->failures.begin();
+                    for (auto it = state->failures.begin();
+                         it != state->failures.end(); ++it) {
+                        if (it->second.seq < oldest->second.seq) {
+                            oldest = it;
+                        }
+                    }
+                    state->failures.erase(oldest);
+                }
             }
-            // 失败不入缓存:下一批请求重试,server 恢复后自愈。
         }
         for (TileCallback& cb : waiters) {
             cb(tile);
@@ -232,7 +297,8 @@ MvtTileFetchCache::Stats MvtTileFetchCache::stats() const {
     return Stats{state_->hits,          state_->fetches,
                  state_->refetches,     state_->rawHits,
                  state_->map.size(),    state_->rawMap.size(),
-                 state_->rawBytes,      state_->residentBytes};
+                 state_->rawBytes,      state_->residentBytes,
+                 state_->failureSkips};
 }
 
 } // namespace earth_engine

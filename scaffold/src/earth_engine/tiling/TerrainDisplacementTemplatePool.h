@@ -287,6 +287,11 @@ private:
         int gridSize = 0;
         TerrainPageLayerPool layerPool;          // 层 LRU(blockLayers=1)
         std::vector<uint32_t> layerEpochs;       // 每层分配代
+        /// 每层最后上传的边 LUT 字节(2026-08-21 H-B1):updateEdgeLutRows 按
+        /// 内容变更检测,字节相同则跳过 GPU 上传 —— 108 瓦视野惯性期每帧
+        /// 108 次小纹理上传(frameState 6.8-11.4ms)的根因。层被重分配
+        /// (epoch 变)时清空,照常上传。
+        std::vector<std::vector<uint8_t>> layerEdgeLutBytes;
         std::unordered_map<uint64_t, HeightTexture> index;  // 瓦片键 → 驻留视图
     };
 

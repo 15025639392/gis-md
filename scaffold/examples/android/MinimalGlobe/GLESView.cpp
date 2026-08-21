@@ -1481,8 +1481,16 @@ static void renderFrame() {
     char perflogProp[4] = {0};
     __system_property_get("debug.ee.perflog", perflogProp);
     const bool perFrameLog = perflogProp[0] == '1';
-    if (perFrameLog || frameId <= 3 || frameId % 120 == 0 ||
-        frameTotalMs >= 25.0 || swapMs >= 8.0) {
+    // 逐帧模式只打"可疑帧":帧间隔/swap/latch 超阈或慢帧 —— 避免全量刷屏
+    // 触发设备 logcat 配额丢日志(2026-08-20 实测 DROPPED 把暂停帧吞掉)。
+    const bool suspiciousFrame =
+        callbackIntervalMs >= 40.0 || swapMs >= 8.0 ||
+        gFenceWaitMs >= 40.0 || frameTotalMs >= 25.0;
+    const bool logFrame =
+        frameId <= 3 || frameId % 120 == 0 ||
+        frameTotalMs >= 25.0 || swapMs >= 8.0 ||
+        (perFrameLog && suspiciousFrame);
+    if (logFrame) {
         const auto& stageDiag = gEngine->diagnostics();
         LOGI(
             "FrameLoop frame=%llu total=%.3f pre=%.3f mvt=%.3f engine=%.3f "

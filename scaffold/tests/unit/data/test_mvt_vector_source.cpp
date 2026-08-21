@@ -403,3 +403,50 @@ TEST(MvtTileFetchCache, EvictedTileRefetchesFromRawTierNotNetwork) {
     EXPECT_EQ(st.refetches, 0u) << "L2 命中不该计重复拉取";
     EXPECT_GT(st.rawBytes, 0u);
 }
+
+// 失败有界重试(2026-08-20 用户契约):同一瓦片失败后最多重试 2 次
+// (1 次初始 + 2 次重试 = 至多 3 次网络请求),间隔按 TileRetryBackoffPolicy
+// 指数退避;用尽后不再发网络。此前"失败不入缓存"让死源每帧重打服务器。
+TEST(MvtTileFetchCache, FailedTileRetriesAtMostTwiceThenGivesUp) {
+    int networkCalls = 0;
+    MvtTileFetchCache cache(
+        [&](const TileKey& k, MvtTileFetchCache::FetchCallback cb) {
+            ++networkCalls;
+            cb(404, {});
+        },
+        /*capacity=*/8, /*rawCapacity=*/0, /*decodePool=*/nullptr);
+    const TileKey key{SchemeId{}, 4, 7, 1};
+    auto get = [&]() {
+        std::shared_ptr<const MvtTile> got;
+        cache.request(key, [&](std::shared_ptr<const MvtTile> t) {
+            got = t;
+        });
+        return got;
+    };
+
+    // 初始失败 → 计数 1,退避 500ms;退避窗口内的重请求被跳过,不发网络。
+    EXPECT_EQ(get(), nullptr);
+    EXPECT_EQ(networkCalls, 1);
+    get();
+    EXPECT_EQ(networkCalls, 1) << "退避中不应重发网络";
+    EXPECT_GE(cache.stats().failureSkips, 1u);
+
+    // 重试 1(500ms 后):失败 → 计数 2,退避 1s。
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    EXPECT_EQ(get(), nullptr);
+    EXPECT_EQ(networkCalls, 2) << "第一次重试应发网络";
+
+    // 重试 2(1s 后):失败 → 计数 3 > 2,终止失败,永不重发。
+    std::this_thread::sleep_for(std::chrono::milliseconds(1100));
+    EXPECT_EQ(get(), nullptr);
+    EXPECT_EQ(networkCalls, 3) << "第二次重试应发网络";
+
+    // 用尽:任意次请求都不再发网络。
+    const int callsBefore = networkCalls;
+    for (int i = 0; i < 5; ++i) {
+        get();
+    }
+    EXPECT_EQ(networkCalls, callsBefore)
+        << "重试用尽后不应再请求失败源";
+    EXPECT_GE(cache.stats().failureSkips, 6u);
+}

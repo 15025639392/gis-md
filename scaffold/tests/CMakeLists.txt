@@ -383,6 +383,16 @@ add_executable(test_terrain_edge_height_lut
 target_link_libraries(test_terrain_edge_height_lut PRIVATE earth_engine_core)
 add_test(NAME test_terrain_edge_height_lut COMMAND test_terrain_edge_height_lut)
 
+add_executable(test_terrain_displacement_edge_lut_upload
+    unit/tiling/test_terrain_displacement_edge_lut_upload.cpp
+)
+target_link_libraries(
+    test_terrain_displacement_edge_lut_upload
+    PRIVATE earth_engine_core GTest::gtest_main)
+add_test(
+    NAME test_terrain_displacement_edge_lut_upload
+    COMMAND test_terrain_displacement_edge_lut_upload)
+
 add_executable(test_tile_edge_snap_resolver
     unit/tiling/test_tile_edge_snap_resolver.cpp
 )

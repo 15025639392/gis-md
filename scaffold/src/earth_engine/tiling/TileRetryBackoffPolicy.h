@@ -14,6 +14,11 @@ struct TileRetryBackoffPolicy {
     /// 退避上限:持续失败的源最多每 30s 重试一次。
     static constexpr double kCapMs = 30000.0;
 
+    /// 每瓦片失败后的最大重试次数(2026-08-20 用户契约):请求失败才重试,
+    /// 同一瓦片默认最多重试 2 次(初始失败 + 2 次重试 = 3 次尝试),用尽即
+    /// 终止,不再请求该 key(除非失败账本因容量淘汰/成功复位而重置)。
+    static constexpr int kMaxSourceRetries = 2;
+
     /// 第 attemptCount 次失败后的退避毫秒数(attemptCount 从 1 起)。
     /// 500 → 1000 → 2000 → … 封顶 30000。
     static double backoffMs(int attemptCount) {

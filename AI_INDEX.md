@@ -1924,11 +1924,11 @@ geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDe
 | `heightCacheKey` | .cpp:160-128 | 高度纹理缓存键 |
 | `findHeightArray` / `ensureHeightArray` | .cpp:173-134 / :136-162 | 按 gridSize 取/建高度 texture array |
 | `bakeTerrainHeightNormalTexels` | .cpp:212-347 | 烘高度 + **切空间法线到 B/A 通道** |
-| `acquireHeightTexture` | .cpp:348-463 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
-| `ensureBakeResources` | .cpp:464-480 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
-| `flushHeightBakes` | .cpp:481-560 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer),然后清空。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
-| `updateEdgeLutRows` | .cpp:561-576 | 写本帧边吸附的邻居高度差表(①-1)。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
-| `touchHeightTexture` | .cpp:577-586 | LRU 触碰 |
+| `acquireHeightTexture` | .cpp:348-469 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
+| `ensureBakeResources` | .cpp:470-486 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
+| `flushHeightBakes` | .cpp:487-566 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer),然后清空。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
+| `updateEdgeLutRows` | .cpp:567-597 | 写本帧边吸附的邻居高度差表(①-1)。**H-B1(2026-08-21):按内容变更检测,字节相同跳过 GPU 上传**(每层缓存最后字节;层重分配时清空)—— 108 瓦视野惯性期每帧 108 次小上传(frameState 6.8-11.4ms)的根因。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
+| `touchHeightTexture` | .cpp:598-607 | LRU 触碰 |
 
 ### HeightmapTerrainContentProvider.h / .cpp
 
@@ -3215,13 +3215,13 @@ nativeDebugRestyle 读外置 style-day/night.json(tools/mvt_demo/styles/)。
 
 ### MvtTileFetchCache.h / .cpp
 
-MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDrapeImageryProvider::State 提炼:面 drape 与路网场烘焙共用同一批 z14 祖先瓦,不共享就是双份 fetch+decode。命中同步回调、miss 在 fetch 完成线程回调;失败回 nullptr 且不入缓存(server 恢复自愈);fetch 回调只捕 shared_ptr<State>(tombstone 拆除法则)。
+MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDrapeImageryProvider::State 提炼:面 drape 与路网场烘焙共用同一批 z14 祖先瓦,不共享就是双份 fetch+decode。命中同步回调、miss 在 fetch 完成线程回调;fetch 回调只捕 shared_ptr<State>(tombstone 拆除法则)。**失败有界重试(2026-08-20 用户契约)**:同瓦失败后最多重试 2 次(间隔按 TileRetryBackoffPolicy 指数退避),用尽即终止不再发网络,失败账本有界(满挤最旧,旧 key 到期可自愈)。
 
 | Item | Lines | Description |
 |---|---|---|
-| `State` | .cpp:22-34 | LRU list+map、inflight waiters、命中/拉取计数;shared_ptr 持有 |
-| `request` | .cpp:125-229 | L1 命中 touch+同步回调 / 在途搭车 / **L2 字节命中→池上重解码** / 发起 fetch(decode 后广播 waiters,成功瓦入 LRU) |
-| `stats` | .cpp:230-238 | 累计命中/拉取/**重复拉取**/常驻瓦数与近似字节快照(P2 容量与 V18 内存有界的共同判据) |
+| `State` | .cpp:22-42 | LRU list+map、inflight waiters、命中/拉取计数、**失败账本(retryNotBeforeMs+次数,满 2048 挤最旧)**;shared_ptr 持有 |
+| `request` | .cpp:142-294 | 失败账本闸(退避中/用尽→同步失败回调不发网络) / L1 命中 touch+同步回调 / 在途搭车 / **L2 字节命中→池上重解码** / 发起 fetch(decode 后广播 waiters,成功瓦入 LRU + 复位账本,失败记账本) |
+| `stats` | .cpp:295-304 | 累计命中/拉取/**重复拉取**/常驻瓦数与近似字节/**失败跳过**快照(P2 容量与 V18 内存有界的共同判据) |
 
 ### VectorTileRasterizer.h / .cpp
 
