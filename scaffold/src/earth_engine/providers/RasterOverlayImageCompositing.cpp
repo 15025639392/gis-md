@@ -679,4 +679,78 @@ void appendCredits(std::vector<std::string>& target,
     }
 }
 
+TileKey parentTileKey(const TileKey& key) {
+    return key.parent();
+}
+
+std::string sourceCacheKey(const TileKey& key) {
+    return key.schemeId.str() + "/" + std::to_string(key.z) + "/" +
+           std::to_string(key.x) + "/" + std::to_string(key.y);
+}
+
+std::string sourceCacheKey(uint64_t epoch, const TileKey& key) {
+    return "epoch/" + std::to_string(epoch) + "/" + sourceCacheKey(key);
+}
+
+void trackPeakBytes(int64_t currentBytes, int64_t& peakBytes) {
+    if (currentBytes > peakBytes) {
+        peakBytes = currentBytes;
+    }
+}
+
+void decrementActiveRasterTileLoads(std::atomic<uint32_t>& activeLoads) {
+    uint32_t current = activeLoads.load(
+        std::memory_order_relaxed);
+    while (current > 0 &&
+           !activeLoads.compare_exchange_weak(
+               current,
+               current - 1,
+               std::memory_order_relaxed,
+               std::memory_order_relaxed)) {
+    }
+}
+
+/// 节流名额唯一释放：完成回调与 abandon/析构可能并发认领同一名额
+/// （completed 置位到回调 erase 之间条目仍在 activeMappedSourceSets），
+/// 以 exchange 决定唯一递减方，防止双重释放静默偷走其他在途名额。
+void releaseRasterThrottleSlotOnce(std::atomic<bool>& released,
+                                   std::atomic<uint32_t>& activeLoads) {
+    if (!released.exchange(true)) {
+        decrementActiveRasterTileLoads(activeLoads);
+    }
+}
+
+bool rectanglesEqualForDirectRasterTile(const Rectangle& a,
+                                        const Rectangle& b) {
+    const double span =
+        std::max({std::abs(a.width()),
+                  std::abs(a.height()),
+                  std::abs(b.width()),
+                  std::abs(b.height()),
+                  1.0});
+    return a.equalsEpsilon(b, span * 1e-12);
+}
+
+std::unique_ptr<TileScheme> createAsyncSchemeSnapshot(
+    const TileScheme& scheme) {
+    const std::string id = scheme.id();
+    if (id == "XYZ-WebMercator") {
+        return TileScheme::createXYZWebMercator();
+    }
+    if (id == "TMS-WebMercator") {
+        return TileScheme::createTMS();
+    }
+    if (id == "OpenGlobus-Earth") {
+        return TileScheme::createOpenGlobusEarth();
+    }
+    if (id == "Geographic-TMS") {
+        return TileScheme::createGeographicTMS();
+    }
+    return nullptr;
+}
+
+bool isResolvedRasterSourceResult(const RasterSourceResult& source) {
+    return source.image || source.terminalFailure;
+}
+
 }  // namespace earth_engine

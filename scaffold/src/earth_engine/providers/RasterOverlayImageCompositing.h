@@ -4,6 +4,10 @@
 #include "../tiling/RasterOverlayProjection.h"
 #include "../core/math/MathUtils.h"
 
+#include <atomic>
+#include <functional>
+#include <memory>
+
 namespace earth_engine {
 
 // ============================================================
@@ -87,5 +91,44 @@ bool hasNonAncestorRasterSourceImage(
 int64_t decodedImageSizeBytes(const DecodedImage& image);
 void appendCredits(std::vector<std::string>& target,
                    const std::vector<std::string>& credits);
+
+// ---- I-P4 第二刀:depot 段共享的轻量工具(主文件 + RasterOverlaySourceDepot 共用) ----
+
+/// 直接瓦片判定:几何矩形与源瓦矩形在容差内相等(避免 direct 路径误判)。
+bool rectanglesEqualForDirectRasterTile(const Rectangle& a,
+                                        const Rectangle& b);
+
+/// 按 scheme id 重建快照(worker 回调需要的独立 scheme 实例)。
+std::unique_ptr<TileScheme> createAsyncSchemeSnapshot(const TileScheme& scheme);
+
+/// 节流名额唯一释放(exchange 决定唯一递减方)。
+void releaseRasterThrottleSlotOnce(std::atomic<bool>& released,
+                                   std::atomic<uint32_t>& activeLoads);
+
+/// 父瓦片键(用于祖先回落链)。
+TileKey parentTileKey(const TileKey& key);
+
+/// 源瓦片缓存键(无 epoch 版 / epoch 前缀版)。
+std::string sourceCacheKey(const TileKey& key);
+std::string sourceCacheKey(uint64_t epoch, const TileKey& key);
+
+/// 峰值字节记账(缓存/背压诊断)。
+void trackPeakBytes(int64_t currentBytes, int64_t& peakBytes);
+
+/// 在飞栅格负载递减(CAS 循环)。
+void decrementActiveRasterTileLoads(std::atomic<uint32_t>& activeLoads);
+
+/// 源加载成功/失败回调类型(depot 与 provider 共享)。
+using MappedSourceLoadSuccess =
+    std::function<void(std::unique_ptr<DecodedImage>,
+                       std::shared_ptr<const DecodedImage>,
+                       Rectangle,
+                       RasterOverlayTile::MoreDetailAvailable,
+                       std::vector<std::string>,
+                       std::vector<std::string>)>;
+using MappedSourceLoadFailure = std::function<void(std::vector<std::string>)>;
+
+/// 源结果是否已解析(image 或终态失败)。
+bool isResolvedRasterSourceResult(const RasterSourceResult& source);
 
 }  // namespace earth_engine
