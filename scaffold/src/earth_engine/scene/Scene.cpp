@@ -299,8 +299,9 @@ bool Scene::hasContinuousProducerWork(const char** outReason) const {
 }
 
 void Scene::auditWorkLedger() const {
-    // **并行验证期**:gating 仍读 hasConvergingWork,本函数零行为影响。
-    // 目的是回答一个只能靠实测回答的问题 —— 那条判据到底漏了几个源。
+    // **影子校验(Phase C 方向)**:gating 已读账本(Engine::ledgerGatingNeedsFrame),
+    // 本函数让旧 hasConvergingWork 反过来检查账本 —— 目的是回答"账本权威后,
+    // 旧判据是否还有它自己的多余来源或漏源"。
     // 只打不一致,一致时静默(健康态刷屏会让人学会无视这条日志)。
     WorkLedger& ledger = WorkLedger::shared();
 

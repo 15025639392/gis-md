@@ -27,7 +27,14 @@
 - **两种令牌语义相反**:`Landing`(别线程会自己走完,持有期不出帧、释放时才需一帧消费)与 `Pumped`(必须在渲染帧里推进,持有期必须持续出帧)。混用会让设计失去意义。
 - `Ticket` 是 move-only RAII,析构即释放,`release()` 幂等;`consumeLanded` 是 exchange 语义、恰好消费一次——否则一次到货让循环永远跑下去(`Engine::requestRender` 踩过)。
 - 接入是"对账式" `sync*WorkTicket` 而非配对 acquire/release(配对要求每条出错路径都记得放手,漏掉正是某次事故 `6028adcdf` 的形状)。
-- **当前状态(有意的过渡态,非债)**:gating 仍读旧 `hasConvergingWork`,WorkLedger 零行为影响,只做审计对拍(`Scene::auditWorkLedger` 每帧比对令牌数 vs `Tileset::countTilesLoadingContent`,不等即 ERROR)。尚未真正接管 gating。
+- **当前状态(2026-08-21 复核,Phase B 已收官)**:gating 已读账本 ——
+  `Engine::needsFrame` 在 `kEnableWorkLedgerGating && frameRequestCallback_`
+  时走 `ledgerGatingNeedsFrame`(Landing 落地消费一帧 / Pumped 持有期持续
+  出帧 / 账本外相机自演进兜底),失败安全:未注入平台级唤醒钩子的平台
+  (iOS/macOS 暂未接)回落旧 `hasConvergingWork`,零风险。`Scene::auditWorkLedger`
+  保留为影子校验(每帧对拍令牌数 vs `Tileset::countTilesLoadingContent`,
+  不等即 ERROR;账本 vs 旧判据分歧打 DIVERGE)。过渡态已结束,剩余是文档
+  同步与更广真机 soak,见「还债路线」进度节。
 
 ### 3. 缓存分层:HttpCache(内存 LRU)+ PersistentCache(磁盘)
 `HttpCache` 是线程安全内存 LRU(cesium `CachingAssetAccessor` 对应物,`maxEntries` 默认 2000),达上限先 `evictOne` 再在锁外 `persistAsync` 落盘。`PersistentCache` 是纯静态文件级落地,按 URL 哈希生成文件名。分层理由:内存层处理会话内高频命中,磁盘层处理跨会话持久化,写入丢到后台线程不阻塞主/网络线程。
@@ -81,7 +88,11 @@
 - Engine 四阶段严格串行 + 逐阶段计时,诊断"帧预算花在哪"时归属明确。
 
 ### ⚠️ 短板 / 已知债
-- **WorkLedger 尚未真正接管 gating**(已核实,当前 HEAD 仍是过渡态):实际 gating 仍读旧 `hasConvergingWork`([Engine.cpp:279](../../scaffold/src/earth_engine/Engine.cpp)),WorkLedger 目前零行为影响只做审计对拍(`Scene::auditWorkLedger`)——此前"四判据各自为政"的风险敞口在 gating 层面尚未消除,只多了一层不影响行为的校验网。**这不是 bug 而是原作者铺好、停在并行验证期的未完成迁移;还债路线见下节**。
+- **WorkLedger 已接管 gating(2026-08-21 复核)**:`Engine::needsFrame` 在
+  `kEnableWorkLedgerGating && frameRequestCallback_` 时走 `ledgerGatingNeedsFrame`
+  (见 §2 当前状态);`Scene::auditWorkLedger` 保留为影子校验,旧判据仅作
+  未注入唤醒钩子平台(iOS/macOS)的失败安全回落。账本覆盖见「还债路线」
+  进度节;残余风险 = 更广真机 soak 与 release 功耗量化,非代码缺口。
 - **`PersistentCache::ensureDir` 是空函数体**,不真正创建目录——若调用方没预建缓存目录,磁盘落地会**静默全部失败**,无任何日志。
 - **`PersistentCache::filePath` 用非加密、进程加盐哈希**做文件名,存在跨进程/跨平台不稳定与碰撞风险,不适合作长期稳定缓存键。
 - **`PersistentCache::prewarm` 是纯占位符**(函数体空),只支持按需加载。
@@ -107,14 +118,20 @@
 - ✅ **H 影像解码逸出**:复核 XYZ 系 `decodeTile` 内联于 callback 前、`inFlightRequests` 括住整段;Google/TMS 覆写但委托 XYZ 覆盖流程 → 无逸出。附:gap-audit 的 GoogleMapTiles availability UAF 已由 `availabilityMutex_` 修掉。
 - ⏳ **余留(非阻塞)**:更广真机 soak(fly-to 飞行豁免路径 / 人为限速慢网 / 全球遍历)属持续观察;release 变体精确功耗数字待量(debug 已定性确认会睡)。
 
-**账本现状:全仓只登记两个源**(仅两处 `WorkLedger::shared().acquire`):
+**账本现状(2026-08-21 复核,全仓六源)**:
 
 | ledger label | Kind | 覆盖旧判据哪条 |
 |---|---|---|
 | `tileContentLoad` | Landing | ② 瓦片内容加载(`TilesetTile`,12 处状态迁移都接了) |
 | `terrainPageUpload` | Pumped | ④ 页存储在途(`TerrainPageStore`) |
+| `rasterOverlayLoad` | Landing | ③ raster overlay 网络在途(与 `rasterOverlayUpload` 配套) |
+| `rasterOverlayUpload` | Pumped | ③ raster overlay 上传在途 |
+| `mvtVectorLoad` | Landing | 矢量 fetch 在途(旧判据未列,Phase A 补上) |
+| `mvtVectorCommit` | Pumped | 矢量 commit 在途(旧判据未列,Phase A 补上) |
 
-对照 `hasConvergingWork` 的四判据,缺口:① 相机自演进**故意不进账本**(持续生产者非"在途");③ **raster overlay `hasPendingWork` 无 ticket**;旧判据没列但在跑的异步(MVT 矢量 fetch/镶嵌、解码池)也没接。
+对照 `hasConvergingWork` 的四判据:① 相机自演进**故意不进账本**(持续生产者
+非"在途",由 `hasContinuousProducerWork` 单独兜底);②③④ 均有对应 ticket。
+旧判据没列但在跑的异步(MVT 矢量 fetch/镶嵌、解码池)也已登记在册。
 
 ### Phase A —— 补齐账本覆盖,把审计打到静默(最花功夫)
 `Scene::auditWorkLedger` 已是**找缺口的工具**:账本漏源时打 `verdict DIVERGE ledger=idle old=busy` + `audit MISMATCH`。
@@ -134,7 +151,16 @@ consumeLanded 命中   → 出一帧消费落地产物
 ⚠️ 翻转前必须钉死一个口径:旧判据 ② 用 `pendingRequests()`,审计对拍用 `countTilesLoadingContent()`/`tileContentLoad` ticket——**先确认三者数的是同一批**,否则会在略微不同的口径上翻转 gating,引入新的边缘漏判。
 
 ### Phase C —— 反转审计方向,再删旧判据
-翻转后让 `hasConvergingWork` 反过来当影子校验(账本权威、旧判据检查),soak 确认不再 DIVERGE,再删 ①②③④ 四段手写 if(相机那条抽成独立 gating 输入保留)。
+翻转后让 `hasConvergingWork` 反过来当影子校验(账本权威、旧判据检查),
+soak 确认不再 DIVERGE,再删 ①②③④ 四段手写 if(相机那条抽成独立 gating
+输入保留)。
+
+**2026-08-21 状态**:Phase A/B 已收官(见上),`hasConvergingWork` 已降级为
+影子校验 + 无唤醒钩子平台的回落路径(账本权威时 `auditWorkLedger` 打 DIVERGE
+即为影子检查)。**暂不删旧判据**:iOS/macOS 未接 `setFrameRequestCallback`
+唤醒钩子,回落路径仍需它;待两平台接钩子并 soak 通过后再删。Engine.cpp 的
+"剩余 TODO(上传尾 settle 实测)"注释已过时 —— 上传尾已由 `b97fd851d` 收官,
+注释随本次文档同步一并更新。
 
 ### 消除后的收益(按价值排序)
 1. **省电(真正的 payoff)**:今天四判据把 Landing/Pumped 一视同仁当 Pumped,一个在飞网络请求就把满帧率按住其整个生命周期;翻转后 Landing 类挂着下载时可休眠、落地才醒一帧。慢网 + churn 的空转帧直接消掉。

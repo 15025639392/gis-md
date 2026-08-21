@@ -270,12 +270,11 @@ namespace {
 /// 又短到不会把设备按在满帧率上。
 constexpr int kShadowVerifySampleFrames = 20;
 
-/// Phase B(WorkLedger 接管 gating)总开关。**默认开,真机验证中**。
+/// Phase B(WorkLedger 接管 gating)总开关。**默认开,Phase B 已收官**。
 /// 采用失败安全:即使为 true,也仅当宿主经 setFrameRequestCallback 注入了
 /// 平台级唤醒钩子时才真正走 ledger 判据,否则回落 hasConvergingWork(见
 /// needsFrame 的 useLedger)。故未接唤醒的平台(当前 iOS/macOS)零风险。
-/// 剩余 TODO(上传尾 settle 实测)详见 docs/architecture/core-scene.md
-/// 「还债路线」。时钟/太阳(N)已由 advanceTime/setTime 置事件脏位覆盖;
+/// 时钟/太阳(N)已由 advanceTime/setTime 置事件脏位覆盖;
 /// 唤醒钩子 + 无冻屏 + 零 DIVERGE 已真机 soak 通过(debug)。
 constexpr bool kEnableWorkLedgerGating = true;
 }  // namespace
