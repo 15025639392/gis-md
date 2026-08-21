@@ -508,16 +508,16 @@ Per-frame issue/finalize rate limiter across named lanes. No cesium-native 1:1; 
 | Item | Lines | Description |
 | --- | --- | --- |
 | `FrameResourceLane` | .h:7-15 | TerrainRequest, ContentRequest, RasterRequest, TerrainFinalize, ContentFinalize, RasterTextureUpload, TerminalState. |
-| `FrameResourcePriority` | .h:17-21 | Preload=0, Normal=1, Urgent=2. **Currently ignored** — `canIssue`/`canFinalize` take priority param but discard it (.cpp:23, .cpp:95). |
-| `FrameResourceBudgetConfig` | .h:23-41 | Per-lane limits. **`maxNetworkRequestsPerFrame`**=20 (.h:27), **`maxNetworkInflight`**=20 (.h:32); terrain/content + raster overrides default 0 → fall back to the 20 defaults (.h:28-34). `maxMainThreadFinalizesPerFrame`=1 (.h:35), `maxTerminalStateTransitionsPerFrame`=64 (.h:36), `maxRasterUploadsPerFrame`=1 (.h:37). Note: per-lane cap, **not** a global network sum cap (comment .h:24-26). |
-| `FrameResourceBudgetSnapshot` | .h:43-67 | Read-model of counters + resolved limits; built in `snapshot()` (.cpp:181-224). |
+| `FrameResourcePriority` | .h:17-21 | Preload=0, Normal=1, Urgent=2. **I-P2(2026-08-22)已接线**:`canIssue` 对 Urgent 使用 `limit + reservedUrgentNetworkRequestsPerFrame`(超额,默认 2),预算紧张帧不被 preload 占满饿死;`canFinalize` 仍忽略 priority —— finalize 是主线程工作,平滑期必须限流(见 SmoothingConservesMainThreadWork)。 |
+| `FrameResourceBudgetConfig` | .h:23-42 | Per-lane limits. **`maxNetworkRequestsPerFrame`**=20 (.h:27), **`maxNetworkInflight`**=20 (.h:32); terrain/content + raster overrides default 0 → fall back to the 20 defaults (.h:28-34). `maxMainThreadFinalizesPerFrame`=1 (.h:35), `maxTerminalStateTransitionsPerFrame`=64 (.h:36), `maxRasterUploadsPerFrame`=1 (.h:37). **`reservedUrgentNetworkRequestsPerFrame`**=2 (.h:41,I-P2). Note: per-lane cap, **not** a global network sum cap (comment .h:24-26). |
+| `FrameResourceBudgetSnapshot` | .h:43-68 | Read-model of counters + resolved limits; built in `snapshot()` (.cpp:193-239). Exposes `reservedUrgentNetworkRequestsPerFrame` (I-P2). |
 | `beginFrame` | .cpp:7-20 | Resets all counters, stores config. |
-| `canIssue` / `tryIssue` | .cpp:22-75 | Terrain+Content share the `terrainContentNetworkRequestsIssued_` pool vs `networkRequestLimit` (.cpp:26-33); Raster uses its own counter (.cpp:34-36). `tryIssue` also bumps `contentNetworkRequestsIssued_` and global `networkRequestsIssued_`. Finalize/upload/terminal lanes always issuable (.cpp:37-41). |
-| `hasNetworkInflightCapacity` | .cpp:77-92 | `currentInflight + fanout <= networkInflightLimit(lane)`; no-lane overload delegates to TerrainRequest lane (.cpp:85-92). |
-| `canFinalize` / `tryFinalize` | .cpp:94-145 | Gated first by `mainThreadTimeExpired()` (.cpp:98). RasterTextureUpload vs `maxRasterUploadsPerFrame`; Terrain/ContentFinalize share `mainThreadFinalizesUsed_` vs `maxMainThreadFinalizesPerFrame`; TerminalState vs its cap; request lanes defer to `canIssue`. |
-| `recordElapsed` / `mainThreadTimeExpired` | .cpp:147-154 | Accumulates `mainThreadElapsedMs_` (lane arg unused); expired when `mainThreadTimeMs>0 && elapsed>=it`. |
-| `positiveUnits` | .cpp:226-228 | `max(1, estimatedUnits)` — fanout/cost floors at 1. |
-| `networkRequestLimit` / `networkInflightLimit` | .cpp:230-251 | Resolve per-lane limit with 0→default fallback; non-network lanes return the network default. |
+| `canIssue` / `tryIssue` | .cpp:24-80 | Terrain+Content share the `terrainContentNetworkRequestsIssued_` pool vs `networkRequestLimit` (.cpp:28-35); Raster uses its own counter (.cpp:36-38). **I-P2:Urgent 每帧超额 reserved 个**(`.cpp:26-28` 计算 overflow);`tryIssue` also bumps `contentNetworkRequestsIssued_` and global `networkRequestsIssued_`. Finalize/upload/terminal lanes always issuable (.cpp:39-43). |
+| `hasNetworkInflightCapacity` | .cpp:85-100 | `currentInflight + fanout <= networkInflightLimit(lane)`; no-lane overload delegates to TerrainRequest lane (.cpp:93-100). |
+| `canFinalize` / `tryFinalize` | .cpp:102-159 | Gated first by `mainThreadTimeExpired()` (.cpp:108). RasterTextureUpload vs `maxRasterUploadsPerFrame`; Terrain/ContentFinalize share `mainThreadFinalizesUsed_` vs `maxMainThreadFinalizesPerFrame`; TerminalState vs its cap; request lanes defer to `canIssue`. ⚠️ priority 不参与超额(主线程限流,设计意图)。 |
+| `recordElapsed` / `mainThreadTimeExpired` | .cpp:161-169 | Accumulates `mainThreadElapsedMs_` (lane arg unused); expired when `mainThreadTimeMs>0 && elapsed>=it`. |
+| `positiveUnits` | .cpp:240-242 | `max(1, estimatedUnits)` — fanout/cost floors at 1. |
+| `networkRequestLimit` / `networkInflightLimit` | .cpp:244-290 | Resolve per-lane limit with 0→default fallback; non-network lanes return the network default. |
 
 ### Uri.h / .cpp
 

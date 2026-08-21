@@ -144,3 +144,54 @@ TEST(FrameResourceBudgetTest, RasterOverlayMappingHasIndependentCountAndTimeCaps
     EXPECT_FALSE(budget.tryStartRasterOverlayMapping());
     EXPECT_EQ(0u, budget.rasterOverlayMappingsUsed());
 }
+
+// ---- I-P2:Urgent 在预算紧张帧可超额,不被 preload 占满饿死 ----
+
+TEST(FrameResourceBudgetTest, UrgentBreaksThroughFullNormalBudget) {
+    FrameResourceBudgetConfig config;
+    config.maxNetworkRequestsPerFrame = 2;
+    config.maxNetworkInflight = 2;
+    // 显式默认:Urgent 每帧可超额 2 个网络请求。
+    config.reservedUrgentNetworkRequestsPerFrame = 2;
+
+    FrameResourceBudget budget;
+    budget.beginFrame(21, config);
+
+    // 普通请求占满 limit=2。
+    EXPECT_TRUE(budget.tryIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Normal));
+    EXPECT_TRUE(budget.tryIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Preload));
+    EXPECT_FALSE(budget.canIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Normal));
+
+    // 预算满后 Urgent 仍可突破(limit+reserved=4)。
+    EXPECT_TRUE(budget.tryIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Urgent));
+    EXPECT_TRUE(budget.tryIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Urgent));
+    // 突破上限也被封顶。
+    EXPECT_FALSE(budget.canIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Urgent));
+
+    // 非 Urgent 不因 Urgent 的存在而获得突破(普通仍被 limit 卡住)。
+    EXPECT_FALSE(budget.canIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Normal));
+}
+
+TEST(FrameResourceBudgetTest, SnapshotExposesUrgentReservedSlots) {
+    FrameResourceBudgetConfig config;
+    config.reservedUrgentNetworkRequestsPerFrame = 3;
+
+    FrameResourceBudget budget;
+    budget.beginFrame(22, config);
+    const FrameResourceBudgetSnapshot snapshot = budget.snapshot();
+    EXPECT_EQ(3u, snapshot.reservedUrgentNetworkRequestsPerFrame);
+}

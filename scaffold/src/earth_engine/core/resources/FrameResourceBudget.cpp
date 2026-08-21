@@ -22,20 +22,26 @@ void FrameResourceBudget::beginFrame(
 }
 
 bool FrameResourceBudget::canIssue(FrameResourceLane lane,
-                                   FrameResourcePriority,
+                                   FrameResourcePriority priority,
                                    int estimatedFanout) const {
+    // I-P2:Urgent 每帧可超额 reserved 个(预算紧张帧不被 preload 占满饿死)。
+    // 普通/Preload 仍按 limit 严格限制。
+    const uint32_t urgentOverflow =
+        priority == FrameResourcePriority::Urgent
+            ? config_.reservedUrgentNetworkRequestsPerFrame
+            : 0;
     switch (lane) {
         case FrameResourceLane::TerrainRequest:
             return terrainContentNetworkRequestsIssued_ +
                        positiveUnits(estimatedFanout) <=
-                   networkRequestLimit(lane);
+                   networkRequestLimit(lane) + urgentOverflow;
         case FrameResourceLane::ContentRequest:
             return terrainContentNetworkRequestsIssued_ +
                        positiveUnits(estimatedFanout) <=
-                   networkRequestLimit(lane);
+                   networkRequestLimit(lane) + urgentOverflow;
         case FrameResourceLane::RasterRequest:
             return rasterNetworkRequestsIssued_ + positiveUnits(estimatedFanout) <=
-                   networkRequestLimit(lane);
+                   networkRequestLimit(lane) + urgentOverflow;
         case FrameResourceLane::TerrainFinalize:
         case FrameResourceLane::ContentFinalize:
         case FrameResourceLane::RasterTextureUpload:
@@ -94,12 +100,18 @@ bool FrameResourceBudget::hasNetworkInflightCapacity(
 }
 
 bool FrameResourceBudget::canFinalize(FrameResourceLane lane,
-                                      FrameResourcePriority,
+                                      FrameResourcePriority priority,
                                       int estimatedCostUnits) const {
     const uint32_t units = positiveUnits(estimatedCostUnits);
     if (mainThreadTimeExpired()) {
         return false;
     }
+    // ⚠️ finalize/upload 是**主线程工作**,不参与 I-P2 的 urgent 超额:
+    //   - 平滑/交互期主线程时间预算必须守住(即使 urgent)——设计意图见
+    //     TileFrameResourceBudgetPlannerTest.SmoothingConservesMainThreadWork;
+    //   - finalize 队列(takeHighestPriorityUpload)本身按优先级取队首,
+    //     urgent 排在 preload 前,预算 1 时先拿名额,不存在被饿死。
+    // I-P2 的 urgent 超额只作用于 canIssue(异步网络请求,超额不阻塞主线程)。
 
     switch (lane) {
         case FrameResourceLane::RasterTextureUpload:
@@ -210,6 +222,8 @@ FrameResourceBudgetSnapshot FrameResourceBudget::snapshot() const {
     snapshot.maxTerminalStateTransitionsPerFrame =
         config_.maxTerminalStateTransitionsPerFrame;
     snapshot.maxRasterUploadsPerFrame = config_.maxRasterUploadsPerFrame;
+    snapshot.reservedUrgentNetworkRequestsPerFrame =
+        config_.reservedUrgentNetworkRequestsPerFrame;
     snapshot.maxRasterOverlayMappingsPerFrame =
         config_.maxRasterOverlayMappingsPerFrame;
     snapshot.rasterOverlayMappingElapsedMs =

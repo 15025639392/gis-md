@@ -35,6 +35,14 @@ struct FrameResourceBudgetConfig {
     uint32_t maxMainThreadFinalizesPerFrame = 1;
     uint32_t maxTerminalStateTransitionsPerFrame = 64;
     uint32_t maxRasterUploadsPerFrame = 1;
+    // I-P2:每帧为 Urgent 保留的超额名额。预算紧张帧(普通请求已占满 limit)时
+    // Urgent 仍可突破 limit 发出/完成 reserved 个 —— 近景可见瓦片不被 preload
+    // 占满而 Blocked(帧级延迟,HTTP 层有并发上限兜底,不会失控)。
+    // 对齐 curl 调度器 kReservedUrgentSlots=2 的保留精神;这里用"超额"而非
+    // "普通让位",避免 limit 小的配置下普通请求被压到 0。
+    // ⚠️ 只作用于 canIssue(异步网络请求);canFinalize 是主线程工作,平滑期
+    // 必须限流,不参与超额(见 SmoothingConservesMainThreadWork)。
+    uint32_t reservedUrgentNetworkRequestsPerFrame = 2;
     // First-time geometry-to-raster mapping is synchronous CPU work performed
     // before any raster request can be issued. Keep it independently bounded so
     // visible imagery can start ahead of geometry without restoring the former
@@ -75,6 +83,7 @@ struct FrameResourceBudgetSnapshot {
     uint32_t maxMainThreadFinalizesPerFrame = 0;
     uint32_t maxTerminalStateTransitionsPerFrame = 0;
     uint32_t maxRasterUploadsPerFrame = 0;
+    uint32_t reservedUrgentNetworkRequestsPerFrame = 0;
     uint32_t maxRasterOverlayMappingsPerFrame = 0;
     double rasterOverlayMappingElapsedMs = 0.0;
     double rasterOverlayMappingTimeMs = 0.0;
