@@ -86,7 +86,15 @@
 | **I-P1** | `HttpCache` 无过期 / 无 ETag 重验 | 影像一旦缓存永不刷新;源端更新用户看不到 | 未做。**TTL 口径是跨会话共享约定,须你先拍**再实现 |
 | **I-P2** | `FrameResourceBudget::canIssue` 忽略 `FrameResourcePriority` | 预算紧张的那一帧,urgent 可能被 preload 占满名额而 Blocked | 未做。影响被 HTTP 层动态优先级 cell 部分兜底(下一帧重试时排在前面),**是帧级延迟不是持续饥饿** |
 | **I-P3** | 空洞瓦每帧重走完整 `update()`(state 非 `Attached`,`hasStableUpdateState()` false) | 洞区瓦片的 per-frame CPU;无网络无合成 | ✅ 已量化(2026-08-22 host,Debug/Release 双口径):机制属实(空合成瓦 ready 无 rendererResources → Step 1 每帧踢回 Unattached),但成本可忽略——Release 每瓦每帧 update() 差值 0.00002ms、prefetch() 差值 0.00019ms(200 洞瓦 ≈ 0.04ms/帧)。**不立项**。证据:`test_raster_hole_update_cost` 2 测试 |
-| **I-P4** | `RasterOverlayTileProvider.cpp` 4785 行,四路失效逻辑互调 | 可维护性,不是运行期成本 | ✅ 已拆完(2026-08-22 第三刀):主文件 4785→4171(投影+合成簇)→3122(depot 嵌套 struct)→**2829**(状态预算簿记 `RasterOverlayTileProviderBudget.cpp`)。每刀逐字搬移(第二刀起用 `git show HEAD | sed` 提取,一次全绿);互调解耦仍靠前序两工具函数。raster ctest + 全量 199/199 绿。剩 2829 行主体为 provider 加载/派发/上传核心,依赖闭包交错,拆前须再确认,暂不动 |
+| **I-P4** | `RasterOverlayTileProvider.cpp` 4785 行,四路失效逻辑互调 | 可维护性,不是运行期成本 | ✅ 已拆完(2026-08-22 第三刀):主文件 4785→4171(投影+合成簇)→3122(depot 嵌套 struct)→**2829**(状态预算簿记 `RasterOverlayTileProviderBudget.cpp`)。每刀逐字搬移(第二刀起用 `git show HEAD | sed` 提取,一次全绿);互调解耦仍靠前序两工具函数。raster ctest + 全量 199/199 绿。**依赖闭包已确认(2026-08-22 分析,见下)** |
+
+**I-P4 第四刀设计(2026-08-22,依赖闭包分析结论,未实施)**:
+匿名 helper 已按簇分层,每刀需求:
+- **收口刀 4a**:`getTile/resolveTile` 与 `loadMapped/pump/sourceTileList` 共享的 6 个纯几何 helper(`effectiveCoverageRectangle`/`mapGeometryBoundsToImageryCoverage`/`shouldClampOutsideCoverage`/`schemeCoverageRectangle`/`expandClampedLineIntoCoverage`/`inwardSampleEpsilon`)→ 先收口进 `RasterOverlayImageCompositing`(零 provider 状态,契合其既有定位),主文件删本地定义。
+- **拆刀 4b**:`loadMappedRasterTile`..`issueActiveMappedSourceImageSets`(约 630 行)→ 新 TU `RasterOverlayTileLoadDispatch.cpp`,自带 5 个专属 helper(`logAndroidRasterPipeline`/`availableRasterRequestSlots`/`hasRasterInflightCapacity`/`gNextRasterSourceWaiterOwnerToken`/`isTransientRasterSourceFailure`)+ 复用收口后的共享集。
+- **拆刀 5**:`processPendingUploads`+`hasPendingWork`(约 350 行)→ 新 TU,自带 4 个专属常量/helper(`kDefaultMaximumRasterUploadsPerFrame`/`uploadAllowedDuringInteraction`/`kInteractionRasterUploadMaxDimension`/`kInteractionRasterUploadMaxPixels`),闭包最干净。
+- **拆刀 6(可选)**:`syncWorkTickets`/`syncRasterLandingTicket*`/`trimUnusedTiles`(约 160 行),只需 `isEpochMappedRasterCacheKey`+`kRetainedUnusedFrames` 两个 helper。
+- 每刀沿用「`git show HEAD | sed` 逐字提取 → 新 TU 自测 + raster ctest + 全量 + AI_INDEX 行号同步」流程。拆完主文件约 1700-1900 行。
 
 ---
 
