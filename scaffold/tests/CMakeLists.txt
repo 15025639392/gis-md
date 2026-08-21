@@ -1188,6 +1188,12 @@ add_executable(test_raster_overlay_lifecycle
 target_link_libraries(test_raster_overlay_lifecycle PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_raster_overlay_lifecycle COMMAND test_raster_overlay_lifecycle)
 
+add_executable(test_raster_hole_update_cost
+    unit/providers/test_raster_hole_update_cost.cpp
+)
+target_link_libraries(test_raster_hole_update_cost PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_raster_hole_update_cost COMMAND test_raster_hole_update_cost)
+
 add_executable(test_web_map_service_imagery_provider
     unit/providers/test_web_map_service_imagery_provider.cpp
 )
