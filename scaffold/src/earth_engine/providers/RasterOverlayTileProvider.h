@@ -335,6 +335,14 @@ private:
     /// 在 asyncState_->mutex 下读两个布尔谓词后释放锁再 reconcile,避免
     /// 账本锁与 provider 锁嵌套(WorkLedger 从不回调本类,单向即可)。
     void syncWorkTickets();
+    struct ProviderAsyncState;  // 前向声明:下方 helper 的参数类型(定义见本类后文)
+    /// [2026-08-21 冻屏根修] worker 完成/派发路径的 Landing 票同步(线程安全)。
+    /// 见 syncWorkTickets 注释;state 由 worker 回调持有(alive 守卫)。
+    static void syncRasterLandingTicketFromAnyThread(
+        const std::shared_ptr<ProviderAsyncState>& state);
+    /// 调用方已持 state->mutex 时的变体(避免自死锁)。
+    static void syncRasterLandingTicketLocked(
+        const std::shared_ptr<ProviderAsyncState>& state);
 
     struct QuadtreeSourcePlan {
         int sourceZoom = 0;
@@ -540,6 +548,10 @@ private:
         std::atomic<uint32_t> activeRasterSourceRequests{0};
         std::atomic<uint32_t> activeRasterComposeTasks{0};
         std::atomic<uint32_t> activeDeferredUploadReleases{0};
+        // [2026-08-21 冻屏根修] 票槽入共享状态:worker 完成/派发路径直接
+        // reconcile(生命周期随 state 的 alive 守卫,不依赖 provider 存活)。
+        WorkTicketSlot loadSlot_;    ///< Landing: inFlight/compose/source/depot/...
+        WorkTicketSlot uploadSlot_;  ///< Pumped: pendingUploads(每帧限量 drain)
         std::atomic<uint32_t> peakRasterSourceRequests{0};
         std::atomic<int> rasterSourceRequestsStarted{0};
         std::atomic<int> rasterSourceRequestsCompleted{0};
@@ -623,11 +635,6 @@ private:
     /// Used to stamp lastUsedFrame on tiles in getTile().
     uint64_t frameNumber_ = 0;
 
-    /// gating 账本对账槽(见 syncWorkTickets)。hasPendingWork 的 8 个子信号
-    /// 按语义拆两票:除 pendingUploads(帧内 drain=Pumped)外全为 Landing
-    /// (网络/worker 合成在别的线程自走完)。仅喂审计,当前零行为影响。
-    WorkTicketSlot loadSlot_;    ///< Landing: inFlight/compose/source/depot/...
-    WorkTicketSlot uploadSlot_;  ///< Pumped: pendingUploads(每帧限量 drain)
     uint64_t mappedRasterTileEpoch_ = 0;
     uint64_t mappingRevision_ = 0;
     double maximumScreenSpaceError_ = 2.0;

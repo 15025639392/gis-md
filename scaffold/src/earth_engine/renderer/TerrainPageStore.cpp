@@ -270,6 +270,9 @@ struct TerrainPageStore::ReadyUploadInbox {
     std::mutex mutex;
     std::vector<Item> items;
     std::atomic<uint64_t> composeMicros{0};
+    /// [2026-08-21 冻屏根修] Pumped 票槽入投递箱(worker 可及):worker 完成
+    /// 路径 ensureHeld 保住帧,渲染帧 drain 后 syncWorkTicket reconcile 释放。
+    WorkTicketSlot workTicket;
     /// 线程 CPU 时钟版(2026-08-20 交互瓶颈专项):墙钟会被同机 8 线程池
     /// 抢占膨胀,CPU 时间才是纯成本 —— 判 compose 46ms 是真空还是墙钟伪影。
     std::atomic<uint64_t> composeCpuMicros{0};
@@ -1298,6 +1301,17 @@ void TerrainPageStore::updateVisiblePages(
     }
 }
 
+void TerrainPageStore::syncWorkTicket() {
+    if (!readyInbox_) {
+        return;
+    }
+    // [2026-08-21 冻屏根修] 槽在线程安全的 ReadyUploadInbox 里;渲染帧每帧
+    // reconcile(有在途→Pumped 按住帧,排空→释放)。worker 完成路径另走
+    // ensureHeld(见 kickPageFetches 完成回调),睡死期间页到货也能保帧。
+    readyInbox_->workTicket.reconcile(
+        WorkLedger::Kind::Pumped, "terrainPageUpload", hasWorkInFlight());
+}
+
 TerrainPageStore::~TerrainPageStore() {
     for (auto& [pageKey, pe] : pages_) {
         for (CancellationToken& token : pe.fetchTokens) {
@@ -1850,6 +1864,10 @@ void TerrainPageStore::drainInbox() {
             out.layer = layer;
             std::lock_guard<std::mutex> lock(readyInbox->mutex);
             readyInbox->items.push_back(std::move(out));
+            // [2026-08-21 冻屏根修] worker 页到货:确保持有 Pumped 票(睡死期间
+            // 到货也能保帧;渲染帧 drain 后 syncWorkTicket reconcile 释放)。
+            readyInbox->workTicket.ensureHeld(
+                WorkLedger::Kind::Pumped, "terrainPageUpload");
         };
         if (config_.composeWorkers) {
             if (dispatched < budget) {

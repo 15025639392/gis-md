@@ -1870,20 +1870,20 @@ cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, as
 | Method | Lines | Description |
 |---|---|---|
 | ctor / dtor | .h:51-55 / .cpp:2841-2868 | Takes `ImageryProvider&`, `TileScheme&`, optional uploader (null = headless test); dtor drains async state |
-| `getTile` | .cpp:3400-3431 | Get/create cached tile by key; returns shared placeholder when not ready; stamps `frameNumber_` |
-| `mapRasterTilesToGeometryTile` | .cpp:3435... | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, else composed mapped tile |
+| `getTile` | .cpp:3412-3443 | Get/create cached tile by key; returns shared placeholder when not ready; stamps `frameNumber_` |
+| `mapRasterTilesToGeometryTile` | .cpp:3447... | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, else composed mapped tile |
 | `buildQuadtreeSourcePlan` | .cpp:1497... | Choose source zoom (SSE/texture-size driven) + source-key rectangle |
-| `resolveTile` | .cpp:3543-3568 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
-| `loadTile` / `loadTileThrottled` | .cpp:3641-3709 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
-| `loadMappedRasterTile` / `loadSourceTileList` / `loadSourceImageSet` | .cpp:3710 / :3831 / :3848 | Fetch/compose overlapping source quadtree tiles for a mapped tile |
-| `issueMappedSourceImageSet` | .cpp:4083-4142 | Dispatch source-tile requests through shared depot |
-| `composeQuadtreeSourceImagesWithDetails` | .cpp:2534-2569 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
-| `projectedVForLatitude` | .cpp:2570-2576 | Latitude → projected V within bounds |
-| `processPendingUploads` | .cpp:4333-4656 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
-| `hasPendingWork` | .cpp:4666-4671 | HTTP/source-fanout/upload outstanding |
-| `trimUnusedTiles` | .cpp:4749-4809 | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
-| `refreshSourceAssetDepot` | .cpp:3104-3112 | Rebuild shared source-tile depot on option change |
-| `requestDiagnostics` | .cpp:3569-3595 | Aggregates imagery-provider + raster-source request counters |
+| `resolveTile` | .cpp:3555-3580 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
+| `loadTile` / `loadTileThrottled` | .cpp:3653-3721 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
+| `loadMappedRasterTile` / `loadSourceTileList` / `loadSourceImageSet` | .cpp:3722 / :3843 / :3860 | Fetch/compose overlapping source quadtree tiles for a mapped tile |
+| `issueMappedSourceImageSet` | .cpp:4101-4160 | Dispatch source-tile requests through shared depot |
+| `composeQuadtreeSourceImagesWithDetails` | .cpp:2546-2581 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
+| `projectedVForLatitude` | .cpp:2582-2588 | Latitude → projected V within bounds |
+| `processPendingUploads` | .cpp:4355-4690 | Main-thread: drain `pendingUploads`, GPU-upload via uploader, Loaded→Done; frame-budget aware |
+| `hasPendingWork` | .cpp:4691-4705 | HTTP/source-fanout/upload outstanding |
+| `trimUnusedTiles` | .cpp:4805-4865 | Evict tiles by `lastUsedFrame`; advances `frameNumber_` |
+| `refreshSourceAssetDepot` | .cpp:3116-3124 | Rebuild shared source-tile depot on option change |
+| `requestDiagnostics` | .cpp:3581-3607 | Aggregates imagery-provider + raster-source request counters |
 
 | State/struct | Lines | Description |
 |---|---|---|
@@ -2615,13 +2615,13 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:1312-1398 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=3(涓流,勿在拖动期冻结)、`maxComposeDispatchesPerFrame`=8(每帧 compose 入队上限,2026-08-20 派发门) |
+| `initialize(device, Config)` | .cpp:1326-1412 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=3(涓流,勿在拖动期冻结)、`maxComposeDispatchesPerFrame`=8(每帧 compose 入队上限,2026-08-20 派发门) |
 | `updateVisiblePages(view, ...)` | .cpp:609-1311 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1492-1585 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1586-1635 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1739-1867 / :1657-1697 | 解码结果派发 worker 合成(渲染线程只做账本校验,每帧入队 ≤ `maxComposeDispatchesPerFrame`,超出进待派队列) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1890-2007 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1476-1491 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1506-1599 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1600-1649 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1753-1885 / :1671-1711 | 解码结果派发 worker 合成(渲染线程只做账本校验,每帧入队 ≤ `maxComposeDispatchesPerFrame`,超出进待派队列) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1908-2036 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `erasePageEntry` | .cpp:1490-1505 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:293-361 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:408-511 / :554-608 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:416-511 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
@@ -3549,21 +3549,21 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:65-75 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:76-82 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:83-120 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:533-1119 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:533). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:533-1119). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:533-1119). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:615-616). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:1145-1148 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:1149-1157 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:534-1144 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:534). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:534-1144). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:534-1144). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:616-617). |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:1146-1149 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:1150-1158 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1216-1219 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1224-1227 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1217-1220 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1225-1228 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1245-1250 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1246-1251 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1327-1334 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1335-1338 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:1174-1177, 1343-1347 | `isReady` = `scene_ && scene_->isReady()`. |
-| `setBlackFrameProbeEnabled` | .h:252, .cpp:692-740 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
+| `getClearColor` | .cpp:1335-1342 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1336-1339 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
+| `camera() / isReady()` | .h:130-131, .cpp:1175-1178, 1344-1348 | `isReady` = `scene_ && scene_->isReady()`. |
+| `setBlackFrameProbeEnabled` | .h:252, .cpp:700-748 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
 Post-refactor: the fallback-globe path is gone. `Renderer::initialize()` no longer builds globe buffers/shader, `SceneRenderPipeline` no longer inserts a fallback-globe command, and `Globe`/`GlobeMesh`/`GlobeVertex` were deleted — before tiles load the frame is clear-color only. The `Diagnostics` globe-fallback counter fields were deleted along with the fallback path.

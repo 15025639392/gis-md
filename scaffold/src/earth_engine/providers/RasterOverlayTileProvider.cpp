@@ -1909,6 +1909,10 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                                 self->state->pendingSourceFallbacks.size()),
                             std::memory_order_release);
                     }
+                    // [2026-08-21 冻屏根修] worker 派发 fallback:确保持有
+                    // Landing 票(睡死期间 worker 起的新活不能无票)。
+                    RasterOverlayTileProvider::
+                        syncRasterLandingTicketFromAnyThread(self->state);
                     return;
                 }
 
@@ -2115,6 +2119,9 @@ private:
                 inFlight.erase(it);
             }
         }
+        // [2026-08-21 冻屏根修] depot 源在途落地:同步 Landing 票(最后一件
+        // 时释放 → 触发落地唤醒)。
+        RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(state);
         for (auto& waiter : waiters) {
             if (waiter.callback) {
                 waiter.callback(source);
@@ -2459,6 +2466,9 @@ private:
                             1,
                             std::memory_order_relaxed);
                         self->state->resolveDestructionIfComplete();
+                        // [2026-08-21 冻屏根修] compose 落地:同步 Landing 票。
+                        RasterOverlayTileProvider::
+                            syncRasterLandingTicketFromAnyThread(self->state);
                     };
                     try {
                         CompositeImageResult composed =
@@ -2506,6 +2516,8 @@ private:
                 1,
                 std::memory_order_relaxed);
             state->resolveDestructionIfComplete();
+            RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(
+                state);
             onFailure({});
         }
     }
@@ -4000,6 +4012,10 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                 *throttleSlotReleased,
                 state->activeRasterTileLoads);
             state->resolveDestructionIfComplete();
+            // [2026-08-21 冻屏根修] 本件在途落地:Landing 票按剩余在途同步,
+            // 最后一件时释放 → 触发落地唤醒(睡着的循环被踹醒去消费上传)。
+            RasterOverlayTileProvider::syncRasterLandingTicketLocked(
+                state);
         },
         [state, throttleSlotReleased, cacheKey, tileWeak,
              requestSourceDepotEpoch, sourceWaiterOwnerToken](
@@ -4056,6 +4072,8 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
                 state->activeRasterTileLoads);
             state->resolveDestructionIfComplete();
             state->revision.fetch_add(1, std::memory_order_relaxed);
+            RasterOverlayTileProvider::syncRasterLandingTicketLocked(
+                state);
         });
 
     {
@@ -4108,6 +4126,8 @@ int RasterOverlayTileProvider::issueMappedSourceImageSet(
                    std::memory_order_relaxed,
                    std::memory_order_relaxed)) {
         }
+        // [2026-08-21 冻屏根修] worker 派发源请求:确保持有 Landing 票。
+        RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(state);
     };
     auto onSourceFinished = [state]() {
         state->rasterSourceRequestsCompleted.fetch_add(
@@ -4123,6 +4143,8 @@ int RasterOverlayTileProvider::issueMappedSourceImageSet(
                    std::memory_order_relaxed)) {
         }
         state->resolveDestructionIfComplete();
+        // [2026-08-21 冻屏根修] 源请求落地:同步 Landing 票。
+        RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(state);
     };
     auto onSourceFailed = [state]() {
         state->rasterSourceRequestsFailed.fetch_add(
@@ -4649,6 +4671,9 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
                 1,
                 std::memory_order_acq_rel);
             deferredState->resolveDestructionIfComplete();
+            // [2026-08-21 冻屏根修] 延迟释放落地:同步 Landing 票。
+            RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(
+                deferredState);
         };
         try {
             (void)AsyncSystem::pool().enqueue(
@@ -4681,6 +4706,8 @@ bool RasterOverlayTileProvider::hasPendingWork() const {
 void RasterOverlayTileProvider::syncWorkTickets() {
     // hasPendingWork 的 8 个子信号按 gating 语义拆两票。在锁下只读两个布尔,
     // 释放锁后再 reconcile(不在 provider 锁内嵌套账本锁)。
+    // [2026-08-21] 槽已移入 ProviderAsyncState(线程安全),本函数渲染线程
+    // 每帧调;worker 完成/派发路径用 syncRasterLandingTicketFromAnyThread。
     bool landing = false;
     bool pumped = false;
     {
@@ -4698,8 +4725,37 @@ void RasterOverlayTileProvider::syncWorkTickets() {
             asyncState_->activeRasterSourceRequests.load(
                 std::memory_order_relaxed) > 0;
     }
-    loadSlot_.reconcile(WorkLedger::Kind::Landing, "rasterOverlayLoad", landing);
-    uploadSlot_.reconcile(WorkLedger::Kind::Pumped, "rasterOverlayUpload", pumped);
+    asyncState_->loadSlot_.reconcile(
+        WorkLedger::Kind::Landing, "rasterOverlayLoad", landing);
+    asyncState_->uploadSlot_.reconcile(
+        WorkLedger::Kind::Pumped, "rasterOverlayUpload", pumped);
+}
+
+/// [2026-08-21 冻屏根修] worker 侧 Landing 票同步:在锁下读 Landing 谓词,
+/// 锁外 reconcile(槽线程安全)。完成路径在最后一件落地时释放 → 触发 Landing
+/// 落地唤醒;派发路径确保持有(睡死期间 worker 起的新活不能无票)。
+/// Locked 变体供已持 state->mutex 的调用方(避免自死锁)。
+void RasterOverlayTileProvider::syncRasterLandingTicketLocked(
+    const std::shared_ptr<ProviderAsyncState>& state) {
+    const bool busy =
+        !state->inFlightRequests.empty() ||
+        !state->activeMappedSourceSets.empty() ||
+        !state->pendingSourceFallbacks.empty() ||
+        !state->sourceTileDepotInFlight.empty() ||
+        state->activeRasterComposeTasks.load(
+            std::memory_order_relaxed) > 0 ||
+        state->activeDeferredUploadReleases.load(
+            std::memory_order_relaxed) > 0 ||
+        state->activeRasterSourceRequests.load(
+            std::memory_order_relaxed) > 0;
+    state->loadSlot_.reconcile(
+        WorkLedger::Kind::Landing, "rasterOverlayLoad", busy);
+}
+
+void RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(
+    const std::shared_ptr<ProviderAsyncState>& state) {
+    std::lock_guard<std::mutex> lock(state->mutex);
+    syncRasterLandingTicketLocked(state);
 }
 
 void RasterOverlayTileProvider::markUsed(const std::string& cacheKey) {

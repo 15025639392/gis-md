@@ -365,15 +365,9 @@ public:
     /// (drainReadyUploads 只在帧里跑),停帧 = 到货永远灌不进 array。与网络
     /// 那类"自己会走完"的 Landing 语义相反,混为一谈就等于没做这个区分。
     /// 整店一张票(不是逐页):gating 只关心"要不要继续出帧",不关心几页。
-    void syncWorkTicket() {
-        const bool busy = hasWorkInFlight();
-        if (busy && !workTicket_.valid()) {
-            workTicket_ = WorkLedger::shared().acquire(
-                WorkLedger::Kind::Pumped, "terrainPageUpload");
-        } else if (!busy && workTicket_.valid()) {
-            workTicket_.release();
-        }
-    }
+    /// [2026-08-21 冻屏根修] 实现移到 .cpp:ReadyUploadInbox 里的 WorkTicketSlot
+    /// 线程安全,worker 完成路径可同步(见 ReadyUploadInbox::workTicket)。
+    void syncWorkTicket();
 
     bool hasWorkInFlight() const {
         for (const auto& entry : pages_) {
@@ -693,7 +687,6 @@ private:
     std::unordered_map<uint64_t, TileIndir> tileIndirs_;  // tileKey → 稀疏间接纹理
     std::unique_ptr<Texture> indirArrayTexture_;  // 合批 Step 2:间接纹理共享 array
     TerrainPageLayerPool indirPool_;              // 间接纹理层 LRU(blockLayers=1)
-    WorkLedger::Ticket workTicket_;
     uint64_t frameId_ = 0;
     int uploadedLayerTotal_ = 0;
 

@@ -164,7 +164,9 @@ public:
     WorkTicketSlot& operator=(WorkTicketSlot&&) noexcept = default;
 
     /// active=true 确保持有一张 (kind,label) 令牌;false 确保已释放。幂等。
+    /// [2026-08-21 冻屏根修] 加锁:worker 完成/派发路径与渲染帧 reconcile 并发。
     void reconcile(WorkLedger::Kind kind, const char* label, bool active) {
+        std::lock_guard<std::mutex> lock(mutex_);
         if (active && !ticket_.valid()) {
             ticket_ = WorkLedger::shared().acquire(kind, label);
         } else if (!active && ticket_.valid()) {
@@ -172,9 +174,31 @@ public:
         }
     }
 
-    bool held() const { return ticket_.valid(); }
+    /// worker 完成路径:最后一件在途落地时释放 → 触发 Landing 落地唤醒。
+    /// 幂等(未持有则 no-op),线程安全。
+    void releaseFromAnyThread() {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (ticket_.valid()) {
+            ticket_.release();
+        }
+    }
+
+    /// worker 派发新在途工作时确保持有(睡死期间 worker 起的新活不能无票)。
+    /// 幂等(已持有则 no-op),线程安全。
+    void ensureHeld(WorkLedger::Kind kind, const char* label) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!ticket_.valid()) {
+            ticket_ = WorkLedger::shared().acquire(kind, label);
+        }
+    }
+
+    bool held() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return ticket_.valid();
+    }
 
 private:
+    mutable std::mutex mutex_;
     WorkLedger::Ticket ticket_;
 };
 
