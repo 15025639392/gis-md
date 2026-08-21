@@ -4,6 +4,7 @@
 #include "earth_engine/environment/SunDirection.h"
 #include "earth_engine/environment/TimeController.h"
 #include "earth_engine/environment/AtmosphereParameters.h"
+#include "earth_engine/environment/SkyColorModel.h"
 
 using namespace earth_engine;
 
@@ -95,18 +96,59 @@ TEST_F(AtmosphereScatteringTest, SunElevationMatchesSunDirection) {
 TEST_F(AtmosphereScatteringTest, CameraAltitudeReducesAtmosphere) {
     Vec3 sunDir = SunDirection::compute(juneSolsticeJD());
 
-    // 地面
+    // 地面:spaceFactor=0,天空亮(与 GPU computeSkyColor 同源)
     gradient_.update(sunDir, localUp_, 0.0);
     auto groundHorizon = gradient_.horizonColor();
     float groundBrightness = groundHorizon[0] + groundHorizon[1] + groundHorizon[2];
 
-    // 高空（100km，大气层顶）
-    gradient_.update(sunDir, localUp_, 100000.0);
+    // 深空（900km，spaceFactor=1）:computeSkyColor 压向太空黑,天顶应明显变暗
+    gradient_.update(sunDir, localUp_, 900000.0);
     auto spaceHorizon = gradient_.horizonColor();
     float spaceBrightness = spaceHorizon[0] + spaceHorizon[1] + spaceHorizon[2];
 
-    // 高空大气散射应减少（天顶变暗）
+    // 太空色 = kSkySpace(压黑项主导)
     EXPECT_LT(spaceBrightness, groundBrightness * 0.9f);
+}
+
+// L-P1:clear/ambient 必须与 GPU 天空同一色模型 —— SkyGradient 白天输出应
+// 精确等于 computeSkyColorCpu 采样(地平线方向朝太阳),不再存在两套可漂移的
+// 色板(正午 horizon 曾差 7 倍)。
+TEST_F(AtmosphereScatteringTest, DaytimeMatchesComputeSkyColorSingleSource) {
+    Vec3 sunDir = SunDirection::compute(juneSolsticeJD());
+    gradient_.update(sunDir, localUp_, 0.0);
+
+    auto& horizon = gradient_.horizonColor();
+    auto& zenith = gradient_.zenithColor();
+
+    // 参考:computeSkyColorCpu 同一输入
+    const Vec3 up = localUp_.normalized();
+    const Vec3 sun = sunDir.normalized();
+    const std::array<double, 3> upArr = {up.x(), up.y(), up.z()};
+    const std::array<double, 3> sunArr = {sun.x(), sun.y(), sun.z()};
+    const double sunUpDot = sunArr[0] * upArr[0] + sunArr[1] * upArr[1] +
+                            sunArr[2] * upArr[2];
+    std::array<double, 3> horizDir = {
+        sunArr[0] - upArr[0] * sunUpDot,
+        sunArr[1] - upArr[1] * sunUpDot,
+        sunArr[2] - upArr[2] * sunUpDot};
+    const double hl = std::sqrt(horizDir[0] * horizDir[0] +
+                                horizDir[1] * horizDir[1] +
+                                horizDir[2] * horizDir[2]);
+    horizDir[0] /= hl;
+    horizDir[1] /= hl;
+    horizDir[2] /= hl;
+
+    const std::array<double, 3> refHorizon =
+        computeSkyColorCpu(horizDir, upArr, sunArr, 0.0);
+    const std::array<double, 3> refZenith =
+        computeSkyColorCpu(upArr, upArr, sunArr, 0.0);
+
+    EXPECT_NEAR(horizon[0], refHorizon[0], 1e-6f);
+    EXPECT_NEAR(horizon[1], refHorizon[1], 1e-6f);
+    EXPECT_NEAR(horizon[2], refHorizon[2], 1e-6f);
+    EXPECT_NEAR(zenith[0], refZenith[0], 1e-6f);
+    EXPECT_NEAR(zenith[1], refZenith[1], 1e-6f);
+    EXPECT_NEAR(zenith[2], refZenith[2], 1e-6f);
 }
 
 TEST_F(AtmosphereScatteringTest, AllColorsInValidRange) {

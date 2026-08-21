@@ -6,15 +6,20 @@
 
 namespace earth_engine {
 
-/// 物理大气散射颜色计算。
+/// 天空 clear/环境光颜色(与 GPU 天空同一色模型)。
 ///
-/// 使用 Rayleigh + Mie 散射解析近似，与 openglobus/src/shaders/atmos/
-/// 使用相同的参数模型，但不依赖 LUT 预计算。
+/// L-P1:此前这里是独立的物理 Rayleigh+Mie+Ozone 解析散射实现,与 GLSL
+/// computeSkyColor(经验色板)数值漂移 → 清屏色/环境光与用户看到的天空不配套。
+/// 现改为直接采样 computeSkyColorCpu(SkyColorModel.h 单一事实源):
+///   - 天顶色/地平线色 = computeSkyColor 对应方向采样(与 GPU 天空/雾同源)
+///   - 环境光 = 天顶/地平线加权(保留原 0.6/0.4 半球近似)
+///   - 夜晚门控保留(computeSkyColor 无夜晚语义,SkyBox starfield 由
+///     SceneRenderPipeline 按同式 nightFactor 叠加)
 ///
 /// 根据太阳方向 + 相机高度计算：
 ///   - 天顶颜色（天空顶部）
 ///   - 地平线颜色（天空底部，clear color 使用）
-///   - 环境光颜色
+///   - 环境光颜色（地表最低补光）
 class SkyGradient {
 public:
     SkyGradient();

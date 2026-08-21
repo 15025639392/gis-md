@@ -3326,19 +3326,15 @@ Command state (.cpp:265-280): `pass="color"`, depthTest **off**, depthWrite off,
 
 ### SkyGradient.h / .cpp
 
-CPU analytic Rayleigh+Mie+Ozone color solver. Produces zenith / horizon / ambient colors + sun elevation from sun dir, local up, and camera altitude. Horizon color feeds `FrameState` clear color; ambient feeds lighting.
+CPU-side clear/ambient colors, **sampled from the same `computeSkyColor` model as the GPU sky/fog** (L-P1: previously an independent analytic Rayleigh+Mie+Ozone solver that drifted from the shader — noon horizon differed ~7×). Produces zenith / horizon / ambient colors + sun elevation from sun dir, local up, and camera altitude. Horizon color feeds `FrameState` clear color; ambient feeds lighting. Night gate retained (`computeSkyColor` has no night semantics; SkyBox starfield uses the same `nightFactor`).
 
 | Method | Lines | Algorithm |
 | --- | --- | --- |
-| `SkyGradient()` / `(params)` / `setParameters` | .cpp:67-78 | Default `earthAtmosphereDefaults()`; `params.validate()` |
-| `update(sunDirECEF,localUpECEF,camAltMeters=0)` | .cpp:80-247 | Core solve |
-| — daylight factor | .cpp:89-91 | `sunElevation=asin(sun·up)`; `daylight=smoothstep(-0.06,0.04,elev)` |
-| — sea-level β / optical depth | .cpp:100-118 | `betaR/M/O`; vertical optical depth 0→atmosHeight |
-| — zenith color | .cpp:125-162 | Phase × extinction × ozone × `sunIntensity` × daylight; `expose(·,330)` |
-| — horizon color | .cpp:164-223 | `horizMassFactor=38.0` (.cpp:181) air mass; secondary ground-albedo scatter (.cpp:201-204); `expose(·,30)`; sunrise/sunset warm-tint boost for elev<~17° (.cpp:56-59) |
-| — ambient color | .cpp:225-246 | `(0.6·zenith+0.4·horizon)·0.35`, min 0.005; night falloff `exp(elev·8)` when elev<-0.05 |
+| `SkyGradient()` / `(params)` / `setParameters` | .cpp:22-33 | Default `earthAtmosphereDefaults()`; `params.validate()` |
+| `update(sunDirECEF,localUpECEF,camAltMeters=0)` | .cpp:35-118 | Sample `computeSkyColorCpu` at zenith + sun-ward horizon; ambient = `(0.6·zenith+0.4·horizon)·0.35`; night gate `exp(elev·8)` when elev<-0.05 with starlight floor |
+| — spaceFactor | .cpp:14-19 | `smoothstep(120km,900km,camAlt)` — same formula as GPU atmosphere pass |
 | `zenithColor/horizonColor/ambientColor/sunElevation` accessors | .h:38-47 | RGBA/RGBA/RGB arrays |
-| helpers `rayleighPhase`/`miePhase`(g=0.76)/`ozoneDensity`/`opticalDepthVertical`/`smoothstep`/`expose` | .cpp:18-59 | `kInv4Pi` (.cpp:15); Mie denom clamp `1e-6` |
+| helpers `clamp01`/`skySpaceFactor` | .cpp:11-19 | Altitude→spaceFactor mapping (shared formula with GPU) |
 
 ### SunDirection.h / .cpp
 
