@@ -323,6 +323,12 @@ add_executable(test_fill_proxy_uv_risk
 target_link_libraries(test_fill_proxy_uv_risk PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_fill_proxy_uv_risk COMMAND test_fill_proxy_uv_risk)
 
+add_executable(test_fill_proxy_build_cost
+    unit/content/test_fill_proxy_build_cost.cpp
+)
+target_link_libraries(test_fill_proxy_build_cost PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_fill_proxy_build_cost COMMAND test_fill_proxy_build_cost)
+
 add_executable(test_terrain_displacement_template
     unit/content/test_terrain_displacement_template.cpp
 )
