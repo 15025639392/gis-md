@@ -52,6 +52,36 @@ double projectedVForLatitudeInternal(
     const Rectangle& bounds,
     double lat);
 
+// ============================================================
+// 几何 ↔ 影像覆盖映射(I-P4 第四刀 4a:从 RasterOverlayTileProvider.cpp 收口)
+// ============================================================
+// getTile/resolveTile 与 loadMapped/pump/sourceTileList 共享的纯几何 helper。
+// 零 provider 私有状态依赖,输入全显式传参。
+
+/// 采样内缩 epsilon:跨度 1e-9 分之一,下限 1e-12(防退化线段变零宽)。
+double inwardSampleEpsilon(double span);
+
+/// 把退化成线/点的裁剪矩形沿覆盖区内扩出至少一个采样单位宽度/高度。
+Rectangle expandClampedLineIntoCoverage(const Rectangle& bounds,
+                                        const Rectangle& coverage);
+
+/// 几何矩形 → 影像覆盖矩形:相交取交,不相交按 cesium 语义钳到最近覆盖边
+/// (clampOutsideCoverage 时)。返回 nullopt 表示无可用映射。
+std::optional<Rectangle> mapGeometryBoundsToImageryCoverage(
+    const Rectangle& geometryBounds,
+    const Rectangle& coverage,
+    bool clampOutsideCoverage);
+
+/// 是否允许把无交集的 overlay 钳到覆盖边采样(当前恒 true)。
+bool shouldClampOutsideCoverage(const RasterOverlay* owner);
+
+/// scheme 根层的覆盖矩形(所有 root 瓦片并集)。
+Rectangle schemeCoverageRectangle(const TileScheme& scheme);
+
+/// scheme 覆盖矩形 ∩ provider 覆盖矩形;无交时回落 scheme 矩形。
+Rectangle effectiveCoverageRectangle(const TileScheme& scheme,
+                                     const Rectangle& providerCoverage);
+
 struct RasterSourceResult {
     TileKey key;
     Rectangle bounds;
