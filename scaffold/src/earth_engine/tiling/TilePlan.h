@@ -199,6 +199,9 @@ struct TilePlan {
     int renderEntryAncestorFallbackCount = 0;
     int renderEntrySynchronousPrepCount = 0;
     int renderEntryDeferredPrepCount = 0;
+    // H-S5:本帧因首建预算耗尽改走祖先裁剪回退的选中瓦片数(预算只摊时间、
+    // 不丢瓦片;与 imagery 回退共用 fallback 计数,这里单列便于归因)。
+    int renderEntryFirstBuildDeferredCount = 0;
     int renderEntryPlannedCommandCount = 0;
     int renderEntrySelectedPlannedCommandCount = 0;
     int renderEntryCommandDrawCount = 0;

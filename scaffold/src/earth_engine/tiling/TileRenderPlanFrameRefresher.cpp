@@ -24,6 +24,10 @@ namespace {
 
 constexpr int kActiveInteractionRenderPrepBudget = 0;
 constexpr int kRecoveryRenderPrepBudget = 1;
+// H-S5:新瓦首建预算。release 实测单片首建 ~0.9ms,交互期 4 片/帧 + 其余
+// ~10ms(terrUpd/命令/渲染)≈ 落在 16.7ms 内;恢复期(静止补载)给 8 片。
+constexpr int kActiveInteractionFirstBuildBudget = 4;
+constexpr int kRecoveryFirstBuildBudget = 8;
 
 // 接边错位的报告周期(帧)。**逐帧测量、窗口累积、周期报告**:单帧只有 1~2
 // 条 fade 一致的吸附边(n≈17),这个样本量撑不起 A/B 判定;而逐帧累积一秒就是
@@ -270,7 +274,13 @@ void TileRenderPlanFrameRefresher::refresh(
             options.interactionActive,
             kActiveInteractionRenderPrepBudget,
             kRecoveryRenderPrepBudget,
-            options.maximumScreenSpaceError},
+            options.maximumScreenSpaceError,
+            options.firstBuildBudgetOverride >= 0
+                ? options.firstBuildBudgetOverride
+                : kActiveInteractionFirstBuildBudget,
+            options.firstBuildBudgetOverride >= 0
+                ? options.firstBuildBudgetOverride
+                : kRecoveryFirstBuildBudget},
         rasterOverlays,
         [&contentAccess](const TileKey& key) {
             return contentAccess.ensureTile(key);

@@ -455,11 +455,56 @@ bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
 #endif
 }
 
+bool RenderDeviceGLES::updateTextureArrayRegion(
+    Texture* texture, int x, int y, int width, int height, int firstLayer,
+    int layerCount, const uint8_t* data, size_t rowBytes) {
+    if (!texture || layerCount <= 0 || firstLayer < 0) {
+        return false;
+    }
+    auto* glTexture = dynamic_cast<GLTexture*>(texture);
+    if (!glTexture || glTexture->target() != GL_TEXTURE_2D_ARRAY) {
+        return false;
+    }
+    if (x < 0 || y < 0 || width <= 0 || height <= 0 ||
+        x + width > glTexture->width() ||
+        y + height > glTexture->height()) {
+        return false;
+    }
+    if (rowBytes != static_cast<size_t>(width) * glTexture->bytesPerPixel()) {
+        return false;
+    }
+    if (firstLayer + layerCount > glTexture->arrayLayers()) {
+        return false;
+    }
+    const size_t totalBytes = static_cast<size_t>(rowBytes) *
+                              static_cast<size_t>(height) *
+                              static_cast<size_t>(layerCount);
+    // 单次 PBO 上传(depth=layerCount):多层数据连续排布,一次 glBufferData +
+    // map + texSubImage3D 完成,摊销逐层调用的固定开销(H-S4)。
+    if (uploadArrayLayerViaPbo(glTexture->glId(), x, y, firstLayer, width,
+                               height, glTexture->glFormat(), data, totalBytes,
+                               layerCount)) {
+        return true;
+    }
+    // PBO 任一步失败 → 回落直传(同样单次调用,不丢内容)。
+    glBindTexture(GL_TEXTURE_2D_ARRAY, glTexture->glId());
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, x, y, firstLayer, width, height,
+                    layerCount, glTexture->glFormat(), GL_UNSIGNED_BYTE, data);
+    glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
+#ifndef NDEBUG
+    return glGetError() == GL_NO_ERROR;
+#else
+    return true;
+#endif
+}
+
 bool RenderDeviceGLES::uploadArrayLayerViaPbo(unsigned int glId, int x, int y,
                                               int layer, int width, int height,
                                               unsigned int glFormat,
                                               const uint8_t* data,
-                                              size_t totalBytes) {
+                                              size_t totalBytes,
+                                              int layerCount) {
     if (totalBytes == 0 || data == nullptr) {
         return false;
     }
@@ -493,8 +538,8 @@ bool RenderDeviceGLES::uploadArrayLayerViaPbo(unsigned int glId, int x, int y,
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     // data=偏移 0 → 从绑定的 UNPACK buffer 取像素;传输入 GPU 命令流异步执行,
     // CPU 立即返回(不再等 GPU 放开正被采样的页数组)。
-    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, x, y, layer, width, height, 1,
-                    glFormat, GL_UNSIGNED_BYTE,
+    glTexSubImage3D(GL_TEXTURE_2D_ARRAY, 0, x, y, layer, width, height,
+                    layerCount, glFormat, GL_UNSIGNED_BYTE,
                     reinterpret_cast<const void*>(static_cast<uintptr_t>(0)));
     glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
     glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);

@@ -4,6 +4,7 @@
 #include "TilePlan.h"
 #include "TileRenderEntryCommandBuilder.h"
 #include "TileRenderFrameMaintenance.h"
+#include "TerrainDisplacementTemplatePool.h"
 #include "TileSelectionMetrics.h"
 #include "TilesetTile.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -11,6 +12,7 @@
 #include "../debug/PerfTimer.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../renderer/RenderCommand.h"
+#include "../renderer/Renderer.h"
 
 #include <algorithm>
 #include <array>
@@ -104,6 +106,34 @@ public:
         // yet and therefore have no render entry.
         for (TilesetTile* tile : input.tilePlan.tilesToRenderThisFrame) {
             protectTile(tile, input.frameNumber);
+        }
+
+        // H-S2:准入顺序保护。layerPool 只把「本帧已 touch」的层视为不可淘汰,
+        // 而可见瓦的 touch 发生在它自己的 build 里;扫掠期新瓦 acquire 若先于
+        // 某可见瓦 build,可能淘汰该瓦的驻留层 → 当帧 epoch 失配 → invalidate →
+        // rebuild → 再淘汰,连锁成每帧多次 ~2ms 的重建 burst。这里在 build 前把
+        // 本帧所有要画瓦片的驻留层统一 touch 到当帧,新准入的 LRU 淘汰只能落在
+        // 「本帧不画」的层上——不设预算、不拒绝准入、不丢命令,保不露底三不变量。
+        if (TerrainDisplacementTemplatePool* pool =
+                renderer.terrainDisplacementPool()) {
+            for (TilesetTile* tile :
+                 input.tilePlan.tilesToRenderThisFrame) {
+                const TileRenderContentState& rc =
+                    tile->content.renderContent;
+                if (!rc.hasCachedDrawCommands()) {
+                    continue;
+                }
+                for (const RenderCommand& cached :
+                     rc.cachedDrawCommands()) {
+                    if (cached.terrainHeightLayer < 0) {
+                        continue;
+                    }
+                    pool->touchHeightTexture(
+                        tile->key, cached.terrainHeightGridSize,
+                        input.frameNumber);
+                    break;
+                }
+            }
         }
 
         TileRenderEntryCommandStats renderStats;

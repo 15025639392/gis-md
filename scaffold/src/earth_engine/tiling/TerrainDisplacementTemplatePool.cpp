@@ -372,7 +372,6 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
         ++heightFrameStats_.denseBudgetRejected;
         return nullptr;
     }
-
     // 认领一层(LRU;当帧被 touch 的层不淘汰,全满 → 返回 -1 = 本帧放弃,
     // draw 侧回落 P5b 兜底重试)。被淘汰瓦片的旧视图删除 + 层 epoch 自增,
     // 使仍引用旧层的常驻命令在 heightLayerCurrent() 校验时失效自愈。
@@ -451,9 +450,9 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
             lut[i] = static_cast<uint8_t>(q >> 8);
             lut[i + 1] = static_cast<uint8_t>(q & 0xFF);
         }
-        device_->updateTextureRegion(arr->texture.get(), 0, n, n, kEdgeLutRows,
-                                     lut.data(), static_cast<size_t>(n) * 4,
-                                     layer);
+        // H-S4:初始化也入批 —— 与当帧 updateEdgeLutRows 的真实差值合并成
+        // 一次批量上传(同层后到者覆盖),不再单独占一次 driver 调用。
+        enqueueEdgeLutUpload(arr, layer, lut.data(), lut.size());
     }
 
     HeightTexture view;
@@ -486,6 +485,14 @@ bool TerrainDisplacementTemplatePool::ensureBakeResources() {
 
 void TerrainDisplacementTemplatePool::flushHeightBakes() {
     if (pendingBakes_.empty()) return;
+    // [GPU swap 尖刺诊断] burst 时打一行:扫掠期一批瓦片同时到达 → 一帧
+    // flush 多片全屏 RTT → GPU swap 尖刺候选(2026-08-21,与 FrameLoop swap
+    // 时间戳关联)。
+    const size_t bakeCount = pendingBakes_.size();
+    if (bakeCount > 1) {
+        platformLog(LogLevel::Info, "EarthPerf",
+                    "HeightBakeFlush count=%zu", bakeCount);
+    }
     if (!ensureBakeResources()) {
         pendingBakes_.clear();  // 建不出(如 Metal 缺 MSL)→ 丢弃,层留空由 P5b 兜底
         return;
@@ -586,13 +593,123 @@ bool TerrainDisplacementTemplatePool::updateEdgeLutRows(const TileKey& key,
             0) {
         return true;  // 已是最新,无需上传
     }
-    const bool ok = device_->updateTextureRegion(
-        arr->texture.get(), 0, n, n, kEdgeLutRows, bytes,
-        static_cast<size_t>(n) * 4, it->second.layer);
-    if (ok && layer < arr->layerEdgeLutBytes.size()) {
-        arr->layerEdgeLutBytes[layer].assign(bytes, bytes + byteCount);
+    // H-S4:入批,帧末 flushEdgeLutUploads 统一上传。上传成败移到 flush,
+    // 这里只承诺「已接受」(字节 diff 照旧跳过,内容不变时仍零上传)。
+    enqueueEdgeLutUpload(arr, static_cast<int>(layer), bytes, byteCount);
+    return true;
+}
+
+void TerrainDisplacementTemplatePool::enqueueEdgeLutUpload(
+    HeightArray* arr, int layer, const uint8_t* bytes, size_t byteCount) {
+    // 同层本帧已待传 → 后到者覆盖(acquire 的 delta-0 初始化会被当帧真实
+    // 差值替换;同瓦多 primitive 重复调用取最后一次)。
+    for (auto& p : pendingEdgeLutUploads_) {
+        if (p.arr == arr && p.layer == layer) {
+            p.bytes.assign(bytes, bytes + byteCount);
+            return;
+        }
     }
-    return ok;
+    PendingEdgeLutUpload p;
+    p.arr = arr;
+    p.layer = layer;
+    p.bytes.assign(bytes, bytes + byteCount);
+    pendingEdgeLutUploads_.push_back(std::move(p));
+}
+
+void TerrainDisplacementTemplatePool::flushEdgeLutUploads() {
+    if (pendingEdgeLutUploads_.empty()) {
+        return;
+    }
+    // 按 array 分组(coarse/dense 至多两组),每组一次批量上传。
+    struct Group {
+        HeightArray* arr = nullptr;
+        std::vector<PendingEdgeLutUpload> items;
+    };
+    std::vector<Group> groups;
+    for (auto& p : pendingEdgeLutUploads_) {
+        Group* g = nullptr;
+        for (auto& cand : groups) {
+            if (cand.arr == p.arr) {
+                g = &cand;
+                break;
+            }
+        }
+        if (!g) {
+            groups.push_back(Group{});
+            g = &groups.back();
+            g->arr = p.arr;
+        }
+        g->items.push_back(std::move(p));
+    }
+    pendingEdgeLutUploads_.clear();
+
+    const uint16_t q = encodeEdgeLutDelta(0.0f);
+    for (auto& group : groups) {
+        HeightArray* arr = group.arr;
+        if (!arr || !arr->texture) {
+            continue;
+        }
+        int minLayer = -1;
+        int maxLayer = -1;
+        for (const auto& item : group.items) {
+            if (minLayer < 0 || item.layer < minLayer) minLayer = item.layer;
+            if (item.layer > maxLayer) maxLayer = item.layer;
+        }
+        const int n = arr->gridSize + 1;
+        const size_t perLayer =
+            static_cast<size_t>(n) * static_cast<size_t>(kEdgeLutRows) * 4u;
+        const int layerCount = maxLayer - minLayer + 1;
+        std::vector<uint8_t> buffer(perLayer * static_cast<size_t>(layerCount));
+        // 未待传的中间层:优先用上次缓存字节(内容未变,写入即无操作);
+        // 无缓存(空闲层/从未传过)→ 写差值 0,绝不写全零(那会被解成 −2048m)。
+        std::vector<uint8_t> zero(perLayer, 0);
+        for (size_t i = 0; i < zero.size(); i += 4) {
+            zero[i] = static_cast<uint8_t>(q >> 8);
+            zero[i + 1] = static_cast<uint8_t>(q & 0xFF);
+        }
+        std::unordered_map<int, const uint8_t*> pendingByLayer;
+        for (const auto& item : group.items) {
+            pendingByLayer[item.layer] = item.bytes.data();
+        }
+        for (int l = 0; l < layerCount; ++l) {
+            const int layer = minLayer + l;
+            uint8_t* dst =
+                buffer.data() + static_cast<size_t>(l) * perLayer;
+            const auto pit = pendingByLayer.find(layer);
+            if (pit != pendingByLayer.end()) {
+                std::memcpy(dst, pit->second, perLayer);
+            } else if (static_cast<size_t>(layer) <
+                           arr->layerEdgeLutBytes.size() &&
+                       arr->layerEdgeLutBytes[static_cast<size_t>(layer)]
+                               .size() == perLayer) {
+                std::memcpy(dst,
+                            arr->layerEdgeLutBytes[static_cast<size_t>(layer)]
+                                .data(),
+                            perLayer);
+            } else {
+                std::memcpy(dst, zero.data(), perLayer);
+            }
+        }
+        const bool ok = device_->updateTextureArrayRegion(
+            arr->texture.get(), 0, n, n, kEdgeLutRows, minLayer, layerCount,
+            buffer.data(), static_cast<size_t>(n) * 4u);
+        if (!ok) {
+            platformLog(LogLevel::Warning, "GltfDrawCmd",
+                        "edge LUT batch upload failed layers=%d-%d", minLayer,
+                        maxLayer);
+        }
+        // 成功才推进变更缓存;失败时缓存保持旧值,下一帧 updateEdgeLutRows
+        // 的字节 diff 会再次入池重试(自愈)。
+        if (ok) {
+            for (const auto& item : group.items) {
+                if (static_cast<size_t>(item.layer) <
+                    arr->layerEdgeLutBytes.size()) {
+                    arr->layerEdgeLutBytes[static_cast<size_t>(item.layer)]
+                        .assign(item.bytes.begin(), item.bytes.end());
+                }
+            }
+        }
+    }
 }
 
 void TerrainDisplacementTemplatePool::touchHeightTexture(const TileKey& key,

@@ -62,6 +62,15 @@ public:
                              const uint8_t* data,
                              size_t rowBytes,
                              int layer = 0) override;
+    bool updateTextureArrayRegion(Texture* texture,
+                                  int x,
+                                  int y,
+                                  int width,
+                                  int height,
+                                  int firstLayer,
+                                  int layerCount,
+                                  const uint8_t* data,
+                                  size_t rowBytes) override;
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override;
     bool updateBuffer(Buffer* buffer,
                       size_t offset,
@@ -200,7 +209,8 @@ private:
     /// 回落直传。data 连续排布(rowBytes==width*bpp,页上传恒满足)。
     bool uploadArrayLayerViaPbo(unsigned int glId, int x, int y, int layer,
                                 int width, int height, unsigned int glFormat,
-                                const uint8_t* data, size_t totalBytes);
+                                const uint8_t* data, size_t totalBytes,
+                                int layerCount = 1);
 
     // GPU 区间计时(测量台,默认关)。gpuRegionSubdivide_ 为假时 submit() 不按
     // 命令桶再切分 —— 深度 prepass 那种"整段一个数"的场景用。

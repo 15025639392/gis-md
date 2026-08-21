@@ -80,6 +80,16 @@ public:
             rasterUploadResult.sourceIssueMs;
         result.rasterUploadQueueSelectMs =
             rasterUploadResult.uploadQueueSelectMs;
+        // [GPU swap 尖刺诊断] 本帧 raster 上传慢于 2ms 才打(稀少):与
+        // FrameLoop swap 尖刺按时间戳关联(2026-08-21)。
+        if (result.rasterUploadMs > 2.0) {
+            platformLog(
+                LogLevel::Info, "EarthPerf",
+                "RasterUp ms=%.1f processed=%d mapped=%d",
+                result.rasterUploadMs,
+                result.rasterUploadsProcessed,
+                result.rasterMappedUploadsProcessed);
+        }
 
         return result;
     }

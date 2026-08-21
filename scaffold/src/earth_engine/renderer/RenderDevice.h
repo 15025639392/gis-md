@@ -63,6 +63,35 @@ public:
                                      const uint8_t* data,
                                      size_t rowBytes,
                                      int layer = 0) = 0;
+    /// H-S4:数组纹理多层矩形批量上传。把 firstLayer 起连续 layerCount 层的
+    /// (x,y,width,height) 子区域一次灌入(depth=layerCount 的 texSubImage3D),
+    /// 摊销逐层调用的 driver/PBO 固定开销 —— 边缘 LUT 上传 burst 的根因。
+    /// data 布局 = layerCount 个连续「rowBytes×height」块(层间无填充)。
+    /// 普通 2D 纹理或参数越界返回 false。默认实现逐层回落 updateTextureRegion;
+    /// GLES 覆写为单次 PBO 上传。
+    virtual bool updateTextureArrayRegion(Texture* texture,
+                                          int x,
+                                          int y,
+                                          int width,
+                                          int height,
+                                          int firstLayer,
+                                          int layerCount,
+                                          const uint8_t* data,
+                                          size_t rowBytes) {
+        if (!texture || layerCount <= 0 || firstLayer < 0) {
+            return false;
+        }
+        const size_t perLayer =
+            static_cast<size_t>(rowBytes) * static_cast<size_t>(height);
+        for (int i = 0; i < layerCount; ++i) {
+            if (!updateTextureRegion(texture, x, y, width, height,
+                                     data + static_cast<size_t>(i) * perLayer,
+                                     rowBytes, firstLayer + i)) {
+                return false;
+            }
+        }
+        return true;
+    }
     virtual std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) = 0;
     virtual bool updateBuffer(Buffer* buffer,
                               size_t offset,

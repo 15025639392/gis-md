@@ -105,6 +105,18 @@ public:
         ++textureRegionUpdateCount;
         return textureRegionUploadSucceeds;
     }
+    // H-S4:批量上传计数(测试边缘 LUT 批处理:多层应合并成一次调用)。
+    int textureArrayRegionUpdateCount = 0;
+    int lastBatchFirstLayer = -1;
+    int lastBatchLayerCount = 0;
+    bool updateTextureArrayRegion(Texture*, int, int, int, int,
+                                  int firstLayer, int layerCount,
+                                  const uint8_t*, size_t) override {
+        ++textureArrayRegionUpdateCount;
+        lastBatchFirstLayer = firstLayer;
+        lastBatchLayerCount = layerCount;
+        return textureRegionUploadSucceeds;
+    }
 
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
         ++bufferCreationAttempts;

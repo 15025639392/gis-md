@@ -1,7 +1,9 @@
-// H-B1(2026-08-21):边缘 LUT 上传的内容变更检测。
-// updateEdgeLutRows 对相同字节跳过 GPU 上传 —— 108 瓦视野惯性期每帧
-// 108 次小纹理上传(frameState 6.8-11.4ms)的根因。用 MockRenderDevice
-// 的 updateTextureRegion 计数验证:相同字节只传一次,内容变化才再传。
+// H-B1 + H-S4(2026-08-21):边缘 LUT 上传的内容变更检测 + 批量上传。
+// H-B1:updateEdgeLutRows 对相同字节跳过上传 —— 108 瓦视野惯性期每帧
+// 108 次小纹理上传(frameState 6.8-11.4ms)的根因。
+// H-S4:上传从「逐层立即调用」改为「入池 + 帧末 flushEdgeLutUploads 一次
+// 批量上传」;acquire 的 delta-0 初始化也并入批。用 MockRenderDevice 的
+// textureArrayRegionUpdateCount 验证:同帧多层变更合并成一次批量调用。
 
 #include <gtest/gtest.h>
 
@@ -30,6 +32,23 @@ DecodedHeightmap makeHeightmap(int tileSize) {
     return hm;
 }
 
+std::vector<uint8_t> makeZeroDeltaLut(int gridSize) {
+    const int n = gridSize + 1;
+    std::vector<uint8_t> lut(
+        static_cast<size_t>(n) *
+            static_cast<size_t>(
+                TerrainDisplacementTemplatePool::kEdgeLutRows) *
+            4u,
+        0);
+    const uint16_t q =
+        TerrainDisplacementTemplatePool::encodeEdgeLutDelta(0.0f);
+    for (size_t i = 0; i < lut.size(); i += 4) {
+        lut[i] = static_cast<uint8_t>(q >> 8);
+        lut[i + 1] = static_cast<uint8_t>(q & 0xFF);
+    }
+    return lut;
+}
+
 TEST(TerrainDisplacementEdgeLutUpload, IdenticalBytesSkipUpload) {
     MockRenderDevice device;
     device.textureRegionUploadSucceeds = true;  // 允许高度层/LUT 上传
@@ -45,33 +64,62 @@ TEST(TerrainDisplacementEdgeLutUpload, IdenticalBytesSkipUpload) {
         pool.acquireHeightTexture(key, hm, bounds, kGridSize, 1);
     ASSERT_NE(ht, nullptr) << "高度层获取失败:测试台没搭起来";
 
-    const int n = kGridSize + 1;
-    std::vector<uint8_t> lut(
-        static_cast<size_t>(n) *
-            static_cast<size_t>(
-                TerrainDisplacementTemplatePool::kEdgeLutRows) *
-            4u,
-        0);
-    const uint16_t q =
-        TerrainDisplacementTemplatePool::encodeEdgeLutDelta(0.0f);
-    for (size_t i = 0; i < lut.size(); i += 4) {
-        lut[i] = static_cast<uint8_t>(q >> 8);
-        lut[i + 1] = static_cast<uint8_t>(q & 0xFF);
-    }
+    std::vector<uint8_t> lut = makeZeroDeltaLut(kGridSize);
 
-    const int uploadsBefore = device.textureRegionUpdateCount;
-    EXPECT_TRUE(pool.updateEdgeLutRows(key, kGridSize, lut.data()));
-    EXPECT_EQ(device.textureRegionUpdateCount, uploadsBefore + 1);
+    // acquire 只把 delta-0 初始化入池,尚未发生任何上传。
+    EXPECT_EQ(device.textureArrayRegionUpdateCount, 0)
+        << "H-S4:acquire 的 LUT 初始化应入批,不立即上传";
 
-    // 相同字节 → 跳过 GPU 上传(修复点)。
+    // 真实差值替换 init,帧末一次批量上传(单层)。
     EXPECT_TRUE(pool.updateEdgeLutRows(key, kGridSize, lut.data()));
-    EXPECT_EQ(device.textureRegionUpdateCount, uploadsBefore + 1)
+    pool.flushEdgeLutUploads();
+    EXPECT_EQ(device.textureArrayRegionUpdateCount, 1)
+        << "H-S4:同帧同 array 的多层变更应合并成一次批量调用";
+    EXPECT_EQ(device.lastBatchFirstLayer, 0);
+    EXPECT_EQ(device.lastBatchLayerCount, 1);
+
+    // 相同字节 → 跳过(字节 diff 在入池前,缓存已随上次 flush 推进)。
+    EXPECT_TRUE(pool.updateEdgeLutRows(key, kGridSize, lut.data()));
+    pool.flushEdgeLutUploads();
+    EXPECT_EQ(device.textureArrayRegionUpdateCount, 1)
         << "相同 LUT 字节不应再次上传";
 
     // 内容变化 → 上传并更新缓存。
     lut[0] ^= 0xFF;
     EXPECT_TRUE(pool.updateEdgeLutRows(key, kGridSize, lut.data()));
-    EXPECT_EQ(device.textureRegionUpdateCount, uploadsBefore + 2);
+    pool.flushEdgeLutUploads();
+    EXPECT_EQ(device.textureArrayRegionUpdateCount, 2);
+}
+
+TEST(TerrainDisplacementEdgeLutUpload, ChangedLayersBatchIntoSingleCall) {
+    MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    TerrainDisplacementTemplatePool pool;
+    pool.initialize(&device);
+    pool.setGpuHeightBakeEnabled(false);
+
+    const Rectangle bounds(0.0, 0.0, 0.1, 0.1);
+    constexpr int kGridSize = 64;
+    const DecodedHeightmap hm = makeHeightmap(65);
+    const TileKey keyA{SchemeId{}, 8, 130, 90};
+    const TileKey keyB{SchemeId{}, 8, 131, 90};
+    ASSERT_NE(pool.acquireHeightTexture(keyA, hm, bounds, kGridSize, 1),
+              nullptr);
+    ASSERT_NE(pool.acquireHeightTexture(keyB, hm, bounds, kGridSize, 1),
+              nullptr);
+
+    std::vector<uint8_t> lutA = makeZeroDeltaLut(kGridSize);
+    std::vector<uint8_t> lutB = makeZeroDeltaLut(kGridSize);
+    lutA[0] = 0xAB;  // 两个瓦片的差值各不相同,都必须上传
+    lutB[0] = 0xCD;
+    EXPECT_TRUE(pool.updateEdgeLutRows(keyA, kGridSize, lutA.data()));
+    EXPECT_TRUE(pool.updateEdgeLutRows(keyB, kGridSize, lutB.data()));
+
+    pool.flushEdgeLutUploads();
+    EXPECT_EQ(device.textureArrayRegionUpdateCount, 1)
+        << "H-S4:两层变更应合并成一次批量上传";
+    EXPECT_EQ(device.lastBatchFirstLayer, 0);
+    EXPECT_EQ(device.lastBatchLayerCount, 2);
 }
 
 }  // namespace

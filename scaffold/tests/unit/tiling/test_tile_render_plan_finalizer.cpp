@@ -1135,3 +1135,98 @@ TEST(
     EXPECT_EQ(plan.renderEntryDropNotBuildableCount, 0);
     EXPECT_EQ(plan.renderEntryDropNoReadyTextureCount, 0);
 }
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    FirstBuildBudgetExhaustedUsesAncestorClip) {
+    // H-S5:内容已就绪但命令缓存未建(首建待执行)的瓦片,预算耗尽时应改走
+    // 祖先裁剪回退(首建顺延),不直接建 —— 摊平扫掠前沿的集中首建 burst,
+    // 且祖先覆盖保证不露底。
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    makeGltfRenderReady(parent);
+    makeGltfRenderReady(child);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            true,   // interactionActive:用交互期首建预算
+            0,
+            1,
+            1.0,
+            0,      // activeInteractionFirstBuildBudget = 0 → 耗尽
+            8},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, childKey);
+    EXPECT_EQ(entry.renderKey, parentKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::AncestorFallback);
+    EXPECT_TRUE(entry.usesAncestorFallback);
+    EXPECT_TRUE(entry.surfaceClipEnabled);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
+    EXPECT_EQ(plan.renderEntryFirstBuildDeferredCount, 1);
+}
+
+TEST(
+    TileRenderPlanFinalizerTest,
+    FirstBuildBudgetAvailableAllowsDirectEntry) {
+    const TileKey parentKey{"test", 0, 0, 0};
+    const TileKey childKey{"test", 1, 0, 0};
+    TilesetTile parent(parentKey, Rectangle{0.0, 0.0, 2.0, 2.0});
+    TilesetTile child(childKey, Rectangle{0.0, 1.0, 1.0, 2.0}, &parent);
+    makeGltfRenderReady(parent);
+    makeGltfRenderReady(child);
+
+    std::unordered_map<std::string, TilesetTile*> tiles{
+        {TileCacheKey::forTile(parentKey), &parent},
+        {TileCacheKey::forTile(childKey), &child}};
+
+    TilePlan plan;
+    plan.visibleTiles.push_back(childKey);
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        TileRenderPlanFinalizeOptions{
+            true,
+            0,
+            1,
+            1.0,
+            1,      // 预算 ≥1 → 本帧直建
+            8},
+        [&tiles](const TileKey& key) {
+            return findTile(tiles, key);
+        },
+        [](const TileKey& key) {
+            return TileCacheKey::forTile(key);
+        },
+        [](const TilesetTile& tile) {
+            return tile.hasSurfaceDrawable();
+        });
+
+    ASSERT_EQ(plan.renderEntries.size(), 1u);
+    const TileRenderEntry& entry = plan.renderEntries.front();
+    EXPECT_EQ(entry.selectedKey, childKey);
+    EXPECT_EQ(entry.renderKey, childKey);
+    EXPECT_EQ(entry.reason, TileRenderEntryReason::Direct);
+    EXPECT_FALSE(entry.usesAncestorFallback);
+    EXPECT_FALSE(entry.surfaceClipEnabled);
+    EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 0);
+    EXPECT_EQ(plan.renderEntryFirstBuildDeferredCount, 0);
+}

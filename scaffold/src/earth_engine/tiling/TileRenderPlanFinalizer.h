@@ -24,6 +24,12 @@ struct TileRenderPlanFinalizeOptions {
     // Tileset SSE threshold for the distance-continuous geomorph factor
     // (0 = derivation disabled → terrainMorphFactor stays 1 = no morph).
     double maximumScreenSpaceError = 0.0;
+    // H-S5:新瓦首建(命令缓存首次构建,~0.9ms/片真机实测)的每帧预算。
+    // 预算耗尽且存在可渲染祖先时,该瓦本帧改走祖先裁剪回退、首建顺延
+    // (与瞬态面回退同一条已证路径,接缝由机制 A/B 保证);无祖先可盖时
+    // 不受限直接建,防露底。扫掠前沿跨瓦边界的集中首建 burst 摊平点。
+    int activeInteractionFirstBuildBudget = 4;
+    int recoveryFirstBuildBudget = 8;
 };
 
 struct TileRenderPlanFinalizer {
@@ -95,6 +101,7 @@ struct TileRenderPlanFinalizer {
         plan.renderEntryAncestorFallbackCount = 0;
         plan.renderEntrySynchronousPrepCount = 0;
         plan.renderEntryDeferredPrepCount = 0;
+        plan.renderEntryFirstBuildDeferredCount = 0;
         plan.renderEntryDropClipUvCount = 0;
         plan.renderEntryDropNotBuildableCount = 0;
         plan.renderEntryBaseColorFallbackCount = 0;
@@ -125,6 +132,13 @@ struct TileRenderPlanFinalizer {
         int renderPrepBudgetRemaining = options.interactionActive
             ? options.activeInteractionRenderPrepBudget
             : options.recoveryRenderPrepBudget;
+        int firstBuildBudgetRemaining = options.interactionActive
+            ? options.activeInteractionFirstBuildBudget
+            : options.recoveryFirstBuildBudget;
+        std::unordered_set<TilesetTile*> firstBuildBudgeted;
+        auto needsFirstCommandBuild = [](TilesetTile& tile) {
+            return !tile.content.renderContent.hasCachedDrawCommands();
+        };
 
         auto appendRenderEntry = [&](TilesetTile& selectedTile) {
             TilesetTile* commandTile = &selectedTile;
@@ -153,6 +167,28 @@ struct TileRenderPlanFinalizer {
                         return;
                     }
                     usesAncestorFallback = true;
+                }
+            }
+            // H-S5:新瓦首建预算。内容已就绪但命令缓存尚未构建的选中瓦片,
+            // 预算耗尽时本帧改由最近可渲染祖先裁剪覆盖,首建顺延到后续帧。
+            // 预算只摊时间、不丢瓦片;无祖先可盖时保持直建(防露底)。
+            if (!usesAncestorFallback && needsFirstCommandBuild(selectedTile) &&
+                firstBuildBudgetRemaining <= 0) {
+                TilesetTile* renderableAncestor =
+                    findNearestRenderableAncestor(
+                        selectedTile,
+                        isFallbackRenderable);
+                if (renderableAncestor) {
+                    std::optional<std::array<float, 4>> ancestorClip =
+                        TileSurfaceClip::forDescendantBounds(
+                            *renderableAncestor,
+                            selectedTile.bounds);
+                    if (ancestorClip) {
+                        commandTile = renderableAncestor;
+                        surfaceClipUv = ancestorClip;
+                        usesAncestorFallback = true;
+                        ++plan.renderEntryFirstBuildDeferredCount;
+                    }
                 }
             }
             if (!canBuildRenderEntryDirectly(
@@ -198,6 +234,15 @@ struct TileRenderPlanFinalizer {
                 renderedClippedGeometry.insert(commandTile);
             } else {
                 renderedFullGeometry.insert(commandTile);
+            }
+
+            // H-S5:首建预算消耗(按 commandTile 去重:同一瓦片多 clip entry
+            // 只建一次;预算 0 且无祖先的 root 情形已在上面放行直建)。
+            if (!usesAncestorFallback &&
+                needsFirstCommandBuild(*commandTile) &&
+                firstBuildBudgeted.insert(commandTile).second &&
+                firstBuildBudgetRemaining > 0) {
+                --firstBuildBudgetRemaining;
             }
 
             bool allowSynchronousMeshPrep = true;

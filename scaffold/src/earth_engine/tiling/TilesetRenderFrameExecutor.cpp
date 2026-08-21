@@ -1,5 +1,6 @@
 #include "TilesetRenderFrameExecutor.h"
 
+#include "TerrainDisplacementTemplatePool.h"
 #include "TileRenderCommandManager.h"
 #include "../debug/PerfTimer.h"
 #include "../renderer/Renderer.h"
@@ -65,11 +66,23 @@ void TilesetRenderFrameExecutor::buildRenderCommands(
     context.input.tilePlan.renderEntryZeroDrawContentNoCommandsCount =
         timings.zeroDraw.contentNoCommands;
     const GltfDrawCommandBuildTimings& draw = timings.drawCommand;
+    const int firstBuildDeferred =
+        context.input.tilePlan.renderEntryFirstBuildDeferredCount;
+    int heightEpochMiss = 0;
+    int heightGridMiss = 0;
+    int heightEvicted = 0;
+    if (TerrainDisplacementTemplatePool* pool =
+            renderer.terrainDisplacementPool()) {
+        const auto& hs = pool->heightFrameStats();
+        heightEpochMiss = hs.epochMiss;
+        heightGridMiss = hs.gridMiss;
+        heightEvicted = hs.evicted;
+    }
     std::array<char, 512> detail{};
     std::snprintf(
         detail.data(),
         detail.size(),
-        "tiles=%d mesh=%.2f resources=%.2f draw=%.2f eligible=%.2f rebuild=%.2f rebuilds=%d copy=%.2f frameState=%.2f rasterBind=%.2f cmds=%d",
+        "tiles=%d mesh=%.2f resources=%.2f draw=%.2f eligible=%.2f rebuild=%.2f rebuilds=%d fbDef=%d epoch=%d grid=%d evict=%d copy=%.2f frameState=%.2f rasterBind=%.2f cmds=%d",
         timings.tileCount,
         timings.ensureMeshMs,
         timings.resourcePrepareMs,
@@ -77,6 +90,10 @@ void TilesetRenderFrameExecutor::buildRenderCommands(
         draw.eligibilityMs,
         draw.cacheRebuildMs,
         draw.cacheRebuildCount,
+        firstBuildDeferred,
+        heightEpochMiss,
+        heightGridMiss,
+        heightEvicted,
         draw.commandCopyMs,
         draw.perFrameStateMs,
         draw.rasterBindingMs,

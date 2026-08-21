@@ -834,7 +834,7 @@ oracle(TileSelectionEquivalence)。前者自 2026-07-19「release 下 selector
 | `TilesetRenderFrameExecutor` (92) | `buildRenderCommands` (TilesetRenderFrameExecutor.cpp:12) | 出命令 |
 | `TileRenderFrameContext` (58) | `markIneligibleForUnloading` (TileRenderFrameContext.cpp:8)、`trackRenderReference` (TileRenderFrameContext.cpp:13)、`buildTileDrawCommand` (TileRenderFrameContext.cpp:24)、`renderCommandTimings` (TileRenderFrameContext.cpp:42) | 帧上下文 + **渲染引用跟踪**(submit 前不得释放,见 §20) |
 | `TileRenderCommandManager` (61) | ctor (TileRenderCommandManager.cpp:10)、`beginFrame` (TileRenderCommandManager.cpp:20)、`buildTileDrawCommand` (TileRenderCommandManager.cpp:30) | 常驻命令缓存。⚠️ **勿把逐帧字段写回常驻命令** |
-| `TileRenderPlanFrameRefresher` (280) | `refreshFrameCredits` (TileRenderPlanFrameRefresher.cpp:157);`collectReadyRasterTileCredits` (TileRenderPlanFrameRefresher.cpp:113)、`collectRenderContentCredits` (TileRenderPlanFrameRefresher.cpp:132)、`collectRasterOverlayProviderCredits` (TileRenderPlanFrameRefresher.cpp:139)、`collectMappedRasterProgress` (TileRenderPlanFrameRefresher.cpp:178)、`logEdgeMismatch` (TileRenderPlanFrameRefresher.cpp:61)、`formatEdgeStats` (TileRenderPlanFrameRefresher.cpp:35) | 归属信息与栅格进度;接边错位探针的**逐帧累积 + 周期报告**(单帧 n≈17 撑不起 A/B) |
+| `TileRenderPlanFrameRefresher` (280) | `refreshFrameCredits` (TileRenderPlanFrameRefresher.cpp:178);`collectReadyRasterTileCredits` (TileRenderPlanFrameRefresher.cpp:134)、`collectRenderContentCredits` (TileRenderPlanFrameRefresher.cpp:153)、`collectRasterOverlayProviderCredits` (TileRenderPlanFrameRefresher.cpp:160)、`collectMappedRasterProgress` (TileRenderPlanFrameRefresher.cpp:199)、`logEdgeMismatch` (TileRenderPlanFrameRefresher.cpp:66)、`formatEdgeStats` (TileRenderPlanFrameRefresher.cpp:40) | 归属信息与栅格进度;接边错位探针的**逐帧累积 + 周期报告**(单帧 n≈17 撑不起 A/B)。⚠️ **H-S5(2026-08-21)**:新瓦首建预算 4/帧(交互)/8/帧(恢复),耗尽且祖先可渲染时改走祖先裁剪回退(`renderEntryFirstBuildDeferredCount`),摊平扫掠前沿首建 burst |
 | `TileEdgeMismatchProbe` (156) | `measure` (TileEdgeMismatchProbe.h:111) | **跨瓦接边几何错位**直接测量(①-1 判据)。漏天像素已恒 0 但 ε 被裙墙盖住,故换尺子。⚠️ 必须乘 `terrainReliefFade`,漏了会读出假错位;⚠️ fadeUniform/fadeDiffer **必须分开统计**,后者量级大一个数量级会把 ①-1 的效果稀释掉 |
 | `TerrainEdgeNeighborHeight` (93) | `sourceOf` (TerrainEdgeNeighborHeight.h:36)、`renderedHeight` (TerrainEdgeNeighborHeight.h:61)、`edgePoint` (TerrainEdgeNeighborHeight.h:74)、`edgeNodeCount` (TerrainEdgeNeighborHeight.h:87) | 「条目本帧实际渲染出的地形高度」**共用真值源**。⚠️ 探针(量)与 LUT(修)必须逐位一致 —— 各写一份的话,修完指标归零只证明两份代码互相同意 |
 | `TerrainEdgeHeightLut` (100) | `build` (TerrainEdgeHeightLut.h:51)、`shaderNodePair` (TerrainEdgeHeightLut.h:88) | **①-1**:边吸附改取邻居真值的 CPU 侧表。⚠️ A′ 契约:`build` 只准在 resolve 阶段调用(记录裸指针同阶段消费),draw 一律查 `TilePlan::edgeLutTables`;⚠️ 节点序号 j=a/snapStep 必须与 shader 的 a0/a1 取法逐一对应(`shaderNodePair` 是这个约定的单一定义,已单测且故意破坏验过会响) |
@@ -1925,10 +1925,11 @@ geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDe
 | `findHeightArray` / `ensureHeightArray` | .cpp:173-134 / :136-162 | 按 gridSize 取/建高度 texture array |
 | `bakeTerrainHeightNormalTexels` | .cpp:212-347 | 烘高度 + **切空间法线到 B/A 通道** |
 | `acquireHeightTexture` | .cpp:348-469 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
-| `ensureBakeResources` | .cpp:470-486 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
-| `flushHeightBakes` | .cpp:487-566 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer),然后清空。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
-| `updateEdgeLutRows` | .cpp:567-597 | 写本帧边吸附的邻居高度差表(①-1)。**H-B1(2026-08-21):按内容变更检测,字节相同跳过 GPU 上传**(每层缓存最后字节;层重分配时清空)—— 108 瓦视野惯性期每帧 108 次小上传(frameState 6.8-11.4ms)的根因。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
-| `touchHeightTexture` | .cpp:598-607 | LRU 触碰 |
+| `ensureBakeResources` | .cpp:478-494 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
+| `flushHeightBakes` | .cpp:495-582 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer)。burst(>1)时打 `HeightBakeFlush` 诊断(2026-08-21 GPU swap 尖刺排查;真机已排除烘焙为尖刺源)。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
+| `updateEdgeLutRows` | .cpp:574-601 | 写本帧边吸附的邻居高度差表(①-1)。**H-B1+H-S4(2026-08-21):字节 diff 相同跳过;变化者只入池(不再立即上传),帧末 `flushEdgeLutUploads` 批量灌入**—— 运动期 frameState 6.8-14.6ms 的逐层小上传被摊成每 array 一次调用。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
+| `enqueueEdgeLutUpload` / `flushEdgeLutUploads` | .cpp:602-614 / :619-714 | H-S4 批量上传:本帧待传层按 array 拼成连续内存(中间未变层用缓存/差值 0 填充),每 array 一次 `updateTextureArrayRegion`(GLES depth=层数单次 PBO)。失败保留旧缓存,下一帧字节 diff 自动重试 |
+| `touchHeightTexture` | .cpp:715-724 | LRU 触碰 |
 
 ### HeightmapTerrainContentProvider.h / .cpp
 
@@ -2735,17 +2736,18 @@ OpenGL ES 3.0 backend implementing `renderer/RenderDevice.h`. Assumes caller own
 | Capability queries | .cpp:214-206 | `maxTextureSize`/`maxDrawBuffers` via `glGetIntegerv`; `supportsFloatTextures`/`supportsInstancing` hardcoded `true` (GLES 3.0 core); `rendererString` from `GL_RENDERER` |
 | `createTexture` | .cpp:239-365 | Format map RGBA8/RGB8/R8/Depth32F/RGBA16F(HDR,`GL_HALF_FLOAT`); anisotropy via `GL_EXT_texture_filter_anisotropic` (ext-guarded, .cpp:239-365,163-171); wrap map (.cpp:239-365); mipmap gen |
 | `updateTextureRegion` | .cpp:381-431 | Bounds-checked `glTexSubImage2D`; rejects `rowBytes != width*4`; returns `glGetError()==GL_NO_ERROR` |
-| `createBuffer` / `updateBuffer` | .cpp:504-522 | Index→`GL_ELEMENT_ARRAY_BUFFER` else `GL_ARRAY_BUFFER`; Dynamic→`GL_DYNAMIC_DRAW`; `updateBuffer` bounds-checked `glBufferSubData` |
-| `createShader` | .cpp:545-626 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
-| `createFramebuffer` | .cpp:669-795 | Returns `nullptr` (MVP uses default FBO) |
-| `beginFrame` | .cpp:829-833 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:829-833) |
-| `submit` | .cpp:1119-1749 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1403-1403). Perf log every 120 submits or ≥25ms (.cpp:1467). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
-| `endFrame` | .cpp:2051-2065 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
-| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2101-2136 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
+| `updateTextureArrayRegion` | .cpp:458-500 | **H-S4 批量上传**:数组纹理多层子区域一次灌入(depth=层数)经单次 PBO,失败回落直传。边缘 LUT 逐层小上传 burst 的消解点 |
+| `createBuffer` / `updateBuffer` | .cpp:549-567 / :568-589 | Index→`GL_ELEMENT_ARRAY_BUFFER` else `GL_ARRAY_BUFFER`; Dynamic→`GL_DYNAMIC_DRAW`; `updateBuffer` bounds-checked `glBufferSubData` |
+| `createShader` | .cpp:590-671 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
+| `createFramebuffer` | .cpp:714-840 | Returns `nullptr` (MVP uses default FBO) |
+| `beginFrame` | .cpp:874-878 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:874-878) |
+| `submit` | .cpp:1164-1794 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1448-1448). Perf log every 120 submits or ≥25ms (.cpp:1512). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
+| `endFrame` | .cpp:2096-2110 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
+| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2146-2181 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
 
-Per-command command-kind counters in `submit` (.cpp:1119-1749) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
+Per-command command-kind counters in `submit` (.cpp:1164-1794) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
 
-**Stride-based vertex-layout dispatch** in `submit` (.cpp:1119-1749) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
+**Stride-based vertex-layout dispatch** in `submit` (.cpp:1164-1794) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
 - stride 32 OR glTF (kind `GltfPrimitive[Instanced]` && stride==**120**): attrib0 POSITION, 1 NORMAL, 2 TEXCOORD (4 floats for glTF, else 2); glTF adds attribs 10-14 (COLOR_0/TANGENT/TEXCOORD sets 2-7) (.cpp:476-524)
 - `GltfPrimitiveInstanced` + `instanceStride==kGltfInstanceMatrixStride` (100): attribs 3-9 from `instanceBuffer` with `glVertexAttribDivisor(...,1)` — instance model matrix (4×vec4) + normal matrix (3×vec3) (.cpp:525-575)
 - `GltfPrimitiveInstanced` + `vertexStride==32` + `instanceStride==kTerrainInstanceStride` (96): the **terrain batch** layout — per-vertex attribs 0-3 from the shared template, attribs 4-9 = 6×vec4 per-instance with divisor 1 (rel×3 / dispMorph / clipUv / layers) (.cpp:1047-1051 selects, :1687-1697 sets up)

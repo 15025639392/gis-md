@@ -1893,6 +1893,7 @@ void TerrainPageStore::drainReadyUploads() {
     // 保证间接纹理永远只指向已写入的层。
     const int side = config_.pageSizeTexels;
     int uploaded = 0;
+    double frameUploadMs = 0.0;
 
     // ==== 刀2 场平面:与影像共享 maxUploadsPerFrame 预算(场 64KB/页,记
     // 1 个上传)。上传真场后设 fieldLayerKey_[layer]=key + entry.uploaded →
@@ -1923,7 +1924,9 @@ void TerrainPageStore::drainReadyUploads() {
             device_->updateTextureRegion(
                 fieldArrayTexture_.get(), 0, 0, side, side, item.r8.data(),
                 static_cast<size_t>(side) * 4u, item.layer);
-            winUploadMs_ += perf::nowMs() - uploadStartMs;
+            const double upMs = perf::nowMs() - uploadStartMs;
+            winUploadMs_ += upMs;
+            frameUploadMs += upMs;
             // 记住该场层现装的是这个 key 的真场 → 同 key 淘汰重建可跳烘不闪。
             if (item.layer >= 0 &&
                 item.layer < static_cast<int>(fieldLayerKey_.size())) {
@@ -1985,7 +1988,9 @@ void TerrainPageStore::drainReadyUploads() {
                                      item.texels.data(),
                                      static_cast<size_t>(side) * 4u,
                                      item.layer);
-        winUploadMs_ += perf::nowMs() - uploadStartMs;
+        const double upMs = perf::nowMs() - uploadStartMs;
+        winUploadMs_ += upMs;
+        frameUploadMs += upMs;
         pe.contentEpoch = item.epoch;  // 上屏内容的样式代随之推进
         pe.uploadedSources = item.composedSources;
         pe.lastProgressFrame = frameId_;  // 上传推进 = 进度(见 kStalledPageFrames)
@@ -2001,6 +2006,12 @@ void TerrainPageStore::drainReadyUploads() {
         for (size_t idx = requeueFrom; idx < ready.size(); ++idx) {
             readyInbox_->items.push_back(std::move(ready[idx]));
         }
+    }
+    // [GPU swap 尖刺诊断] 本帧页存储上传慢于 2ms 才打(稀少):与 FrameLoop
+    // swap 尖刺按时间戳关联,定位扫掠期 GPU 上传阻塞(2026-08-21)。
+    if (frameUploadMs > 2.0) {
+        platformLog(LogLevel::Info, "EarthPerf",
+                    "PageStoreUp ms=%.1f n=%d", frameUploadMs, uploaded);
     }
 }
 

@@ -16,6 +16,8 @@ struct TileRenderPlanFrameRefreshOptions {
     double maximumScreenSpaceError = 0.0;
     // 接边错位诊断探针(SeamDiag)。默认关:常开每帧 measure 约 4ms(selPlan 大头)。
     bool seamEdgeMismatchProbe = false;
+    // H-S5:新瓦首建每帧预算覆盖值(<0 = 用 finalizer 默认常量)。
+    int firstBuildBudgetOverride = -1;
 };
 
 class TileRenderPlanFrameRefresher {

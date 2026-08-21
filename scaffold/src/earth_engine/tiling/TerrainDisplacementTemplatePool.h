@@ -252,6 +252,11 @@ public:
     // 消费 pending bake 请求:逐请求把源高度打包纹理传 GPU + 一遍片元 pass 渲进
     // 目标层。须在渲染线程、任何主/prepass pass 打开之前调(pass 不可嵌套)。
     void flushHeightBakes();
+    // H-S4:消费本帧登记的边 LUT 上传。updateEdgeLutRows 只入池(字节变更检测
+    // 照旧),本函数在 build 之后、submit 之前调用,按 array 把待传层拼成一段
+    // 连续内存一次灌入(depth=层数),把「每瓦每帧一次小上传」摊成每 array
+    // 每帧一次 —— 运动期 frameState 6.8-14.6ms 的 LUT 上传 burst 根因。
+    void flushEdgeLutUploads();
 
 private:
     struct Entry {
@@ -408,8 +413,20 @@ private:
         float heightM = 1.0f;
         float reach = 0.0f;
     };
+    // H-S4:待批量上传的边 LUT 层(本帧内按层去重,后到者覆盖)。bytes 为
+    // (gridSize+1)×kEdgeLutRows 的 RGBA8。
+    struct PendingEdgeLutUpload {
+        HeightArray* arr = nullptr;
+        int layer = -1;
+        std::vector<uint8_t> bytes;
+    };
+    // 入池(同层已在本帧待传则覆盖);供 updateEdgeLutRows 与 acquire 的
+    // delta-0 初始化共用。
+    void enqueueEdgeLutUpload(HeightArray* arr, int layer,
+                              const uint8_t* bytes, size_t byteCount);
     bool gpuBakeEnabled_ = false;
     std::vector<PendingHeightBake> pendingBakes_;
+    std::vector<PendingEdgeLutUpload> pendingEdgeLutUploads_;
     std::unique_ptr<ShaderProgram> bakeShader_;
     std::unique_ptr<Buffer> bakeQuad_;
     std::map<int, std::unique_ptr<Framebuffer>> bakeFbos_;   // 按 n=gridSize+1 定 viewport

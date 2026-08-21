@@ -238,6 +238,9 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     // 与主 submit 之前——它们要采样这些高度纹理层。flag off 时 pending 空,早退无副作用。
     if (auto* pool = context.renderer.terrainDisplacementPool()) {
         pool->flushHeightBakes();
+        // H-S4:边 LUT 本帧登记的上传入批,统一一次灌入 —— 必须在任何
+        // 主/prepass pass 之前(submit 采样这些 LUT),与 bake 同位置。
+        pool->flushEdgeLutUploads();
         // 黑带排查:本帧高度层池的三条 nullptr 出口与占用。抄在 flush 之后 =
         // 本帧所有 acquireHeightTexture 都已跑过,计数已定稿。
         const auto& hs = pool->heightFrameStats();

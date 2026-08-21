@@ -394,7 +394,14 @@ static bool initEGL(ANativeWindow* window) {
 
     EGLConfig config;
     EGLint numConfigs = 0;
-    if (!eglChooseConfig(gDisplay, msaaAttribs, &config, 1, &numConfigs) ||
+    // MSAA A/B(2026-08-21 GPU swap 专项):4x MSAA 在 1240×2772 × 2 pass 下
+    // 是 GPU 帧时大头候选(swap 10-14ms)。运行时 `adb shell setprop
+    // debug.ee.msaa 0` 关,重进 app 生效。
+    char msaaProp[4] = {0};
+    __system_property_get("debug.ee.msaa", msaaProp);
+    const bool wantMsaa = msaaProp[0] != '0';
+    const EGLint* chosenAttribs = wantMsaa ? msaaAttribs : attribs;
+    if (!eglChooseConfig(gDisplay, chosenAttribs, &config, 1, &numConfigs) ||
         numConfigs < 1) {
         if (!eglChooseConfig(gDisplay, attribs, &config, 1, &numConfigs)) {
             return false;
@@ -1481,6 +1488,11 @@ static void renderFrame() {
     char perflogProp[4] = {0};
     __system_property_get("debug.ee.perflog", perflogProp);
     const bool perFrameLog = perflogProp[0] == '1';
+    // 采样模式:perflog=4 → 每 4 帧打一行(swap 分布用,~15 行/秒,不触发
+    // 设备 logcat 配额);perflog=1 → 只打可疑帧。2026-08-21 GPU swap 专项。
+    const int beatN = perflogProp[0] == '4' ? 4
+                     : perflogProp[0] == '8' ? 8
+                                            : 0;
     // 逐帧模式只打"可疑帧":帧间隔/swap/latch 超阈或慢帧 —— 避免全量刷屏
     // 触发设备 logcat 配额丢日志(2026-08-20 实测 DROPPED 把暂停帧吞掉)。
     const bool suspiciousFrame =
@@ -1489,7 +1501,8 @@ static void renderFrame() {
     const bool logFrame =
         frameId <= 3 || frameId % 120 == 0 ||
         frameTotalMs >= 25.0 || swapMs >= 8.0 ||
-        (perFrameLog && suspiciousFrame);
+        (perFrameLog && suspiciousFrame) ||
+        (beatN > 0 && frameId % beatN == 0);
     if (logFrame) {
         const auto& stageDiag = gEngine->diagnostics();
         LOGI(
