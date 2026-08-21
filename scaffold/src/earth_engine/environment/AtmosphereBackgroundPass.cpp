@@ -340,7 +340,7 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
     // 拼接:头(uniform+phase 函数) + 共享 computeSkyColor + 输出合成变体
     // (LDR/HDR 编译期择一,见 kEnableHdrPipeline) + main。
     shaderDesc.fragmentSource =
-        std::string(kAtmosphereBackgroundFragHead) + kSkyColorGLSL +
+        std::string(kAtmosphereBackgroundFragHead) + kSkyColorGLSL() +
         (kEnableHdrPipeline ? kAtmosphereComposeHdr : kAtmosphereComposeLdr) +
         kAtmosphereBackgroundFragMain;
     auto shaderPtr = device->createShader(shaderDesc);

@@ -293,13 +293,13 @@ std::string fragForEffect(OffscreenPostProcess::Effect effect) {
         case OffscreenPostProcess::Effect::AerialFog:
             // 拼接:头(uniform) + 共享 computeSkyColor + main。雾色与大气
             // pass 同源。
-            return std::string(kAerialFogFragHead) + kSkyColorGLSL +
+            return std::string(kAerialFogFragHead) + kSkyColorGLSL() +
                    kAerialFogFragMain;
         case OffscreenPostProcess::Effect::Tonemap:
             return kTonemapFragGLSL;
         case OffscreenPostProcess::Effect::AerialFogTonemap:
             // 头(uniform,含 depth)+ 共享 computeSkyColor + fog-then-tonemap main。
-            return std::string(kAerialFogFragHead) + kSkyColorGLSL +
+            return std::string(kAerialFogFragHead) + kSkyColorGLSL() +
                    kAerialFogTonemapMain;
         case OffscreenPostProcess::Effect::Passthrough:
         default:

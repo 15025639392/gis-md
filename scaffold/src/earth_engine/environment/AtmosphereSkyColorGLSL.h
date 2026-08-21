@@ -1,5 +1,7 @@
 #pragma once
 
+#include "SunsetWarmthRamp.h"
+
 namespace earth_engine {
 
 // ============================================================
@@ -26,7 +28,12 @@ namespace earth_engine {
 // ⚠️ 修改约定:horizonSky / zenithSky / 太阳暖色是此模型的**唯一**色板来源。
 // 不要在 caller 里再引入独立的 lowSkyColor / horizonColor 常数(那正是旧的
 // "三套模型凑近似"病根)。
-constexpr const char* kSkyColorGLSL = R"(
+/// 生成共享天空色模型 GLSL 源(computeSkyColor + 暖度曲线)。
+/// 由 2026-08-21(L-P2)从 constexpr 文本改为生成函数:日落暖度曲线
+/// sunsetWarmthRamp 的定义由 SunsetWarmthRamp.h 的单一常量生成,杜绝
+/// "CPU/GLSL 各抄一份 smoothstep 0→0.30"的历史漂移债。
+inline std::string kSkyColorGLSL() {
+    return sunsetWarmthRampGLSL() + R"(
 vec3 computeSkyColor(vec3 rayDir, vec3 localUp, vec3 sun, float spaceFactor) {
     float viewUp = dot(rayDir, localUp);
     // 地平线雾白蓝 → 天顶深蓝的仰角(viewUp)渐变。ray-based —— 与 fog 从
@@ -39,12 +46,13 @@ vec3 computeSkyColor(vec3 rayDir, vec3 localUp, vec3 sun, float spaceFactor) {
     sky = mix(sky, vec3(0.0, 0.005, 0.025), spaceFactor);
 
     // ---- 日落着色:随太阳高度从"日间微暖"过渡到"日落橙" ----
-    // sunElev = 太阳相对当地天顶的高度(用相机天顶近似全天);sunLow 在太阳贴
-    // 地平线时→1、升到 ~17°(sin≈0.30)以上→0。高日光下 sunLow=0,以下各项全部
-    // 归零 → 与旧行为逐字等价(仅低太阳场景着色)。
+    // sunElev = 太阳相对当地天顶的高度(用相机天顶近似全天);sunLow 由
+    // sunsetWarmthRamp(与 CPU 同一曲线,见 SunsetWarmthRamp.h)在太阳贴
+    // 地平线时→1、升到膝点以上→0。高日光下 sunLow=0,以下各项全部归零
+    // → 与旧行为逐字等价(仅低太阳场景着色)。
     float mu = max(dot(rayDir, sun), 0.0);
     float sunElev = dot(sun, localUp);
-    float sunLow = 1.0 - smoothstep(0.0, 0.30, max(sunElev, 0.0));
+    float sunLow = sunsetWarmthRamp(sunElev);
     // 暖色向天顶收紧:lowSky 贴地平线≈1、升高按 2.5 次幂快速→0 → 暖色集中在
     // 地平线带,高空回到 base(蓝),给"近地平线暖、高空冷"的日落层次。
     float lowSky = pow(1.0 - skyT, 2.5);
@@ -63,5 +71,6 @@ vec3 computeSkyColor(vec3 rayDir, vec3 localUp, vec3 sun, float spaceFactor) {
     return sky;
 }
 )";
+}
 
 } // namespace earth_engine

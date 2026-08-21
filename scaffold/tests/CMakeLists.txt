@@ -1210,6 +1210,12 @@ add_executable(test_atmosphere_scattering
 target_link_libraries(test_atmosphere_scattering PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_atmosphere_scattering COMMAND test_atmosphere_scattering)
 
+add_executable(test_sunset_warmth_ramp
+    unit/environment/test_sunset_warmth_ramp.cpp
+)
+target_link_libraries(test_sunset_warmth_ramp PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_sunset_warmth_ramp COMMAND test_sunset_warmth_ramp)
+
 # ============================================================
 # 文档一致性(非 C++ 测试)
 # ============================================================

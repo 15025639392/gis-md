@@ -7,6 +7,7 @@
 #include "../debug/PerfTimer.h"
 #include "../environment/SkyGradient.h"
 #include "../environment/SunDirection.h"
+#include "../environment/SunsetWarmthRamp.h"
 #include "../environment/TimeController.h"
 
 namespace earth_engine {
@@ -70,15 +71,12 @@ double updateEnvironment(const SceneFrameStateBuildInput& input) {
     auto& ac = input.skyGradient->ambientColor();
     frameState.ambient = {ac[0], ac[1], ac[2]};
 
-    // 日落地表暖化:太阳贴地平线(sunElev→0)时受光色温转暖橙。sunLow 曲线与天空
-    // pass 逐字一致(smoothstep 0→0.30,见 AtmosphereSkyColorGLSL.h)。⚠️ 两处各
-    // 推同一曲线:改暖度曲线须同步天空侧,否则天地暖度错位(共享口径,瘦版让步)。
+    // 日落地表暖化:太阳贴地平线(sunElev→0)时受光色温转暖橙。sunLow 与天空
+    // pass 共用同一 sunsetWarmthRamp(膝点单一来源,见 SunsetWarmthRamp.h,
+    // L-P2 抽函数后不再存在两处可漂移的字面量)。
     double sunElev = sunDir.x() * localUp.x() + sunDir.y() * localUp.y() +
                      sunDir.z() * localUp.z();
-    double e = sunElev > 0.0 ? sunElev : 0.0;
-    double t = e / 0.30;
-    t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
-    double sunLow = 1.0 - t * t * (3.0 - 2.0 * t);
+    double sunLow = sunsetWarmthRampCpu(sunElev);
     // 日落地表着色:受光面 sunTint(暖度=warmth) + 阴影面暖补光(=shadowAmbient×
     // sunLow)。档位见 kSunsetTintNatural。白天 sunLow=0 → sunTint=noonTint、
     // ambient=0 = 现状零回归。
