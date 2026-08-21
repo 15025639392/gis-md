@@ -1176,6 +1176,12 @@ add_executable(test_raster_overlay_lifecycle
 target_link_libraries(test_raster_overlay_lifecycle PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_raster_overlay_lifecycle COMMAND test_raster_overlay_lifecycle)
 
+add_executable(test_web_map_service_imagery_provider
+    unit/providers/test_web_map_service_imagery_provider.cpp
+)
+target_link_libraries(test_web_map_service_imagery_provider PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_web_map_service_imagery_provider COMMAND test_web_map_service_imagery_provider)
+
 add_executable(test_provider_request_diagnostics_aggregator
     unit/providers/test_provider_request_diagnostics_aggregator.cpp
 )

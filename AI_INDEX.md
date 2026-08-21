@@ -1706,10 +1706,10 @@ WMS `GetMap` provider (cesium-native WMS aligned). Subclass of XYZ; forces `Geog
 |---|---|---|
 | `WebMapServiceImageryOptions` | .h:9-17 | version (`1.3.0`), layers, format (`image/png`), min/max level, tile W/H |
 | ctor | .cpp:266-278 | Forces `Geographic-TMS`; clamps zoom/tileSize |
-| `buildUrl` | .cpp:290-329 | Computes lat/lon bbox from key; sets `crs/styles/transparent/service` (no-overwrite), `request=GetMap`/`version`/`bbox`(S,W,N,E)/`layers`/`format`/`width`/`height` (overwrite) |
+| `buildUrl` | .cpp:290-332 | Computes lat/lon bbox from key; sets `crs`(1.3.x)/`srs`(1.0/1.1.x, I-V10)/`styles/transparent/service` (no-overwrite), `request=GetMap`/`version`/`bbox`(S,W,N,E)/`layers`/`format`/`width`/`height` (overwrite) |
 | URL query split/join | .cpp:183-250 | `splitUrl`, `setQueryValue`, `joinUrl` |
-| `validateWebMapServiceCapabilities` | .cpp:331-417 | Checks Service/Name; MaxWidth/MaxHeight/LayerLimit vs options |
-| `webMapServiceCapabilitiesUrl` | .cpp:419-426 | Builds `GetCapabilities` URL |
+| `validateWebMapServiceCapabilities` | .cpp:335-422 | Checks Service/Name; MaxWidth/MaxHeight/LayerLimit vs options |
+| `webMapServiceCapabilitiesUrl` | .cpp:423-432 | Builds `GetCapabilities` URL |
 
 ### WebMapTileServiceImageryProvider.h / .cpp
 

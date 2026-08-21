@@ -308,7 +308,11 @@ std::string WebMapServiceImageryProvider::buildUrl(const TileKey& key) const {
         static_cast<double>(key.y + 1) / static_cast<double>(yTiles) * 180.0;
 
     UrlParts parts = splitUrl(baseUrl_);
-    setQueryValue(parts.query, "crs", "EPSG:4326", false);
+    // I-V10:WMS 1.1.1 用 SRS 参数(轴序 lat,lon);1.3.0 用 CRS 参数。
+    // BBOX 轴序保持 lat,lon(south,west,north,east)与现状/cesium 一致;
+    // 1.1.1 只差参数名 crs→srs(1.1.1 规范强制 SRS + lat,lon)。
+    const bool wms13 = options_.version.rfind("1.3", 0) == 0;
+    setQueryValue(parts.query, wms13 ? "crs" : "srs", "EPSG:4326", false);
     setQueryValue(parts.query, "styles", "", false);
     setQueryValue(parts.query, "transparent", "true", false);
     setQueryValue(parts.query, "service", "WMS", false);

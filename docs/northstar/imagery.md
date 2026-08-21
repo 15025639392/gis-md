@@ -95,7 +95,7 @@
 | # | 判据 | 状态 | 证据 |
 |---|---|---|---|
 | **I-V9** | Google Maps Tiles ToS 要求的归属 logo 显示 | ❌ 未做 | `GoogleMapTilesImageryProvider.cpp` 的 TODO;曾有的 `showLogo` 占位位(恒 true、无消费者)已于 2026-08-07 删除 |
-| **I-V10** | WMS 版本适配:`version` 可配但只实现了 1.3.0 口径 | ⚠️ 有缺口 | 无条件写 `crs=EPSG:4326` + lat,lon 轴序;全文件无 `srs` / 1.1.1 分支 → 配 1.1.1 会同时错在参数名和轴序 |
+| **I-V10** | WMS 版本适配:`version` 可配但只实现了 1.3.0 口径 | ✅ 达成(2026-08-22) | buildUrl 按 version 前缀切参数名:1.3.x → `crs`,其他(1.0/1.1.x)→ `srs`;BBOX 保持 lat,lon(south,west,north,east,与 cesium 一致)。新增 `test_web_map_service_imagery_provider` 4 测试钉死 1.1.1/1.3.0/1.0.0/默认版本 URL |
 
 ---
 
