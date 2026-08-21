@@ -2619,8 +2619,8 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 | `updateVisiblePages(view, ...)` | .cpp:609-1311 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
 | `applyToTerrainCommand(cmd, tile)` | .cpp:1506-1599 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
 | `tick()` | .cpp:1600-1649 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1753-1885 / :1671-1711 | 解码结果派发 worker 合成(渲染线程只做账本校验,每帧入队 ≤ `maxComposeDispatchesPerFrame`,超出进待派队列) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1908-2036 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
+| `drainInbox` / `kickPageFetches` | .cpp:1758-1890 / :1676-1716 | 解码结果派发 worker 合成(渲染线程只做账本校验,每帧入队 ≤ `maxComposeDispatchesPerFrame`,超出进待派队列) / 发起缺页请求 |
+| `drainReadyUploads` | .cpp:1913-2041 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
 | `erasePageEntry` | .cpp:1490-1505 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:293-361 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:408-511 / :554-608 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
@@ -3560,7 +3560,7 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `hasTerrain()` | .h:94, .cpp:1246-1251 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1335-1342 | Reads `frameState().clearR/G/B/A`. |
+| `getClearColor` | .cpp:1327-1334 | Reads `frameState().clearR/G/B/A`. |
 | `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1336-1339 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
 | `camera() / isReady()` | .h:130-131, .cpp:1175-1178, 1344-1348 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:700-748 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |

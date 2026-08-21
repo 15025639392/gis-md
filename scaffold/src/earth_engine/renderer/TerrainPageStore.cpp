@@ -1666,6 +1666,11 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
     pe.needsRebake = false;
     kickPageFetches(fetchKey, pageKey, layer, pe);
     ++determinationDirtyRevision_;  // 新建/重烘 → 状态变了,静止帧跳过失效
+    // [2026-08-21 pageStoreInFlight 分歧] kick 后立即同步 Pumped 票:帧首的
+    // syncWorkTicket(updateVisiblePages:619)早于本帧的 kick,若等下一帧才持有,
+    // 帧尾审计(needsFrame)会看到 ledger=idle vs old=busy(pageStoreInFlight)
+    // 的一帧分歧。状态迁移点同步后当帧即持有。
+    syncWorkTicket();
 }
 
 void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
