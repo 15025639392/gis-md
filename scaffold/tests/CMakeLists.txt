@@ -317,6 +317,12 @@ add_executable(test_computed_imagery_uv_risk
 target_link_libraries(test_computed_imagery_uv_risk PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_computed_imagery_uv_risk COMMAND test_computed_imagery_uv_risk)
 
+add_executable(test_fill_proxy_uv_risk
+    unit/content/test_fill_proxy_uv_risk.cpp
+)
+target_link_libraries(test_fill_proxy_uv_risk PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_fill_proxy_uv_risk COMMAND test_fill_proxy_uv_risk)
+
 add_executable(test_terrain_displacement_template
     unit/content/test_terrain_displacement_template.cpp
 )
