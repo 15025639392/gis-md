@@ -110,6 +110,51 @@ std::vector<unsigned int> GLVaoInvalidationRegistry::takePendingDeletedBuffers()
 }
 
 // ============================================================
+// GLTextureRecycler(H-S7)
+// ============================================================
+
+bool GLTextureRecycler::pop(int width, int height, unsigned int target,
+                            unsigned int internalFormat, unsigned int format,
+                            unsigned int type, bool mipmap, Entry* out) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (dead_) {
+        return false;
+    }
+    for (size_t i = 0; i < entries_.size(); ++i) {
+        const Entry& e = entries_[i];
+        if (e.width == width && e.height == height && e.target == target &&
+            e.internalFormat == internalFormat && e.format == format &&
+            e.type == type && e.mipmap == mipmap) {
+            if (out) {
+                *out = e;
+            }
+            entries_.erase(
+                entries_.begin() + static_cast<std::ptrdiff_t>(i));
+            return true;
+        }
+    }
+    return false;
+}
+
+bool GLTextureRecycler::recycle(const Entry& entry) {
+    if (entry.id == 0) {
+        return false;
+    }
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (dead_ || entries_.size() >= kMaxEntries) {
+        return false;
+    }
+    entries_.push_back(entry);
+    return true;
+}
+
+void GLTextureRecycler::clearCpuIds() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    dead_ = true;
+    entries_.clear();
+}
+
+// ============================================================
 // GLTexture
 // ============================================================
 
@@ -120,7 +165,12 @@ GLTexture::GLTexture(unsigned int id,
                      unsigned int target,
                      int arrayLayers,
                      unsigned int glFormat,
-                     size_t bytesPerPixel)
+                     size_t bytesPerPixel,
+                     unsigned int internalFormat,
+                     unsigned int type,
+                     bool mipmap,
+                     bool recyclable,
+                     std::shared_ptr<GLTextureRecycler> recycler)
     : id_(id),
       width_(width),
       height_(height),
@@ -128,12 +178,27 @@ GLTexture::GLTexture(unsigned int id,
       target_(target),
       arrayLayers_(arrayLayers),
       glFormat_(glFormat),
-      bytesPerPixel_(bytesPerPixel) {}
+      bytesPerPixel_(bytesPerPixel),
+      internalFormat_(internalFormat),
+      type_(type),
+      mipmap_(mipmap),
+      recyclable_(recyclable),
+      recycler_(std::move(recycler)) {}
 
 GLTexture::~GLTexture() {
-    if (id_) {
-        glDeleteTextures(1, &id_);
+    if (!id_) {
+        return;
     }
+    // H-S7:可回收的 2D 带 data 纹理归还池(同尺寸复用免对象创建);
+    // 池满/context 失效/非可回收 → 照常删除。
+    if (recyclable_ && recycler_ &&
+        recycler_->recycle(GLTextureRecycler::Entry{
+            id_, width_, height_, target_, internalFormat_, glFormat_,
+            type_, mipmap_})) {
+        id_ = 0;  // 已进池,GL 对象由下一次领取者复用
+        return;
+    }
+    glDeleteTextures(1, &id_);
 }
 
 // ============================================================
@@ -196,7 +261,8 @@ const std::vector<int>& GLShaderProgram::gltfBlockLocations() {
 // ============================================================
 
 RenderDeviceGLES::RenderDeviceGLES()
-    : vaoRegistry_(std::make_shared<GLVaoInvalidationRegistry>()) {}
+    : vaoRegistry_(std::make_shared<GLVaoInvalidationRegistry>()),
+      textureRecycler_(std::make_shared<GLTextureRecycler>()) {}
 
 RenderDeviceGLES::~RenderDeviceGLES() {
     // 先声明设备死亡：此后 GLBuffer 析构不再登记。登记表由 shared_ptr
@@ -237,10 +303,6 @@ std::string RenderDeviceGLES::rendererString() const {
 // ============================================================
 
 std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc) {
-    GLuint id = 0;
-    glGenTextures(1, &id);
-    if (!id) return nullptr;
-
     // 格式映射(2D 与 array 共用)。
     GLenum internalFormat = GL_RGBA8;
     GLenum format = GL_RGBA;
@@ -284,6 +346,45 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
             : (desc.format == TextureDesc::Format::RGB8
                    ? 3u
                    : (desc.format == TextureDesc::Format::RGBA16F ? 8u : 4u));
+    const bool wantMipmap = desc.mipmap && desc.data;
+    const GLenum uploadType =
+        (desc.format == TextureDesc::Format::RGBA16F) ? GL_HALF_FLOAT
+                                                      : GL_UNSIGNED_BYTE;
+
+    // H-S7:2D 带 data 纹理先查回收池(同尺寸精确复用,免 glGen+分配)。
+    // 扫掠期映射光栅瓦尺寸稳定(258×257),复用只付 glTexSubImage2D。
+    GLTextureRecycler::Entry recycled{};
+    GLuint id = 0;
+    const bool is2dWithData = !(desc.arrayLayers > 1) && desc.data != nullptr;
+    if (is2dWithData && textureRecycler_ &&
+        textureRecycler_->pop(desc.width, desc.height, GL_TEXTURE_2D,
+                              internalFormat, format, uploadType, wantMipmap,
+                              &recycled)) {
+        id = recycled.id;
+    } else {
+        glGenTextures(1, &id);
+        if (!id) return nullptr;
+    }
+    const bool recyclable =
+        is2dWithData && textureRecycler_ != nullptr;
+    if (is2dWithData) {
+        if (recycled.id != 0) {
+            ++texturePoolHitCount_;
+        } else {
+            ++texturePoolMissCount_;
+        }
+        // H-S7 命中诊断:每 200 次创建报一次池命中率(验证复用生效)。
+        const int poolTotal =
+            texturePoolHitCount_ + texturePoolMissCount_;
+        if (poolTotal % 200 == 0) {
+            __android_log_print(
+                ANDROID_LOG_INFO, "GLES",
+                "texturePool hits=%d miss=%d rate=%.2f",
+                texturePoolHitCount_, texturePoolMissCount_,
+                static_cast<double>(texturePoolHitCount_) /
+                    static_cast<double>(poolTotal));
+        }
+    }
 
     // ---- texture2DArray 路径(合成方案页存储:一页一层)----
     // 只分配层存储(无初始 data),各层随后经 updateTextureRegion(layer) 上传。
@@ -316,18 +417,23 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
             static_cast<size_t>(layers);
         return std::make_unique<GLTexture>(
             id, desc.width, desc.height, arrayBytes,
-            GL_TEXTURE_2D_ARRAY, layers, format, bytesPerPixelFor);
+            GL_TEXTURE_2D_ARRAY, layers, format, bytesPerPixelFor,
+            internalFormat, uploadType, wantMipmap, recyclable,
+            textureRecycler_);
     }
 
     glBindTexture(GL_TEXTURE_2D, id);
 
-    GLenum type = (desc.format == TextureDesc::Format::RGBA16F)
-                      ? GL_HALF_FLOAT
-                      : GL_UNSIGNED_BYTE;
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-    glTexImage2D(GL_TEXTURE_2D, 0, internalFormat,
-                 desc.width, desc.height, 0,
-                 format, type, desc.data);
+    if (recycled.id != 0) {
+        // H-S7:同尺寸复用,只刷内容,免对象创建/存储分配。
+        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, desc.width, desc.height,
+                        format, uploadType, desc.data);
+    } else {
+        glTexImage2D(GL_TEXTURE_2D, 0, internalFormat,
+                     desc.width, desc.height, 0,
+                     format, uploadType, desc.data);
+    }
 
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
                     desc.minFilter == TextureDesc::Filter::Linear
@@ -375,7 +481,16 @@ std::unique_ptr<Texture> RenderDeviceGLES::createTexture(const TextureDesc& desc
         id,
         desc.width,
         desc.height,
-        allocatedBytes);
+        allocatedBytes,
+        GL_TEXTURE_2D,
+        1,
+        format,
+        bytesPerPixelFor,
+        internalFormat,
+        uploadType,
+        wantMipmap,
+        recyclable,
+        textureRecycler_);
 }
 
 bool RenderDeviceGLES::updateTextureRegion(Texture* texture,
@@ -2206,6 +2321,8 @@ void RenderDeviceGLES::onSurfaceDestroyed() {
         uploadPboBytes_[i] = 0;
     }
     nextUploadPbo_ = 0;
+    // H-S7:纹理回收池同样只清 CPU id(GL 对象随 context 一起销毁)。
+    textureRecycler_->clearCpuIds();
 }
 
 } // namespace earth_engine

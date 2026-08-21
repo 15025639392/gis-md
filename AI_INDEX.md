@@ -2729,25 +2729,26 @@ tileset 侧诊断快照(802 行)。**快照 → 累加 → 落盘**三段式,避
 
 ### RenderDeviceGLES.h / .cpp
 
-OpenGL ES 3.0 backend implementing `renderer/RenderDevice.h`. Assumes caller owns/activates EGL context. Header declares device + internal GL resource wrappers `GLTexture`/`GLBuffer`/`GLShaderProgram` (.h:61-98); `GLShaderProgram::uniformLocation` caches locations in `unordered_map` (.cpp:114-131).
+OpenGL ES 3.0 backend implementing `renderer/RenderDevice.h`. Assumes caller owns/activates EGL context. Header declares device + internal GL resource wrappers `GLTexture`/`GLBuffer`/`GLShaderProgram` (.h:61-98); `GLShaderProgram::uniformLocation` caches locations in `unordered_map`.
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| Capability queries | .cpp:214-206 | `maxTextureSize`/`maxDrawBuffers` via `glGetIntegerv`; `supportsFloatTextures`/`supportsInstancing` hardcoded `true` (GLES 3.0 core); `rendererString` from `GL_RENDERER` |
-| `createTexture` | .cpp:239-365 | Format map RGBA8/RGB8/R8/Depth32F/RGBA16F(HDR,`GL_HALF_FLOAT`); anisotropy via `GL_EXT_texture_filter_anisotropic` (ext-guarded, .cpp:239-365,163-171); wrap map (.cpp:239-365); mipmap gen |
-| `updateTextureRegion` | .cpp:381-431 | Bounds-checked `glTexSubImage2D`; rejects `rowBytes != width*4`; returns `glGetError()==GL_NO_ERROR` |
-| `updateTextureArrayRegion` | .cpp:458-500 | **H-S4 批量上传**:数组纹理多层子区域一次灌入(depth=层数)经单次 PBO,失败回落直传。边缘 LUT 逐层小上传 burst 的消解点 |
-| `createBuffer` / `updateBuffer` | .cpp:549-567 / :568-589 | Index→`GL_ELEMENT_ARRAY_BUFFER` else `GL_ARRAY_BUFFER`; Dynamic→`GL_DYNAMIC_DRAW`; `updateBuffer` bounds-checked `glBufferSubData` |
-| `createShader` | .cpp:590-671 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
-| `createFramebuffer` | .cpp:714-840 | Returns `nullptr` (MVP uses default FBO) |
-| `beginFrame` | .cpp:874-878 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:874-878) |
-| `submit` | .cpp:1164-1794 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1448-1448). Perf log every 120 submits or ≥25ms (.cpp:1512). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
-| `endFrame` | .cpp:2096-2110 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
-| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2146-2181 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
+| Capability queries | .cpp:274-285 | `maxTextureSize`/`maxDrawBuffers` via `glGetIntegerv`; `supportsFloatTextures`/`supportsInstancing` hardcoded `true` (GLES 3.0 core); `rendererString` from `GL_RENDERER` |
+| `GLTextureRecycler` | .cpp:116-159 / .h:60-109 | **H-S7(2026-08-21)**:2D 带 data 纹理对象回收池——GLTexture 析构归还、createTexture 按 (target,internalFormat,format,type,size,mipmap) 精确复用,同尺寸只付 glTexSubImage2D(免 glGen+分配,rasterTex 0.5-0.75ms/张的成本主体)。shared_ptr 共持,context 失效只清 CPU id;池上限 48 |
+| `createTexture` | .cpp:305-495 | Format map RGBA8/RGB8/R8/Depth32F/RGBA16F(HDR,`GL_HALF_FLOAT`); anisotropy via `GL_EXT_texture_filter_anisotropic` (ext-guarded, .cpp:305-495,163-171); wrap map (.cpp:305-495); mipmap gen;**H-S7:2D 带 data 先查回收池** |
+| `updateTextureRegion` | .cpp:496-572 | Bounds-checked `glTexSubImage2D`; rejects `rowBytes != width*4`; returns `glGetError()==GL_NO_ERROR` |
+| `updateTextureArrayRegion` | .cpp:573-616 | **H-S4 批量上传**:数组纹理多层子区域一次灌入(depth=层数)经单次 PBO,失败回落直传。边缘 LUT 逐层小上传 burst 的消解点 |
+| `createBuffer` / `updateBuffer` | .cpp:664-682 / :683-704 | Index→`GL_ELEMENT_ARRAY_BUFFER` else `GL_ARRAY_BUFFER`; Dynamic→`GL_DYNAMIC_DRAW`; `updateBuffer` bounds-checked `glBufferSubData` |
+| `createShader` | .cpp:705-786 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
+| `createFramebuffer` | .cpp:829-955 | Returns `nullptr` (MVP uses default FBO) |
+| `beginFrame` | .cpp:989-993 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:989-993) |
+| `submit` | .cpp:1279-1909 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1563-1563). Perf log every 120 submits or ≥25ms (.cpp:1627). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
+| `endFrame` | .cpp:2211-2225 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
+| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2261-2296 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
 
-Per-command command-kind counters in `submit` (.cpp:1164-1794) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
+Per-command command-kind counters in `submit` (.cpp:1279-1909) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
 
-**Stride-based vertex-layout dispatch** in `submit` (.cpp:1164-1794) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
+**Stride-based vertex-layout dispatch** in `submit` (.cpp:1279-1909) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
 - stride 32 OR glTF (kind `GltfPrimitive[Instanced]` && stride==**120**): attrib0 POSITION, 1 NORMAL, 2 TEXCOORD (4 floats for glTF, else 2); glTF adds attribs 10-14 (COLOR_0/TANGENT/TEXCOORD sets 2-7) (.cpp:476-524)
 - `GltfPrimitiveInstanced` + `instanceStride==kGltfInstanceMatrixStride` (100): attribs 3-9 from `instanceBuffer` with `glVertexAttribDivisor(...,1)` — instance model matrix (4×vec4) + normal matrix (3×vec3) (.cpp:525-575)
 - `GltfPrimitiveInstanced` + `vertexStride==32` + `instanceStride==kTerrainInstanceStride` (96): the **terrain batch** layout — per-vertex attribs 0-3 from the shared template, attribs 4-9 = 6×vec4 per-instance with divisor 1 (rel×3 / dispMorph / clipUv / layers) (.cpp:1047-1051 selects, :1687-1697 sets up)

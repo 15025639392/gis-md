@@ -34,6 +34,43 @@ private:
     bool deviceAlive_ = true;
 };
 
+/// H-S7:2D 带 data 纹理(GL 对象)的回收池。扫掠期映射光栅瓦尺寸稳定
+/// (258×257),glGenTextures + glTexImage2D 分配的 0.5-0.75ms/张是
+/// rasterTex(terrUpd 尖刺最大单项)的成本主体;同尺寸复用只付
+/// glTexSubImage2D。GLTexture 析构时归还,createTexture 按
+/// (target,internalFormat,format,type,size,mipmap) 精确匹配领取。
+/// 与 GLVaoInvalidationRegistry 同生命周期模式:shared_ptr 由 device 与
+/// 各 GLTexture 共持,context 失效时只清 CPU id、不碰 GL。
+class GLTextureRecycler {
+public:
+    struct Entry {
+        unsigned int id = 0;
+        int width = 0;
+        int height = 0;
+        unsigned int target = 0;
+        unsigned int internalFormat = 0;
+        unsigned int format = 0;
+        unsigned int type = 0;
+        bool mipmap = false;
+    };
+    // 显存上界 ≈ 48 × 258×257×4B ≈ 12.7MB(影像瓦 258² 均码)。
+    static constexpr size_t kMaxEntries = 48;
+
+    /// 领取精确匹配的空闲纹理;命中填 *out 并从池移除,未命中不消耗。
+    bool pop(int width, int height, unsigned int target,
+             unsigned int internalFormat, unsigned int format,
+             unsigned int type, bool mipmap, Entry* out);
+    /// 归还;池满或 context 已失效返回 false(调用方 glDeleteTextures)。
+    bool recycle(const Entry& entry);
+    /// context 失效:只丢 CPU id,不调 GL(与 VAO/PBO 环同纪律)。
+    void clearCpuIds();
+
+private:
+    std::mutex mutex_;
+    std::vector<Entry> entries_;
+    bool dead_ = false;
+};
+
 /// OpenGL ES 3.0 渲染后端。
 /// 假设调用者已创建并激活 EGL context。
 class RenderDeviceGLES : public RenderDevice {
@@ -179,6 +216,12 @@ private:
     std::unordered_map<VaoKey, VaoEntry, VaoKeyHash> vaoCache_;
     uint64_t vaoUseCounter_ = 0;
     std::shared_ptr<GLVaoInvalidationRegistry> vaoRegistry_;
+    // H-S7:纹理回收池登记表(shared_ptr 与各 GLTexture 共持,保证比 texture
+    // 活得久;context 失效时只清 CPU id)。见 GLTextureRecycler。
+    std::shared_ptr<GLTextureRecycler> textureRecycler_;
+    // H-S7 命中诊断:2D 带 data 创建中复用池的计数(仅 GL 线程)。
+    int texturePoolHitCount_ = 0;
+    int texturePoolMissCount_ = 0;
 
     // 异步回读环:VT feedback 生产形态。每 slot = PBO + fence + 票号。enqueue 找
     // 空 slot 发 glReadPixels 到 PBO(不 stall)+ glFenceSync;acquire 用
@@ -256,7 +299,12 @@ public:
               unsigned int target = 0x0DE1 /* GL_TEXTURE_2D */,
               int arrayLayers = 1,
               unsigned int glFormat = 0x1908 /* GL_RGBA */,
-              size_t bytesPerPixel = 4);
+              size_t bytesPerPixel = 4,
+              unsigned int internalFormat = 0x8058 /* GL_RGBA8 */,
+              unsigned int type = 0x1401 /* GL_UNSIGNED_BYTE */,
+              bool mipmap = false,
+              bool recyclable = false,
+              std::shared_ptr<GLTextureRecycler> recycler = {});
     ~GLTexture() override;
     int width() const override { return width_; }
     int height() const override { return height_; }
@@ -274,6 +322,11 @@ private:
     int arrayLayers_ = 1;
     unsigned int glFormat_ = 0x1908;
     size_t bytesPerPixel_ = 4;
+    unsigned int internalFormat_ = 0x8058;
+    unsigned int type_ = 0x1401;
+    bool mipmap_ = false;
+    bool recyclable_ = false;
+    std::shared_ptr<GLTextureRecycler> recycler_;
 };
 
 /// 离屏 framebuffer:color 恒为可采样 GLTexture(生命周期归本对象)。
