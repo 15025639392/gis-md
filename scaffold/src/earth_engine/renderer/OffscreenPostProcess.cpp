@@ -2,6 +2,7 @@
 
 #include "../debug/PlatformLog.h"
 #include "../environment/AtmosphereSkyColorGLSL.h"
+#include "PostProcessModel.h"
 
 #include <string>
 
@@ -36,31 +37,27 @@ void main() {
 // Tonemap(T2 强制终端):采样线性 HDR 场景色 → Khronos PBR-Neutral tonemap
 // → sRGB encode → 8bit。highp(mediump 存不下 HDR >1)。曲线 = Cesium 默认
 // 同款(hue 稳定、不过饱和)。u_tileTexture=离屏 HDR color(unit 0)。
-const char* kTonemapFragGLSL = R"(#version 300 es
+// ⚠️ 曲线函数体由 PostProcessModel.h 生成(pbrNeutralToneMappingGLSL),
+// 与 kAerialFogTonemapMain 共用同一份 —— 勿在此处另写第二份(L-P4)。
+const char* kTonemapFragHead = R"(#version 300 es
 precision highp float;
 uniform sampler2D u_tileTexture;
 in vec2 v_uv;
 out vec4 fragColor;
-vec3 pbrNeutralToneMapping(vec3 color) {
-    const float startCompression = 0.8 - 0.04;
-    const float desaturation = 0.15;
-    float x = min(color.r, min(color.g, color.b));
-    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
-    color -= offset;
-    float peak = max(color.r, max(color.g, color.b));
-    if (peak < startCompression) return color;
-    float d = 1.0 - startCompression;
-    float newPeak = 1.0 - d * d / (peak + d - startCompression);
-    color *= newPeak / peak;
-    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
-    return mix(color, vec3(newPeak), g);
-}
+)";
+
+const char* kTonemapFragMain = R"(
 void main() {
     vec3 hdr = texture(u_tileTexture, v_uv).rgb;           // 线性 HDR 场景色
     vec3 mapped = pbrNeutralToneMapping(max(hdr, vec3(0.0)));
     fragColor = vec4(pow(mapped, vec3(1.0 / 2.2)), 1.0);   // linear → sRGB
 }
 )";
+
+std::string tonemapFragGLSL() {
+    return std::string(kTonemapFragHead) + pbrNeutralToneMappingGLSL() +
+           kTonemapFragMain;
+}
 
 // FXAA(Timothy Lottes / NVIDIA 经典版,luma 边缘检测 + 定向 4-tap 模糊)。
 // u_inverseResolution = (1/width, 1/height),邻域 texel 偏移用。低对比区
@@ -153,6 +150,8 @@ out vec4 fragColor;
 // 模型,逐分量恒等 → 远处地形融进正前方天空、交接无缝。见
 // AtmosphereSkyColorGLSL.h。旧的本地 skyColorFor 已删除(那是与大气 pass
 // 平行的第二套近似,正是"搭配不完美"的根因)。
+// ⚠️ fog 剂量数学由 PostProcessModel.h 生成(aerialFogMathGLSL),与
+// kAerialFogTonemapMain 共用同一份 —— 勿在此处另写第二份(L-P4)。
 const char* kAerialFogFragMain = R"(
 void main() {
     vec3 color = texture(u_tileTexture, v_uv).rgb;
@@ -177,33 +176,21 @@ void main() {
     vec3 sun = normalize(u_sunDir);
     float camHeight = max(length(u_camPos) - u_planetRadius, 0.0);
 
-    // 密度:基础强度 × 视线角(地平线最浓、朝下清)× 高度衰减(近地浓、
-    // 超 maxHeight 关)。maxHeight=150km:高空俯瞰基本无雾。
-    const float maxHeight = 150000.0;
-    float viewWeight = 1.0 - abs(dot(rayDir, up));
-    float heightWeight = smoothstep(maxHeight, 0.0, camHeight);
-    float density = u_fogParams.x * viewWeight * heightWeight;
+    // 密度/雾量/地平线强制/spaceFactor(单一来源,见 PostProcessModel.h)。
+    // 平-指数雾(aerial perspective):haze 从近到远连续累积,给出纵深空间感。
+    // 地平线处强制全雾消除交接硬边;雾色 = computeSkyColor。
+)";
 
-    float startDistance = u_fogParams.y;
-    float fogDist = max(d - startDistance, 0.0);
-    // 平-指数雾(aerial perspective):haze 从近到远**连续**累积,给出纵深/
-    // 空间感。指数-平方会让近处极清、只有地平线饱和(二元、无中景过渡、显
-    // 平),故用平-exp——中景就开始渐变发蓝,如 Google Earth。
-    float fog = clamp(1.0 - exp(-fogDist * density), 0.0, 1.0);
-    // 地平线处(视线近水平,viewUp≈0)强制全雾:最远地形距离有限,普通指数
-    // 雾只到 ~0.9,残留几%地形色比纯雾天空略深 → 地平线硬轮廓边。这里让近
-    // 水平视线的地形完全融进天空(GE 远景本就全雾化),消除交接硬边。
-    float viewUp = dot(rayDir, up);
-    fog = max(fog, 1.0 - smoothstep(0.0, 0.06, abs(viewUp)));
-
-    // 雾色 = 该视线方向的天空色(与大气 pass 同一 computeSkyColor)。
-    // spaceFactor 用与大气 pass 一致的公式(近地 fog 生效区恒≈0,深黑项
-    // 不起作用,但保持同源可读)。
-    float spaceFactor = smoothstep(120000.0, 900000.0, camHeight);
+const char* kAerialFogFragMainTail = R"(
     vec3 fogColor = computeSkyColor(rayDir, up, sun, spaceFactor);
     fragColor = vec4(mix(color, fogColor, fog), 1.0);
 }
 )";
+
+std::string aerialFogFragMain() {
+    return std::string(kAerialFogFragMain) + aerialFogMathGLSL() +
+           kAerialFogFragMainTail;
+}
 
 // AerialFogTonemap(B0):HDR 路径下 fog + tonemap 合并终端。共用 kAerialFogFragHead
 // 的 uniform 集(采样离屏 HDR color + depth,重建视距/视线),先按 kAerialFogFragMain
@@ -213,22 +200,13 @@ void main() {
 // ⚠️ 色彩空间:HDR 下离屏 16F 里地形(kTerrainLightHdrGLSL)与背景天空
 // (kAtmosphereComposeHdr)都是**线性**;computeSkyColor 返回 gamma 显示色,故雾色
 // 必须 srgbToLinear 后再 mix,否则全雾像素比背景天空亮一个 gamma(地平线雾带过亮)。
-const char* kAerialFogTonemapMain = R"(
+// ⚠️ fog 剂量数学与 tonemap 曲线均由 PostProcessModel.h 生成(与纯 AerialFog /
+// 纯 Tonemap 共用同一份,逐字复用,不另立第三套)。
+const char* kAerialFogTonemapPreamble = R"(
 vec3 srgbToLinear(vec3 c) { return pow(max(c, vec3(0.0)), vec3(2.2)); }
-vec3 pbrNeutralToneMapping(vec3 color) {
-    const float startCompression = 0.8 - 0.04;
-    const float desaturation = 0.15;
-    float x = min(color.r, min(color.g, color.b));
-    float offset = x < 0.08 ? x - 6.25 * x * x : 0.04;
-    color -= offset;
-    float peak = max(color.r, max(color.g, color.b));
-    if (peak < startCompression) return color;
-    float d = 1.0 - startCompression;
-    float newPeak = 1.0 - d * d / (peak + d - startCompression);
-    color *= newPeak / peak;
-    float g = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
-    return mix(color, vec3(newPeak), g);
-}
+)";
+
+const char* kAerialFogTonemapMainHead = R"(
 void main() {
     vec3 color = texture(u_tileTexture, v_uv).rgb;   // 线性 HDR 场景色
     float zWin = texture(u_depthTexture, v_uv).r;
@@ -247,19 +225,10 @@ void main() {
         vec3 up = normalize(u_camPos);
         vec3 sun = normalize(u_sunDir);
         float camHeight = max(length(u_camPos) - u_planetRadius, 0.0);
+        // 密度/雾量/地平线强制/spaceFactor(单一来源,见 PostProcessModel.h)。
+)";
 
-        const float maxHeight = 150000.0;
-        float viewWeight = 1.0 - abs(dot(rayDir, up));
-        float heightWeight = smoothstep(maxHeight, 0.0, camHeight);
-        float density = u_fogParams.x * viewWeight * heightWeight;
-
-        float startDistance = u_fogParams.y;
-        float fogDist = max(d - startDistance, 0.0);
-        float fog = clamp(1.0 - exp(-fogDist * density), 0.0, 1.0);
-        float viewUp = dot(rayDir, up);
-        fog = max(fog, 1.0 - smoothstep(0.0, 0.06, abs(viewUp)));
-
-        float spaceFactor = smoothstep(120000.0, 900000.0, camHeight);
+const char* kAerialFogTonemapTail = R"(
         // 雾色线性化:与线性地形/背景天空(kAtmosphereComposeHdr 也 srgbToLinear)
         // 同域,mix 才自洽。
         vec3 fogColor = srgbToLinear(computeSkyColor(rayDir, up, sun, spaceFactor));
@@ -269,6 +238,13 @@ void main() {
     fragColor = vec4(pow(mapped, vec3(1.0 / 2.2)), 1.0);  // linear → sRGB
 }
 )";
+
+std::string aerialFogTonemapMain() {
+    return std::string(kAerialFogTonemapPreamble) +
+           pbrNeutralToneMappingGLSL() +
+           kAerialFogTonemapMainHead +
+           aerialFogMathGLSL() + kAerialFogTonemapTail;
+}
 
 const char* diagTag(OffscreenPostProcess::Effect effect) {
     switch (effect) {
@@ -294,13 +270,13 @@ std::string fragForEffect(OffscreenPostProcess::Effect effect) {
             // 拼接:头(uniform) + 共享 computeSkyColor + main。雾色与大气
             // pass 同源。
             return std::string(kAerialFogFragHead) + kSkyColorGLSL() +
-                   kAerialFogFragMain;
+                   aerialFogFragMain();
         case OffscreenPostProcess::Effect::Tonemap:
-            return kTonemapFragGLSL;
+            return tonemapFragGLSL();
         case OffscreenPostProcess::Effect::AerialFogTonemap:
             // 头(uniform,含 depth)+ 共享 computeSkyColor + fog-then-tonemap main。
             return std::string(kAerialFogFragHead) + kSkyColorGLSL() +
-                   kAerialFogTonemapMain;
+                   aerialFogTonemapMain();
         case OffscreenPostProcess::Effect::Passthrough:
         default:
             return kBlitFragGLSL;

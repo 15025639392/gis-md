@@ -2876,16 +2876,18 @@ Single translation unit defining `STB_IMAGE_IMPLEMENTATION` (avoids multiple-def
 
 ### OffscreenPostProcess.h / .cpp
 
-离屏后处理(332 行)。一个 framebuffer + 一个全屏三角形 + 按 `Effect` 选片元着色器。
+离屏后处理(421 行)。一个 framebuffer + 一个全屏三角形 + 按 `Effect` 选片元着色器。
+⚠️ tonemap 曲线与 fog 剂量数学的**唯一事实源**在 `renderer/PostProcessModel.h`
+(C++ 常量 + GLSL 生成函数 + host 镜像),此处 shader 只做拼接引用(L-P4)。
 
 | 项 | 行 | 说明 |
 |---|---|---|
-| 内置 GLSL | — | `kFullscreenVertGLSL` (.cpp:14)、`kBlitFragGLSL` (.cpp:26)、`kTonemapFragGLSL` (.cpp:39,PBR-Neutral HDR tonemap)、`kFxaaFragGLSL` (.cpp:68,`luma` 辅助在 .cpp:81) |
-| `diagTag` / `fragForEffect` | .cpp:273-288 / :289-311 | Effect → 诊断名 / 片元源 |
-| `initialize` | .cpp:312-354 | 编 shader,建全屏几何 |
-| `ensureFramebuffer` | .cpp:355-389 | 按尺寸建/复用 FBO |
-| `buildCommand` | .cpp:390-437 | 出后处理 RenderCommand |
-| `dispose` | .cpp:438-445 | |
+| 内置 GLSL | — | `kFullscreenVertGLSL` (.cpp:15)、`kBlitFragGLSL` (.cpp:27)、`kTonemapFragHead`/`kTonemapFragMain` (.cpp:42/:49,由 `tonemapFragGLSL()` .cpp:57 拼 PBR-Neutral 曲线)、`kFxaaFragGLSL` (.cpp:65,`luma` 辅助在其内) |
+| `diagTag` / `fragForEffect` | .cpp:249-264 / :265-287 | Effect → 诊断名 / 片元源(tonemap/fog 由 PostProcessModel.h 生成函数拼接) |
+| `initialize` | .cpp:288-330 | 编 shader,建全屏几何 |
+| `ensureFramebuffer` | .cpp:331-365 | 按尺寸建/复用 FBO |
+| `buildCommand` | .cpp:366-413 | 出后处理 RenderCommand |
+| `dispose` | .cpp:414-421 | |
 
 ⚠️ 离屏 FBO **必须带 stencil 附件**,否则贴地面的 stencil 测试恒通过、整侧影染色
 (P6a 根因)。判别法:改 stencil func 探针画面不变 = 先查附件。
@@ -3293,18 +3295,18 @@ Full-screen atmospheric-scattering pass, ported from openglobus `Atmosphere.ts` 
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| `initialize(RenderDevice*)` | .cpp:332-376 | Compiles shader (Head+SkyColor+**compose variant**+Main), uploads 4-vertex fullscreen quad (`TriangleStrip`) |
-| `buildCommand(camPos,fov,vpW,vpH,camRight,camUp,camForward,sunDir,params,opacity=1)` | .cpp:378-435 | Emits one `RenderCommand`, kind `AtmosphereBackground` (.cpp:391) |
-| `isReady()` / `dispose()` | .h:46 / .cpp:437-440 | |
-| GLSL vert `kAtmosphereBackgroundVert` | .cpp:19-27 | Draws at `gl_Position.z=0` (reverse-Z far plane) after terrain; composites only sky pixels |
-| GLSL frag (Head+SkyColor+compose+Main) | .cpp:29-322 | View ray rebuilt in ECEF from camera basis (.cpp:94-102); ray-sphere shell intersect (.cpp:114-124); **ground-facing rays → gap-fill haze** (.cpp:159-166) so ground haze belongs to surface shader |
-| Output compose `composeAtmosphereOutput` (LDR/HDR variant) | .cpp:77-90 | `kEnableHdrPipeline` OFF → `sky+sun` 直出显示色(= 现状);ON → sky `srgbToLinear`,太阳项 `*kSunHdrBoost`(provisional 6.0)推进 HDR 高光 → PBR-Neutral tonemap 过曝白芯 |
-| Scatter integral | .cpp:168-189 | `SAMPLE_COUNT=8`, `rayleighScaleHeight=8000`, `mieScaleHeight=1200` |
-| Phase fns | .cpp:51-61 | `rayleighPhase`; softened Henyey-Greenstein `miePhase` (g=0.76) |
-| Sun disk + 多层柔光晕(halo) | .cpp:265-302 | Limb darkening;盘 + halo1/2/3 三层柔光晕。离散放射光束(sunburst)已删——开阔地平线无云隙光,收敛为大气散射柔光晕;拆成 `sunEmissive` 供 compose 单独 boost |
-| Alpha composite | .cpp:304-320 | `skyAlpha` fades to 0.18 in space; limb + sun alpha |
+| `initialize(RenderDevice*)` | .cpp:331-377 | Compiles shader (Head+**量B 常量/ramp**+SkyColor+**compose variant**+Main), uploads 4-vertex fullscreen quad (`TriangleStrip`) |
+| `buildCommand(camPos,fov,vpW,vpH,camRight,camUp,camForward,sunDir,params,opacity=1)` | .cpp:379-436 | Emits one `RenderCommand`, kind `AtmosphereBackground` (.cpp:392) |
+| `isReady()` / `dispose()` | .h:46 / .cpp:438-441 | |
+| GLSL vert `kAtmosphereBackgroundVert` | .cpp:20-28 | Draws at `gl_Position.z=0` (reverse-Z far plane) after terrain; composites only sky pixels |
+| GLSL frag (Head+量B+SkyColor+compose+Main) | .cpp:30-329 | View ray rebuilt in ECEF from camera basis (.cpp:101-109); ray-sphere shell intersect (.cpp:121-131); **ground-facing rays → gap-fill haze** (.cpp:166-173) so ground haze belongs to surface shader; ⚠️ 量 B ramp/系数由 `renderer/PostProcessModel.h` 生成(L-P4) |
+| Output compose `composeAtmosphereOutput` (LDR/HDR variant) | .cpp:84-92 | `kEnableHdrPipeline` OFF → `sky+sun` 直出显示色(= 现状);ON → sky `srgbToLinear`,太阳项 `*kSunHdrBoost`(provisional 6.0)推进 HDR 高光 → PBR-Neutral tonemap 过曝白芯 |
+| Scatter integral | .cpp:175-196 | `SAMPLE_COUNT=8`, `rayleighScaleHeight=8000`, `mieScaleHeight=1200` |
+| Phase fns | .cpp:58-68 | `rayleighPhase`; softened Henyey-Greenstein `miePhase` (g=0.76) |
+| Sun disk + 多层柔光晕(halo) | .cpp:272-309 | Limb darkening;盘 + halo1/2/3 三层柔光晕。离散放射光束(sunburst)已删——开阔地平线无云隙光,收敛为大气散射柔光晕;拆成 `sunEmissive` 供 compose 单独 boost |
+| Alpha composite | .cpp:311-327 | `skyAlpha` fades to 0.18 in space; limb + sun alpha |
 
-Render command state (.cpp:390-406): `pass="color"`, depthTest on / depthWrite off, alpha blend (SrcAlpha/OneMinusSrcAlpha), no cull. Uniform `u_bottomRadius` is the local surface radius from `Ellipsoid::projectToSurface(cameraPos)` (.cpp:421-425), `u_topRadius = bottom + atmosHeight`.
+Render command state (.cpp:391-407): `pass="color"`, depthTest on / depthWrite off, alpha blend (SrcAlpha/OneMinusSrcAlpha), no cull. Uniform `u_bottomRadius` is the local surface radius from `Ellipsoid::projectToSurface(cameraPos)` (.cpp:422-426), `u_topRadius = bottom + atmosHeight`.
 
 ### SkyBox.h / .cpp
 

@@ -1222,6 +1222,12 @@ add_executable(test_sky_color_model
 target_link_libraries(test_sky_color_model PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_sky_color_model COMMAND test_sky_color_model)
 
+add_executable(test_post_process_model
+    unit/renderer/test_post_process_model.cpp
+)
+target_link_libraries(test_post_process_model PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_post_process_model COMMAND test_post_process_model)
+
 # ============================================================
 # 文档一致性(非 C++ 测试)
 # ============================================================

@@ -1,5 +1,6 @@
 #include "AtmosphereBackgroundPass.h"
 #include "AtmosphereSkyColorGLSL.h"
+#include "../renderer/PostProcessModel.h"
 #include "../renderer/PipelineConfig.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include <glm/gtc/constants.hpp>
@@ -246,10 +247,10 @@ void main() {
     // PBR-Neutral 的漂白区,故红色得以在 tonemap 后存活(暗红 vs 白热芯)。高日光
     // sunLow=0 → tint=白、dim=1 → 与旧行为逐字等价。
     float sunElevSky = dot(sun, localUp);
-    float sunLowSky = 1.0 - smoothstep(0.0, 0.25, max(sunElevSky, 0.0));
-    vec3 sunsetTint = mix(vec3(1.0), vec3(1.0, 0.42, 0.16), sunLowSky);
-    float sunDim = mix(1.0, 0.22, sunLowSky);  // 日落太阳整体压暗:芯 boost 后落到
-                                               // ~2 的 tonemap 不漂白区 → 橙红存活
+    float sunLowSky = sunLowSkyRamp(sunElevSky);  // 量 B ramp,见 PostProcessModel.h
+    vec3 sunsetTint = mix(vec3(1.0), kSunsetTint, sunLowSky);
+    float sunDim = mix(1.0, kSunDimLow, sunLowSky);  // 日落太阳整体压暗:芯 boost 后
+                                                     // 落到 ~2 的 tonemap 不漂白区
     // d: 归一化角距，1.0 落在圆盘边缘。
     float discRadius = baseSunRadius * 0.72;
     float d = sunAngle / discRadius;
@@ -290,7 +291,7 @@ void main() {
     // 响应区(峰值~2,几乎不 desaturate),橙红得以存活。高日光 discSunset=1 = 零回归。
     vec3 sunDisc = discColor * (core + limb * 0.35) + discBloom;
     vec3 sunGlow = haloColor;
-    float discSunset = mix(1.0, 0.25, sunLowSky);
+    float discSunset = mix(1.0, kDiscSunsetLow, sunLowSky);
     vec3 sunColor = (sunDisc * discSunset + sunGlow) * sunsetTint;   // 日落整体红移
 
     float sunEnabled = step(0.5, u_sunDiskEnabled);
@@ -337,10 +338,12 @@ bool AtmosphereBackgroundPass::initialize(RenderDevice* device) {
 
     ShaderDesc shaderDesc;
     shaderDesc.vertexSource = kAtmosphereBackgroundVert;
-    // 拼接:头(uniform+phase 函数) + 共享 computeSkyColor + 输出合成变体
-    // (LDR/HDR 编译期择一,见 kEnableHdrPipeline) + main。
+    // 拼接:头(uniform+phase 函数) + 量 B 常量/ramp(PostProcessModel.h) +
+    // 共享 computeSkyColor + 输出合成变体(LDR/HDR 编译期择一) + main。
     shaderDesc.fragmentSource =
-        std::string(kAtmosphereBackgroundFragHead) + kSkyColorGLSL() +
+        std::string(kAtmosphereBackgroundFragHead) +
+        sunDiscSunsetConstantsGLSL() + sunLowSkyRampGLSL() +
+        kSkyColorGLSL() +
         (kEnableHdrPipeline ? kAtmosphereComposeHdr : kAtmosphereComposeLdr) +
         kAtmosphereBackgroundFragMain;
     auto shaderPtr = device->createShader(shaderDesc);
