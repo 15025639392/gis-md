@@ -86,7 +86,7 @@
 | **I-P1** | `HttpCache` 无过期 / 无 ETag 重验 | 影像一旦缓存永不刷新;源端更新用户看不到 | 未做。**TTL 口径是跨会话共享约定,须你先拍**再实现 |
 | **I-P2** | `FrameResourceBudget::canIssue` 忽略 `FrameResourcePriority` | 预算紧张的那一帧,urgent 可能被 preload 占满名额而 Blocked | 未做。影响被 HTTP 层动态优先级 cell 部分兜底(下一帧重试时排在前面),**是帧级延迟不是持续饥饿** |
 | **I-P3** | 空洞瓦每帧重走完整 `update()`(state 非 `Attached`,`hasStableUpdateState()` false) | 洞区瓦片的 per-frame CPU;无网络无合成 | ✅ 已量化(2026-08-22 host,Debug/Release 双口径):机制属实(空合成瓦 ready 无 rendererResources → Step 1 每帧踢回 Unattached),但成本可忽略——Release 每瓦每帧 update() 差值 0.00002ms、prefetch() 差值 0.00019ms(200 洞瓦 ≈ 0.04ms/帧)。**不立项**。证据:`test_raster_hole_update_cost` 2 测试 |
-| **I-P4** | `RasterOverlayTileProvider.cpp` 4785 行,四路失效逻辑互调 | 可维护性,不是运行期成本 | ✅ 已拆完(2026-08-22 第四刀 4a+4b):主文件 4785→4171→3122→2829→2701→**2006**(budget TU + 共享几何收口 + load/issue 簇拆 `RasterOverlayTileLoadDispatch.cpp` 730 行)。每刀逐字搬移 + 全量回归;raster ctest + 全量 201/201 绿。剩 2006 行,下一刀 5(processPendingUploads ~335 行,闭包最干净)已确认 |
+| **I-P4** | `RasterOverlayTileProvider.cpp` 4785 行,四路失效逻辑互调 | 可维护性,不是运行期成本 | ✅ 已拆完(2026-08-22 第四刀 4a+4b+5):主文件 4785→4171→3122→2829→2701→2006→**1630**(budget TU + 共享几何收口 + load/issue 簇 `RasterOverlayTileLoadDispatch.cpp` + 上传簇 `RasterOverlayUploadProcessor.cpp`)。每刀逐字搬移 + 全量回归;raster ctest + 全量 201/201 绿。剩 1630 行(缓存/获取/失效/同步),可选拆刀 6(sync/trim 160 行) |
 
 **I-P4 第四刀设计(2026-08-22,依赖闭包分析结论,未实施)**:
 匿名 helper 已按簇分层,每刀需求:
