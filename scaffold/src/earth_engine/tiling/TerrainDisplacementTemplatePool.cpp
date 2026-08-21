@@ -12,6 +12,7 @@
 #include "../renderer/RenderCommand.h"
 #include "../renderer/RenderDevice.h"
 #include "../renderer/TerrainHeightBakeShader.h"  // B:GPU 烘焙 shader
+#include "../debug/PlatformLog.h"
 #include "GltfRenderGeometryBuilder.h"  // TerrainGpuVertex
 #include "SchemeId.h"
 
@@ -66,6 +67,27 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
         // 瓦片决定并永久缓存,前提一旦被破坏,整行都用错尺寸几何且不自愈 ——
         // 屏幕上就是「瓦片画大/画小,四周露背景」。不猜成因,当场比。
         const Entry& e = it->second;
+        // T-P5 元凶定位:同一缓存键被**不同 scheme** 复用 = 要么两套方案被
+        // intern 成同一 handle,要么调用点用 A 的 key 配了 B 的 bounds。
+        // 命中即打印双方 schemeId 字符串 + 键分量,一次真机复现即可定位。
+        if (e.builtSchemeId != key.schemeId) {
+            static std::atomic<int> schemeMismatchLogged{0};
+            if (schemeMismatchLogged.fetch_add(1) < 16) {
+                platformLog(
+                    LogLevel::Error,
+                    "TemplatePool",
+                    "TEMPLATE_SCHEME_MISMATCH req=%s built=%s z=%d y=%d grid=%d "
+                    "latSpan=%.9f lonSpan=%.9f key=%llu",
+                    key.schemeId.str().c_str(),
+                    e.builtSchemeId.str().c_str(),
+                    key.z,
+                    key.y,
+                    gridSize,
+                    wantLat,
+                    wantLon,
+                    static_cast<unsigned long long>(k));
+            }
+        }
         const double latRatio =
             e.builtLatSpan > 0.0 ? wantLat / e.builtLatSpan : 1.0;
         const double lonRatio =
@@ -142,6 +164,22 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
     }
 
     Entry entry;
+    entry.builtSchemeId = key.schemeId;
+    static std::atomic<int> templateBuildLogged{0};
+    if (templateBuildLogged.fetch_add(1) < 32) {
+        platformLog(
+            LogLevel::Info,
+            "TemplatePool",
+            "TEMPLATE_BUILD scheme=%s z=%d y=%d grid=%d latSpan=%.9f "
+            "lonSpan=%.9f key=%llu",
+            key.schemeId.str().c_str(),
+            key.z,
+            key.y,
+            gridSize,
+            wantLat,
+            wantLon,
+            static_cast<unsigned long long>(k));
+    }
     entry.vertexBuffer = device_->createBuffer(vboDesc);
     if (!entry.vertexBuffer) {
         return nullptr;

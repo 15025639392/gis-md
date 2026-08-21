@@ -267,6 +267,10 @@ private:
         // 破坏,整行从此都用错尺寸的几何,且不会自愈。存下来就能当场比对。
         double builtLatSpan = 0.0;
         double builtLonSpan = 0.0;
+        // 建模方的 schemeId(interned handle,O(1) 指针比较)。T-P5:若某调用点
+        // 用 A 的 key 配 B 的 bounds,或两套切片方案被 intern 成同一 handle,
+        // 命中比对立刻暴露「谁和谁撞了同一个模板键」—— 打印双方字符串。
+        SchemeId builtSchemeId;
     };
 
     // 按 gridSize 共享的索引缓冲(内容纯拓扑,与瓦片位置无关)。生命周期与池

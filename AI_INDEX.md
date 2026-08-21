@@ -1922,17 +1922,17 @@ geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDe
 
 | 项 | 行 | 说明 |
 |---|---|---|
-| `cacheKey` | .cpp:28-30 | TileKey + 参数 → 模板缓存键 |
-| `acquire` | .cpp:52-115 | 取(或建)一份模板几何 |
-| `heightCacheKey` | .cpp:160-128 | 高度纹理缓存键 |
-| `findHeightArray` / `ensureHeightArray` | .cpp:173-134 / :136-162 | 按 gridSize 取/建高度 texture array |
-| `bakeTerrainHeightNormalTexels` | .cpp:212-347 | 烘高度 + **切空间法线到 B/A 通道** |
-| `acquireHeightTexture` | .cpp:348-469 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
-| `ensureBakeResources` | .cpp:478-494 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
-| `flushHeightBakes` | .cpp:495-582 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer)。burst(>1)时打 `HeightBakeFlush` 诊断(2026-08-21 GPU swap 尖刺排查;真机已排除烘焙为尖刺源)。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
-| `updateEdgeLutRows` | .cpp:574-601 | 写本帧边吸附的邻居高度差表(①-1)。**H-B1+H-S4(2026-08-21):字节 diff 相同跳过;变化者只入池(不再立即上传),帧末 `flushEdgeLutUploads` 批量灌入**—— 运动期 frameState 6.8-14.6ms 的逐层小上传被摊成每 array 一次调用。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
-| `enqueueEdgeLutUpload` / `flushEdgeLutUploads` | .cpp:602-614 / :619-714 | H-S4 批量上传:本帧待传层按 array 拼成连续内存(中间未变层用缓存/差值 0 填充),每 array 一次 `updateTextureArrayRegion`(GLES depth=层数单次 PBO)。失败保留旧缓存,下一帧字节 diff 自动重试 |
-| `touchHeightTexture` | .cpp:715-724 | LRU 触碰 |
+| `cacheKey` | .cpp:30-32 | TileKey + 参数 → 模板缓存键 |
+| `acquire` | .cpp:54-138 | 取(或建)一份模板几何;命中比对建模方 schemeId(T-P5 看门) |
+| `heightCacheKey` | .cpp:199-211 | 高度纹理缓存键 |
+| `findHeightArray` / `ensureHeightArray` | .cpp:212-217 / :218-251 | 按 gridSize 取/建高度 texture array |
+| `bakeTerrainHeightNormalTexels` | .cpp:252-387 | 烘高度 + **切空间法线到 B/A 通道** |
+| `acquireHeightTexture` | .cpp:388-506 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
+| `ensureBakeResources` | .cpp:507-523 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
+| `flushHeightBakes` | .cpp:524-611 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer)。burst(>1)时打 `HeightBakeFlush` 诊断(2026-08-21 GPU swap 尖刺排查;真机已排除烘焙为尖刺源)。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
+| `updateEdgeLutRows` | .cpp:612-639 | 写本帧边吸附的邻居高度差表(①-1)。**H-B1+H-S4(2026-08-21):字节 diff 相同跳过;变化者只入池(不再立即上传),帧末 `flushEdgeLutUploads` 批量灌入**—— 运动期 frameState 6.8-14.6ms 的逐层小上传被摊成每 array 一次调用。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
+| `enqueueEdgeLutUpload` / `flushEdgeLutUploads` | .cpp:640-656 / :657-752 | H-S4 批量上传:本帧待传层按 array 拼成连续内存(中间未变层用缓存/差值 0 填充),每 array 一次 `updateTextureArrayRegion`(GLES depth=层数单次 PBO)。失败保留旧缓存,下一帧字节 diff 自动重试 |
+| `touchHeightTexture` | .cpp:753-762 | LRU 触碰 |
 
 ### HeightmapTerrainContentProvider.h / .cpp
 
