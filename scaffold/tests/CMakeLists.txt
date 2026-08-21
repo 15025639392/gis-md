@@ -335,6 +335,12 @@ add_executable(test_terrain_displacement_template
 target_link_libraries(test_terrain_displacement_template PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_terrain_displacement_template COMMAND test_terrain_displacement_template)
 
+add_executable(test_terrain_cpu_bake_cost
+    unit/tiling/test_terrain_cpu_bake_cost.cpp
+)
+target_link_libraries(test_terrain_cpu_bake_cost PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_terrain_cpu_bake_cost COMMAND test_terrain_cpu_bake_cost)
+
 add_executable(test_tile_bounding_volume
     unit/tiling/test_tile_bounding_volume.cpp
 )

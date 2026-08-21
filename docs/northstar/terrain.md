@@ -156,7 +156,7 @@ zoom 维度**,判定却留在旧维度 —— 这是 T-V7 此前失效的成因,
 | # | 债 | 量化状态 |
 |---|---|---|
 | **T-P1** | Metal 从未绑定地形高度纹理:`RenderDeviceMetal.mm:1114` 绑定循环上界曾 = 22,而 `kGltfHeightTextureSlot = 22` 被排除 → Metal 侧 GPU 位移形同休眠。上界已随槽 23 扩容改为 `kGltfTerrainNormalTextureSlot + 1`,但**位移本身仍未接线** | 与 T-V8 同根 |
-| **T-P2** | 非 GLES 后端回退 CPU 烘焙高度层 | **未量化** —— CPU 烘焙相对 GPU 烘焙的成本差没测过 |
+| **T-P2** | 非 GLES 后端回退 CPU 烘焙高度层 | ✅ 已量化 CPU 侧(2026-08-22 host,Release -O2 arm64):`bakeTerrainHeightNormalTexels` 每瓦 coarse(65²)=0.087ms、dense(257²)=0.938ms;GPU 路径 CPU 侧打包(514² 源)仅 0.130ms → CPU 烘焙多付 ~0.81ms/瓦(dense)。20 瓦 dense 一帧 ≈ 18.8ms(host,手机预计 2-5×)。**不单独立项**:修复归属 T-V8/T-P1(Metal 补 MSL 走 GPU 烘焙);若 iOS 真机 churn 尖刺复现,CPU 烘焙是候选元凶,先分解再决定。GPU RTT 本体 host 不可测(T-P6),成本差仅 CPU 侧钉死。证据:`test_terrain_cpu_bake_cost`(Debug 19.9ms/瓦是 -O0 放大 ~21×,勿用) |
 | **T-P3** | fill 代理构建同步且无帧预算封顶:`TileUpdateSelectionWorkRunner.h:237` 对每个可见瓦片循环调用 `ensureFillProxy`,`fillStartMs` 仅事后计时,无 break/budget | ✅ 已量化(2026-08-22 host,Release -O2 arm64):每瓦全量构建 mean 0.072ms(median 0.054,grid16;grid8 0.017/grid32 0.218,~grid² 缩放);burst 32/64/128 瓦一帧 = 3.8/5.0/10.6ms;稳态签名早退 0.00003ms;高度采样增量 0.006ms/瓦。**不立项**:单瓦成本已足够低,帧预算收益有限;该循环里更贵的影像 prefetch 半程已有 `frameResourceBudget` 节流。若真机 churn 尖刺仍现,先分解 `prefetchFill`(fill 构建 vs 影像映射),勿先封构建。证据:`test_fill_proxy_build_cost` 4 测试(Debug 1.09ms/瓦是 -O0 放大 ~15× 的假象,勿用) |
 | **T-P5** | 谁和谁撞了同一个模板键**未定位**:`std::hash<SchemeId>` 哈希的是 interned 指针,本该区分两套 scheme —— 所以要么两者被 intern 成同一 handle,要么某调用点用 A 的 key 配了 B 的 bounds。T-V9 的修法是结构性兜底(键含跨度),**没修元凶** | 需再加一处日志打印请求方/建模方的 schemeId 字符串,一次真机复现即可定位 |
 | **T-P4** | HDR 变体常数是 provisional:`TerrainSurfaceLightGLSL.h:52` 的 `shadowFloor=0.15`/`ambientScale=0.6` 明标未定,真正调参在 T2 对着 tonemap 输出做 | 有主(T2),flag 默认关 |
