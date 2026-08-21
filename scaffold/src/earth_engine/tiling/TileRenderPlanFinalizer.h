@@ -322,6 +322,19 @@ struct TileRenderPlanFinalizer {
         }
     }
 
+    /// H-S8:该瓦是否存在可渲染祖先(finalizer 会用祖先裁剪覆盖而非瓦片自身
+    /// 的瞬态面)。谓词必须与 refreshRenderEntries 的 isFallbackRenderable
+    /// 完全一致——fill 阶段用它跳过白建,同一帧判定一致则无缺口窗口。
+    template <typename IsFallbackRenderableFn>
+    static bool hasRenderableAncestor(
+        TilesetTile& tile,
+        IsFallbackRenderableFn&& isFallbackRenderable) {
+        return findNearestRenderableAncestor(
+                   tile,
+                   std::forward<IsFallbackRenderableFn>(
+                       isFallbackRenderable)) != nullptr;
+    }
+
 private:
     struct RenderGeometryIdentity {
         TilesetTile* renderTile = nullptr;

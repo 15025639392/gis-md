@@ -7,6 +7,7 @@
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TileSelectionCounters.h"
 #include "TileFillProxyPreparer.h"
+#include "TileRenderPlanFinalizer.h"
 #include "TileSelectionPerformanceTimings.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionReuseState.h"
@@ -240,6 +241,25 @@ public:
                     tile = ensureTile(key);
                 }
                 if (!tile) continue;
+                // H-S8:有可渲染祖先时跳过 fill 构建。finalizer 的
+                // PreferAncestorForTransientSurface 会对这类瓦用祖先裁剪覆盖,
+                // 这个 fill 建了也不会被画——快速拉入已缓存区域时 25ms/79 片
+                // 的 prefetchFill burst 主体就是这类白建。谓词必须与
+                // refreshRenderEntries 的 isFallbackRenderable 完全一致
+                // (hasDrawableResources + imagery ready),且本循环先于 finalizer
+                // 同帧执行:祖先失渲染的那一帧,这里会重新建 fill,无缺口窗口。
+                if (TileRenderPlanFinalizer::hasRenderableAncestor(
+                        *tile,
+                        [&input](const TilesetTile& ancestor) {
+                            return ancestor.content.renderContent
+                                       .hasDrawableResources() &&
+                                   TileRasterOverlayReadinessPolicy::
+                                       terrainSurfaceImageryDrawableReady(
+                                           ancestor,
+                                           input.rasterOverlays);
+                        })) {
+                    continue;
+                }
                 const TileFillProxyPrepareResult fillResult =
                     TileFillProxyPreparer::ensureFillProxy(
                         *tile,
