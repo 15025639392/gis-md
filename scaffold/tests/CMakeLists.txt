@@ -1216,6 +1216,12 @@ add_executable(test_sunset_warmth_ramp
 target_link_libraries(test_sunset_warmth_ramp PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_sunset_warmth_ramp COMMAND test_sunset_warmth_ramp)
 
+add_executable(test_sky_color_model
+    unit/environment/test_sky_color_model.cpp
+)
+target_link_libraries(test_sky_color_model PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_sky_color_model COMMAND test_sky_color_model)
+
 # ============================================================
 # 文档一致性(非 C++ 测试)
 # ============================================================
