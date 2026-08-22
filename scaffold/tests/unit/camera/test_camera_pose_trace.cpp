@@ -294,7 +294,7 @@ TEST_F(PoseTraceTest, TraceB_PinchDollyTwistPanPitch) {
     EXPECT_TRUE(controller_->groundState().hasTerrainData)
         << "场景失效:没拿到地形样本,滤波/探针分支空转";
 
-    EXPECT_TRACE_HASH(trace_, 0xed5e7ee27054dbecull);
+    EXPECT_TRACE_HASH(trace_, 0x64b41dda0f3e9395ull);
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +370,7 @@ TEST_F(PoseTraceTest, TraceC_TerrainClampAndFilter) {
         << "场景失效:指数逼近没有收敛";
 
     EXPECT_GT(sampleCalls, 0);
-    EXPECT_TRACE_HASH(trace_, 0xed3a6197feae4081ull);
+    EXPECT_TRACE_HASH(trace_, 0xecd490268a7f328cull);
 }
 
 // ---------------------------------------------------------------------------
@@ -416,7 +416,7 @@ TEST_F(PoseTraceTest, TraceD_HighAltitudeRecenterAndSentinel) {
 
     // 2026-08-19:高空球心回中(契约 2.4)——拉远越过 1.5R 后视轴随高度转向地心,
     // TraceD 的偏心 zoom-out 轨迹随之变化,hash 更新。
-    EXPECT_TRACE_HASH(trace_, 0x2073982d83de5871ull);
+    EXPECT_TRACE_HASH(trace_, 0x1db2e1a1821446d3ull);
 }
 
 // ---------------------------------------------------------------------------

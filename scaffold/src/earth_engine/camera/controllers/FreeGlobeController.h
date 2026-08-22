@@ -124,9 +124,11 @@ private:
         Space,
         NearGround
     };
-    /// 模式判据：海拔 < 150km（Cesium minimumPickingTerrainHeight）且
-    /// pitch ≥ 60°（MapLibre issue #6111 高倾斜病态起点）。
-    DragMode resolveDragMode() const;
+    /// 模式判据（对齐 Cesium spin3D）：海拔 < 150km（Cesium
+    /// minimumPickingTerrainHeight）且起手拾取射线与地表**掠射**
+    /// （|dot(rayDir, 地表法线)| < 0.05）或相机在拾取点内侧 → strafe 近地
+    /// 拖图；否则空间拖球（绕地心旋转）。不再用 pitch≥60° 硬阈值。
+    DragMode resolveDragMode(float xPixels, float yPixels) const;
 
     /// 近地像素平移（契约 1.3）：锚点钉在指下，姿态完全锁定；每帧把屏幕
     /// Δpx 经"锚点局部切平面"换算成世界位移（旋转的平直极限，不引入第二套
@@ -145,8 +147,6 @@ private:
     void repinNearGroundAnchor(float fX, float fY,
                                const glm::dvec3& planeNormal,
                                const glm::dvec3& anchorWorld);
-    /// 当前相机姿态下地平线在屏幕上的 y（契约 1.2 地平线几何约束）。
-    double horizonScreenY() const;
     /// 键盘平移（契约 3.3）：空间=转台旋转，近地=切平面平移（带地平线裁剪）。
     void panByPixels(double dx, double dy);
     /// 键盘缩放：绕屏幕中心锚点 ±levels 缩放级（1 级 = ×2）。
@@ -257,8 +257,6 @@ private:
     bool debugHasInertiaAnchor_ = false;
     float nearStartX_ = 0.0f;   // 起手手指像素（锚点初始指下位置）
     float nearStartY_ = 0.0f;
-    double nearHorizonY_ = 1.0e9;        // 地平线屏幕 y（近地模式起手时算一次）
-    double nearPixelsToHorizon_ = 1.0e9; // |起手Y − 地平线Y|
     double nearAppliedOffsetX_ = 0.0;     // 已施加的屏幕偏移（相对起手）
     double nearAppliedOffsetY_ = 0.0;
     double nearVelocityX_ = 0.0;          // 近地惯性速度（px/s，屏幕系）

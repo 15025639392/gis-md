@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 
 #include <glm/glm.hpp>
+#include <algorithm>
 #include <cmath>
 #include <memory>
 
@@ -242,9 +243,14 @@ TEST_F(PinAnchorErrorTest, GrazingOrFarAnchorRejectedNoRunaway) {
     EXPECT_FALSE(controller_->debugAnchorWorld(anchor))
         << "掠射锚点没被拒绝(条件数≈0.03 仍接受,会跳远)";
 
-    // Pitch 手势(不缩放):起手拒绝 + 中途重试也不得拉回远锚,相机不得移动。
+    // Pitch 手势(不缩放):起手拒绝 → 无锚回退竖转(eye 不动、俯仰响应,
+    // 2026-08-22 新增);中途质心下移变陡后重试可能拿到合法近锚(距离
+    // ≤ max(1.5×海拔,600m)),此后走有锚倾斜。不允许的是把远锚拉回来
+    // (跳远)——近锚步长上限 1.5km×0.08rad=120m,远锚跳远(数十~数百 km)
+    // 会被此界拦下。
     in.mode = PinchMode::Pitch;
     const glm::dvec3 eyeBefore = camera_->position().raw();
+    const glm::dvec3 dirBefore = camera_->direction().raw();
     double maxSwing = 0.0;
     glm::dvec3 prevEye = eyeBefore;
     for (int i = 1; i <= 8; ++i) {
@@ -255,10 +261,17 @@ TEST_F(PinAnchorErrorTest, GrazingOrFarAnchorRejectedNoRunaway) {
         maxSwing = std::max(maxSwing, glm::length(now - prevEye));
         prevEye = now;
     }
-    EXPECT_LE(maxSwing, 55.0)
-        << "掠射/远锚态捏合仍产生大位移:锚点拒绝或重试守卫没生效";
-    EXPECT_FALSE(controller_->debugAnchorWorld(anchor))
-        << "中途重试把远锚拉回来了";
+    EXPECT_LE(maxSwing, 150.0)
+        << "掠射/远锚态捏合仍产生跳远级位移:锚点拒绝或重试守卫没生效";
+    Vec3 anchorAtEnd;
+    if (controller_->debugAnchorWorld(anchorAtEnd)) {
+        EXPECT_LE(
+            glm::length(anchorAtEnd.raw() - camera_->position().raw()),
+            std::max(1.5 * 1000.0, 600.0) + 1.0)
+            << "中途重试把远锚拉回来了";
+    }
+    // 俯仰必须响应(无锚回退竖转或近锚倾斜都算)。
+    EXPECT_GT(glm::length(camera_->direction().raw() - dirBefore), 1e-6);
 }
 
 // 高空球心回中(契约 2.4):拉远到地球可见(≥1.5R)后,捏合拉远应把视轴转向地心,
