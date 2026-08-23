@@ -112,6 +112,7 @@ enum class RenderCommandKind {
     // 与 VectorOverlay(旧 GeoJSON 标注路径)平行,同 order 30。
     VectorFill,            // order 30: 多边形 fill(CDT 三角化,pos-only 顶点)
     VectorLine,            // order 30: 线 ribbon(44B 顶点,shader 屏幕挤出)
+    VectorExtrusion,       // order 30: 建筑挤出体(pos+法线+色,写深度)
     VectorPoint,           // order 30: 点符号 billboard(20B 顶点,SDF 圆)
     VectorLabel,           // order 31: SDF 文字标注(28B 顶点,压最后画)
     // P6 stencil 终态贴地(设计 §7.2 方案 B):面 fill 挤成水密体做阴影体

@@ -467,7 +467,9 @@ void FeatureRenderLayer::tessellateFeatureInto(
     std::vector<LabelEntry>& labelEntries,
     VolumeCpuGroups& volumeGroups,
     VolumeCpuGroups& lineVolumeGroups,
-    std::vector<float>* lineClampSourceOut) {
+    std::vector<float>* lineClampSourceOut,
+    std::vector<float>* extrudeVertsOut,
+    std::vector<uint32_t>* extrudeIndicesOut) {
     // P6b 数据驱动色:镶嵌期逐要素求值(上下文 = 属性,无 zoom),失败
     // 回落图层字面量;打包 RGBA8 烘进顶点流。
     const std::array<float, 4> fillColor =
@@ -547,6 +549,17 @@ void FeatureRenderLayer::tessellateFeatureInto(
 
     switch (geometry->type) {
         case GeometryType::Polygon: {
+            // V6 建筑挤出:带 amap_height 的 Polygon → 墙带 + CDT 顶面,
+            // 不产平 fill / stencil / outline(与面路径互斥)。
+            const bool extrudeBuilding =
+                ctx.style.buildingExtrusion && extrudeVertsOut &&
+                feature.properties.count("amap_height");
+            if (extrudeBuilding) {
+                appendExtrusionVolume(ctx, *geometry, fillColor, origin,
+                                     hasOrigin, *extrudeVertsOut,
+                                     *extrudeIndicesOut);
+                break;
+            }
             if (stencilFill) {
                 // 体积从原始 footprint 出(2D 拓扑,高度由采样范围决定),
                 // 按解析色归组(每组独立命令对,不同色互不污染)。
@@ -1263,6 +1276,8 @@ bool FeatureRenderLayer::uploadBucketGpu(
     std::vector<LabelEntry>&& labelEntries,
     const VolumeCpuGroups& volumeGroups,
     const VolumeCpuGroups& lineVolumeGroups,
+    const std::vector<float>& extrudeVerts,
+    const std::vector<uint32_t>& extrudeIndices,
     BucketGpu& out) const {
     out = BucketGpu{};
     out.origin = origin;
@@ -1337,9 +1352,23 @@ bool FeatureRenderLayer::uploadBucketGpu(
             out.lineIndexCount = static_cast<int>(lineIndices.size());
         }
     }
+    if (!extrudeIndices.empty()) {
+        out.extrudeVertexBuffer = makeBuffer(
+            renderDevice_, extrudeVerts.data(),
+            extrudeVerts.size() * sizeof(float), BufferDesc::Type::Vertex);
+        out.extrudeIndexBuffer = makeBuffer(
+            renderDevice_, extrudeIndices.data(),
+            extrudeIndices.size() * sizeof(uint32_t),
+            BufferDesc::Type::Index);
+        if (out.extrudeVertexBuffer && out.extrudeIndexBuffer) {
+            out.extrudeIndexCount =
+                static_cast<int>(extrudeIndices.size());
+        }
+    }
     return out.fillIndexCount > 0 || out.lineIndexCount > 0 ||
            out.pointIndexCount > 0 || out.labelIndexCount > 0 ||
-           !out.volumeGroups.empty() || !out.lineVolumeGroups.empty();
+           !out.volumeGroups.empty() || !out.lineVolumeGroups.empty() ||
+           out.extrudeIndexCount > 0;
 }
 
 void FeatureRenderLayer::rebuildBucket(BucketKey key) {
@@ -1366,6 +1395,8 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     VolumeCpuGroups lineVolumeGroups;  // P6d stencil 线墙带(按色分组)
     Vec3 origin = Vec3::zero();
     bool hasOrigin = false;
+    std::vector<float> extrudeVerts;  // V6 建筑挤出(7 float/顶点)
+    std::vector<uint32_t> extrudeIndices;
 
     // 贴地采样器:桶内全部要素的 rings 并集区域,一次收集候选瓦片。
     std::vector<std::vector<Cartographic>> allRings;
@@ -1386,12 +1417,13 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
                               fillVerts, fillIndices, lineVerts, lineIndices,
                               pointVerts, pointIndices,
                               labelVerts, labelIndices, labelEntries,
-                              volumeGroups, lineVolumeGroups, nullptr);
+                              volumeGroups, lineVolumeGroups, nullptr,
+                              &extrudeVerts, &extrudeIndices);
     }
 
     if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty() &&
         labelIndices.empty() && volumeGroups.empty() &&
-        lineVolumeGroups.empty()) {
+        lineVolumeGroups.empty() && extrudeIndices.empty()) {
         buckets_.erase(key);
         return;
     }
@@ -1402,7 +1434,8 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
                          pointVerts, pointIndices,
                          std::move(labelVerts), labelIndices,
                          std::move(labelEntries),
-                         volumeGroups, lineVolumeGroups, gpu)) {
+                         volumeGroups, lineVolumeGroups,
+                         extrudeVerts, extrudeIndices, gpu)) {
         // buffer 创建失败:丢弃本桶,脏区已消费 → 下次编辑该桶时重试。
         buckets_.erase(key);
         return;
@@ -1448,7 +1481,8 @@ FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
                               mesh.lineVerts, mesh.lineIndices, pointVerts,
                               pointIndices, labelVerts, labelIndices,
                               labelEntries, mesh.fillVolumeGroups,
-                              mesh.lineVolumeGroups, &mesh.lineClampSource);
+                              mesh.lineVolumeGroups, &mesh.lineClampSource,
+                              nullptr, nullptr);
     }
     return mesh;
 }
@@ -1540,7 +1574,7 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
                          mesh.lineVerts, mesh.lineIndices, pointVerts,
                          pointIndices, std::vector<float>(), kNoIndices,
                          std::vector<LabelEntry>(), mesh.fillVolumeGroups,
-                         mesh.lineVolumeGroups, gpu)) {
+                         mesh.lineVolumeGroups, {}, {}, gpu)) {
         return;
     }
     const auto tBake = PClock::now();
@@ -1725,6 +1759,100 @@ void FeatureRenderLayer::clampTileLineHeights(TileMeshCpu& mesh) {
     if (reclampLineVertsFromSource(mesh.lineClampSource, clamped,
                                    mesh.origin, sample)) {
         mesh.lineVerts = std::move(clamped);
+    }
+}
+
+// ============================================================
+// V6 建筑挤出:贴地 footprint + amap_height → 墙带 + CDT 顶面
+// ============================================================
+
+void FeatureRenderLayer::appendExtrusionVolume(
+    const TessellationContext& ctx, const Feature& feature,
+    const std::array<float, 4>& color, Vec3& origin, bool& hasOrigin,
+    std::vector<float>& extrudeVerts,
+    std::vector<uint32_t>& extrudeIndices) {
+    if (feature.type != GeometryType::Polygon || feature.rings.empty() ||
+        feature.rings[0].size() < 3) {
+        return;
+    }
+    double height = 0.0;
+    const auto hit = feature.properties.find("amap_height");
+    if (hit != feature.properties.end()) {
+        try {
+            height = std::stod(hit->second);
+        } catch (...) {
+            height = 0.0;
+        }
+    }
+    if (height <= 0.0) height = 10.0;  // 兜底
+    const auto& ring = feature.rings[0];
+    const size_t n = ring.size();
+    std::vector<Vec3> base(n), top(n), up(n);
+    double cx = 0, cy = 0, cz = 0;
+    for (size_t i = 0; i < n; ++i) {
+        base[i] = ctx.ellipsoid.cartographicToCartesian(ring[i]);
+        up[i] = base[i].normalized();
+        top[i] = base[i] + up[i] * height;
+        cx += base[i].x();
+        cy += base[i].y();
+        cz += base[i].z();
+    }
+    const Vec3 centroid(cx / static_cast<double>(n),
+                        cy / static_cast<double>(n),
+                        cz / static_cast<double>(n));
+    if (!hasOrigin) {
+        origin = base[0];
+        hasOrigin = true;
+    }
+    const float colorPacked = packColorFloat(color);
+    const auto push = [&](const Vec3& p, const Vec3& nm) {
+        const Vec3 rel = p - origin;
+        extrudeVerts.push_back(static_cast<float>(rel.x()));
+        extrudeVerts.push_back(static_cast<float>(rel.y()));
+        extrudeVerts.push_back(static_cast<float>(rel.z()));
+        extrudeVerts.push_back(static_cast<float>(nm.x()));
+        extrudeVerts.push_back(static_cast<float>(nm.y()));
+        extrudeVerts.push_back(static_cast<float>(nm.z()));
+        extrudeVerts.push_back(colorPacked);
+    };
+    const auto pushQuad = [&](const Vec3& a, const Vec3& b, const Vec3& c,
+                              const Vec3& d, const Vec3& nm) {
+        const uint32_t v0 =
+            static_cast<uint32_t>(extrudeVerts.size() / 7);
+        push(a, nm);
+        push(b, nm);
+        push(c, nm);
+        push(d, nm);
+        extrudeIndices.push_back(v0);
+        extrudeIndices.push_back(v0 + 1);
+        extrudeIndices.push_back(v0 + 2);
+        extrudeIndices.push_back(v0);
+        extrudeIndices.push_back(v0 + 2);
+        extrudeIndices.push_back(v0 + 3);
+    };
+    // 墙带(双面渲染,绕向免调)。
+    for (size_t i = 0; i < n; ++i) {
+        const size_t j = (i + 1) % n;
+        const Vec3 edge = base[j] - base[i];
+        Vec3 outw = edge.cross(up[i]).normalized();
+        if (outw.dot(base[i] - centroid) < 0.0) {
+            outw = Vec3(-outw.x(), -outw.y(), -outw.z());
+        }
+        pushQuad(base[i], base[j], top[j], top[i], outw);
+    }
+    // 顶面(CDT,抬 height)。
+    Feature topFeature;
+    topFeature.type = GeometryType::Polygon;
+    topFeature.rings = {ring};
+    const TessellatedFill topFill =
+        PolygonTessellator::tessellate(topFeature, ctx.ellipsoid, height);
+    const uint32_t topBase =
+        static_cast<uint32_t>(extrudeVerts.size() / 7);
+    for (const Vec3& p : topFill.positions) {
+        push(p, p.normalized());
+    }
+    for (uint32_t idx : topFill.fillIndices) {
+        extrudeIndices.push_back(topBase + idx);
     }
 }
 
@@ -2041,7 +2169,7 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                 origin, fillVerts, fillIndices, lineVerts, lineIndices,
                 pointVerts, pointIndices, std::move(labelVerts),
                 labelIndices, std::move(labelEntries),
-                volumeGroups, lineVolumeGroups, previewGpu_);
+                volumeGroups, lineVolumeGroups, {}, {}, previewGpu_);
         }
     }
 
@@ -2636,6 +2764,31 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.blend = true;
             cmd.cullFace = false;
             cmd.uniforms["u_modelViewProjection"] = mvpUniform;
+            commands.push_back(std::move(cmd));
+        }
+
+        if (gpu.extrudeIndexCount > 0 && renderer.vectorExtrusionShader()) {
+            RenderCommand cmd;
+            cmd.kind = RenderCommandKind::VectorExtrusion;
+            cmd.owner = layerId_;
+            cmd.pass = "color";
+            cmd.frameId = frameState.frameId;
+            cmd.shader = renderer.vectorExtrusionShader();
+            cmd.vertexBuffer = gpu.extrudeVertexBuffer.get();
+            cmd.indexBuffer = gpu.extrudeIndexBuffer.get();
+            cmd.indexCount = gpu.extrudeIndexCount;
+            cmd.indexType = RenderCommand::IndexType::UInt32;
+            cmd.vertexStride = 28;  // pos(12)+normal(12)+color(4)
+            cmd.primitive = RenderCommand::PrimitiveType::Triangles;
+            cmd.depthTest = true;
+            cmd.depthWrite = true;
+            cmd.blend = false;
+            cmd.cullFace = false;
+            cmd.uniforms["u_modelViewProjection"] = mvpUniform;
+            cmd.uniforms["u_lightDir"] = {
+                frameState.lightDir.x, frameState.lightDir.y,
+                frameState.lightDir.z};
+            cmd.uniforms["u_ambient"] = {0.25f};
             commands.push_back(std::move(cmd));
         }
 

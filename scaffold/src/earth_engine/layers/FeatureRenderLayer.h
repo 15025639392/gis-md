@@ -143,6 +143,9 @@ struct FeatureRenderStyle {
     /// 跳过(路网是 ribbon 单 pass,避免多山瓦片墙带 fill rate 失控);
     /// fill 不受影响。
     bool terrainClampRibbon = false;
+    /// V6 建筑挤出:Polygon 带 amap_height 属性时挤出(墙+顶面,lambert
+    /// 顶光),不产平 fill(与 stencil 面互斥)。
+    bool buildingExtrusion = true;
 };
 
 /// 地形高程采样注入(P3)。与 Tileset 解耦:Scene 接线真实地形,host 测试
@@ -396,6 +399,10 @@ private:
         /// volumeGroups 分开存(同色 fill/line 不得并组)。非空 → 该桶
         /// clamp 线走 stencil 双 pass,不再产出方案 A 的线 ribbon。
         std::vector<VolumeGroupGpu> lineVolumeGroups;
+        /// V6 建筑挤出(pos3+normal3+color4=28B,相对桶原点)。
+        std::unique_ptr<Buffer> extrudeVertexBuffer;
+        std::unique_ptr<Buffer> extrudeIndexBuffer;
+        int extrudeIndexCount = 0;
     };
 
     // VolumeCpuGroup / VolumeCpuGroups 已下沉到 data/FeatureTileMesh.h ——
@@ -690,7 +697,20 @@ private:
                                VolumeCpuGroups& volumeGroups,
                                VolumeCpuGroups& lineVolumeGroups,
                                std::vector<float>* lineClampSourceOut =
+                                   nullptr,
+                               std::vector<float>* extrudeVertsOut = nullptr,
+                               std::vector<uint32_t>* extrudeIndicesOut =
                                    nullptr);
+
+    /// V6 建筑挤出:footprint(贴地钳高后)+ amap_height → 墙带 + CDT 顶面。
+    static void appendExtrusionVolume(
+        const TessellationContext& ctx,
+        const Feature& feature,
+        const std::array<float, 4>& color,
+        Vec3& origin,
+        bool& hasOrigin,
+        std::vector<float>& extrudeVerts,
+        std::vector<uint32_t>& extrudeIndices);
 
     /// P6 stencil 贴地:polygon footprint 挤成水密体(底/顶两层同拓扑
     /// CDT cap + 环边墙),按解析 fill 色归组。高度范围 = 环顶点+粗内部
@@ -728,6 +748,8 @@ private:
                          std::vector<LabelEntry>&& labelEntries,
                          const VolumeCpuGroups& volumeGroups,
                          const VolumeCpuGroups& lineVolumeGroups,
+                         const std::vector<float>& extrudeVerts,
+                         const std::vector<uint32_t>& extrudeIndices,
                          BucketGpu& out) const;
 
     /// P5c:每帧跑 placement(collect 全桶 LabelEntry → place/commit),

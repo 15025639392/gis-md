@@ -221,6 +221,16 @@ validateMvpRenderCommands(const RenderCommandList& commands,
                 }
                 break;
 
+            case RenderCommandKind::VectorExtrusion:
+                // V6 建筑挤出:不透明实体,深度测+写(楼与楼互遮挡),
+                // 双面(墙带绕向免调),不混合。
+                if (!requireColorPass(i, cmd, error)) return error;
+                if (!requireState(i, cmd, true, true, false, false,
+                                  "VectorExtrusion", error)) {
+                    return error;
+                }
+                break;
+
             case RenderCommandKind::VectorPoint:
             case RenderCommandKind::VectorLabel:
                 // 符号(billboard/文字)固定状态:**深度测试关**。四角共用

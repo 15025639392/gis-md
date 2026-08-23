@@ -1728,6 +1728,82 @@ fragment float4 vectorFillFragment(VectorFillFragmentIn in [[stage_in]]) {
 )msl";
 
 // ============================================================
+// Vector Extrusion Shader (V6 建筑挤出)
+// 顶点 28B:pos(12)+normal(12)+color(4,RGBA8)。lambert 顶光 + 环境光。
+// ============================================================
+
+static const char* kVectorExtrusionVertexGLSL = R"glsl(
+#version 300 es
+layout(location = 0) in vec3 a_position;
+layout(location = 1) in vec3 a_normal;
+layout(location = 2) in vec4 a_color;
+uniform mat4 u_modelViewProjection;
+uniform vec3 u_lightDir;
+out vec4 v_color;
+out float v_ndl;
+void main() {
+    vec3 n = normalize(a_normal);
+    v_ndl = max(dot(n, -u_lightDir), 0.0);
+    v_color = a_color;
+    gl_Position = u_modelViewProjection * vec4(a_position, 1.0);
+}
+)glsl";
+
+static const char* kVectorExtrusionFragmentGLSL = R"glsl(
+#version 300 es
+precision mediump float;
+in vec4 v_color;
+in float v_ndl;
+uniform float u_ambient;
+out vec4 fragColor;
+void main() {
+    float l = u_ambient + (1.0 - u_ambient) * v_ndl;
+    fragColor = vec4(encodeSceneOutput(v_color.rgb * l), v_color.a);
+}
+)glsl";
+
+static const char* kVectorExtrusionVertexMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+struct VectorExtrusionVertexIn {
+    float3 position [[attribute(0)]];
+    float3 normal [[attribute(1)]];
+    float4 color [[attribute(2)]];
+};
+struct VectorExtrusionVertexOut {
+    float4 position [[position]];
+    float4 color;
+    float ndl;
+};
+vertex VectorExtrusionVertexOut vectorExtrusionVertex(
+        VectorExtrusionVertexIn in [[stage_in]],
+        constant float4x4& u_modelViewProjection [[buffer(1)]],
+        constant float3& u_lightDir [[buffer(2)]]) {
+    VectorExtrusionVertexOut out;
+    float3 n = normalize(in.normal);
+    out.ndl = max(dot(n, -u_lightDir), 0.0);
+    out.color = in.color;
+    out.position = u_modelViewProjection * float4(in.position, 1.0);
+    return out;
+}
+)msl";
+
+static const char* kVectorExtrusionFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+struct VectorExtrusionFragmentIn {
+    float4 color;
+    float ndl;
+};
+fragment float4 vectorExtrusionFragment(
+        VectorExtrusionFragmentIn in [[stage_in]],
+        constant float& u_ambient [[buffer(0)]]) {
+    float l = u_ambient + (1.0 - u_ambient) * in.ndl;
+    return float4(in.color.rgb * l, in.color.a);
+}
+)msl";
+
+// ============================================================
 // Vector Page Mesh Shader (C-2c:矢量画进页存储 array 层)
 // 顶点 20B:pos(2×f32,瓦片本地归一化)+ extrude(2×f32,单位法线×半线宽/页像素)
 // + color(4,RGBA8),对应 GLES VectorPageMesh20。
@@ -4062,6 +4138,7 @@ struct Renderer::Impl {
     // P6d stencil 贴地线(墙带体,两 stencil pass 共用)。
     std::unique_ptr<ShaderProgram> vectorLineStencilShader;
     std::unique_ptr<ShaderProgram> vectorFillShader;
+    std::unique_ptr<ShaderProgram> vectorExtrusionShader;
     std::unique_ptr<ShaderProgram> vectorPageMeshShader;  // C-2c
     // 矢量点符号/图标 billboard(P5a 解析 SDF 形状 + P6c 位图图集)。
     std::unique_ptr<ShaderProgram> vectorPointShader;
@@ -4217,6 +4294,20 @@ bool Renderer::initialize() {
         fprintf(stderr, "[Renderer] vectorFillShader failed — vector fills unavailable\n");
     }
 
+    // ---- Vector extrusion shader (V6 建筑挤出) ----
+    ShaderDesc vectorExtrusionSd;
+    vectorExtrusionSd.vertexSource =
+        isMetal ? kVectorExtrusionVertexMSL : kVectorExtrusionVertexGLSL;
+    vectorExtrusionSd.fragmentSource =
+        isMetal ? kVectorExtrusionFragmentMSL
+                : withSceneOutput(kVectorExtrusionFragmentGLSL);
+    impl_->vectorExtrusionShader = dev->createShader(vectorExtrusionSd);
+    if (!impl_->vectorExtrusionShader) {
+        fprintf(stderr,
+                "[Renderer] vectorExtrusionShader failed — building "
+                "extrusions unavailable\n");
+    }
+
     // ---- Vector page mesh shader (C-2c 矢量画进页存储 array 层) ----
     ShaderDesc vectorPageMeshSd;
     vectorPageMeshSd.vertexSource =
@@ -4339,6 +4430,9 @@ ShaderProgram* Renderer::vectorPageMeshShader() const {
 
 ShaderProgram* Renderer::vectorFillShader() const {
     return impl_->vectorFillShader.get();
+}
+ShaderProgram* Renderer::vectorExtrusionShader() const {
+    return impl_->vectorExtrusionShader.get();
 }
 ShaderProgram* Renderer::vectorPointShader() const {
     return impl_->vectorPointShader.get();

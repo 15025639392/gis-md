@@ -91,6 +91,8 @@ public:
     /// 矢量 fill shader(P6b:pos+顶点色 16B;colorShader 保持 pos-only
     /// 服务 stencil 分类等 uniform 色路径)
     ShaderProgram* vectorFillShader() const;
+    /// V6 建筑挤出(pos+法线+色 28B,lambert 顶光)。
+    ShaderProgram* vectorExtrusionShader() const;
     /// C-2c:矢量画进页存储 array 层的 20B 顶点着色器(空 = 该路径不可用,
     /// 调用方回落 mappedRaster 上的栅格版)。
     ShaderProgram* vectorPageMeshShader() const;

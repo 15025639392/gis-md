@@ -2098,3 +2098,34 @@ TEST_F(FeatureRenderLayerTest, TileClampWithoutRibbonKeepsStencilVolumes) {
     EXPECT_FALSE(mesh.lineVolumeGroups.empty());
     EXPECT_TRUE(mesh.lineVerts.empty());
 }
+
+TEST_F(FeatureRenderLayerTest, BuildingExtrusionEmitsVectorExtrusionCommand) {
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::Absolute;
+    style.buildingExtrusion = true;
+    layer_->setStyle(style);
+    Feature b = makePolygon(6.0, 29.0, 0.01);
+    b.properties["amap_height"] = "25";
+    layer_->store().addFeature(std::move(b));
+
+    RenderCommandList commands = build();
+    const RenderCommand* ext = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorExtrusion) ext = &cmd;
+    }
+    ASSERT_NE(nullptr, ext);
+    EXPECT_TRUE(ext->depthTest);
+    EXPECT_TRUE(ext->depthWrite);
+    EXPECT_FALSE(ext->blend);
+    EXPECT_EQ(28, ext->vertexStride);
+    const auto* vb =
+        dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+            ext->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    // 墙 4 边 × 4 顶点 + 顶面 ≥4 顶点;7 float/顶点。
+    EXPECT_GE(vb->bytes().size() / (sizeof(float) * 7), 20u);
+    // 挤出与平 fill 互斥。
+    for (const auto& cmd : commands) {
+        EXPECT_NE(RenderCommandKind::VectorFill, cmd.kind);
+    }
+}
