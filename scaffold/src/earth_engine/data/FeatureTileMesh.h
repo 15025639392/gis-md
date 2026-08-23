@@ -63,6 +63,10 @@ struct FeatureTileMesh {
     std::vector<uint32_t> fillIndices;
     std::vector<float> lineVerts;
     std::vector<uint32_t> lineIndices;
+    /// E 方案 P2:线 ribbon 的钳高源(每 ribbon 顶点 3 float:lon/lat 弧度 +
+    /// colorPacked)。worker 无地形采样时只产椭球面高度;渲染线程 commit/
+    /// 重钳时按 (lon,lat) 同源采样钳高(第 i 个顶点对应第 i/2 个折线点)。
+    std::vector<float> lineClampSource;
     /// 贴地(ClampToGround + 后端支持 stencil 分类)时,fill/line 改产
     /// 挤出体走双 pass 像素级贴合;此时上面的 fill/lineVerts 为空(两条路
     /// **互斥**,同时产出会让同一份内容画两遍)。

@@ -466,7 +466,8 @@ void FeatureRenderLayer::tessellateFeatureInto(
     std::vector<uint32_t>& labelIndices,
     std::vector<LabelEntry>& labelEntries,
     VolumeCpuGroups& volumeGroups,
-    VolumeCpuGroups& lineVolumeGroups) {
+    VolumeCpuGroups& lineVolumeGroups,
+    std::vector<float>* lineClampSourceOut) {
     // P6b 数据驱动色:镶嵌期逐要素求值(上下文 = 属性,无 zoom),失败
     // 回落图层字面量;打包 RGBA8 烘进顶点流。
     const std::array<float, 4> fillColor =
@@ -496,6 +497,10 @@ void FeatureRenderLayer::tessellateFeatureInto(
     const bool stencilLine =
         clamp && !ctx.style.terrainClampRibbon &&
         ctx.supportsStencilClassification;
+    /// E 方案 P2:clamp 源只在「worker 无采样」的瓦片路径产出 —— store
+    /// 路径地形可用时直接钳真高,靠 rebuildBucket 自愈,不需要源。
+    const bool emitClampSource =
+        clamp && ctx.style.terrainClampRibbon && !sample;
     std::vector<Cartographic> steinerPoints;
     Feature clampedStorage;
     const Feature* geometry = &feature;
@@ -519,7 +524,8 @@ void FeatureRenderLayer::tessellateFeatureInto(
             TessellationContext flatCtx = ctx;
             flatCtx.hasTerrainHeightRange = false;
             clampedStorage = prepareClampedFeature(
-                flatCtx, feature, AreaSampleFn(), nullptr, densify);
+                flatCtx, feature, sample ? sample : AreaSampleFn(), nullptr,
+                densify);
         } else {
             clampedStorage = prepareClampedFeature(
                 ctx,
@@ -614,6 +620,22 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 }
                 appendLineMesh(line, origin, lineColorPacked, lineVerts,
                                lineIndices, colors);
+                if (lineClampSourceOut && emitClampSource) {
+                    // 每 ribbon 顶点:lon/lat(弧度)+ 实际烘入的颜色。
+                    const auto& ring = geometry->rings[0];
+                    lineClampSourceOut->reserve(
+                        lineClampSourceOut->size() +
+                        line.vertices.size() * 3);
+                    for (size_t i = 0; i < line.vertices.size(); ++i) {
+                        const Cartographic& c = ring[i / 2];
+                        lineClampSourceOut->push_back(
+                            static_cast<float>(c.longitude()));
+                        lineClampSourceOut->push_back(
+                            static_cast<float>(c.latitude()));
+                        lineClampSourceOut->push_back(
+                            colors ? (*colors)[i] : lineColorPacked);
+                    }
+                }
             }
             break;
         }
@@ -1364,7 +1386,7 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
                               fillVerts, fillIndices, lineVerts, lineIndices,
                               pointVerts, pointIndices,
                               labelVerts, labelIndices, labelEntries,
-                              volumeGroups, lineVolumeGroups);
+                              volumeGroups, lineVolumeGroups, nullptr);
     }
 
     if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty() &&
@@ -1426,7 +1448,7 @@ FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
                               mesh.lineVerts, mesh.lineIndices, pointVerts,
                               pointIndices, labelVerts, labelIndices,
                               labelEntries, mesh.fillVolumeGroups,
-                              mesh.lineVolumeGroups);
+                              mesh.lineVolumeGroups, &mesh.lineClampSource);
     }
     return mesh;
 }
@@ -1510,6 +1532,9 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
     // 整瓦原子替换:先建好新 GPU 资源,成功了才换掉旧的。中途失败保留旧瓦
     // 而不是留半张 —— 半张瓦片在画面上是缺口,比旧数据糟。
     BucketGpu gpu;
+    // E 方案 P2:commit 时同源采样钳高(worker 只给了椭球面高度 +
+    // lineClampSource;store 路径在镶嵌期已钳真高,无源可空转)。
+    clampTileLineHeights(mesh);
     static const std::vector<uint32_t> kNoIndices;
     if (!uploadBucketGpu(mesh.origin, mesh.fillVerts, mesh.fillIndices,
                          mesh.lineVerts, mesh.lineIndices, pointVerts,
@@ -1519,6 +1544,7 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
         return;
     }
     const auto tBake = PClock::now();
+    gpu.lineClampSource = std::move(mesh.lineClampSource);
     gpu.tileLabelSources = std::move(labelSources);
     gpu.tileSymbolSources = std::move(mesh.symbols);  // 重钳用(见字段注释)
     BucketGpu& stored = tileBuckets_[key];
@@ -1630,6 +1656,103 @@ void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
     gpu.labelVertsCpu.clear();
     gpu.labelEntries.clear();
     bakeTileBucketLabels(gpu);
+}
+
+// ============================================================
+// E 方案 P2:瓦片线 CPU 同源采样贴地(commit 钳高 + 地形代次重钳)
+// ============================================================
+
+bool FeatureRenderLayer::reclampLineVertsFromSource(
+    const std::vector<float>& clampSource, std::vector<float>& outVerts,
+    const Vec3& origin, const AreaSampleFn& sample) const {
+    const size_t nverts = clampSource.size() / 3;
+    const size_t n = nverts / 2;  // 折线点数(每点 2 个 ribbon 顶点)
+    if (n < 2 || !sample) return false;
+    std::vector<Vec3> pts(n), rel(n);
+    std::vector<float> len(n, 0.0f);
+    for (size_t j = 0; j < n; ++j) {
+        // 顶点 2j(侧 +1)携带该折线点的 lon/lat。
+        const double lon = clampSource[6 * j];
+        const double lat = clampSource[6 * j + 1];
+        const double h = sample(lon, lat).value_or(0.0);
+        pts[j] = ellipsoid_.cartographicToCartesian(
+            Cartographic(lon, lat, h));
+        rel[j] = pts[j] - origin;
+        if (j > 0) {
+            len[j] = len[j - 1] +
+                     static_cast<float>((pts[j - 1] - pts[j]).length());
+        }
+    }
+    outVerts.clear();
+    outVerts.reserve(nverts * 12);
+    for (size_t i = 0; i < nverts; ++i) {
+        const size_t j = i / 2;
+        const size_t pv = j > 0 ? j - 1 : j;  // 端点哨兵 = 自身
+        const size_t nx = j + 1 < n ? j + 1 : j;
+        const float side = (i & 1u) ? -1.0f : 1.0f;
+        const float color = clampSource[3 * i + 2];
+        const Vec3& p = rel[j];
+        const Vec3& pr = rel[pv];
+        const Vec3& nxr = rel[nx];
+        outVerts.push_back(static_cast<float>(p.x()));
+        outVerts.push_back(static_cast<float>(p.y()));
+        outVerts.push_back(static_cast<float>(p.z()));
+        outVerts.push_back(static_cast<float>(pr.x()));
+        outVerts.push_back(static_cast<float>(pr.y()));
+        outVerts.push_back(static_cast<float>(pr.z()));
+        outVerts.push_back(static_cast<float>(nxr.x()));
+        outVerts.push_back(static_cast<float>(nxr.y()));
+        outVerts.push_back(static_cast<float>(nxr.z()));
+        outVerts.push_back(side);
+        outVerts.push_back(len[j]);
+        outVerts.push_back(color);
+    }
+    return true;
+}
+
+void FeatureRenderLayer::clampTileLineHeights(TileMeshCpu& mesh) {
+    if (mesh.lineClampSource.empty() || !mesh.hasOrigin) return;
+    std::vector<std::vector<Cartographic>> rings(1);
+    const size_t nverts = mesh.lineClampSource.size() / 3;
+    rings[0].reserve(nverts / 2);
+    for (size_t i = 0; i + 1 < nverts; i += 2) {
+        rings[0].emplace_back(mesh.lineClampSource[3 * i],
+                              mesh.lineClampSource[3 * i + 1], 0.0);
+    }
+    const AreaSampleFn sample = makeClampSampler(rings);
+    if (!sample) return;
+    std::vector<float> clamped;
+    if (reclampLineVertsFromSource(mesh.lineClampSource, clamped,
+                                   mesh.origin, sample)) {
+        mesh.lineVerts = std::move(clamped);
+    }
+}
+
+void FeatureRenderLayer::reclampTileBucketLines(BucketGpu& gpu) {
+    if (gpu.lineClampSource.empty() || !renderDevice_ ||
+        gpu.lineIndexCount <= 0) {
+        return;
+    }
+    std::vector<std::vector<Cartographic>> rings(1);
+    const size_t nverts = gpu.lineClampSource.size() / 3;
+    rings[0].reserve(nverts / 2);
+    for (size_t i = 0; i + 1 < nverts; i += 2) {
+        rings[0].emplace_back(gpu.lineClampSource[3 * i],
+                              gpu.lineClampSource[3 * i + 1], 0.0);
+    }
+    const AreaSampleFn sample = makeClampSampler(rings);
+    if (!sample) return;
+    std::vector<float> lineVerts;
+    if (!reclampLineVertsFromSource(gpu.lineClampSource, lineVerts,
+                                    gpu.origin, sample)) {
+        return;
+    }
+    // 只换顶点缓冲:重钳只改高度,索引拓扑不变。
+    auto vb = makeBuffer(renderDevice_, lineVerts.data(),
+                         lineVerts.size() * sizeof(float),
+                         BufferDesc::Type::Vertex);
+    if (!vb) return;
+    gpu.lineVertexBuffer = std::move(vb);
 }
 
 uint64_t FeatureRenderLayer::crossTileIdFor(
@@ -1840,6 +1963,8 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
             pendingReclamp_.pop_back();
             if (it != tileBuckets_.end()) {
                 reclampTileBucketSymbols(it->second);
+                // E 方案 P2:线桶同款重钳(只换顶点缓冲)。
+                reclampTileBucketLines(it->second);
                 ++done;
             }
         }

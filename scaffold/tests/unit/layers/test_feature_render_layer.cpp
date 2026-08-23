@@ -2032,12 +2032,55 @@ TEST_F(FeatureRenderLayerTest, TileRibbonClampDensifiesAtEllipsoidAndSkipsStenci
     ASSERT_FALSE(mesh.lineIndices.empty());
     // 0.1°≈11km、100m 细分 → 顶点数远大于未细分的 3 顶点 ribbon(6)。
     EXPECT_GT(mesh.lineVerts.size(), 12u * 6u);
+    // E 方案 P2:worker 无采样 → 产出钳高源(每 ribbon 顶点 3 float:
+    // lon/lat/colorPacked),供渲染线程 commit/重钳同源采样。
+    ASSERT_FALSE(mesh.lineClampSource.empty());
+    EXPECT_EQ(mesh.lineClampSource.size(), mesh.lineVerts.size() / 12 * 3);
+    EXPECT_NEAR(mesh.lineClampSource[0], 6.0 * kDeg, 1e-6);
+    EXPECT_NEAR(mesh.lineClampSource[1], 29.0 * kDeg, 1e-6);
     // 顶点落在椭球面(高≈0),而非山地范围中点(1250m)。
     const Ellipsoid& ell = Ellipsoid::WGS84();
     const float* v = mesh.lineVerts.data();
     const Vec3 rel(v[0], v[1], v[2]);
     const Cartographic c = ell.cartesianToCartographic(mesh.origin + rel);
     EXPECT_NEAR(c.height(), 0.0, 0.05);
+}
+
+TEST_F(FeatureRenderLayerTest, TileRibbonClampCommitSamplesTerrain) {
+    FeatureRenderLayer layer("t", &device_, Ellipsoid::WGS84());
+    layer.setTerrainSampling(makeFlatSampling(1500.0f));
+    FeatureRenderStyle style;
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.terrainClampRibbon = true;  // E 方案 P1+P2
+    style.clampDensifyMeters = 100.0;
+    layer.setStyle(style);  // commit 钳高的采样器按图层样式门控
+    FeatureRenderLayer::TessellationContext ctx{
+        style, Ellipsoid::WGS84(), nullptr, nullptr,
+        /*supportsStencilClassification=*/true};
+
+    Feature line = makeLine(6.0, 29.0, 0.02);
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(ctx, {line});
+    const Vec3 origin = mesh.origin;
+    ASSERT_FALSE(mesh.lineClampSource.empty());
+    layer.commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200}, std::move(mesh));
+
+    RenderCommandList commands;
+    layer.buildRenderCommands(frame_, *renderer_, commands);
+    const RenderCommand* lineCmd = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorLine) lineCmd = &cmd;
+    }
+    ASSERT_NE(nullptr, lineCmd);
+    const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+        lineCmd->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const float* f = reinterpret_cast<const float*>(vb->bytes().data());
+    const Vec3 rel(f[0], f[1], f[2]);
+    const Cartographic c =
+        Ellipsoid::WGS84().cartesianToCartographic(origin + rel);
+    // commit 时按 1500m 平地同源采样钳高(worker 给的是椭球面)。
+    EXPECT_NEAR(c.height(), 1500.0, 1.0);
 }
 
 TEST_F(FeatureRenderLayerTest, TileClampWithoutRibbonKeepsStencilVolumes) {

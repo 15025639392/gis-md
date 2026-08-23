@@ -375,6 +375,10 @@ private:
         /// 掉(硬件深度 + T2 判定都读它),表现为"标记点闪一下就没"。
         /// store 桶靠 rebuildBucket 重钳,瓦片桶没有重镶路径,靠它。
         std::vector<TileSymbolCpu> tileSymbolSources;
+        /// E 方案 P2:瓦片线重钳源(每 ribbon 顶点 lon/lat 弧度 +
+        /// colorPacked,与 lineVertexBuffer 同序)。地形代次变化时重采样
+        /// 重传顶点缓冲(索引不变);镜像 tileSymbolSources 的重钳路径。
+        std::vector<float> lineClampSource;
         /// P6 stencil 分类贴地(方案 B):面 fill 的水密挤出体(pos-only
         /// 12B,相对桶原点)。P6b 按解析 fill 色分组——每组一对
         /// Volume/Color 命令(组内并集计数,不同色互不污染)。非空 →
@@ -618,6 +622,20 @@ public:
     /// GPU 资源(store 桶的 rebuildBucket 对应物)。无符号源则空转。
     void reclampTileBucketSymbols(BucketGpu& gpu);
 
+    /// E 方案 P2:瓦片线 commit 时按 (lon,lat) 同源采样钳高(worker 只
+    /// 给了椭球面高度 + lineClampSource)。
+    void clampTileLineHeights(TileMeshCpu& mesh);
+    /// E 方案 P2:地形代次变化重钳线桶(镜像 reclampTileBucketSymbols;
+    /// 只重建顶点缓冲,索引不变)。
+    void reclampTileBucketLines(BucketGpu& gpu);
+    /// 共享钳高数学:由 clampSource(每顶点 lon/lat/colorPacked)重建完整
+    /// ribbon 顶点流(pos/prev/next/lengthSoFar 重算,side/color 原样)。
+    /// 返回 false = 源不足/退化,调用方保留旧缓冲。
+    bool reclampLineVertsFromSource(const std::vector<float>& clampSource,
+                                    std::vector<float>& outVerts,
+                                    const Vec3& origin,
+                                    const AreaSampleFn& sample) const;
+
     /// **渲染线程**:跨瓦稳定符号 ID(符号刀C,对拍 maplibre
     /// CrossTileSymbolIndex 语义)。同名符号锚点在「两代中较粗 zoom 的
     /// MVT 量化格」容差内 → 继承既有 id;miss 分配新 id。placement 的
@@ -670,7 +688,9 @@ private:
                                std::vector<uint32_t>& labelIndices,
                                std::vector<LabelEntry>& labelEntries,
                                VolumeCpuGroups& volumeGroups,
-                               VolumeCpuGroups& lineVolumeGroups);
+                               VolumeCpuGroups& lineVolumeGroups,
+                               std::vector<float>* lineClampSourceOut =
+                                   nullptr);
 
     /// P6 stencil 贴地:polygon footprint 挤成水密体(底/顶两层同拓扑
     /// CDT cap + 环边墙),按解析 fill 色归组。高度范围 = 环顶点+粗内部
