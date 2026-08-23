@@ -343,8 +343,8 @@ EarthSceneConfig makeDefaultDemoSceneConfig(
             420.0,
         };
     }
-    // Aerial fog 距离雾:默认开,远处地形融进地平线霞(斜视地平线最明显,
-    // nadir 下淡)。雾色/密度用 SDK 默认(亮地平线霞 + 6e-6 密度)。
+    // Aerial fog 大气光学深度雾(osgEarth 式):默认开,远处地形沿视线路径
+    // 自然融进地平线霞,近处山坡不被角度窗口染白。雾色/消光系数用 SDK 默认。
     config.aerialFog = true;
     // 北极星 Phase 2b 虚拟纹理 PoC(默认关,见 header)。
     config.virtualTexturePoc = kMeasureVirtualTexturePoC;

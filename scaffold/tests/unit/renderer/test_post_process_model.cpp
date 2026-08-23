@@ -60,7 +60,7 @@ TEST(PostProcessModelTest, TonemapGlslIsGeneratedFromConstants) {
     EXPECT_NE(std::string::npos, glsl.find("0.1500"));  // desaturation
 }
 
-// ---- Aerial fog 剂量数学 ----
+// ---- Aerial fog 剂量数学(osgEarth 式光学深度路径积分)----
 
 TEST(PostProcessModelTest, FogZeroDistanceIsZero) {
     // d=0 且 startDistance>0 → 无雾。
@@ -69,21 +69,47 @@ TEST(PostProcessModelTest, FogZeroDistanceIsZero) {
 }
 
 TEST(PostProcessModelTest, FogFarDistanceApproachesOne) {
-    // 远距离 + 有密度 → 雾趋于饱和。
-    // viewUp=0.1:近水平视线,viewWeight≈0.9,不触发地平线强制全雾(否则
-    // 近距离也恒 1,测不出"距离累积"这条路径)。
+    // 远距离 + 有密度 → 光学深度积分趋于饱和。
+    // d=1e9 被积分上限(400km)截断,水平略仰视线在近地稠密大气内穿行,
+    // τ 已远超饱和所需。
     const double fog = aerialFogAmountCpu(1e9, 0.0, 0.001, 0.1, 1000.0);
     EXPECT_GT(fog, 0.99);
 }
 
-TEST(PostProcessModelTest, FogHorizonForcesFullFog) {
-    // 视线近水平(viewUp≈0):即使距离很近也强制全雾(消除地平线硬边)。
-    const double fog = aerialFogAmountCpu(1.0, 0.0, 0.0, 0.0, 1000.0);
-    EXPECT_DOUBLE_EQ(1.0, fog);
+TEST(PostProcessModelTest, FogNearHorizontalShortDistanceIsClear) {
+    // 回归钉子:近处山坡即使视线水平(viewUp≈0)也几乎无雾 —— 这是 osgEarth
+    // 式路径积分与旧"地平线强制"的关键差异(旧实现 d=1m 也强制 100%,产生
+    // 横切山腰的白带)。光学深度 = 100m × ρ(1500m) ≈ 83,3e-5 消光 → 雾≈0.25%。
+    const double fog = aerialFogAmountCpu(100.0, 0.0, 3.0e-5, 0.0, 1500.0);
+    EXPECT_LT(fog, 0.01);
+}
+
+TEST(PostProcessModelTest, FogSaturatesTowardHorizon) {
+    // 远处贴地平线视线:路径长、密度高 → 光学深度饱和,雾趋近 1,与天空无缝
+    // (替代旧强制项达成同样的"地平线融进天空",但按路径而非角度)。
+    const double fog = aerialFogAmountCpu(500000.0, 0.0, 3.0e-5, 0.0, 1500.0);
+    EXPECT_GT(fog, 0.9);
+}
+
+TEST(PostProcessModelTest, FogIncreasesMonotonicallyWithDistance) {
+    // 同一视线方向:距离越远光学深度越大 → 雾单调不减。
+    const double near = aerialFogAmountCpu(1000.0, 0.0, 3.0e-5, 0.0, 1500.0);
+    const double mid = aerialFogAmountCpu(100000.0, 0.0, 3.0e-5, 0.0, 1500.0);
+    const double far = aerialFogAmountCpu(400000.0, 0.0, 3.0e-5, 0.0, 1500.0);
+    EXPECT_LE(near, mid);
+    EXPECT_LE(mid, far);
+    EXPECT_GT(far, near);
+}
+
+TEST(PostProcessModelTest, FogLookingDownIsSmall) {
+    // 俯视近景:视线快速接近地面,路径短 → 雾量小(不是角度窗口,是路径短)。
+    // 相机 1000m 俯视 30°,1500m 处地形仍在地面上(高度≈250m)。
+    const double fog = aerialFogAmountCpu(1500.0, 0.0, 3.0e-5, -0.5, 1000.0);
+    EXPECT_LT(fog, 0.1);
 }
 
 TEST(PostProcessModelTest, FogHeightDecayClosesAtMaxHeight) {
-    // camHeight ≥ 150km:heightWeight→0 → 无雾。
+    // camHeight ≥ 150km(太空):heightWeight→0 → 无雾。
     const double fogLow =
         aerialFogAmountCpu(1e6, 0.0, 0.001, 0.1, 200000.0);
     const double fogHigh =
@@ -95,9 +121,17 @@ TEST(PostProcessModelTest, FogHeightDecayClosesAtMaxHeight) {
 TEST(PostProcessModelTest, FogMathGlslIsGeneratedAndReusable) {
     const std::string glsl = aerialFogMathGLSL();
     EXPECT_NE(std::string::npos, glsl.find("maxHeight"));
-    EXPECT_NE(std::string::npos, glsl.find("heightWeight"));
+    EXPECT_NE(std::string::npos, glsl.find("scaleHeight"));
+    EXPECT_NE(std::string::npos, glsl.find("opticalDepth"));
     EXPECT_NE(std::string::npos, glsl.find("150000.0000"));
     EXPECT_NE(std::string::npos, glsl.find("spaceFactor"));
+    EXPECT_NE(std::string::npos, glsl.find("7994.0000"));
+    EXPECT_EQ(std::string::npos, glsl.find("smoothstep(0.0000, 0.0600"));
+    // 回归钉子:uniform 不能初始化 const(GLSL ES 编译错误会令 fog pass 静默
+    // 回落直绘,真机表现为"雾整体消失"而非白带修复)。planetRadius 必须是非
+    // const 局部变量,从 u_planetRadius 读取。
+    EXPECT_EQ(std::string::npos, glsl.find("const float planetRadius"));
+    EXPECT_NE(std::string::npos, glsl.find("float planetRadius = u_planetRadius;"));
 }
 
 // ---- 量 B:太阳盘 ramp ----

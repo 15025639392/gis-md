@@ -120,13 +120,15 @@ void main() {
 }
 )";
 
-// Aerial fog(大气一致的距离雾,Google Earth / Cesium 式):采样离屏 color
-// (unit0)+ depth(unit1),reverse-Z 反算 eye-space 视距 d,再:
+// Aerial fog(osgEarth 式大气光学深度空气透视):采样离屏 color(unit0)+
+// depth(unit1),reverse-Z 反算 eye-space 视距 d,再:
 //   ① 雾色 = 该像素视线方向的天空色(移植大气 pass 天空色近似,与天空
 //      同源→远处地形无缝融进它正前方那块天空,随高度/方向/太阳变);
-//   ② 密度随相机高度衰减(近地浓、超 maxHeight 关)+ 视线角(朝地平线最
-//      浓、朝下几乎无——aerial perspective 主要在地平线可见,同 Cesium Fog.js);
-//   ③ 指数-平方雾混合(同 czm_fog)。
+//   ② 雾量 = 视线从相机到该像素穿过的**大气光学深度**积分(指数密度剖面
+//      ρ(h)=exp(-h/H),4 段中点采样),fog=1-exp(-τ·density)。远处/贴地平线
+//      视线路径长→自然饱和与天空无缝;近处山坡路径短→保持本色;俯视近景
+//      几乎无雾。替代旧的逐像素地平线强制项(那正是横切山腰白带的根因)。
+//   ③ 相机 >150km(太空)heightWeight→0,雾关闭。
 // reverse-Z:z_ndc=2*z_win-1(GLES depth range [0,1]),d=near*far/(z_ndc*(far-near)+near)。
 // 背景(z_win<0.25,无地形写入)跳过——天空色已在离屏 color 里。
 const char* kAerialFogFragHead = R"(#version 300 es
@@ -176,9 +178,10 @@ void main() {
     vec3 sun = normalize(u_sunDir);
     float camHeight = max(length(u_camPos) - u_planetRadius, 0.0);
 
-    // 密度/雾量/地平线强制/spaceFactor(单一来源,见 PostProcessModel.h)。
-    // 平-指数雾(aerial perspective):haze 从近到远连续累积,给出纵深空间感。
-    // 地平线处强制全雾消除交接硬边;雾色 = computeSkyColor。
+    // 光学深度/雾量/spaceFactor(单一来源,见 PostProcessModel.h)。
+    // osgEarth 式路径积分空气透视:沿视线累积指数密度剖面的光学深度,
+    // 远处/贴地平线自然饱和融进天空,近处山坡按路径长短渐变,无角度窗口。
+    // 雾色 = computeSkyColor(与天空同源)。
 )";
 
 const char* kAerialFogFragMainTail = R"(
@@ -225,7 +228,7 @@ void main() {
         vec3 up = normalize(u_camPos);
         vec3 sun = normalize(u_sunDir);
         float camHeight = max(length(u_camPos) - u_planetRadius, 0.0);
-        // 密度/雾量/地平线强制/spaceFactor(单一来源,见 PostProcessModel.h)。
+        // 光学深度/雾量/spaceFactor(单一来源,见 PostProcessModel.h)。
 )";
 
 const char* kAerialFogTonemapTail = R"(
