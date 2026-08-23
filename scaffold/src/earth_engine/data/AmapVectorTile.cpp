@@ -117,10 +117,13 @@ void decodeBlob(const uint8_t* blob, size_t len,
     }
 }
 
-void parseFeature(Reader& f, int classCode, int geomType,
+void parseFeature(Reader& f, int classCode, int geomType, int layerType,
                   AmapDecodedFeature& feat) {
     feat.classCode = classCode;
     feat.geomType = geomType;
+    // 几何所在 Part 字段按层类型区分(实测):type1 线 = Part{blob #5};
+    // type3 建筑 / type4 轨道 = Part{blob #3};type2 区域 = Feature #6 环。
+    const int partBlobField = (layerType == 1) ? 5 : 3;
     int field = 0, wire = 0;
     while (f.tag(field, wire)) {
         if (wire == 0) {
@@ -134,7 +137,7 @@ void parseFeature(Reader& f, int classCode, int geomType,
             const uint8_t* sub = nullptr;
             if (!f.bytes(static_cast<size_t>(len), sub)) return;
             if (field == 4) {
-                // Part:blob #3(几何)+ height #5。
+                // Part(线/建筑/轨道共用容器)。
                 Reader pr;
                 pr.p = sub;
                 pr.n = static_cast<size_t>(len);
@@ -155,17 +158,24 @@ void parseFeature(Reader& f, int classCode, int geomType,
                         }
                         const uint8_t* psub = nullptr;
                         if (!pr.bytes(static_cast<size_t>(plen), psub)) break;
-                        if (pf == 3) {
+                        if (pf == partBlobField) {
                             decodeBlob(psub, static_cast<size_t>(plen), ring);
-                        } else if (pf == 5) {
-                            // 当前版本 height 为 bytes,编码待校准;先按
-                            // 字符串记录(name 复用,避免丢数据)。
+                        } else if (pf == 3 && partBlobField == 5) {
+                            // type1 线:blob 在 #5;若有 #3(实测未见)忽略。
+                        } else if (pf == 5 && layerType != 1) {
+                            // 建筑高度 varint 已在上面 wire==0 分支读取;
+                            // 此处兜底字符串不适用,忽略。
                             feat.name.assign(
                                 reinterpret_cast<const char*>(psub),
                                 static_cast<size_t>(plen));
                         }
                     }
                 }
+                if (!ring.empty()) feat.rings.push_back(std::move(ring));
+            } else if (field == 6 && layerType == 2) {
+                // type2 区域:Feature #6 为 repeated ring blob。
+                std::vector<std::pair<double, double>> ring;
+                decodeBlob(sub, static_cast<size_t>(len), ring);
                 if (!ring.empty()) feat.rings.push_back(std::move(ring));
             } else if (field == 6) {
                 // 名称(标签/道路名),字符串。
@@ -268,20 +278,20 @@ bool decodeContainer(const uint8_t* data, size_t size,
                     Reader g;
                     g.p = cg;
                     g.n = static_cast<size_t>(clen);
-                    int classCode = 0, geomType = 0;
+                    // classCode 只在字段 1(实测 type1=20009 在 #1);
+                    // type2 区域 #1 缺省,默认 30001;type3 建筑合成 90001。
+                    const int defaultClass = part.type == 1 ? 20004
+                                             : part.type == 2 ? 30001
+                                                               : 90001;
+                    int classCode = defaultClass, geomType = 0;
                     int gf = 0, gw = 0;
                     std::vector<const uint8_t*> feats;
                     std::vector<size_t> featLens;
                     while (g.tag(gf, gw)) {
                         if (gw == 0) {
                             const uint64_t v = g.varint();
-                            if (gf == 1 || gf == 2) {
-                                if (gf == 1) classCode = static_cast<int>(v);
-                                if (gf == 2 && classCode == 0) {
-                                    classCode = static_cast<int>(v);
-                                }
-                            }
-                            if (gf == 3 || (gf == 2 && geomType == 0)) {
+                            if (gf == 1) classCode = static_cast<int>(v);
+                            if (gf == 2 || gf == 3) {
                                 geomType = static_cast<int>(v);
                             }
                         } else if (gw == 2) {
@@ -304,7 +314,7 @@ bool decodeContainer(const uint8_t* data, size_t size,
                         fr.p = feats[fi];
                         fr.n = featLens[fi];
                         AmapDecodedFeature feat;
-                        parseFeature(fr, classCode, geomType, feat);
+                        parseFeature(fr, classCode, geomType, part.type, feat);
                         if (!feat.rings.empty() || !feat.name.empty()) {
                             part.features.push_back(std::move(feat));
                         }

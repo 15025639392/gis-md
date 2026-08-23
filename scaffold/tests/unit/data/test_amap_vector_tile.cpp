@@ -66,7 +66,9 @@ std::vector<uint8_t> makeContainer(const std::vector<uint8_t>& protobuf) {
 
 // zigzag(v) = (v<<1) ^ (v>>63 语义:非负 → 2v)。
 void putZigzag(std::vector<uint8_t>& b, int64_t v) {
-    putVarint(b, static_cast<uint64_t>((v << 1) ^ (v >> 63)));
+    const uint64_t u = static_cast<uint64_t>(v);
+    const uint64_t z = (u << 1) ^ (0 - (u >> 63));
+    putVarint(b, z);
 }
 
 // 类型 3(建筑)层:一个 ClassGroup(classCode=20009, geomType=13),
@@ -107,6 +109,59 @@ std::vector<uint8_t> makeBuildingTile() {
     return makeContainer(root);
 }
 
+std::vector<uint8_t> makeBlobLayer(int layerType, const std::vector<uint8_t>& cg) {
+    std::vector<uint8_t> content;
+    putBytesField(content, 1, cg);
+    std::vector<uint8_t> layer;
+    putVarintField(layer, 1, 14);
+    putVarintField(layer, 2, 13038);
+    putVarintField(layer, 3, 6785);
+    putVarintField(layer, 4, layerType);
+    putBytesField(layer, 5, content);
+    putVarintField(layer, 8, 4);
+    std::vector<uint8_t> tile;
+    putVarintField(tile, 1, 14);
+    putVarintField(tile, 2, 13038);
+    putVarintField(tile, 3, 6785);
+    putBytesField(tile, 4, layer);
+    std::vector<uint8_t> root;
+    putBytesField(root, 1, tile);
+    const std::vector<uint8_t> ver{'v', '2'};
+    putBytesField(root, 2, ver);
+    return makeContainer(root);
+}
+
+std::vector<uint8_t> makeLineTile() {
+    std::vector<uint8_t> part;
+    {
+        std::vector<uint8_t> blob;
+        const int64_t pts[6] = {0, 0, 10, 0, 0, 10};
+        for (int64_t v : pts) putZigzag(blob, v);
+        putBytesField(part, 5, blob);  // 实测:type1 线 Part{blob #5}
+    }
+    std::vector<uint8_t> feature;
+    putBytesField(feature, 4, part);
+    std::vector<uint8_t> cg;
+    putVarintField(cg, 1, 20009);
+    putVarintField(cg, 3, 13);
+    putBytesField(cg, 4, feature);
+    return makeBlobLayer(1, cg);
+}
+
+std::vector<uint8_t> makeRegionTile() {
+    std::vector<uint8_t> feature;
+    {
+        std::vector<uint8_t> ring;
+        // 增量:(0,0)->(10,0)->(10,10)->(-10,-10) 闭合回原点。
+        const int64_t pts[8] = {0, 0, 10, 0, 0, 10, -10, -10};
+        for (int64_t v : pts) putZigzag(ring, v);
+        putBytesField(feature, 6, ring);  // 实测:type2 区域 Feature#6 环
+    }
+    std::vector<uint8_t> cg;  // 无 classCode → 默认 30001
+    putBytesField(cg, 4, feature);
+    return makeBlobLayer(2, cg);
+}
+
 }  // namespace
 
 TEST(AmapVectorTileTest, DecodesBuildingContainer) {
@@ -134,6 +189,34 @@ TEST(AmapVectorTileTest, DecodesBuildingContainer) {
     EXPECT_DOUBLE_EQ(0.0, f.rings[0][1].second);
     EXPECT_DOUBLE_EQ(10.0, f.rings[0][2].first);
     EXPECT_DOUBLE_EQ(10.0, f.rings[0][2].second);
+}
+
+TEST(AmapVectorTileTest, DecodesLineContainerWithBlobAtPart5) {
+    const auto container = makeLineTile();
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(container.data(), container.size(), parts));
+    ASSERT_EQ(1u, parts.size());
+    EXPECT_EQ(1, parts[0].type);
+    ASSERT_EQ(1u, parts[0].features.size());
+    const AmapDecodedFeature& f = parts[0].features[0];
+    EXPECT_EQ(20009, f.classCode);
+    ASSERT_EQ(1u, f.rings.size());
+    ASSERT_EQ(3u, f.rings[0].size());
+    EXPECT_DOUBLE_EQ(10.0, f.rings[0][1].first);
+}
+
+TEST(AmapVectorTileTest, DecodesRegionContainerWithFeature6Rings) {
+    const auto container = makeRegionTile();
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(container.data(), container.size(), parts));
+    ASSERT_EQ(1u, parts.size());
+    EXPECT_EQ(2, parts[0].type);
+    ASSERT_EQ(1u, parts[0].features.size());
+    const AmapDecodedFeature& f = parts[0].features[0];
+    EXPECT_EQ(30001, f.classCode);  // 缺省类
+    ASSERT_EQ(1u, f.rings.size());
+    ASSERT_EQ(4u, f.rings[0].size());
+    EXPECT_DOUBLE_EQ(0.0, f.rings[0][3].first);
 }
 
 TEST(AmapVectorTileTest, RejectsBadLengthHeader) {
