@@ -1482,7 +1482,7 @@ FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
                               pointIndices, labelVerts, labelIndices,
                               labelEntries, mesh.fillVolumeGroups,
                               mesh.lineVolumeGroups, &mesh.lineClampSource,
-                              nullptr, nullptr);
+                              &mesh.extrudeVerts, &mesh.extrudeIndices);
     }
     return mesh;
 }
@@ -1574,7 +1574,8 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
                          mesh.lineVerts, mesh.lineIndices, pointVerts,
                          pointIndices, std::vector<float>(), kNoIndices,
                          std::vector<LabelEntry>(), mesh.fillVolumeGroups,
-                         mesh.lineVolumeGroups, {}, {}, gpu)) {
+                         mesh.lineVolumeGroups, mesh.extrudeVerts,
+                         mesh.extrudeIndices, gpu)) {
         return;
     }
     const auto tBake = PClock::now();

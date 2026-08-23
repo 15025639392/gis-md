@@ -3,6 +3,7 @@
 #include "AmapVectorTile.h"
 #include "Feature.h"
 
+#include <string>
 #include <vector>
 
 namespace earth_engine {
@@ -32,5 +33,16 @@ Cartographic amapTileLocalToLngLat(int tileX, int tileY, int z,
 /// toWgs84=true 时做 GCJ 反偏移(默认)。
 std::vector<Feature> amapDecodedPartToFeatures(
     const AmapDecodedLayerPart& part, bool toWgs84 = true);
+
+/// 完整瓦片字节流 → 引擎 Feature 列表(解码 + 逐层转换)。
+///
+/// E3 通路:高德瓦片容器(4 字节 BE 长度 + gzip protobuf)直接解码成
+/// Feature,供 VectorTileSourceT 的 DecodeTraits 注入。regionsOnly 过滤
+/// 在解码阶段做(粗源 z10 只要 type2 面,主源 z14 只要 type1/3/4)——
+/// 与旧 demo 切片 amapLoadDemoTile 的过滤语义一致,但提前到 worker 解码
+/// 期,减少传输/缓存里的无关要素。
+bool amapBytesToFeatures(const uint8_t* data, size_t size,
+                         bool regionsOnly, std::vector<Feature>& out,
+                         std::string* error = nullptr);
 
 }  // namespace earth_engine

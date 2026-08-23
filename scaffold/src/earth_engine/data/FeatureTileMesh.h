@@ -72,13 +72,18 @@ struct FeatureTileMesh {
     /// **互斥**,同时产出会让同一份内容画两遍)。
     VolumeCpuGroups fillVolumeGroups;
     VolumeCpuGroups lineVolumeGroups;
+    /// V6 建筑挤出(pos3+normal3+color4=28B/顶点,相对 origin)。
+    /// E3:与 store 路径的 BucketGpu::extrude* 同构,worker 全链镶嵌时
+    /// 在这里携带,commitTileMesh 上传到 BucketGpu::extrude*。
+    std::vector<float> extrudeVerts;
+    std::vector<uint32_t> extrudeIndices;
     /// 点符号实例表(quad 定型留在渲染线程,见 TileSymbolCpu)。
     std::vector<TileSymbolCpu> symbols;
 
     bool empty() const {
         return fillIndices.empty() && lineIndices.empty() &&
                fillVolumeGroups.empty() && lineVolumeGroups.empty() &&
-               symbols.empty();
+               extrudeIndices.empty() && symbols.empty();
     }
 };
 

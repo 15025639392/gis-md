@@ -64,4 +64,22 @@ std::vector<Feature> amapDecodedPartToFeatures(
     return out;
 }
 
+bool amapBytesToFeatures(const uint8_t* data, size_t size,
+                         bool regionsOnly, std::vector<Feature>& out,
+                         std::string* error) {
+    std::vector<AmapDecodedLayerPart> parts;
+    if (!decodeAmapTile(data, size, parts, error)) {
+        return false;
+    }
+    for (const auto& p : parts) {
+        if (regionsOnly ? (p.type != 2) : (p.type == 2)) {
+            continue;
+        }
+        auto fs = amapDecodedPartToFeatures(p, true);
+        out.insert(out.end(), std::make_move_iterator(fs.begin()),
+                   std::make_move_iterator(fs.end()));
+    }
+    return true;
+}
+
 }  // namespace earth_engine

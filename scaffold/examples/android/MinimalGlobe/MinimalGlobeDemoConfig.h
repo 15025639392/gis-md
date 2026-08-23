@@ -137,8 +137,11 @@ constexpr int kMvtBasemapMaxZoom = 14;
 constexpr size_t kMvtTileCacheDecoded = 48;
 constexpr size_t kMvtTileCacheRaw = 256;
 
-constexpr bool kEnableTerrainForDemo = true;
-constexpr bool kUseGaodeSatelliteForDemo = true;
+// 用户指示先隐藏卫星底图,避免卫星盖住矢量层造成的误导。
+// 地形暂保留(amap 复刻平面语义最终要关,但关地形会触发另一个
+// 启动即卡问题,单独排查后再切)。
+constexpr bool kEnableTerrainForDemo = false;
+constexpr bool kUseGaodeSatelliteForDemo = false;
 constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;
 /// C2 步骤5 垂直切片:直接拉高德矢量瓦片(type1 组)→ 解码 → WGS84 →
 /// FeatureRenderLayer(E 贴地 ribbon + 面 fill)。开时关掉栅格路网 overlay

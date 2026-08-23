@@ -382,4 +382,75 @@ std::unique_ptr<TileScheme> TileScheme::createGeographicTMS() {
     return std::make_unique<GeographicTMSScheme>();
 }
 
+// ============================================================
+// 高德 Nebula 4326 等距圆柱网格
+// ============================================================
+
+namespace {
+
+/// 高德 4326 等距圆柱(2:1)瓦片体系。
+///
+/// 与 GeographicTMS 的区别:
+///   - level 0 是 1×1(整世界一瓦),而非 2×1;
+///   - y=0 在北纬 90(y 向下递增,XYZ 风格),而非南底;
+///   - 每瓦 360/2^z × 180/2^z 度(2:1 地理比例,与 amapTileLocalToLngLat
+///     的 flipY=true 语义一致)。
+class AmapGeographicScheme : public TileScheme {
+public:
+    std::string id() const override { return "Amap-Geographic"; }
+    const CrsProfile& crs() const override {
+        return CrsProfile::wgs84Geographic();
+    }
+    std::string crsProfile() const override { return "EPSG:4326"; }
+    int tileSize() const override { return 256; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 25; }
+    std::string yDirection() const override { return "down"; }  // y=0 = north
+    int tileCountX(int zoom) const override { return quadtreeTileCount(1, zoom); }
+    int tileCountY(int zoom) const override { return quadtreeTileCount(1, zoom); }
+
+    Rectangle tileToRectangle(const TileKey& key) const override {
+        int z = key.z, x = key.x, y = key.y;
+        double n = static_cast<double>(tileCountX(z));
+        double west = static_cast<double>(x) / n * 360.0 - 180.0;
+        double east = static_cast<double>(x + 1) / n * 360.0 - 180.0;
+        double north = 90.0 - static_cast<double>(y) / n * 180.0;
+        double south = 90.0 - static_cast<double>(y + 1) / n * 180.0;
+        return Rectangle(
+            MathUtils::degreesToRadians(west),
+            MathUtils::degreesToRadians(south),
+            MathUtils::degreesToRadians(east),
+            MathUtils::degreesToRadians(north));
+    }
+
+    TileKey positionToTile(double lngRad, double latRad, int zoom) const override {
+        double lngDeg = MathUtils::radiansToDegrees(lngRad);
+        double latDeg = MathUtils::radiansToDegrees(latRad);
+        int n = tileCountX(zoom);
+        int x = static_cast<int>((lngDeg + 180.0) / 360.0 * n);
+        int y = static_cast<int>((90.0 - latDeg) / 180.0 * n);
+        x = std::clamp(x, 0, n - 1);
+        y = std::clamp(y, 0, n - 1);
+        return TileKey{id(), zoom, x, y};
+    }
+
+    void tileRange(const Rectangle& rect, int zoom,
+                   int& minX, int& minY, int& maxX, int& maxY) const override {
+        TileKey nw = positionToTile(rect.west(), rect.north(), zoom);
+        TileKey se = positionToTile(rect.east(), rect.south(), zoom);
+        minX = std::min(nw.x, se.x); maxX = std::max(nw.x, se.x);
+        minY = std::min(nw.y, se.y); maxY = std::max(nw.y, se.y);
+    }
+
+    double levelResolution(int zoom) const override {
+        return MathUtils::TwoPi / static_cast<double>(tileCountX(zoom));
+    }
+};
+
+} // namespace
+
+std::unique_ptr<TileScheme> TileScheme::createAmapGeographic() {
+    return std::make_unique<AmapGeographicScheme>();
+}
+
 } // namespace earth_engine

@@ -1114,6 +1114,12 @@ add_executable(test_mvt_vector_source
 target_link_libraries(test_mvt_vector_source PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_mvt_vector_source COMMAND test_mvt_vector_source)
 
+add_executable(test_amap_vector_source
+    unit/data/test_amap_vector_source.cpp
+)
+target_link_libraries(test_amap_vector_source PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_amap_vector_source COMMAND test_amap_vector_source)
+
 add_executable(test_constrained_delaunay
     unit/data/test_constrained_delaunay.cpp
 )

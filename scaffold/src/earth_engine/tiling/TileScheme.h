@@ -68,6 +68,13 @@ public:
     /// x = floor((lng + 180) / 360 * 2^(z+1))
     /// y = floor((lat + 90) / 180 * 2^z)  (TMS: y=0 at south pole)
     static std::unique_ptr<TileScheme> createGeographicTMS();
+
+    /// 高德(amap.com)Nebula 矢量瓦片的 4326 等距圆柱网格(E3)。
+    /// 2:1 地理比例(每瓦 360/2^z × 180/2^z 度),x/y 各 2^z 瓦:
+    ///   x = floor((lng + 180) / 360 * 2^z),y = floor((90 - lat) / 180 * 2^z)
+    /// (y=0 在北纬 90,向下递增;实测重庆 z14 = 13038_5505,
+    ///  而非 WebMercator 的 6785 —— 网格错了瓦片全偏)。
+    static std::unique_ptr<TileScheme> createAmapGeographic();
 };
 
 } // namespace earth_engine

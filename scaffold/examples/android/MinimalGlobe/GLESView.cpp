@@ -48,6 +48,7 @@
 #include "earth_engine/data/AmapTileManifest.h"
 #include "earth_engine/data/AmapVectorTile.h"
 #include "earth_engine/data/AmapGeometry.h"
+#include "earth_engine/data/AmapVectorSource.h"
 #include "earth_engine/providers/RoadFieldSource.h"
 #include <nlohmann/json.hpp>
 #include "earth_engine/style/StyleDocument.h"
@@ -211,6 +212,15 @@ static std::vector<FeatureId> gEditHandleIds;
 // 一个普通 FeatureRenderLayer(store 即 source 的灌注目标)。 ----
 static FeatureRenderLayer* gMvtBasemapLayer = nullptr;  // Engine 持有所有权
 static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
+
+// ---- C2/E3:高德矢量瓦片引擎级源(替换 demo 切片的 FeatureStore 灌注)。
+// 同一套 VectorTileSourceT 调度:树选择 + worker 解码/镶嵌 + 渲染线程
+// 整瓦原子替换(tile-bucket 常驻命令)。粗源(z10 区域)与主源(z14 路网/
+// 建筑)各一实例,共享同一 worker 池,各自树限定 zoom 档。 ----
+static std::unique_ptr<AmapRegionsVectorSource> gAmapRegionsSource;
+static std::unique_ptr<AmapMainVectorSource> gAmapMainSource;
+static FeatureRenderLayer* gAmapRegionsLayer = nullptr;  // Engine 持有
+static FeatureRenderLayer* gAmapMainLayer = nullptr;     // Engine 持有
 // E1:MVT 解码 + 镶嵌的 worker 池。独立于引擎的瓦片加载池 —— 底图镶嵌是
 // 突发型重负载(换 zoom 时整视口一起来),混进地形/影像池会挤掉它们的
 // 加载额度。2 线程:再多也只是把内存峰值抬高,commit 侧本就有帧预算。
@@ -320,6 +330,188 @@ static void mvtFetchTile(const TileKey& key,
     gMvtFetch.requests[id] = std::move(handle);
 }
 
+// ---- C2/E3:高德瓦片异步 fetch 链(引擎级通路用)。
+// 与 demo 切片的阻塞链同一数据路径(web/init → web_map/get_tile →
+// 签名 URL),但全程异步回调,匹配 MvtTileFetchCacheT::FetchFn 契约。
+// 版本探测结果跨瓦片共享(版本号是全局数据 stamp,逐瓦探测是纯浪费)。
+// ---------------------------------------------------------------------
+struct AmapFetchState {
+    std::mutex mutex;
+    std::string version;       // 已探测的版本 stamp(空 = 未探测)
+    bool versionResolved = false;
+    bool versionProbing = false;  // 探测在途(防并发首探)
+    /// 探测在途时排队的瓦片请求(版本就绪后统一放行)。
+    std::vector<std::function<void(bool)>> versionWaiters;
+    uint64_t nextId = 0;
+    std::unordered_map<uint64_t, std::unique_ptr<HttpRequest>> requests;
+    std::vector<uint64_t> completed;
+};
+static AmapFetchState gAmapFetch;
+
+/// 渲染线程专用:剪除已完成的 HttpRequest 句柄(析构即取消,故不能在
+/// curl 回调线程 erase)。每帧驱动 amap 源前调用。
+static void amapCleanupCompleted() {
+    std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
+    for (uint64_t done : gAmapFetch.completed) {
+        gAmapFetch.requests.erase(done);
+    }
+    gAmapFetch.completed.clear();
+}
+
+/// 完成一次 amap 瓦片 fetch:版本(缓存)→ manifest POST → 签名 URL GET。
+/// 回调 (statusCode, body) 在任意线程;**任何失败路径都必须回调**,否则
+/// MvtTileFetchCacheT 的 in-flight 永不解除、树 pending 永不消化 ——
+/// 失败回调 status != 200 或空 body,由 cache 记失败账本。
+static void amapFetchTile(const TileKey& key,
+                          std::function<void(int, std::vector<uint8_t>)> cb) {
+    const std::string webKey = minimal_globe_demo::kAmapWebKey;
+    const std::string referer = minimal_globe_demo::kAmapReferer;
+
+    // 持有 in-flight HttpRequest 句柄到完成(析构即取消)。
+    // ⚠️ 完成 id 的剪除**只在渲染线程**做(见 amapCleanupCompleted),
+    // 绝不能在 curl 回调线程 erase —— 析构 HttpRequest 会 cancel 句柄,
+    // cancel 可能等待 curl 内部锁,而回调正持着该锁 → 自锁死循环。
+    // (与 gMvtFetch 同纪律;gMvtFetch 的剪除在渲染线程的发请求路径上。)
+    auto allocId = []() -> uint64_t {
+        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
+        return gAmapFetch.nextId++;
+    };
+    auto hold = [](uint64_t id, std::unique_ptr<HttpRequest> handle) {
+        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
+        gAmapFetch.requests[id] = std::move(handle);
+    };
+    auto release = [](uint64_t id) {
+        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
+        gAmapFetch.completed.push_back(id);
+    };
+
+    // 阶段 3:GET 签名瓦片 URL → 字节。
+    auto fetchSignedUrl = [cb, referer, allocId, hold, release](
+                              const std::string& url) {
+        const uint64_t id = allocId();
+        auto handle = CurlMultiRequestScheduler::shared().get(
+            url,
+            [cb, release, id](int statusCode, std::vector<uint8_t> body) {
+                cb(statusCode, std::move(body));
+                release(id);
+            },
+            HttpRequestOptions(HttpRequestPriority::Low,
+                               {{"Referer", referer}}));
+        hold(id, std::move(handle));
+    };
+
+    // 阶段 2:POST get_tile manifest → 解析签名 URL → 阶段 3。
+    auto fetchManifest = [key, referer, cb, fetchSignedUrl, allocId, hold,
+                          release](const std::string& version) {
+        AmapManifestConfig cfg;
+        cfg.key = minimal_globe_demo::kAmapWebKey;
+        cfg.referer = referer;
+        cfg.version = version;
+        const std::string url = buildGetTileUrl(cfg);
+        const std::string bodyStr = buildGetTileBody(
+            {{key.x, key.y, key.z, 1}}, cfg, version);
+        const uint64_t id = allocId();
+        auto handle = CurlMultiRequestScheduler::shared().post(
+            url, std::vector<uint8_t>(bodyStr.begin(), bodyStr.end()),
+            "application/x-www-form-urlencoded",
+            [cb, fetchSignedUrl, referer, release, id](
+                int statusCode, std::vector<uint8_t> body) {
+                if (statusCode != 200 || body.empty()) {
+                    cb(0, {});
+                    release(id);
+                    return;
+                }
+                std::vector<AmapTileUrl> urls;
+                std::string err;
+                if (!parseTileUrls(
+                        std::string(body.begin(), body.end()), urls, &err) ||
+                    urls.empty()) {
+                    cb(0, {});
+                    release(id);
+                    return;
+                }
+                fetchSignedUrl(urls[0].url);
+                release(id);
+            },
+            HttpRequestOptions(HttpRequestPriority::Low,
+                               {{"Referer", referer}}));
+        hold(id, std::move(handle));
+    };
+
+    // 阶段 1:版本探测(跨瓦片共享;已解析直接跳阶段 2)。
+    // 并发首探由 versionProbing 标志拦下(首个请求发起 init,其余排队)。
+    bool probeNeeded = false;
+    bool resolved = false;
+    std::string resolvedVersion;
+    {
+        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
+        if (gAmapFetch.versionResolved) {
+            if (gAmapFetch.version.empty()) {
+                cb(0, {});
+                return;
+            }
+            resolved = true;
+            resolvedVersion = gAmapFetch.version;
+        } else {
+            gAmapFetch.versionWaiters.push_back(
+                [cb, fetchManifest](bool ok) {
+                    if (!ok) {
+                        cb(0, {});
+                        return;
+                    }
+                    std::string version;
+                    {
+                        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
+                        version = gAmapFetch.version;
+                    }
+                    fetchManifest(version);
+                });
+            if (!gAmapFetch.versionProbing) {
+                gAmapFetch.versionProbing = true;
+                probeNeeded = true;
+            }
+        }
+    }
+    if (resolved) {
+        fetchManifest(resolvedVersion);  // 锁外调用,避免自死锁
+        return;
+    }
+    if (!probeNeeded) return;  // 探测已在途,本 key 已排队等放行
+
+    const std::string initUrl = "https://jsapi.amap.com/web/init?key=" + webKey;
+    const uint64_t id = allocId();
+    auto handle = CurlMultiRequestScheduler::shared().get(
+        initUrl,
+        [release, id](int statusCode, std::vector<uint8_t> body) {
+            std::string version;
+            if (statusCode == 200) {
+                try {
+                    const auto doc =
+                        nlohmann::json::parse(body.begin(), body.end());
+                    const auto inner =
+                        nlohmann::json::parse(doc.value("tile", "{}"));
+                    version = inner.value("v", "");
+                } catch (const std::exception&) {
+                    version.clear();
+                }
+            }
+            std::vector<std::function<void(bool)>> waiters;
+            {
+                std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
+                gAmapFetch.version = version;
+                gAmapFetch.versionResolved = true;
+                gAmapFetch.versionProbing = false;
+                waiters.swap(gAmapFetch.versionWaiters);
+            }
+            const bool ok = !version.empty();
+            for (auto& w : waiters) w(ok);
+            release(id);
+        },
+        HttpRequestOptions(HttpRequestPriority::Low,
+                           {{"Referer", referer}}));
+    hold(id, std::move(handle));
+}
+
 // ---- C2 步骤5:高德矢量瓦片垂直切片 ----
 // 定义在文件尾部(gRenderThread 之后),见 amapLoadDemoTile。
 static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z,
@@ -346,13 +538,26 @@ static void clearDemoEngineObjects() {
     // MVT 源先停:它持有 basemap 层 store 的引用(层归 Engine 所有),
     // 且在飞的 HttpRequest 句柄析构即取消。
     gMvtSource.reset();
+    gAmapRegionsSource.reset();
+    gAmapMainSource.reset();
     gMvtWorkerPool.reset();
     {
         std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
         gMvtFetch.requests.clear();
         gMvtFetch.completed.clear();
     }
+    {
+        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
+        gAmapFetch.requests.clear();
+        gAmapFetch.completed.clear();
+        gAmapFetch.versionWaiters.clear();
+        gAmapFetch.version.clear();
+        gAmapFetch.versionResolved = false;
+        gAmapFetch.versionProbing = false;
+    }
     gMvtBasemapLayer = nullptr;   // Engine 持有,随 gEngine 一起销毁
+    gAmapRegionsLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
+    gAmapMainLayer = nullptr;     // Engine 持有,随 gEngine 一起销毁
     gDemoFeatureLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
     gEditHandleLayer = nullptr;
     gClusterLayer = nullptr;
@@ -873,31 +1078,95 @@ static bool createEngine() {
                  {"61",
                   StyleExpression::literal({0.48f, 0.80f, 0.50f, 0.60f})}},
                 StyleExpression::literal({0.71f, 0.71f, 0.71f, 0.55f}));
-            // 粗源:面(水/绿地)z10 网格(重庆 106.5E/29.5N → z10 815_344)。
+            if (!gMvtWorkerPool) {
+                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
+            }
+            // 粗源:面(水/绿地)z10 网格。树固定 z10 档(overzoom 钳制)。
             auto regionLayer = std::make_unique<FeatureRenderLayer>(
                 "amap-regions", gRenderDevice.get(), Ellipsoid::WGS84());
             regionLayer->setStyle(as);
-            auto* regionPtr = regionLayer.get();
+            gAmapRegionsLayer = regionLayer.get();  // Engine 将持有所有权
             gEngine->addFeatureRenderLayer(std::move(regionLayer));
-            for (int dx = -1; dx <= 1; ++dx) {
-                for (int dy = -1; dy <= 1; ++dy) {
-                    amapLoadDemoTile(regionPtr, 815 + dx, 344 + dy, 10, true);
-                }
-            }
-            // 主源:路网/建筑/轨道 z14 网格。
+            auto regionsCache =
+                std::make_shared<MvtTileFetchCacheT<
+                    std::vector<Feature>, AmapDecodeTraits<true>>>(
+                    [](const TileKey& k,
+                       MvtTileFetchCacheT<std::vector<Feature>,
+                                          AmapDecodeTraits<true>>::
+                           FetchCallback cb) {
+                        amapFetchTile(k, std::move(cb));
+                    },
+                    minimal_globe_demo::kMvtTileCacheDecoded,
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+            AmapRegionsVectorSource::Options rOpts;
+            rOpts.tree.minZoom = 10;
+            rOpts.tree.maxZoom = 10;
+            rOpts.tree.scheme = TileScheme::createAmapGeographic();
+            AmapRegionsVectorSource::Sinks rSinks;
+            FeatureRenderLayer* rLayer = gAmapRegionsLayer;
+            rSinks.tessellate =
+                [rLayer](const TileKey& key,
+                         std::vector<Feature>&& features) {
+                    return FeatureRenderLayer::tessellateTileMesh(
+                        rLayer->workerTessellationContextForArea(
+                            amapTileRectangle(key)),
+                        features);
+                };
+            rSinks.commit = [rLayer](const TileKey& key,
+                                     FeatureTileMesh&& mesh) {
+                rLayer->commitTileMesh(key, std::move(mesh));
+            };
+            rSinks.drop = [rLayer](const TileKey& key) {
+                rLayer->dropTileMesh(key);
+            };
+            gAmapRegionsSource = std::make_unique<AmapRegionsVectorSource>(
+                rOpts, std::move(rSinks), regionsCache, gMvtWorkerPool);
+            LOGI("AmapE3: regions source installed (z10, amap 4326 grid)");
+            // 主源:路网/建筑/轨道 z14 网格。树 z12-14(近景放开细档)。
             auto mainLayer = std::make_unique<FeatureRenderLayer>(
                 "amap-vector", gRenderDevice.get(), Ellipsoid::WGS84());
             mainLayer->setStyle(as);
-            auto* mainPtr = mainLayer.get();
+            gAmapMainLayer = mainLayer.get();  // Engine 将持有所有权
             gEngine->addFeatureRenderLayer(std::move(mainLayer));
-            for (int dx = -1; dx <= 1; ++dx) {
-                for (int dy = -1; dy <= 1; ++dy) {
-                    amapLoadDemoTile(mainPtr, 13038 + dx, 5505 + dy, 14,
-                                     false);
-                }
-            }
-            LOGI("AmapVectorDemo: coarse(z10 regions) + main(z14) installed, "
-                 "18 tiles queued");
+            auto mainCache =
+                std::make_shared<MvtTileFetchCacheT<
+                    std::vector<Feature>, AmapDecodeTraits<false>>>(
+                    [](const TileKey& k,
+                       MvtTileFetchCacheT<std::vector<Feature>,
+                                          AmapDecodeTraits<false>>::
+                           FetchCallback cb) {
+                        amapFetchTile(k, std::move(cb));
+                    },
+                    minimal_globe_demo::kMvtTileCacheDecoded,
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+            AmapMainVectorSource::Options mOpts;
+            mOpts.tree.minZoom = 12;
+            mOpts.tree.maxZoom = 14;
+            mOpts.tree.scheme = TileScheme::createAmapGeographic();
+            // 近景 z14 视口约 84 瓦(1.5km 高),默认 64 会把它压到 z13
+            // —— 而 z13 组是空瓦(81B),主源将永远无内容。抬高闸让 z14
+            // 进入;瓦数上界仍由相机视口矩形天然限制(见 horizonViewRect)。
+            mOpts.tree.maxTilesPerView = 256;
+            AmapMainVectorSource::Sinks mSinks;
+            FeatureRenderLayer* mLayer = gAmapMainLayer;
+            mSinks.tessellate =
+                [mLayer](const TileKey& key,
+                         std::vector<Feature>&& features) {
+                    return FeatureRenderLayer::tessellateTileMesh(
+                        mLayer->workerTessellationContextForArea(
+                            amapTileRectangle(key)),
+                        features);
+                };
+            mSinks.commit = [mLayer](const TileKey& key,
+                                     FeatureTileMesh&& mesh) {
+                mLayer->commitTileMesh(key, std::move(mesh));
+            };
+            mSinks.drop = [mLayer](const TileKey& key) {
+                mLayer->dropTileMesh(key);
+            };
+            gAmapMainSource = std::make_unique<AmapMainVectorSource>(
+                mOpts, std::move(mSinks), mainCache, gMvtWorkerPool);
+            LOGI("AmapE3: main source installed (z12-14, amap 4326 grid)");
         }
 
         // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。**不在任何
@@ -1522,6 +1791,36 @@ static void renderFrame() {
                  cs.residentTiles, cs.residentBytes / 1024, cs.rawTiles,
                  cs.rawBytes / 1024,
                  static_cast<unsigned long long>(cs.rawHits));
+        }
+    }
+    // C2/E3:高德矢量双源驱动(与 gMvtSource 同契约:渲染线程 update)。
+    // 两源独立树(z10 粗档 / z12-14 主档),共享 worker 池与版本探测。
+    if (gAmapRegionsSource || gAmapMainSource) {
+        amapCleanupCompleted();  // 渲染线程剪除已完成句柄(见该函数注释)
+        const Ellipsoid& wgs84 = Ellipsoid::WGS84();
+        const Cartographic camCarto =
+            wgs84.cartesianToCartographic(gEngine->camera().position());
+        const Vec3& radii = wgs84.radii();
+        const double minRadius =
+            std::min(radii.x(), std::min(radii.y(), radii.z()));
+        const Rectangle viewRect =
+            MvtVectorSource::horizonViewRectangle(camCarto, minRadius);
+        const double camHeight = std::max(1.0, camCarto.height());
+        bool amapPending = false;
+        if (gAmapRegionsSource) {
+            gAmapRegionsSource->update(viewRect, camHeight);
+            amapPending = amapPending ||
+                          gAmapRegionsSource->tree().pendingCount() > 0 ||
+                          gAmapRegionsSource->hasTessellationInFlight();
+        }
+        if (gAmapMainSource) {
+            gAmapMainSource->update(viewRect, camHeight);
+            amapPending = amapPending ||
+                          gAmapMainSource->tree().pendingCount() > 0 ||
+                          gAmapMainSource->hasTessellationInFlight();
+        }
+        if (amapPending) {
+            gEngine->requestRender("amapPending");
         }
     }
     // 阶段 4:假载体在**引擎 update 之前**推进,这样本帧 tether 读到的就是新
