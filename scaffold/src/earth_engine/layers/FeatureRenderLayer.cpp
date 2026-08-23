@@ -493,7 +493,7 @@ void FeatureRenderLayer::tessellateFeatureInto(
     // (像素级贴合,LOD 切换免重钳);不支持回落方案 A。
     const bool stencilFill =
         clamp && feature.type == GeometryType::Polygon &&
-        ctx.supportsStencilClassification;
+        ctx.supportsStencilClassification && ctx.style.stencilFillEnabled;
     // P6d:clamp 线(LineString + polygon outline)同走 stencil 双 pass
     // (墙带体,像素级贴地,宽度 VS 按眼深挤出);不支持回落方案 A ribbon。
     const bool stencilLine =

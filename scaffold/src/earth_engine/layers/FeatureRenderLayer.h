@@ -146,6 +146,10 @@ struct FeatureRenderStyle {
     /// V6 建筑挤出:Polygon 带 amap_height 属性时挤出(墙+顶面,lambert
     /// 顶光),不产平 fill(与 stencil 面互斥)。
     bool buildingExtrusion = true;
+    /// 面 fill 走 stencil 分类(P6a,像素级贴地,2-pass)还是方案A 平面
+    /// fill(单 pass,贴地采样 + heightOffset 抬升,掠视有轻微视差)。
+    /// 底图级大面(水/绿地)近景 stencil fill rate 高,关掉换单 pass。
+    bool stencilFillEnabled = true;
 };
 
 /// 地形高程采样注入(P3)。与 Tileset 解耦:Scene 接线真实地形,host 测试

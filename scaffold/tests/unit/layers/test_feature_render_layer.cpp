@@ -2129,3 +2129,23 @@ TEST_F(FeatureRenderLayerTest, BuildingExtrusionEmitsVectorExtrusionCommand) {
         EXPECT_NE(RenderCommandKind::VectorFill, cmd.kind);
     }
 }
+
+TEST_F(FeatureRenderLayerTest, DisabledStencilFillFallsBackToSinglePassFill) {
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.terrainClampRibbon = true;  // 镜像 demo:描边走 ribbon,不进 stencil
+    style.stencilFillEnabled = false;
+    style.heightOffset = 2.5;
+    layer_->setStyle(style);
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.02));
+
+    RenderCommandList commands = build();
+    bool sawFill = false;
+    bool sawStencil = false;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorFill) sawFill = true;
+        if (cmd.kind == RenderCommandKind::VectorStencil) sawStencil = true;
+    }
+    EXPECT_TRUE(sawFill);
+    EXPECT_FALSE(sawStencil);  // 2-pass stencil 被单 pass fill 取代
+}

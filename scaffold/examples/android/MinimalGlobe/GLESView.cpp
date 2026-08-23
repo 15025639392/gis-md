@@ -856,6 +856,8 @@ static bool createEngine() {
             FeatureRenderStyle as;
             as.altitudeMode = FeatureAltitudeMode::ClampToGround;
             as.terrainClampRibbon = true;
+            as.stencilFillEnabled = false;  // 区域单 pass 平面 fill(省近景 stencil)
+            as.heightOffset = 2.5;          // 抬升防 z-fight
             as.clampDensifyMeters = 50.0;
             as.lineWidthPx = 3.0f;
             as.lineColorExpr = StyleExpression::match(
