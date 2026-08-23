@@ -861,17 +861,17 @@ static bool createEngine() {
             as.lineColorExpr = StyleExpression::match(
                 "amap_class",
                 {{"20004",
-                  StyleExpression::literal({0.98f, 0.98f, 0.96f, 0.90f})},
+                  StyleExpression::literal({0.85f, 0.89f, 0.93f, 0.92f})},
                  {"20009",
-                  StyleExpression::literal({0.97f, 0.96f, 0.92f, 0.88f})}},
-                StyleExpression::literal({0.94f, 0.93f, 0.90f, 0.82f}));
+                  StyleExpression::literal({0.67f, 0.71f, 0.80f, 0.88f})}},
+                StyleExpression::literal({0.76f, 0.80f, 0.87f, 0.82f}));
             as.fillColorExpr = StyleExpression::match(
                 "amap_kind",
                 {{"63",
-                  StyleExpression::literal({0.25f, 0.50f, 0.85f, 0.70f})},
+                  StyleExpression::literal({0.38f, 0.75f, 1.00f, 0.65f})},
                  {"61",
-                  StyleExpression::literal({0.35f, 0.70f, 0.40f, 0.60f})}},
-                StyleExpression::literal({0.60f, 0.60f, 0.62f, 0.50f}));
+                  StyleExpression::literal({0.48f, 0.80f, 0.50f, 0.60f})}},
+                StyleExpression::literal({0.71f, 0.71f, 0.71f, 0.55f}));
             amapLayer->setStyle(as);
             auto* amapPtr = amapLayer.get();
             gEngine->addFeatureRenderLayer(std::move(amapLayer));
