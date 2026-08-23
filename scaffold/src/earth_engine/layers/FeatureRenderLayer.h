@@ -137,6 +137,12 @@ struct FeatureRenderStyle {
     /// 贴地细分间距(m):边按此长度细分、polygon 内部按此网格撒 Steiner
     /// 点逐点采高,让几何跟随地形起伏(方案 A 是线/面过渡态,stencil B 终态)。
     double clampDensifyMeters = 100.0;
+    /// E 方案(P1):clamp 线改走几何 ribbon,不做 stencil 墙带。顶点在
+    /// 镶嵌期按椭球面细分(worker 拿不到地形采样器,不采高),P2 由
+    /// VectorLine VS 采位移高度纹理贴地。置位时 stencil 双 pass 分支被
+    /// 跳过(路网是 ribbon 单 pass,避免多山瓦片墙带 fill rate 失控);
+    /// fill 不受影响。
+    bool terrainClampRibbon = false;
 };
 
 /// 地形高程采样注入(P3)。与 Tileset 解耦:Scene 接线真实地形,host 测试

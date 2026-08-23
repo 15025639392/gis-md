@@ -83,6 +83,9 @@ constexpr bool kEnableMvtDrapeBasemap = true;
 // 探针实测增量在噪声内;独立 overlay pass 同数学 25-30ms,勿走回头路)。
 // 与面 drape 共享 MvtTileFetchCache(同一批 z14 祖先瓦零重复 fetch)。
 constexpr bool kEnableMvtRoadField = true;
+/// E 方案路网几何通道(P1 接线,默认关:P2 的 VS 采高贴地落地前,路网在
+/// 山地会飘在椭球面上;置 true 时与 D2 场互斥 —— RoadFieldSource 跳过)。
+constexpr bool kEnableEPlanRoadRibbon = false;
 
 // 贴地体的高度范围不在这里配:SceneRenderPipeline 每帧从**可见地形瓦片的
 // 包围体**汇总(O(可见瓦片数),零采样),相机飞到哪都对。

@@ -2003,3 +2003,55 @@ TEST_F(FeatureRenderLayerTest, PerAreaHeightRangeFallsBackWhenNoCellIntersects) 
     EXPECT_TRUE(bareCtx.hasTerrainHeightRange);
     EXPECT_DOUBLE_EQ(bareCtx.terrainMaxHeight, 900.0);
 }
+
+// ============================================================
+// E 方案 P1:ribbon-clamp 瓦片线(几何通道,不做 stencil 墙带)
+// ============================================================
+
+TEST_F(FeatureRenderLayerTest, TileRibbonClampDensifiesAtEllipsoidAndSkipsStencil) {
+    FeatureRenderLayer layer("t", &device_, Ellipsoid::WGS84());
+    FeatureRenderStyle style;
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.terrainClampRibbon = true;  // E 方案 P1
+    style.clampDensifyMeters = 100.0;
+    // 故意给一个"山地范围":E-ribbon 必须忽略它(高度由 P2 VS 采高负责),
+    // 而不是把全部顶点放在范围中点 —— 那会让整条路飘在半空。
+    FeatureRenderLayer::TessellationContext ctx{
+        style, Ellipsoid::WGS84(), nullptr, nullptr,
+        /*supportsStencilClassification=*/true};
+    ctx.hasTerrainHeightRange = true;
+    ctx.terrainMinHeight = 500.0;
+    ctx.terrainMaxHeight = 2000.0;
+
+    Feature line = makeLine(6.0, 29.0, 0.1);
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(ctx, {line});
+
+    // 不走 stencil 墙带,走 ribbon 单 pass。
+    EXPECT_TRUE(mesh.lineVolumeGroups.empty());
+    EXPECT_FALSE(mesh.lineVerts.empty());
+    ASSERT_FALSE(mesh.lineIndices.empty());
+    // 0.1°≈11km、100m 细分 → 顶点数远大于未细分的 3 顶点 ribbon(6)。
+    EXPECT_GT(mesh.lineVerts.size(), 12u * 6u);
+    // 顶点落在椭球面(高≈0),而非山地范围中点(1250m)。
+    const Ellipsoid& ell = Ellipsoid::WGS84();
+    const float* v = mesh.lineVerts.data();
+    const Vec3 rel(v[0], v[1], v[2]);
+    const Cartographic c = ell.cartesianToCartographic(mesh.origin + rel);
+    EXPECT_NEAR(c.height(), 0.0, 0.05);
+}
+
+TEST_F(FeatureRenderLayerTest, TileClampWithoutRibbonKeepsStencilVolumes) {
+    FeatureRenderLayer layer("t", &device_, Ellipsoid::WGS84());
+    FeatureRenderStyle style;
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.terrainClampRibbon = false;  // 默认:仍走 stencil 墙带
+    FeatureRenderLayer::TessellationContext ctx{
+        style, Ellipsoid::WGS84(), nullptr, nullptr,
+        /*supportsStencilClassification=*/true};
+
+    Feature line = makeLine(6.0, 29.0, 0.1);
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(ctx, {line});
+
+    EXPECT_FALSE(mesh.lineVolumeGroups.empty());
+    EXPECT_TRUE(mesh.lineVerts.empty());
+}

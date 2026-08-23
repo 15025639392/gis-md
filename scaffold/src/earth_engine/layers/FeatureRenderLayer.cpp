@@ -494,7 +494,8 @@ void FeatureRenderLayer::tessellateFeatureInto(
     // P6d:clamp 线(LineString + polygon outline)同走 stencil 双 pass
     // (墙带体,像素级贴地,宽度 VS 按眼深挤出);不支持回落方案 A ribbon。
     const bool stencilLine =
-        clamp && ctx.supportsStencilClassification;
+        clamp && !ctx.style.terrainClampRibbon &&
+        ctx.supportsStencilClassification;
     std::vector<Cartographic> steinerPoints;
     Feature clampedStorage;
     const Feature* geometry = &feature;
@@ -510,9 +511,21 @@ void FeatureRenderLayer::tessellateFeatureInto(
             stencilLine ? std::max(ctx.style.clampDensifyMeters,
                                    kStencilLineDensifyMeters)
                         : ctx.style.clampDensifyMeters;
-        clampedStorage = prepareClampedFeature(
-            ctx,
-            feature, sample, stencilFill ? nullptr : &steinerPoints, densify);
+        if (ctx.style.terrainClampRibbon) {
+            // E 方案 ribbon-clamp:高度交给 P2 的 VS 采高(位移地形高度
+            // 纹理),worker 只做椭球面细分(几何密度服务贴地曲率)。
+            // **必须屏蔽 hasTerrainHeightRange** —— 那是 stencil 体的
+            // 中点高度语义,沿用会让整条路飘在范围中点。
+            TessellationContext flatCtx = ctx;
+            flatCtx.hasTerrainHeightRange = false;
+            clampedStorage = prepareClampedFeature(
+                flatCtx, feature, AreaSampleFn(), nullptr, densify);
+        } else {
+            clampedStorage = prepareClampedFeature(
+                ctx,
+                feature, sample, stencilFill ? nullptr : &steinerPoints,
+                densify);
+        }
         geometry = &clampedStorage;
         tessHeightOffset = 0.0;
     }

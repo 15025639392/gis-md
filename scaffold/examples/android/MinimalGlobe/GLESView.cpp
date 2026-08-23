@@ -559,7 +559,8 @@ static bool createEngine() {
 
         // ---- 刀2 路网线 SDF 场:页存储"第二平面"生产者注入。----
         // setRoadFieldSource 须在首帧渲染前调(页存储 lazy init 快照 Config)。
-        if (minimal_globe_demo::kEnableMvtRoadField) {
+        if (minimal_globe_demo::kEnableMvtRoadField &&
+            !minimal_globe_demo::kEnableEPlanRoadRibbon) {
             if (!gMvtWorkerPool) {
                 gMvtWorkerPool = std::make_shared<ThreadPool>(2);
             }
@@ -626,6 +627,39 @@ static bool createEngine() {
                 StyleExpression::zoom(),
                 {{8.0, StyleExpression::literal(1.0)},
                  {15.0, StyleExpression::literal(5.0)}});
+            if (minimal_globe_demo::kEnableEPlanRoadRibbon) {
+                // E 方案 P1 路网样式:按 highway 类逐要素配色(镶嵌期
+                // 求值烘进顶点,零每帧成本);宽度 zoom 插值;dash 后续
+                // 可加(长度 SoFar 已携带)。细分密度服务 P2 贴地曲率。
+                bs.terrainClampRibbon = true;
+                bs.clampDensifyMeters = 50.0;
+                bs.lineColorExpr = StyleExpression::match(
+                    "highway",
+                    {{"motorway",
+                      StyleExpression::literal(
+                          {0.98f, 0.95f, 0.88f, 0.90f})},
+                     {"trunk",
+                      StyleExpression::literal(
+                          {0.97f, 0.92f, 0.80f, 0.88f})},
+                     {"primary",
+                      StyleExpression::literal(
+                          {0.96f, 0.90f, 0.78f, 0.86f})},
+                     {"secondary",
+                      StyleExpression::literal(
+                          {0.93f, 0.87f, 0.74f, 0.82f})},
+                     {"tertiary",
+                      StyleExpression::literal(
+                          {0.90f, 0.84f, 0.70f, 0.78f})},
+                     {"residential",
+                      StyleExpression::literal(
+                          {0.88f, 0.82f, 0.68f, 0.72f})}},
+                    StyleExpression::literal(
+                        {0.86f, 0.80f, 0.66f, 0.65f}));
+                bs.lineWidthExpr = StyleExpression::interpolateLinear(
+                    StyleExpression::zoom(),
+                    {{8.0, StyleExpression::literal(1.0)},
+                     {15.0, StyleExpression::literal(4.0)}});
+            }
             // 符号刀A:POI 点。暖红在亮白路网/绿地上都有对比;底部锚定
             // 规避「居中锚定被身前地形吃掉下半个」(P6c 明记的深度语义)。
             bs.pointColor = {0.92f, 0.26f, 0.21f, 0.95f};
@@ -742,6 +776,13 @@ static bool createEngine() {
                 (void)roads;
                 mvtOpts.includeLayers = {"poi"};
                 mvtOpts.layerRules = {poi};
+                if (minimal_globe_demo::kEnableEPlanRoadRibbon) {
+                    // E 方案 P1:路网接回瓦片桶几何通道(ribbon 模式)。
+                    // 与 D2 场互斥(同瓦双画):RoadFieldSource 安装已在
+                    // 上方跳过。
+                    mvtOpts.includeLayers = {"poi", "roads"};
+                    mvtOpts.layerRules = {poi, roads};
+                }
             }
             mvtOpts.tree.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
             mvtOpts.tree.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
