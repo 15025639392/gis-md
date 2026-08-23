@@ -1066,6 +1066,12 @@ add_executable(test_amap_tile_manifest
 target_link_libraries(test_amap_tile_manifest PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_amap_tile_manifest COMMAND test_amap_tile_manifest)
 
+add_executable(test_amap_geometry
+    unit/data/test_amap_geometry.cpp
+)
+target_link_libraries(test_amap_geometry PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_amap_geometry COMMAND test_amap_geometry)
+
 add_executable(test_line_field_rasterizer
     unit/data/test_line_field_rasterizer.cpp
 )
