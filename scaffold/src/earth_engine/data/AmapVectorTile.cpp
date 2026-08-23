@@ -283,7 +283,7 @@ bool decodeContainer(const uint8_t* data, size_t size,
                     const int defaultClass = part.type == 1 ? 20004
                                              : part.type == 2 ? 30001
                                                                : 90001;
-                    int classCode = defaultClass, geomType = 0;
+                    int classCode = defaultClass, geomType = 0, kind = 0;
                     int gf = 0, gw = 0;
                     std::vector<const uint8_t*> feats;
                     std::vector<size_t> featLens;
@@ -291,6 +291,7 @@ bool decodeContainer(const uint8_t* data, size_t size,
                         if (gw == 0) {
                             const uint64_t v = g.varint();
                             if (gf == 1) classCode = static_cast<int>(v);
+                            if (gf == 2) kind = static_cast<int>(v);
                             if (gf == 2 || gf == 3) {
                                 geomType = static_cast<int>(v);
                             }
@@ -314,6 +315,7 @@ bool decodeContainer(const uint8_t* data, size_t size,
                         fr.p = feats[fi];
                         fr.n = featLens[fi];
                         AmapDecodedFeature feat;
+                        feat.kind = kind;
                         parseFeature(fr, classCode, geomType, part.type, feat);
                         if (!feat.rings.empty() || !feat.name.empty()) {
                             part.features.push_back(std::move(feat));

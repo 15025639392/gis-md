@@ -52,6 +52,9 @@ std::vector<Feature> amapDecodedPartToFeatures(
             }
             feat.rings.push_back(std::move(pts));
             feat.properties["amap_class"] = std::to_string(f.classCode);
+            if (f.kind > 0) {
+                feat.properties["amap_kind"] = std::to_string(f.kind);
+            }
             if (part.type == 3 && f.height > 0.0) {
                 feat.properties["amap_height"] = std::to_string(f.height);
             }

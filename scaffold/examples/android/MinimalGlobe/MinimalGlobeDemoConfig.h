@@ -139,7 +139,16 @@ constexpr size_t kMvtTileCacheRaw = 256;
 
 constexpr bool kEnableTerrainForDemo = true;
 constexpr bool kUseGaodeSatelliteForDemo = true;
-constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
+constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;
+/// C2 步骤5 垂直切片:直接拉高德矢量瓦片(type1 组)→ 解码 → WGS84 →
+/// FeatureRenderLayer(E 贴地 ribbon + 面 fill)。开时关掉栅格路网 overlay
+/// 避免同瓦双画。
+constexpr bool kEnableAmapVectorDemo = true;
+/// 高德 web key(dev;产品换 key 只改这里,referer 白名单见
+/// kAmapReferer)。
+constexpr const char* kAmapWebKey =
+    "2f282f369e388ef01bae260cbc35edce";
+constexpr const char* kAmapReferer = "https://www.amap.com/";
 constexpr bool kEnableRobotExpressiveGltfDemo = false;
 // 开启后 config.gltf 指向 tree.i3dm(覆盖 RobotExpressive),用于实例化基线测量。
 // tree.i3dm 是世界锚定内容,相机随之移到样本真实位置(宾州)低空俯视。

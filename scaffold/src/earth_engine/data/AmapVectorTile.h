@@ -31,6 +31,9 @@ namespace earth_engine {
 struct AmapDecodedFeature {
     int classCode = 0;
     int geomType = 0;
+    /// 类组字段 2:type2 区域 = kind(水63/绿地61/建筑块20-27…),
+    /// type3 建筑 = cat。样式配色按它分。
+    int kind = 0;
     /// 环/折线:rings[0] = 一条;建筑每个 Part 一个环。坐标 = 瓦片局部整数。
     std::vector<std::vector<std::pair<double, double>>> rings;
     /// 建筑高度(米;type 3)。当前版本编码待校准,解析失败保持 0。

@@ -21,6 +21,7 @@
 #include <future>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -44,7 +45,11 @@
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
 #include "earth_engine/data/MvtTileFetchCache.h"
+#include "earth_engine/data/AmapTileManifest.h"
+#include "earth_engine/data/AmapVectorTile.h"
+#include "earth_engine/data/AmapGeometry.h"
 #include "earth_engine/providers/RoadFieldSource.h"
+#include <nlohmann/json.hpp>
 #include "earth_engine/style/StyleDocument.h"
 #include "earth_engine/providers/VectorDrapeImageryProvider.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -314,6 +319,10 @@ static void mvtFetchTile(const TileKey& key,
     std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
     gMvtFetch.requests[id] = std::move(handle);
 }
+
+// ---- C2 步骤5:高德矢量瓦片垂直切片 ----
+// 定义在文件尾部(gRenderThread 之后),见 amapLoadDemoTile。
+static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z);
 
 
 static double androidUptimeSeconds();
@@ -834,6 +843,44 @@ static bool createEngine() {
                  gMvtBasemapUrl.c_str(),
                  minimal_globe_demo::kMvtBasemapMinZoom,
                  minimal_globe_demo::kMvtBasemapMaxZoom);
+        }
+
+        // ---- C2 步骤5:高德矢量瓦片 demo(垂直切片)----
+        // 拉重庆 3×3 瓦片(type1 组:道路/区域/建筑),解码→WGS84→灌
+        // FeatureStore,线走 E 贴地 ribbon(terrainClampRibbon),面走
+        // stencil fill。样式按 amap_class/amap_kind 粗配色(样式 fidelity
+        // 后续 port @xinzhi/amap-style)。
+        if (minimal_globe_demo::kEnableAmapVectorDemo) {
+            auto amapLayer = std::make_unique<FeatureRenderLayer>(
+                "amap-vector", gRenderDevice.get(), Ellipsoid::WGS84());
+            FeatureRenderStyle as;
+            as.altitudeMode = FeatureAltitudeMode::ClampToGround;
+            as.terrainClampRibbon = true;
+            as.clampDensifyMeters = 50.0;
+            as.lineWidthPx = 3.0f;
+            as.lineColorExpr = StyleExpression::match(
+                "amap_class",
+                {{"20004",
+                  StyleExpression::literal({0.98f, 0.98f, 0.96f, 0.90f})},
+                 {"20009",
+                  StyleExpression::literal({0.97f, 0.96f, 0.92f, 0.88f})}},
+                StyleExpression::literal({0.94f, 0.93f, 0.90f, 0.82f}));
+            as.fillColorExpr = StyleExpression::match(
+                "amap_kind",
+                {{"63",
+                  StyleExpression::literal({0.25f, 0.50f, 0.85f, 0.70f})},
+                 {"61",
+                  StyleExpression::literal({0.35f, 0.70f, 0.40f, 0.60f})}},
+                StyleExpression::literal({0.60f, 0.60f, 0.62f, 0.50f}));
+            amapLayer->setStyle(as);
+            auto* amapPtr = amapLayer.get();
+            gEngine->addFeatureRenderLayer(std::move(amapLayer));
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    amapLoadDemoTile(amapPtr, 13038 + dx, 5505 + dy, 14);
+                }
+            }
+            LOGI("AmapVectorDemo: layer installed, 9 tiles queued");
         }
 
         // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。**不在任何
@@ -2102,6 +2149,117 @@ private:
 };
 
 static RenderThread gRenderThread;
+
+// ---- C2 步骤5:高德矢量瓦片垂直切片 ----
+// 独立线程 + 阻塞请求(getBlocking 是影像/地形已验证路径;异步链在本机
+// 调度器上未触发,先绕开):版本探测(GET)→ get_tile(POST)→ 签名 URL(GET)
+// → 解码/转换(工作线程,纯 CPU)→ gRenderThread.post 灌 FeatureStore。
+static std::vector<uint8_t> amapPostBlocking(
+    const std::string& url, const std::string& body,
+    const std::string& contentType, HttpRequestOptions opts,
+    int timeoutMs = 20000) {
+    struct St {
+        std::vector<uint8_t> result;
+        std::mutex mutex;
+        std::condition_variable cv;
+        bool done = false;
+    };
+    auto st = std::make_shared<St>();
+    auto req = CurlMultiRequestScheduler::shared().post(
+        url, std::vector<uint8_t>(body.begin(), body.end()), contentType,
+        [st](int code, std::vector<uint8_t> b) {
+            {
+                std::lock_guard<std::mutex> lk(st->mutex);
+                if (code == 200) st->result = std::move(b);
+                st->done = true;
+            }
+            st->cv.notify_one();
+        },
+        opts);
+    std::unique_lock<std::mutex> lk(st->mutex);
+    if (!st->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
+                         [&] { return st->done; })) {
+        if (req) req->cancel();
+        return {};
+    }
+    return std::move(st->result);
+}
+
+static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z) {
+    LOGI("AmapDemo: enqueue %d_%d_%d", x, y, z);
+    std::thread([layer, x, y, z]() {
+        const std::string key = minimal_globe_demo::kAmapWebKey;
+        const std::string referer = minimal_globe_demo::kAmapReferer;
+        const std::string initUrl =
+            "https://jsapi.amap.com/web/init?key=" + key;
+        HttpRequestOptions opts;
+        opts.headers = {{"Referer", referer}};
+        const auto initBody = CurlMultiRequestScheduler::shared().getBlocking(
+            initUrl, opts);
+        {
+            std::string version;
+            try {
+                const auto doc = nlohmann::json::parse(initBody.begin(),
+                                                       initBody.end());
+                const auto inner =
+                    nlohmann::json::parse(doc.value("tile", "{}"));
+                version = inner.value("v", "");
+            } catch (const std::exception&) {
+                LOGE("AmapDemo: version probe failed");
+                return;
+            }
+            if (version.empty()) {
+                LOGE("AmapDemo: empty version stamp");
+                return;
+            }
+            AmapManifestConfig cfg;
+            cfg.key = key;
+            cfg.referer = referer;
+            cfg.version = version;
+            const std::vector<AmapTileRequest> reqs = {{x, y, z, 1}};
+            const std::string url = buildGetTileUrl(cfg);
+            const std::string bodyStr = buildGetTileBody(reqs, cfg, version);
+            HttpRequestOptions postOpts;
+            postOpts.headers = {{"Referer", referer}};
+            const auto manifestBody =
+                amapPostBlocking(url, bodyStr,
+                                 "application/x-www-form-urlencoded",
+                                 postOpts);
+            std::vector<AmapTileUrl> urls;
+            std::string err;
+            if (!parseTileUrls(std::string(manifestBody.begin(),
+                                           manifestBody.end()),
+                               urls, &err)) {
+                LOGE("AmapDemo: get_tile refused: %s", err.c_str());
+                return;
+            }
+            if (urls.empty()) return;
+            HttpRequestOptions tileOpts;
+            tileOpts.headers = {{"Referer", cfg.referer}};
+            const auto tileBody =
+                CurlMultiRequestScheduler::shared().getBlocking(
+                    urls[0].url, tileOpts);
+            std::vector<AmapDecodedLayerPart> parts;
+            if (!decodeAmapTile(tileBody.data(), tileBody.size(), parts)) {
+                LOGE("AmapDemo: tile decode failed");
+                return;
+            }
+            std::vector<Feature> feats;
+            for (const auto& p : parts) {
+                auto fs = amapDecodedPartToFeatures(p, true);
+                feats.insert(feats.end(), std::make_move_iterator(fs.begin()),
+                             std::make_move_iterator(fs.end()));
+            }
+            LOGI("AmapDemo: decoded %zu features from %zu layers",
+                 feats.size(), parts.size());
+            gRenderThread.post([layer, feats = std::move(feats)]() {
+                for (auto& f : feats) {
+                    layer->store().addFeature(std::move(f));
+                }
+            });
+        }
+    }).detach();
+}
 
 // UI 线程整形好的输入事件统一从这里投递到渲染线程。
 // 屏幕密度（Java surfaceChanged 时设置）。手势阈值以 dp 定义，InputManager
