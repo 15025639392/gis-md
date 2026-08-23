@@ -1060,6 +1060,12 @@ add_executable(test_amap_vector_tile
 target_link_libraries(test_amap_vector_tile PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_amap_vector_tile COMMAND test_amap_vector_tile)
 
+add_executable(test_amap_tile_manifest
+    unit/data/test_amap_tile_manifest.cpp
+)
+target_link_libraries(test_amap_tile_manifest PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_amap_tile_manifest COMMAND test_amap_tile_manifest)
+
 add_executable(test_line_field_rasterizer
     unit/data/test_line_field_rasterizer.cpp
 )

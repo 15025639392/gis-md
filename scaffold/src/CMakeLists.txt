@@ -753,6 +753,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/MvtDecoder.h
     earth_engine/data/MvtDecoder.cpp
     earth_engine/data/AmapVectorTile.cpp
+    earth_engine/data/AmapTileManifest.cpp
     earth_engine/data/VectorTileTree.h
     earth_engine/data/VectorTileTree.cpp
     earth_engine/data/MvtFeatureConverter.h
