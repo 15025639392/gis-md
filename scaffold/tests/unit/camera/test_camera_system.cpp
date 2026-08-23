@@ -457,6 +457,102 @@ TEST_F(CameraSystemTest, HighTiltPinchPitchFallsBackWithoutAnchor) {
     EXPECT_NEAR(glm::length(camera_->position().raw() - eye0), 0.0, 1e-6);
 }
 
+TEST_F(CameraSystemTest, HighTiltPinchTwistFallsBackWithoutAnchor) {
+    // 高倾斜露出天空、质心在掠射/远锚区（锚点被拒）时，twist 回退为**绕指下
+    // 地表点竖直轴旋转**（地图旋转语义，奥维同款）：双指中心的地表点钉在
+    // 指下、地图画面绕它旋转、地平线保持水平（天空不跟着滚转）
+    // （2026-08-23 修复前 hasAnchor=0 时 twist 整段丢失）。
+    setRealTiltedPose(*camera_, 2000.0, 86.0);  // 4° 下俯，中心射线掠射
+    controller_->update(0.0);
+    const glm::dvec3 eye0 = camera_->position().raw();
+    const glm::dvec3 up0 = eye0 / glm::length(eye0);
+    const glm::dvec3 dir0 = camera_->direction().raw();
+    const Vec3 pivot = intersectEarthSphere(
+        camera_->getPickRay(400.0, 300.0, 800.0, 600.0));
+    const glm::dvec2 pivotBefore = projectToScreen(*camera_, pivot);
+
+    PinchInput in{};
+    in.centroidX = 400.0f;
+    in.centroidY = 300.0f;
+    in.scaleFromStart = 1.0f;
+    in.twistFromStartRadians = 0.0f;
+    in.mode = PinchMode::Undecided;
+    in.timestamp = 0.0;
+    controller_->onPinchGesture(in);  // 起手：掠射锚点应被拒
+    Vec3 anchor;
+    EXPECT_FALSE(controller_->debugAnchorWorld(anchor));
+
+    in.mode = PinchMode::Manipulate;
+    for (int i = 1; i <= 5; ++i) {
+        in.twistFromStartRadians = 0.03f * static_cast<float>(i);
+        in.timestamp = i * 0.016;
+        controller_->onPinchGesture(in);
+    }
+    controller_->onPinchEnd();
+    controller_->update(0.0);
+
+    // 旋转必须响应：方向改变；地图绕指下锚点转 ⇒ 俯仰角保持（地平线不翻）；
+    // 双指中心像素钉住（质心射线上的地表点保持投影在双指中心）；eye 位移
+    // 有界（0.15rad×~29km 锚点 ≈ 4.3km，无 118km 横移）。
+    const glm::dvec3 dir1 = camera_->direction().raw();
+    EXPECT_GT(glm::length(dir1 - dir0), 1e-6);
+    EXPECT_NEAR(glm::dot(dir1, up0), glm::dot(dir0, up0), 0.05);
+    const glm::dvec2 pivotAfter = projectToScreen(*camera_, pivot);
+    EXPECT_NEAR(pivotBefore.x, pivotAfter.x, 3.0);
+    EXPECT_NEAR(pivotBefore.y, pivotAfter.y, 3.0);
+    EXPECT_LT(glm::length(camera_->position().raw() - eye0), 30000.0);
+}
+
+TEST_F(CameraSystemTest, PinchTwistInertiaGlidesThenStops) {
+    // 契约 2.2 扩展：拧转松手后按拧动速率惯性滑行（Cesium inertiaSpin 同款
+    // 指数阻尼 + 0.5px/帧感知判停），单调衰减停住。
+    setTiltedPose(*camera_, 2000.0, 45.0);  // 非 nadir：拧转产生可见方向变化
+    controller_->update(0.0);
+    double t = 1.0;
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f, t);
+    for (int i = 1; i <= 5; ++i) {
+        t += 0.016;
+        controller_->onPinchGesture(
+            1.0f, 400.0f, 300.0f, 0.05f * static_cast<float>(i),
+            0.0f, 0.0f, t);
+    }
+    controller_->onPinchEnd();
+    controller_->update(0.0);
+    const glm::dvec3 dirAfterEnd = camera_->direction().raw();
+    controller_->update(1.0 / 60.0);
+    const glm::dvec3 dirAfterFrame = camera_->direction().raw();
+    EXPECT_GT(glm::length(dirAfterFrame - dirAfterEnd), 1e-6);  // 松手仍在转
+
+    for (int i = 0; i < 300; ++i) controller_->update(1.0 / 60.0);
+    const glm::dvec3 dirFinal = camera_->direction().raw();
+    controller_->update(1.0 / 60.0);
+    EXPECT_LT(glm::length(camera_->direction().raw() - dirFinal), 1e-9);
+}
+
+TEST_F(CameraSystemTest, PinchTwistCancelStopsInertiaImmediately) {
+    // 契约 2.3/1.5：拧转惯性被 cancel 立即打断（相机级）。
+    setTiltedPose(*camera_, 2000.0, 45.0);  // 非 nadir：拧转产生可见方向变化
+    controller_->update(0.0);
+    double t = 1.0;
+    controller_->onPinchGesture(1.0f, 400.0f, 300.0f, 0.0f, 0.0f, 0.0f, t);
+    for (int i = 1; i <= 5; ++i) {
+        t += 0.016;
+        controller_->onPinchGesture(
+            1.0f, 400.0f, 300.0f, 0.05f * static_cast<float>(i),
+            0.0f, 0.0f, t);
+    }
+    controller_->onPinchEnd();
+    controller_->update(1.0 / 60.0);
+    const glm::dvec3 moving = camera_->direction().raw();
+    controller_->update(1.0 / 60.0);
+    EXPECT_GT(glm::length(camera_->direction().raw() - moving), 1e-9);
+
+    controller_->onPinchCancel();
+    const glm::dvec3 frozen = camera_->direction().raw();
+    for (int i = 0; i < 10; ++i) controller_->update(1.0 / 60.0);
+    EXPECT_NEAR(glm::length(camera_->direction().raw() - frozen), 0.0, 1e-9);
+}
+
 TEST_F(CameraSystemTest, NearGroundInertiaGlidesThenStopsWithoutReversal) {
     // 掠射位姿 θ=88°@2km，起手 y=310（贴近地平线，strafe）。下甩 5×8px
     // 后松手：沿锁定方向自由滑行、不回拉，指数衰减停住（Cesium 惯性）；

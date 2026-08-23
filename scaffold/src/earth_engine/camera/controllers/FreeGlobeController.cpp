@@ -48,6 +48,11 @@ constexpr double kPinchTiltMaxStepRadians = 0.08;
 // 6378km 锚点都是合法场景,1.5×海拔后仍放行)。
 constexpr double kMaxPinchAnchorAltitudeScale = 1.5;
 constexpr double kMinPinchAnchorDistanceMeters = 600.0;
+// Twist 惯性（契约 2.2 扩展）：阻尼与拖拽惯性一致 2/s（Cesium inertiaSpin=0.9
+// 等效 exp(-2.5t)，同量级）；速率上限滤抖动尖峰；下限决定松手是否滑行。
+constexpr double kTwistInertiaDampingPerSecond = 2.0;
+constexpr double kMaxTwistInertiaRate = 2.0 * glm::pi<double>();
+constexpr double kMinTwistInertiaRate = 0.05;
 // 单指模式切换（契约 1.2）：海拔门限 = Cesium minimumPickingTerrainHeight
 // (WGS84 生产默认)；倾斜门限 = MapLibre issue #6111 的高倾斜病态起点。
 constexpr double kNearModeMaxAltitudeMeters = 150000.0;
@@ -133,6 +138,8 @@ void FreeGlobeController::onDragStart(float xPixels, float yPixels,
     inertiaAngularVelocity_ = 0.0;
     hasZoomInertia_ = false;   // 拖拽打断 zoom 惯性滑行
     zoomInertiaLogRate_ = 0.0;
+    hasTwistInertia_ = false;  // 拖拽打断 twist 惯性滑行
+    twistInertiaRate_ = 0.0;
     zoomSettleActive_ = false; // 拖拽打断滚轮平滑缩放
     dragVelocitySamples_.clear();
     pixelVelocitySamples_.clear();
@@ -604,6 +611,8 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
         // 新捏合打断上一段 zoom 惯性滑行，并重置速率累积。
         hasZoomInertia_ = false;
         zoomInertiaLogRate_ = 0.0;
+        hasTwistInertia_ = false;  // 新捏合打断上一段 twist 惯性滑行
+        twistInertiaRate_ = 0.0;
         if (!input.smoothZoom) {
             zoomSettleActive_ = false;  // 双指捏合打断滚轮平滑缩放
         }
@@ -620,6 +629,15 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
 
         hasPinchAnchor_ =
             tryAcquirePinchAnchor(input.centroidX, input.centroidY);
+        // 无锚 twist 回退枢轴（起手 latch）：质心地表点（地图旋转语义）。
+        // 强锚命中时直接用锚点，保证有锚/无锚同一根轴。
+        if (hasPinchAnchor_) {
+            pinchTwistPivot_ = pinchAnchorNormal_.raw() * grabbedRadiusMeters_;
+            pinchTwistAxis_ = pinchAnchorNormal_.raw();
+            hasPinchTwistPivot_ = true;
+        } else {
+            latchPinchTwistPivot(input.centroidX, input.centroidY);
+        }
         platformLog(LogLevel::Info, "CameraCtrl",
             "pinchStart hasAnchor=%d center=(%.0f,%.0f)",
             hasPinchAnchor_, input.centroidX, input.centroidY);
@@ -731,6 +749,28 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
         stepScale = 1.0;
     }
 
+    // twist 增量（契约 2.2）：弧长 ≥25px 由 InputManager 激活 rotateEngaged；
+    // 本事件增量 = 请求累计 − 已施加累计，有锚/无锚两分支共用。顺带采样拧转
+    // 惯性速率（视角角速度；EMA 与 zoom 惯性同源，dt 过滤合并事件）。
+    double twistStep = 0.0;
+    if (input.rotateEngaged) {
+        twistStep = static_cast<double>(input.twistFromStartRadians) -
+                    pinchAppliedTwistRadians_;
+        pinchAppliedTwistRadians_ =
+            static_cast<double>(input.twistFromStartRadians);
+        if (std::abs(twistStep) > 0.0) {
+            const double dt = input.timestamp - lastPinchTimestamp_;
+            if (dt > 0.0 && dt < 0.25) {
+                const double instRate = std::clamp(
+                    twistStep / dt,
+                    -kMaxTwistInertiaRate, kMaxTwistInertiaRate);
+                twistInertiaRate_ =
+                    twistInertiaRate_ * (1.0 - kVelocitySmoothing) +
+                    instRate * kVelocitySmoothing;
+            }
+        }
+    }
+
     if (hasPinchAnchor_) {
         const glm::dvec3 anchorWorld =
             pinchAnchorNormal_.raw() * grabbedRadiusMeters_;
@@ -765,18 +805,12 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
             zoomInertiaAnchor_ = zoomAnchor;
         }
 
-        // ② twist（契约 2.2）：弧长 ≥25px 激活后绕锚点法线旋转；锚点在轴上
-        // ⇒ 精确保锚。阈值防近距手指误转，激活后每帧增量直接施加。
-        if (input.rotateEngaged) {
-            const double twistStep = static_cast<double>(
-                input.twistFromStartRadians) - pinchAppliedTwistRadians_;
-            pinchAppliedTwistRadians_ =
-                static_cast<double>(input.twistFromStartRadians);
-            if (std::abs(twistStep) > 0.0) {
-                camera_ops::rotateAboutPoint(*camera_, anchorWorld,
-                                             pinchAnchorNormal_.raw(),
-                                             twistStep);
-            }
+        // ② twist（契约 2.2）：绕锚点法线旋转；锚点在轴上 ⇒ 精确保锚。
+        // 阈值防近距手指误转，激活后每帧增量直接施加。
+        if (std::abs(twistStep) > 0.0) {
+            camera_ops::rotateAboutPoint(*camera_, anchorWorld,
+                                         pinchAnchorNormal_.raw(),
+                                         twistStep);
         }
 
         // ③ pitch（仅 Pitch 模式）：质心 Y 相对基线的绝对映射，绕锚点
@@ -819,8 +853,26 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
     } else {
         // 无有效 pinch anchor（天空/掠射/远锚被拒）时：
         // ① dolly 沿视线方向缩放相机（无锚点可钉，只能以地心距当作被缩放
-        //    的距离）。位移量与有锚点分支同一公式 d*(1-1/s)。
-        // ② Pitch 模式回退为**绕相机自身竖转**（eye 不动、只转 direction/up，
+        //    的距离）。位移量与有锚点分支同一公式 d*(1-1/s)。**必须先执行**：
+        //    zoomEye 是本事件起手位姿，若放在 twist 之后会把拧转位移覆盖。
+        const double moveMeters = zoomDist * (1.0 - 1.0 / stepScale);
+        glm::dvec3 nextEye = zoomDist > 1e-6
+            ? zoomEye + ((zoomAnchor - zoomEye) / zoomDist) * moveMeters
+            : zoomEye;
+        if ((glm::length(nextEye) / kEarthRadiusMeters) <=
+            kMaxDistanceEarthRadii) {
+            camera_->setView(Vec3(nextEye), camera_->direction(),
+                             camera_->up());
+        }
+        // ② twist 回退（2026-08-23）：无锚时旋转为**绕指下地表点的竖直轴**
+        //    （地图旋转语义，奥维/2D 地图同款）——双指中心的地表点钉在指下，
+        //    地图画面绕它旋转、地平线保持水平（天空不跟着滚转）。twist 是
+        //    正向旋转，不经过 pin 反解，掠射/远锚守卫不参与。
+        if (std::abs(twistStep) > 0.0) {
+            camera_ops::rotateAboutPoint(*camera_, pinchTwistPivot_,
+                                         pinchTwistAxis_, twistStep);
+        }
+        // ③ Pitch 模式回退为**绕相机自身竖转**（eye 不动、只转 direction/up，
         //    center=eye 走 rotateCameraVerticalAroundPoint 的同一套守卫）——
         //    高倾斜露出天空时质心锚点被掠射守卫拒绝，若不回退双指倾斜就整段
         //    失效（2026-08-22 真机 CAMPROBE 实证 hasAnchor=0 全程无响应）。
@@ -846,14 +898,6 @@ void FreeGlobeController::onPinchGesture(const PinchInput& input) {
                                            kPinchTiltRadiansPerPixel);
                 }
             }
-        }
-        // 无锚分支同样沿屏幕中心缩放锚点（Cesium 同款）。
-        const double moveMeters = zoomDist * (1.0 - 1.0 / stepScale);
-        glm::dvec3 nextEye = zoomDist > 1e-6
-            ? zoomEye + ((zoomAnchor - zoomEye) / zoomDist) * moveMeters
-            : zoomEye;
-        if ((glm::length(nextEye) / kEarthRadiusMeters) <= kMaxDistanceEarthRadii) {
-            camera_->setView(Vec3(nextEye), camera_->direction(), camera_->up());
         }
         clampNow(nullptr);
     }
@@ -883,6 +927,23 @@ void FreeGlobeController::onPinchEnd() {
     } else {
         hasZoomInertia_ = false;
         zoomInertiaLogRate_ = 0.0;
+    }
+    // 契约 2.2 扩展：twist 惯性——松手按拧动速率滑行（Cesium inertiaSpin
+    // 同款指数阻尼 + 0.5px/帧感知判停）。枢轴/轴与手势一致：有锚 = 锚点
+    // 法线，无锚 = 弱锚回退枢轴（都绕指下地表点竖直轴，地图旋转语义）。
+    if (std::abs(twistInertiaRate_) >= kMinTwistInertiaRate) {
+        hasTwistInertia_ = true;
+        if (hasPinchAnchor_) {
+            twistInertiaPivot_ =
+                pinchAnchorNormal_.raw() * grabbedRadiusMeters_;
+            twistInertiaAxis_ = pinchAnchorNormal_.raw();
+        } else {
+            twistInertiaPivot_ = pinchTwistPivot_;
+            twistInertiaAxis_ = pinchTwistAxis_;
+        }
+    } else {
+        hasTwistInertia_ = false;
+        twistInertiaRate_ = 0.0;
     }
     hasPinchAnchor_ = false;
 }
@@ -1008,6 +1069,30 @@ void FreeGlobeController::tick(double deltaSeconds) {
         }
     }
 
+    // Twist 惯性：松手后绕手势枢轴继续拧转（Cesium inertiaSpin 同款——
+    // 指数阻尼 2/s、0.5px/帧感知判停）。绕枢轴旋转的视角角速度 == 轴角速度，
+    // 无拖拽惯性那套视差增益问题；每步 clamp 防远锚滑行穿地。
+    if (!dragging_ && !pinching_ && hasTwistInertia_ && deltaSeconds > 0.0) {
+        const double viewAngle = twistInertiaRate_ * deltaSeconds;
+        const double radPerPixel =
+            camera_->verticalFovRadians() /
+            static_cast<double>(std::max(1, viewportHeight_));
+        if (radPerPixel > 0.0 && std::abs(viewAngle) / radPerPixel < 0.5) {
+            hasTwistInertia_ = false;
+            twistInertiaRate_ = 0.0;
+        } else {
+            camera_ops::rotateAboutPoint(*camera_, twistInertiaPivot_,
+                                         twistInertiaAxis_, viewAngle);
+            clampNow(&twistInertiaPivot_);
+            twistInertiaRate_ *=
+                std::exp(-kTwistInertiaDampingPerSecond * deltaSeconds);
+            if (std::abs(twistInertiaRate_) < kMinTwistInertiaRate) {
+                hasTwistInertia_ = false;
+                twistInertiaRate_ = 0.0;
+            }
+        }
+    }
+
 }
 
 void FreeGlobeController::clearPanInertia() {
@@ -1023,6 +1108,8 @@ void FreeGlobeController::clearGlideInertia() {
     clearPanInertia();
     hasZoomInertia_ = false;
     zoomInertiaLogRate_ = 0.0;
+    hasTwistInertia_ = false;
+    twistInertiaRate_ = 0.0;
     zoomSettleActive_ = false;
     zoomSettleTargetLog_ = 0.0;
     zoomSettleAppliedLog_ = 0.0;
@@ -1368,6 +1455,48 @@ bool FreeGlobeController::tryAcquirePinchAnchor(float xPixels,
         "pinchAnchor accept cond=%.3f dist=%.1fkm alt=%.0f (%.0f,%.0f)",
         conditioning, anchorDist / 1000.0, eyeAlt, xPixels, yPixels);
     return true;
+}
+
+void FreeGlobeController::latchPinchTwistPivot(float centroidX,
+                                               float centroidY) {
+    const glm::dvec3 eye = camera_->position().raw();
+    Vec3 picked;
+    // ① 质心地表/椭球命中（弱锚：只要求命中，不做掠射/距离守卫——twist 是
+    //    正向旋转，角度直接来自手指，不存在 pin 反解的 1/c 放大）。
+    if (pickSurfacePoint(centroidX, centroidY, picked) &&
+        glm::length(picked.raw()) > 1e-6) {
+        pinchTwistPivot_ = picked.raw();
+        pinchTwistAxis_ = glm::normalize(pinchTwistPivot_);
+        hasPinchTwistPivot_ = true;
+        return;
+    }
+    // ② 屏幕中心拾取点（质心在天空/地平线外时的兜底：绕观察中心的地表点转）。
+    const float cx = static_cast<float>(viewportWidth_) * 0.5f;
+    const float cy = static_cast<float>(viewportHeight_) * 0.5f;
+    Vec3 centerPick;
+    bool got = surfacePicker_ && surfacePicker_(cx, cy, centerPick);
+    if (!got) {
+        const Ray ray = camera_->getPickRay(
+            static_cast<double>(cx), static_cast<double>(cy),
+            static_cast<double>(viewportWidth_),
+            static_cast<double>(viewportHeight_));
+        const std::optional<Vec3> hit =
+            Ellipsoid::WGS84().rayIntersection(ray.origin(), ray.direction());
+        if (hit) {
+            centerPick = *hit;
+            got = true;
+        }
+    }
+    if (got && glm::length(centerPick.raw()) > 1e-6) {
+        pinchTwistPivot_ = centerPick.raw();
+        pinchTwistAxis_ = glm::normalize(pinchTwistPivot_);
+        hasPinchTwistPivot_ = true;
+        return;
+    }
+    // ③ 兜底：绕相机自身竖直轴（heading 旋转，地平线保持水平、有界）。
+    pinchTwistPivot_ = eye;
+    pinchTwistAxis_ = glm::normalize(eye);
+    hasPinchTwistPivot_ = true;
 }
 
 glm::dquat FreeGlobeController::applyPinchPin(float targetX,

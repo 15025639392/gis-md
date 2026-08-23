@@ -87,7 +87,7 @@ public:
     bool isAnimating() const override {
         return hasZoomInertia_ ||
                inertiaAngularVelocity_ > kMinInertiaAngularVelocity ||
-               nearInertiaActive_ || zoomSettleActive_;
+               nearInertiaActive_ || zoomSettleActive_ || hasTwistInertia_;
     }
 
     // ---- 惯性清零：三个**不同**的子集 ----
@@ -185,6 +185,9 @@ private:
     /// pinch 锚点获取：pick 地表点 → 半径钳到 eye 以下（防抓取球包住相机、
     /// 射线命中球背面疯转）→ 方向换成射线∩钳位球（防起手跳变）。
     bool tryAcquirePinchAnchor(float xPixels, float yPixels);
+    /// 无锚 twist 回退枢轴（起手 latch）：质心地表/椭球命中点 → 屏幕中心
+    /// 拾取点 → eye。轴 = 枢轴径向（当地竖直轴），地图旋转语义。
+    void latchPinchTwistPivot(float centroidX, float centroidY);
     /// pinch 钉合：把锚点钉到目标像素，病态区连续混入质心转台并整点重取
     /// 锚点（与单指 applyAnchorDrag 同一套连续化策略），末尾做高度钳位。
     /// @return 实际施加的旋转增量（未施加时为单位四元数），供 pan 惯性累积。
@@ -292,6 +295,20 @@ private:
     bool hasZoomInertia_ = false;
     double zoomInertiaLogRate_ = 0.0;         // d(ln dist)/dt，>0 = 继续拉近
     glm::dvec3 zoomInertiaAnchor_{0.0, 0.0, 0.0};
+    // twist 惯性（契约 2.2 扩展）：松手后绕手势枢轴继续拧转（Cesium
+    // inertiaSpin 同款指数阻尼 + 0.5px/帧感知判停）。速率 = 视角角速度
+    // （绕枢轴旋转时方向角速度 == 轴角速度，无拖拽惯性的视差增益问题）。
+    bool hasTwistInertia_ = false;
+    double twistInertiaRate_ = 0.0;   // rad/s
+    glm::dvec3 twistInertiaPivot_{0.0, 0.0, 0.0};
+    glm::dvec3 twistInertiaAxis_{0.0, 1.0, 0.0};
+    // 无锚 twist 回退枢轴（起手 latch）：质心地表/椭球命中点 → 屏幕中心拾取
+    // 点 → eye。轴 = 枢轴径向（当地竖直轴）——地图画面绕指下地表点旋转、
+    // 地平线保持水平（奥维/2D 地图语义；绕质心射线滚转会连带天空一起转）。
+    // 不逐事件重取，轴不漂移。
+    bool hasPinchTwistPivot_ = false;
+    glm::dvec3 pinchTwistPivot_{0.0, 0.0, 0.0};
+    glm::dvec3 pinchTwistAxis_{0.0, 1.0, 0.0};
 
     // 滚轮平滑缩放（契约 3.1）：目标/已施加的对数缩放（累计），tick 指数收敛
     // （~300ms），单帧上限 ±ln(2)（Mapbox maxScalePerFrame=2），不越目标（不反向）。

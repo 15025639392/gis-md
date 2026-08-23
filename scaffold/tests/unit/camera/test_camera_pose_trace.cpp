@@ -271,7 +271,7 @@ TEST_F(PoseTraceTest, TraceB_PinchDollyTwistPanPitch) {
     }
     controller_->onPinchEnd();
     trace_.record(*camera_, controller_->groundState());
-    step(12);  // zoom + pan 双惯性滑行
+    step(12);  // zoom + pan + twist 三惯性滑行（2026-08-23 twist 惯性加入）
 
     // 独立一段 Pitch:质心竖移驱动俯仰,锚点钉 latch 质心。
     t += 0.5;
@@ -294,7 +294,7 @@ TEST_F(PoseTraceTest, TraceB_PinchDollyTwistPanPitch) {
     EXPECT_TRUE(controller_->groundState().hasTerrainData)
         << "场景失效:没拿到地形样本,滤波/探针分支空转";
 
-    EXPECT_TRACE_HASH(trace_, 0x64b41dda0f3e9395ull);
+    EXPECT_TRACE_HASH(trace_, 0x0d0bd984bf0c1496ull);
 }
 
 // ---------------------------------------------------------------------------
