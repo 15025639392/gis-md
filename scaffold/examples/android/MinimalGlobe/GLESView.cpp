@@ -1071,16 +1071,14 @@ static bool createEngine() {
                  {"20009",
                   StyleExpression::literal({0.67f, 0.71f, 0.80f, 0.88f})}},
                 StyleExpression::literal({0.76f, 0.80f, 0.87f, 0.82f}));
+            // fill 按 classCode+kind 分流(amap_fillkey):
+            //   30001 层 kind 3 → 水系浅蓝(实测值,参考 spec 63 水系);
+            //   其余(30001 其他 kind / 30002 地块)→ 浅灰(spec
+            //   regionBlocks fallback #eeeeee),不再误用 kind 3/4/5 当水。
             as.fillColorExpr = StyleExpression::match(
-                "amap_kind",
-                // 参考 @xinzhi/amap-style amapStyleSpec.js:type2 区域按
-                // ClassGroup #2 kind 分色。实测 z10 粗源 kind 3=水系
-                // (#d7edfc 浅蓝)、5=绿地(#b8eea4 浅绿),其余为建成区地块
-                // (spec colors.regionBlocks 逐 key)。
-                {{"3",
-                  StyleExpression::literal({0.38f, 0.75f, 1.00f, 0.65f})},
-                 {"5",
-                  StyleExpression::literal({0.48f, 0.80f, 0.50f, 0.60f})}},
+                "amap_fillkey",
+                {{"30001:3",
+                  StyleExpression::literal({0.38f, 0.75f, 1.00f, 0.65f})}},
                 StyleExpression::literal({0.93f, 0.93f, 0.93f, 0.85f}));
             if (!gMvtWorkerPool) {
                 gMvtWorkerPool = std::make_shared<ThreadPool>(2);

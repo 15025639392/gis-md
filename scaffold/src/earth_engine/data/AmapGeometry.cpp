@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <limits>
 
 namespace earth_engine {
@@ -134,17 +135,27 @@ Cartographic amapTileLocalToLngLat(int tileX, int tileY, int z,
 std::vector<std::vector<std::pair<double, double>>> amapNormalizeEvenOddWinding(
     const std::vector<std::vector<std::pair<double, double>>>& rings) {
     const size_t n = rings.size();
-    if (n <= 1) return rings;
+
+    // 高德瓦片环是**开放**的(瓦片边界裁剪产物):面积/点在环内判定、
+    // 后续 CDT 三角化都要求闭合。先补闭合点(首点 != 尾点时追加首点)。
+    std::vector<std::vector<std::pair<double, double>>> closed = rings;
+    for (auto& ring : closed) {
+        if (ring.size() >= 3 &&
+            !(ring.front() == ring.back())) {
+            ring.push_back(ring.front());
+        }
+    }
+    if (n <= 1) return closed;
 
     std::vector<double> areas(n);
     std::vector<double> absAreas(n);
     std::vector<RingBounds> bounds(n);
     std::vector<std::pair<double, double>> interior(n);
     for (size_t i = 0; i < n; ++i) {
-        areas[i] = ringSignedArea(rings[i]);
+        areas[i] = ringSignedArea(closed[i]);
         absAreas[i] = std::abs(areas[i]);
-        bounds[i] = ringBounds(rings[i]);
-        interior[i] = ringInteriorPoint(rings[i], bounds[i]);
+        bounds[i] = ringBounds(closed[i]);
+        interior[i] = ringInteriorPoint(closed[i], bounds[i]);
     }
 
     // 每个环的 even-odd 嵌套深度 + 最近严格包含它的环。
@@ -161,7 +172,7 @@ std::vector<std::vector<std::pair<double, double>>> amapNormalizeEvenOddWinding(
                 py < bounds[j].minY || py > bounds[j].maxY) {
                 continue;
             }
-            if (pointInRing(rings[j], px, py)) {
+            if (pointInRing(closed[j], px, py)) {
                 ++d;
                 if (absAreas[j] < bestArea) {
                     bestArea = absAreas[j];
@@ -181,12 +192,12 @@ std::vector<std::vector<std::pair<double, double>>> amapNormalizeEvenOddWinding(
             break;
         }
     }
-    if (!hasEnclosed) return rings;
+    if (!hasEnclosed) return closed;
 
     auto oriented = [&](size_t i, bool wantPositive)
         -> std::vector<std::pair<double, double>> {
-        if ((areas[i] > 0.0) == wantPositive) return rings[i];
-        std::vector<std::pair<double, double>> rev = rings[i];
+        if ((areas[i] > 0.0) == wantPositive) return closed[i];
+        std::vector<std::pair<double, double>> rev = closed[i];
         std::reverse(rev.begin(), rev.end());
         return rev;
     };
@@ -205,11 +216,75 @@ std::vector<std::vector<std::pair<double, double>>> amapNormalizeEvenOddWinding(
     if (out.size() < n) {
         for (size_t i = 0; i < n; ++i) {
             if (depth[i] % 2 == 1 && parent[i] == -1) {
-                out.push_back(rings[i]);
+                out.push_back(closed[i]);
             }
         }
     }
     return out;
+}
+
+std::vector<std::pair<double, double>> amapClipPolygonRing(
+    const std::vector<std::pair<double, double>>& ring,
+    double minX, double maxX, double minY, double maxY) {
+    // Sutherland–Hodgman:逐轴对齐半平面裁剪,交点解析计算(参考
+    // xinzhi-map clipPolygonRing 的 lerp 求交)。
+    auto lerp = [](const auto& a, const auto& b, double t) {
+        return std::make_pair(a.first + (b.first - a.first) * t,
+                              a.second + (b.second - a.second) * t);
+    };
+    auto clipHalfPlane =
+        [&](const std::vector<std::pair<double, double>>& in,
+            const std::function<bool(double, double)>& keep,
+            const std::function<std::pair<double, double>(
+                const std::pair<double, double>&,
+                const std::pair<double, double>&)>& intersect) {
+            if (in.empty()) return in;
+            std::vector<std::pair<double, double>> out;
+            auto prev = in.back();
+            bool prevIn = keep(prev.first, prev.second);
+            for (const auto& cur : in) {
+                const bool curIn = keep(cur.first, cur.second);
+                if (curIn) {
+                    if (!prevIn) out.push_back(intersect(prev, cur));
+                    out.push_back(cur);
+                } else if (prevIn) {
+                    out.push_back(intersect(prev, cur));
+                }
+                prev = cur;
+                prevIn = curIn;
+            }
+            return out;
+        };
+    auto r = ring;
+    // left: x >= minX
+    r = clipHalfPlane(
+        r,
+        [&](double x, double) { return x >= minX; },
+        [&](const auto& a, const auto& b) {
+            return lerp(a, b, (minX - a.first) / (b.first - a.first));
+        });
+    // right: x <= maxX
+    r = clipHalfPlane(
+        r,
+        [&](double x, double) { return x <= maxX; },
+        [&](const auto& a, const auto& b) {
+            return lerp(a, b, (maxX - a.first) / (b.first - a.first));
+        });
+    // bottom: y >= minY
+    r = clipHalfPlane(
+        r,
+        [&](double, double y) { return y >= minY; },
+        [&](const auto& a, const auto& b) {
+            return lerp(a, b, (minY - a.second) / (b.second - a.second));
+        });
+    // top: y <= maxY
+    r = clipHalfPlane(
+        r,
+        [&](double, double y) { return y <= maxY; },
+        [&](const auto& a, const auto& b) {
+            return lerp(a, b, (maxY - a.second) / (b.second - a.second));
+        });
+    return r.size() >= 3 ? r : std::vector<std::pair<double, double>>{};
 }
 
 std::vector<Feature> amapDecodedPartToFeatures(
@@ -243,20 +318,87 @@ std::vector<Feature> amapDecodedPartToFeatures(
             continue;
         }
 
-        // type2 区域 / type3 建筑:环全部同向(even-odd 掩膜),归一化为
+        // type3 建筑:footprint 外环+庭院孔,非 even-odd 掩膜。每个 ring
+        // 独立 polygon(建筑带孔少见,且裁剪会破坏孔);补闭合即可。
+        if (part.type == 3) {
+            for (const auto& ring : f.rings) {
+                Feature feat;
+                feat.type = GeometryType::Polygon;
+                std::vector<Cartographic> pts;
+                pts.reserve(ring.size());
+                for (const auto& pt : ring) {
+                    Cartographic c = amapTileLocalToLngLat(
+                        part.x, part.y, part.z, pt.first * scale,
+                        pt.second * scale);
+                    if (toWgs84) c = Gcj02CoordinateTransform::toWgs84(c);
+                    pts.push_back(c);
+                }
+                if (pts.size() >= 3 &&
+                    !(pts.front().longitude() == pts.back().longitude() &&
+                      pts.front().latitude() == pts.back().latitude())) {
+                    pts.push_back(pts.front());
+                }
+                feat.rings.push_back(std::move(pts));
+                feat.properties["amap_class"] = std::to_string(f.classCode);
+                if (f.kind > 0) {
+                    feat.properties["amap_kind"] = std::to_string(f.kind);
+                }
+                if (f.height > 0.0) {
+                    feat.properties["amap_height"] =
+                        std::to_string(f.height);
+                }
+                out.push_back(std::move(feat));
+            }
+            continue;
+        }
+
+        // type2 区域:环全部同向(even-odd 掩膜),归一化为
         // 「外环 + 孔环」分组,每组一个 Polygon(三角化自动挖孔)。
         // 归一化保证:外环 area>0,孔 area<0,且每个外环后紧跟它的孔
         // (下一个外环之前)。消费端按绕向符号分组即可,无需重算嵌套。
-        const auto groups = amapNormalizeEvenOddWinding(f.rings);
+        //
+        // ⚠️ 归一化必须与 CDT 同一坐标语义:高德 tile-local y 底朝上,
+        // 经纬度 lat 是翻转后的 y(amapTileLocalToLngLat flipY=true)。
+        // 归一化的面积/绕向若不翻转,与三角化坐标符号相反 → 外环/孔
+        // 分组颠倒,CDT 挖错区域(蓝色过度填充)。参考实现 loadGeometry
+        // 先 `AMAP_EXTENT_Y - y*scale` 翻转再做 even-odd 归一化,随后
+        // amap_reprojected_tile.js 才做瓦片裁剪 —— 顺序:翻转→归一化
+        // →裁剪(先裁剪会破坏嵌套判定)。
+        constexpr double kAmapExtentY = 4096.0;
+        auto flippedRings = f.rings;
+        for (auto& ring : flippedRings) {
+            for (auto& pt : ring) {
+                // 参考实现 loadGeometry:先乘 scale 进 canonical,再翻转 y。
+                pt.first *= scale;
+                pt.second = kAmapExtentY - pt.second * scale;
+            }
+        }
+        const auto groups = amapNormalizeEvenOddWinding(flippedRings);
         const auto toCarto = [&](const auto& ring) {
             std::vector<Cartographic> pts;
-            pts.reserve(ring.size());
-            for (const auto& pt : ring) {
+            // 瓦片裁剪仅用于 type2 区域(跨边界大掩膜/条带);type3 建筑
+            // footprint 在瓦片内,裁剪会破坏庭院孔(孔盖外环 → 空 fill)。
+            const bool doClip = part.type == 2;
+            const auto& src = doClip
+                ? amapClipPolygonRing(ring, -256.0, 8192.0 + 256.0,
+                                      -256.0, 4096.0 + 256.0)
+                : ring;
+            pts.reserve(src.size());
+            for (const auto& pt : src) {
+                // 归一化/裁剪在「翻转后」坐标(与 lat 同号);toCarto 传回
+                // flipY=true 的 amapTileLocalToLngLat,还原 y 底朝上
+                // (裁剪坐标已含 scale,还原即 kAmapExtentY - py)。
                 Cartographic c = amapTileLocalToLngLat(
-                    part.x, part.y, part.z, pt.first * scale,
-                    pt.second * scale);
+                    part.x, part.y, part.z, pt.first,
+                    kAmapExtentY - pt.second);
                 if (toWgs84) c = Gcj02CoordinateTransform::toWgs84(c);
                 pts.push_back(c);
+            }
+            // 裁剪后环在窗口边闭合;若仍开放(首尾不同)补首点。
+            if (pts.size() >= 3 &&
+                !(pts.front().longitude() == pts.back().longitude() &&
+                  pts.front().latitude() == pts.back().latitude())) {
+                pts.push_back(pts.front());
             }
             return pts;
         };
@@ -271,6 +413,12 @@ std::vector<Feature> amapDecodedPartToFeatures(
             if (f.kind > 0) {
                 feat.properties["amap_kind"] = std::to_string(f.kind);
             }
+            // fill 配色分流键:classCode 区分数据层(30001 水/绿地、
+            // 30002 地块),kind 是层内细分。合成单键供 StyleExpression
+            // match(它只支持单属性匹配)。
+            feat.properties["amap_fillkey"] =
+                std::to_string(f.classCode) + ":" +
+                (f.kind > 0 ? std::to_string(f.kind) : "0");
             if (part.type == 3 && f.height > 0.0) {
                 feat.properties["amap_height"] = std::to_string(f.height);
             }
@@ -300,12 +448,12 @@ bool amapBytesToFeatures(const uint8_t* data, size_t size,
     for (const auto& p : parts) {
         if (p.type == 2) {
             if (!regionsOnly) {
-                // 主源(z14):排除建成区地块(kind 2/4/6-12/19-54 等),
-                // 保留水/绿地(kind 3/5;样式在 z14 主源也有)。
+                // 主源(z14):只保留 30001 层水系(kind 3,样式浅蓝);
+                // 30002 地块与 30001 其他 kind 主源不画(地块走粗源浅灰)。
                 AmapDecodedLayerPart kept = p;
                 kept.features.clear();
                 for (const auto& f : p.features) {
-                    if (f.kind == 3 || f.kind == 5) {
+                    if (f.classCode == 30001 && f.kind == 3) {
                         kept.features.push_back(f);
                     }
                 }

@@ -55,6 +55,22 @@ Cartographic amapTileLocalToLngLat(int tileX, int tileY, int z,
 std::vector<std::vector<std::pair<double, double>>> amapNormalizeEvenOddWinding(
     const std::vector<std::vector<std::pair<double, double>>>& rings);
 
+/// 高德瓦片多边形裁剪(参考 xinzhi-map amap_reprojected_tile.js
+/// `clipPolygonRing`,Sutherland–Hodgman 对 4 个轴对齐半平面)。
+///
+/// 高德 4326 瓦片的面环**跨瓦片边界时被裁成开放条带**(首尾不连,且
+/// 部分坐标越界)。不裁剪直接补闭合会得到贴瓦片边缘的细长伪多边形
+/// (蓝色观感异常的根因)。裁剪把环切到 [min, max]² 窗口内,开口沿瓦片
+/// 边闭合,再交给三角化才得到正确面。调用方应传入**翻转后 canonical
+/// tile-local 坐标**(与 amapNormalizeEvenOddWinding 同一坐标系)。
+///
+/// @param ring 一个环(tile-local 坐标,可越界/开放)。
+/// @param minX/maxX/minY/maxY 裁剪窗口(x/y 独立,参考 POLY_CLIP_BUFFER=
+///   256:min=-256, max=extent+256)。返回空 = 无幸存。
+std::vector<std::pair<double, double>> amapClipPolygonRing(
+    const std::vector<std::pair<double, double>>& ring,
+    double minX, double maxX, double minY, double maxY);
+
 /// 一个解码层 → 引擎 Feature 列表。
 /// - type1/4:每个 ring 一条 LineString(properties["amap_class"]=classCode);
 /// - type2/3:环先经 amapNormalizeEvenOddWinding 归一化,每个「外环+孔环」
