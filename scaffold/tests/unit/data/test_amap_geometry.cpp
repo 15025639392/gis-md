@@ -2,7 +2,10 @@
 
 #include "earth_engine/data/AmapGeometry.h"
 #include "earth_engine/data/AmapVectorTile.h"
+#include "earth_engine/data/PolygonTessellator.h"
+#include "earth_engine/core/geodesy/Ellipsoid.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -17,12 +20,17 @@ constexpr double kRadToDeg = 180.0 / 3.14159265358979323846;
 }  // namespace
 
 TEST(AmapGeometryTest, CoordScalePerType) {
-    EXPECT_DOUBLE_EQ(2.0, amapCoordScale(1, 14));
-    EXPECT_DOUBLE_EQ(4.0, amapCoordScale(1, 10));
-    EXPECT_DOUBLE_EQ(8.0, amapCoordScale(1, 3));
-    EXPECT_DOUBLE_EQ(4.0, amapCoordScale(2, 14));
-    EXPECT_DOUBLE_EQ(1.0 / 16.0, amapCoordScale(3, 14));
-    EXPECT_DOUBLE_EQ(2.0, amapCoordScale(4, 14));
+    EXPECT_EQ(2.0, amapCoordScale(1, 14));
+    EXPECT_EQ(4.0, amapCoordScale(1, 10));
+    EXPECT_EQ(8.0, amapCoordScale(1, 3));
+    // type2 普通区域恒 2048×1024(任意 zoom)。
+    EXPECT_EQ(4.0, amapCoordScale(2, 14));
+    EXPECT_EQ(4.0, amapCoordScale(2, 10));
+    // type2 大区域 kind 60/80 走 line-grid。
+    EXPECT_EQ(2.0, amapCoordScale(2, 14, 60));
+    EXPECT_EQ(4.0, amapCoordScale(2, 10, 80));
+    EXPECT_NEAR(1.0 / 16.0, amapCoordScale(3, 14), 1e-9);
+    EXPECT_EQ(2.0, amapCoordScale(4, 14));
 }
 
 TEST(AmapGeometryTest, TileLocalToLngLatFlipY) {
@@ -87,6 +95,111 @@ TEST(AmapGeometryTest, GcjDeOffsetMovesInsideChina) {
     EXPECT_GT(std::abs(dLat), 1e-4);
 }
 
+// 参考 xinzhi-map amap_geometry.js normalizeEvenOddWinding:
+// 高德区域环全部同向(even-odd 掩膜)。外环+被包围环(岛屿)同向时,直接
+// nonzero 填充会把岛屿画成水面;归一化后外环 CCW(area>0)、孔 CW(area<0)
+// 且孔紧跟外环。
+TEST(AmapGeometryTest, EvenOddWindingGroupsOuterAndHole) {
+    // 全部同向(CW,负面积)的环:大海外环 + 岛屿内环。
+    std::vector<std::pair<double, double>> ocean = {
+        {0, 0}, {100, 0}, {100, 100}, {0, 100}};
+    std::vector<std::pair<double, double>> island = {
+        {40, 40}, {60, 40}, {60, 60}, {40, 60}};
+    // 同向:ocean 逆序 = island 同向序列(都 CW)。
+    std::vector<std::pair<double, double>> oceanCW = ocean;
+    std::reverse(oceanCW.begin(), oceanCW.end());
+    const auto groups = amapNormalizeEvenOddWinding({oceanCW, island});
+
+    ASSERT_EQ(2u, groups.size());
+    // 外环重绕为 area>0(CCW),孔保持 area<0(CW)。
+    auto area = [](const auto& r) {
+        double sum = 0.0;
+        const size_t n = r.size();
+        for (size_t i = 0, j = n - 1; i < n; j = i++) {
+            sum += (r[j].first + r[i].first) *
+                   (r[j].second - r[i].second);
+        }
+        return sum / 2.0;
+    };
+    EXPECT_GT(area(groups[0]), 0.0);
+    EXPECT_LT(area(groups[1]), 0.0);
+}
+
+// 两层嵌套:海(外)→ 岛(孔)→ 岛内湖(孔)。even-odd 深度:岛=1(孔)、
+// 湖=2(外环)。归一化输出:海外环 + 岛孔,然后湖作为独立外环。
+TEST(AmapGeometryTest, EvenOddWindingTwoLevelNesting) {
+    std::vector<std::pair<double, double>> ocean = {
+        {0, 0}, {200, 0}, {200, 200}, {0, 200}};
+    std::vector<std::pair<double, double>> island = {
+        {50, 50}, {150, 50}, {150, 150}, {50, 150}};
+    std::vector<std::pair<double, double>> lake = {
+        {80, 80}, {120, 80}, {120, 120}, {80, 120}};
+    // 全部同向(CW)。
+    std::vector<std::pair<double, double>> oceanCW = ocean;
+    std::reverse(oceanCW.begin(), oceanCW.end());
+    std::vector<std::pair<double, double>> islandCW = island;
+    std::reverse(islandCW.begin(), islandCW.end());
+    std::vector<std::pair<double, double>> lakeCW = lake;
+    std::reverse(lakeCW.begin(), lakeCW.end());
+    const auto groups = amapNormalizeEvenOddWinding(
+        {oceanCW, islandCW, lakeCW});
+
+    auto area = [](const auto& r) {
+        double sum = 0.0;
+        const size_t n = r.size();
+        for (size_t i = 0, j = n - 1; i < n; j = i++) {
+            sum += (r[j].first + r[i].first) *
+                   (r[j].second - r[i].second);
+        }
+        return sum / 2.0;
+    };
+    ASSERT_EQ(3u, groups.size());
+    // 海(外)+ 岛(孔)+ 湖(外)。
+    EXPECT_GT(area(groups[0]), 0.0);
+    EXPECT_LT(area(groups[1]), 0.0);
+    EXPECT_GT(area(groups[2]), 0.0);
+}
+
+// 解码 → 归一化 → Feature 分组:外环与孔进同一个 Polygon,孔不再独立成面。
+TEST(AmapGeometryTest, DecodedPartGroupsHoleIntoPolygon) {
+    AmapDecodedLayerPart part;
+    part.z = 10;
+    part.x = 815;
+    part.y = 344;
+    part.type = 2;
+    AmapDecodedFeature f;
+    f.classCode = 20000;
+    f.geomType = 3;  // Polygon
+    f.rings = {
+        // 大海外环(同向 CW)。
+        {{1000, 1000}, {3000, 1000}, {3000, 3000}, {1000, 3000}},
+        // 岛屿内环(同向 CW)。
+        {{1600, 1600}, {2400, 1600}, {2400, 2400}, {1600, 2400}},
+    };
+    part.features.push_back(std::move(f));
+
+    const auto features = amapDecodedPartToFeatures(part, /*toWgs84=*/false);
+    // 一个 feature(外环 + 孔),不是两个独立面。
+    ASSERT_EQ(1u, features.size());
+    EXPECT_EQ(GeometryType::Polygon, features[0].type);
+    ASSERT_EQ(2u, features[0].rings.size());
+    // 孔被正确收集进 rings[1]。
+    EXPECT_GT(features[0].rings[1].size(), 0u);
+}
+
+// 单环(无孔)区域:归一化必须原样返回,不得改变绕向/坐标。
+TEST(AmapGeometryTest, EvenOddWindingSingleRingUntouched) {
+    std::vector<std::pair<double, double>> ring = {
+        {100, 100}, {200, 100}, {200, 200}, {100, 200}};
+    const auto groups = amapNormalizeEvenOddWinding({ring});
+    ASSERT_EQ(1u, groups.size());
+    ASSERT_EQ(ring.size(), groups[0].size());
+    for (size_t i = 0; i < ring.size(); ++i) {
+        EXPECT_DOUBLE_EQ(ring[i].first, groups[0][i].first);
+        EXPECT_DOUBLE_EQ(ring[i].second, groups[0][i].second);
+    }
+}
+
 // 真样本端到端:AMAP_SAMPLE_TILE 指向真实瓦片时,解码→转换全部落在瓦片
 // 地理范围内(重庆 ~106.4-106.5E / 29.4-29.5N)。
 TEST(AmapGeometryTest, RealSampleConvertsToChongqingBounds) {
@@ -127,4 +240,96 @@ TEST(AmapGeometryTest, RealSampleConvertsToChongqingBounds) {
     }
     EXPECT_GT(total, 0u);
     EXPECT_GT(buildings, 0u);  // 正确瓦片(13038_5505_14)含 type-3 建筑层
+    // type2 区域的 kind 必须被解出(样式数据驱动配色的依据;旧实现恒 0)。
+    bool sawRegionKind = false;
+    for (const auto& p : parts) {
+        if (p.type != 2) continue;
+        const auto feats = amapDecodedPartToFeatures(p);
+        for (const auto& feat : feats) {
+            if (feat.properties.count("amap_kind")) {
+                sawRegionKind = true;
+                break;
+            }
+        }
+        if (sawRegionKind) break;
+    }
+    EXPECT_TRUE(sawRegionKind) << "type2 region kind must be decoded";
+}
+
+// 真实样本:type2/3 多环 feature 应合并为「外环+孔」单 Polygon(不再每个环
+// 独立成面)。样本含水面/绿地掩膜(海含岛、湖含岛),归一化前后 feature 数
+// 应显著减少且部分 feature 携带孔环。
+TEST(AmapGeometryTest, RealSampleHolesGroupedIntoPolygons) {
+    const char* path = std::getenv("AMAP_SAMPLE_TILE");
+    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
+    FILE* f = std::fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::rewind(f);
+    std::vector<uint8_t> raw(static_cast<size_t>(len));
+    ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+    std::fclose(f);
+
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(raw.data(), raw.size(), parts));
+    size_t multiRingFeatures = 0;
+    size_t polygonFeatures = 0;
+    for (const auto& p : parts) {
+        if (p.type != 2 && p.type != 3) continue;
+        const auto feats = amapDecodedPartToFeatures(p);
+        for (const auto& feat : feats) {
+            if (feat.type != GeometryType::Polygon) continue;
+            ++polygonFeatures;
+            if (feat.rings.size() > 1) ++multiRingFeatures;
+        }
+    }
+    // 重庆城区样本几乎必含带孔的水面/绿地(湖泊/岛屿);若样本恰好无孔,
+    // 至少确认 feature 数不为零且不崩溃。
+    EXPECT_GT(polygonFeatures, 0u);
+    EXPECT_GT(multiRingFeatures, 0u)
+        << "real sample should contain at least one polygon with holes";
+}
+
+// 归一化后的多环 polygon 必须能正常三角化(CDT 外环+孔 → 非空 fill)。
+// 若孔环绕向/自交破坏 flood-fill,fill 为空 = 大面整体消失(真机近景
+// 现象)。
+TEST(AmapGeometryTest, RealSampleHolePolygonsTessellate) {
+    const char* path = std::getenv("AMAP_SAMPLE_TILE");
+    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
+    FILE* f = std::fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::rewind(f);
+    std::vector<uint8_t> raw(static_cast<size_t>(len));
+    ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+    std::fclose(f);
+
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(raw.data(), raw.size(), parts));
+    const Ellipsoid& e = Ellipsoid::WGS84();
+    size_t multiRing = 0;
+    size_t emptyFill = 0;
+    size_t tinyFill = 0;
+    for (const auto& p : parts) {
+        if (p.type != 2 && p.type != 3) continue;
+        const auto feats = amapDecodedPartToFeatures(p);
+        for (const auto& feat : feats) {
+            if (feat.type != GeometryType::Polygon ||
+                feat.rings.size() <= 1) {
+                continue;
+            }
+            ++multiRing;
+            const auto fill = PolygonTessellator::tessellate(feat, e);
+            if (fill.fillIndices.empty()) {
+                ++emptyFill;
+            } else if (fill.fillIndices.size() < 6) {
+                ++tinyFill;
+            }
+        }
+    }
+    EXPECT_GT(multiRing, 0u);
+    EXPECT_EQ(emptyFill, 0u) << "hole polygons must tessellate";
+    EXPECT_EQ(tinyFill, 0u) << "hole polygons must not degenerate";
 }

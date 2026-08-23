@@ -127,7 +127,14 @@ void parseFeature(Reader& f, int classCode, int geomType, int layerType,
     int field = 0, wire = 0;
     while (f.tag(field, wire)) {
         if (wire == 0) {
-            (void)f.varint();
+            const uint64_t v = f.varint();
+            // type2 区域:Feature #4 varint = primary kind。实测 z10 粗源
+            // 3=水系、5=绿地,其余为建成区地块(2/4/6-12/19-54 等);
+            // 大区域 60/80 走 line-grid(见 amapCoordScale)。参考
+            // xinzhi-map decodeRegionFeature 的 #4 kind / #1 rank。
+            if (layerType == 2 && field == 4 && feat.kind == 0) {
+                feat.kind = static_cast<int>(v);
+            }
         } else if (wire == 2) {
             const uint64_t len = f.varint();
             if (!f.ok || len > std::numeric_limits<size_t>::max()) {

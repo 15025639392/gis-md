@@ -1073,11 +1073,15 @@ static bool createEngine() {
                 StyleExpression::literal({0.76f, 0.80f, 0.87f, 0.82f}));
             as.fillColorExpr = StyleExpression::match(
                 "amap_kind",
-                {{"63",
+                // 参考 @xinzhi/amap-style amapStyleSpec.js:type2 区域按
+                // ClassGroup #2 kind 分色。实测 z10 粗源 kind 3=水系
+                // (#d7edfc 浅蓝)、5=绿地(#b8eea4 浅绿),其余为建成区地块
+                // (spec colors.regionBlocks 逐 key)。
+                {{"3",
                   StyleExpression::literal({0.38f, 0.75f, 1.00f, 0.65f})},
-                 {"61",
+                 {"5",
                   StyleExpression::literal({0.48f, 0.80f, 0.50f, 0.60f})}},
-                StyleExpression::literal({0.71f, 0.71f, 0.71f, 0.55f}));
+                StyleExpression::literal({0.93f, 0.93f, 0.93f, 0.85f}));
             if (!gMvtWorkerPool) {
                 gMvtWorkerPool = std::make_shared<ThreadPool>(2);
             }
