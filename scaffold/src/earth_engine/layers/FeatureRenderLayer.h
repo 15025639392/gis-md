@@ -70,6 +70,18 @@ struct FeatureRenderStyle {
     /// stencil 线与方案 A ribbon 两路径同语义。
     float lineDashPeriodMeters = 0.0f;
     float lineDashOnFraction = 0.6f;
+    /// 海拔着色轨迹(demo,2026-08-23):按顶点椭球高在
+    /// [lineColorGradientHeightMinMeters, lineColorGradientHeightMaxMeters]
+    /// 内从 lineColorGradientLow 线性渐变到 lineColorGradientHigh,逐顶点
+    /// 烘进 a_color(RGBA8)。复用既有 VectorLine48 顶点布局与 shader,
+    /// 不新增属性/着色器;lengthSoFar 仍照常携带(dash 语义不变)。
+    /// 仅作用于方案 A ribbon 线(LineString/outline);stencil 贴地线
+    /// (体积 mesh 按整线分组色)不支持逐顶点色,置位时仍按字面量。
+    bool lineColorGradientByHeight = false;
+    float lineColorGradientHeightMinMeters = 0.0f;
+    float lineColorGradientHeightMaxMeters = 3000.0f;
+    std::array<float, 4> lineColorGradientLow{0.10f, 0.55f, 0.25f, 0.95f};
+    std::array<float, 4> lineColorGradientHigh{0.90f, 0.15f, 0.15f, 0.95f};
     /// 点符号(P5a):billboard 颜色与基准尺寸(px)。尺寸语义随形状:
     /// 内置形状 = 外接方边长/圆直径;位图图标 = 图标**高度**(宽按源图
     /// 宽高比推,不拉伸)。

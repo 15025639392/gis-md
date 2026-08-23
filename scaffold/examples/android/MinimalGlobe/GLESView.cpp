@@ -1042,6 +1042,51 @@ static bool createEngine() {
             }
             LOGI("VectorP1 demo layer installed: 1 polygon + 1 line");
         }
+
+        // ---- 海拔着色轨迹 demo(2026-08-23,独立开关默认开)----
+        // 数据 = 现有 FeatureStore(LineString 顶点带椭球高);
+        // 渐变 = 复用既有 VectorLine48 顶点布局:逐顶点椭球高 → 线性渐变
+        // RGBA8 烘进 a_color,lengthSoFar 原样携带(dash 语义不变),不新增
+        // shader/顶点属性。Absolute 模式走方案 A ribbon —— stencil 贴地线
+        // 是整线分组色,逐顶点色需体积 mesh 扩展(后置)。
+        // 路线故意起伏(420→1720→1200m):若颜色跟着海拔而非里程走,一眼
+        // 可见;在 RESET 预设视角(1.5km/-45°)中段穿过视野。
+        if (minimal_globe_demo::kEnableElevationTrajectoryDemo) {
+            constexpr double kDeg = M_PI / 180.0;
+            auto trajectoryLayer = std::make_unique<FeatureRenderLayer>(
+                "demo-elevation-trajectory", gRenderDevice.get(),
+                Ellipsoid::WGS84());
+            FeatureRenderStyle ts;
+            ts.altitudeMode = FeatureAltitudeMode::Absolute;
+            ts.lineWidthPx = 9.0f;
+            ts.lineColorGradientByHeight = true;
+            ts.lineColorGradientHeightMinMeters = 400.0f;
+            ts.lineColorGradientHeightMaxMeters = 1700.0f;
+            ts.lineColorGradientLow = {0.10f, 0.55f, 0.25f, 0.95f};
+            ts.lineColorGradientHigh = {0.90f, 0.15f, 0.15f, 0.95f};
+            trajectoryLayer->setStyle(ts);
+
+            Feature trail;
+            trail.type = GeometryType::LineString;
+            trail.properties["name"] = "海拔着色轨迹";
+            trail.rings = {{}};
+            const struct { double lon, lat, h; } kTrail[] = {
+                {106.5200, 29.5900, 420}, {106.5160, 29.5960, 580},
+                {106.5110, 29.6010, 760}, {106.5070, 29.6040, 620},
+                {106.5035, 29.6085, 1050}, {106.5000, 29.6130, 1420},
+                {106.4970, 29.6180, 1280}, {106.4930, 29.6220, 1580},
+                {106.4890, 29.6260, 1720}, {106.4850, 29.6300, 1450},
+                {106.4810, 29.6345, 1650}, {106.4770, 29.6390, 1200},
+            };
+            for (const auto& p : kTrail) {
+                trail.rings[0].emplace_back(
+                    Cartographic(p.lon * kDeg, p.lat * kDeg, p.h));
+            }
+            trajectoryLayer->store().addFeature(std::move(trail));
+            gEngine->addFeatureRenderLayer(std::move(trajectoryLayer));
+            LOGI("VectorElevationTrajectory demo: 12 pts 420->1720m "
+                 "absolute + per-vertex a_color gradient");
+        }
         // Phase 2c P5:GPU 位移已引擎默认开(Engine.h terrainGpuDisplacementEnabled_
         // = true,pool 在首次 scene update 前急切创建)。运行时 A/B 关闭仍走调试面板
         // 的 setTerrainGpuDisplacementEnabled(false)(GLESView.cpp toggle)。

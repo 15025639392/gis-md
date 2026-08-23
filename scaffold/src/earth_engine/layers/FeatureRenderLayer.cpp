@@ -62,13 +62,19 @@ void appendLineMesh(const TessellatedLine& line,
                     const Vec3& origin,
                     float packedColor,
                     std::vector<float>& outVerts,
-                    std::vector<uint32_t>& outIndices) {
+                    std::vector<uint32_t>& outIndices,
+                    const std::vector<float>* perVertexColors = nullptr) {
     if (line.vertices.empty() || line.indices.empty()) return;
+    // 逐顶点色(海拔着色轨迹 demo):长度须与 ribbon 顶点一致,否则整线
+    // 回落统一色(调用方 bug 不炸渲染)。
+    const bool hasPerVertexColors =
+        perVertexColors && perVertexColors->size() == line.vertices.size();
     const uint32_t base =
         static_cast<uint32_t>(outVerts.size() / kLineVertexFloats);
     outVerts.reserve(outVerts.size() +
                      line.vertices.size() * kLineVertexFloats);
-    for (const LineVertex& v : line.vertices) {
+    for (size_t i = 0; i < line.vertices.size(); ++i) {
+        const LineVertex& v = line.vertices[i];
         const Vec3 p = v.pos - origin;
         const Vec3 pr = v.prev - origin;
         const Vec3 nx = v.next - origin;
@@ -83,12 +89,42 @@ void appendLineMesh(const TessellatedLine& line,
         outVerts.push_back(static_cast<float>(nx.z()));
         outVerts.push_back(v.side);
         outVerts.push_back(v.lengthSoFar);
-        outVerts.push_back(packedColor);
+        outVerts.push_back(hasPerVertexColors ? (*perVertexColors)[i]
+                                              : packedColor);
     }
     outIndices.reserve(outIndices.size() + line.indices.size());
     for (uint32_t idx : line.indices) {
         outIndices.push_back(base + idx);
     }
+}
+
+/// 海拔着色轨迹(2026-08-23 demo):逐顶点椭球高 → 线性渐变 RGBA8 打包。
+/// 复用 VectorLine48 既有 a_color 槽;lengthSoFar 不参与上色(dash 仍独立)。
+/// min==max 时 t 按整线取中(0.5),不会除零。
+std::vector<float> packLineHeightGradientColors(
+    const TessellatedLine& line,
+    const Ellipsoid& ellipsoid,
+    const FeatureRenderStyle& style) {
+    std::vector<float> out;
+    out.reserve(line.vertices.size());
+    const float range = style.lineColorGradientHeightMaxMeters -
+                        style.lineColorGradientHeightMinMeters;
+    const float tDenom = range > 1e-3f ? range : 1.0f;
+    for (const LineVertex& v : line.vertices) {
+        const double h = ellipsoid.cartesianToCartographic(v.pos).height();
+        const float t = std::clamp(
+            (static_cast<float>(h) - style.lineColorGradientHeightMinMeters) /
+                tDenom,
+            0.0f, 1.0f);
+        std::array<float, 4> c;
+        for (int k = 0; k < 4; ++k) {
+            c[k] = style.lineColorGradientLow[k] +
+                   (style.lineColorGradientHigh[k] -
+                    style.lineColorGradientLow[k]) * t;
+        }
+        out.push_back(packColorFloat(c));
+    }
+    return out;
 }
 
 /// 颜色表达式求值(P6b 数据驱动,镶嵌期上下文 = 属性,无 zoom)。
@@ -556,8 +592,15 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 /*closed=*/false);
             if (!line.vertices.empty()) {
                 ensureOrigin(line.vertices.front().pos);
-                appendLineMesh(line, origin, lineColorPacked,
-                               lineVerts, lineIndices);
+                std::vector<float> perVertexColors;
+                const std::vector<float>* colors = nullptr;
+                if (ctx.style.lineColorGradientByHeight) {
+                    perVertexColors = packLineHeightGradientColors(
+                        line, ctx.ellipsoid, ctx.style);
+                    colors = &perVertexColors;
+                }
+                appendLineMesh(line, origin, lineColorPacked, lineVerts,
+                               lineIndices, colors);
             }
             break;
         }

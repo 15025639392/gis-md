@@ -52,6 +52,13 @@ constexpr const char* kTreeI3dmUrl =
 // 排除干扰是判因的前提,不是洁癖。
 constexpr bool kEnableVectorDemoLayers = false;
 
+// 海拔着色轨迹 demo(2026-08-23):一条带椭球高的 LineString 轨迹
+// (FeatureStore 数据),按顶点海拔线性渐变烘进既有 a_color,复用
+// VectorLine48 顶点布局与 shader(无新属性/着色器),lengthSoFar 照常
+// 携带(dash 语义不变)。独立开关且默认开,不依赖上面整套 feature demo
+// 图层 —— 排查地形时若嫌画面多一条线,置 false 即可。
+constexpr bool kEnableElevationTrajectoryDemo = true;
+
 // 矢量 P4 MVT 只读底图(**几何通路**)。本地 tippecanoe 自制重庆 OSM
 // mbtiles,serve_mvt_tiles.py 起 8092 + adb reverse tcp:8092。
 // 刀1(面→drape)后只承载线;刀2(线→SDF 场+地形 FS 解算)落地后线也

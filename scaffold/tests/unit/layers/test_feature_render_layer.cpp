@@ -135,6 +135,89 @@ TEST_F(FeatureRenderLayerTest, LineStringEmitsOnlyLineCommand) {
     EXPECT_EQ(12, commands[0].indexCount);
 }
 
+// 海拔着色轨迹(2026-08-23):逐顶点椭球高 → a_color 线性渐变,复用既有
+// VectorLine48 布局(shader 无改动);lengthSoFar 原样携带(dash 语义不变)。
+TEST_F(FeatureRenderLayerTest, LineHeightGradientBakesPerVertexColors) {
+    Feature line;
+    line.type = GeometryType::LineString;
+    line.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0),
+                   Cartographic(6.02 * kDeg, 29.02 * kDeg, 1500.0),
+                   Cartographic(6.04 * kDeg, 29.04 * kDeg, 3000.0)}};
+    FeatureRenderStyle style;
+    style.altitudeMode = FeatureAltitudeMode::Absolute;
+    style.lineColorGradientByHeight = true;
+    style.lineColorGradientHeightMinMeters = 0.0f;
+    style.lineColorGradientHeightMaxMeters = 3000.0f;
+    style.lineColorGradientLow = {0.10f, 0.55f, 0.25f, 0.95f};
+    style.lineColorGradientHigh = {0.90f, 0.15f, 0.15f, 0.95f};
+    layer_->setStyle(style);
+    layer_->store().addFeature(std::move(line));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    ASSERT_EQ(RenderCommandKind::VectorLine, commands[0].kind);
+    const auto* vb = dynamic_cast<const DummyBuffer*>(commands[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    EXPECT_EQ(48, commands[0].vertexStride);
+    // 3 折线点 × 2 ribbon 顶点 × 12 float(48B)。
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    ASSERT_EQ(3u * 2u * 12u, vb->bytes().size() / sizeof(float));
+
+    auto unpack = [](float packed) {
+        uint32_t u = 0;
+        std::memcpy(&u, &packed, sizeof(u));
+        return std::array<float, 4>{
+            ((u >> 0) & 0xFF) / 255.0f, ((u >> 8) & 0xFF) / 255.0f,
+            ((u >> 16) & 0xFF) / 255.0f, ((u >> 24) & 0xFF) / 255.0f};
+    };
+    auto vertexColor = [&](size_t polylineIndex) {
+        return unpack(floats[polylineIndex * 2 * 12 + 11]);
+    };
+    const auto c0 = vertexColor(0);
+    const auto c1 = vertexColor(1);
+    const auto c2 = vertexColor(2);
+    // 0m → low(绿);3000m → high(红);1500m → 严格中点。
+    EXPECT_NEAR(c0[0], 0.10f, 0.02f);
+    EXPECT_NEAR(c0[1], 0.55f, 0.02f);
+    EXPECT_NEAR(c0[2], 0.25f, 0.02f);
+    EXPECT_NEAR(c2[0], 0.90f, 0.02f);
+    EXPECT_NEAR(c2[1], 0.15f, 0.02f);
+    EXPECT_NEAR(c2[2], 0.15f, 0.02f);
+    EXPECT_GT(c1[0], c0[0] + 0.05f);
+    EXPECT_LT(c1[0], c2[0] - 0.05f);
+    EXPECT_LT(c1[1], c0[1] - 0.05f);
+    EXPECT_GT(c1[1], c2[1] + 0.05f);
+
+    // lengthSoFar 原样携带:首点 0、末点全长、递增(与 shader dash 契约不变)。
+    const float l0 = floats[0 * 2 * 12 + 10];
+    const float l1 = floats[1 * 2 * 12 + 10];
+    const float l2 = floats[2 * 2 * 12 + 10];
+    EXPECT_FLOAT_EQ(0.0f, l0);
+    EXPECT_GT(l1, l0);
+    EXPECT_GT(l2, l1);
+}
+
+// 渐变开关关闭 → 整线统一字面量色(默认行为不回退)。
+TEST_F(FeatureRenderLayerTest, LineHeightGradientOffUsesUniformColor) {
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.01));
+    FeatureRenderStyle style;
+    style.lineColor = {1.0f, 0.5f, 0.25f, 0.9f};
+    layer_->setStyle(style);
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    ASSERT_EQ(RenderCommandKind::VectorLine, commands[0].kind);
+    const auto* vb = dynamic_cast<const DummyBuffer*>(commands[0].vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
+    const size_t vertexCount = vb->bytes().size() / commands[0].vertexStride;
+    ASSERT_EQ(6u, vertexCount);  // open 3 点 ribbon
+    for (size_t v = 0; v < vertexCount; ++v) {
+        EXPECT_FLOAT_EQ(floats[0 * 12 + 11], floats[v * 12 + 11])
+            << "vertex " << v << " 偏离统一线色";
+    }
+}
+
 TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     // P5a/P6c:Point 要素 = billboard quad(4 顶点 6 索引,36B 顶点)。
     Feature p;
