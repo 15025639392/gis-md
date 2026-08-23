@@ -69,24 +69,27 @@ constexpr bool kEnableElevationTrajectoryDemo = true;
 // 塞回 layerRules(见 GLESView;⚠️ 整层白名单是 includeLayers,layerRules
 // 未列出的层是全收)。获取层已与 drape/场共享 MvtTileFetchCache(刀A.5),
 // 同一数据瓦网络/解码/内存恰一份。
-constexpr bool kEnableMvtBasemap = true;
+constexpr bool kEnableMvtBasemap = false;
 
 // 矢量**面** drape 底图:MVT 面要素动态栅格化冒充影像,进 TerrainPageStore
 // 页合成(与卫星影像同轨,GPU 边际成本≈0)。E4 原版影像通路曾于 2026-08-07
 // 整链删除(页纹素封顶,近景**线**糊成栅格块);本版按"面 drape/线 SDF"
 // 新分工复活,overzoom 现画不再封顶,见 VectorDrapeImageryProvider.h。
 // Metal 红利:drape 不依赖 stencil,iOS 首次获得贴地面能力。
-constexpr bool kEnableMvtDrapeBasemap = true;
+constexpr bool kEnableMvtDrapeBasemap = false;
 
 // 刀2 路网线 SDF 场:逐页 R8 距离场(CPU scatter 烘焙,worker)+ 地形 FS
 // 内解算(smoothstep+fwidth 解析 AA,寄生地形 FS 边际成本≈0 —— S2 场税
 // 探针实测增量在噪声内;独立 overlay pass 同数学 25-30ms,勿走回头路)。
 // 与面 drape 共享 MvtTileFetchCache(同一批 z14 祖先瓦零重复 fetch)。
-constexpr bool kEnableMvtRoadField = true;
+// 复刻 amap 观感组合(A):高德栅格路网 overlay 打开后,本地 MVT 矢量栈
+// (D2 场 / E 几何路网 / POI)关掉避免同瓦双画 —— 画面 = 高德卫星 + 高德
+// 渲染路网,纯 amap 2D 观感。B 阶段(交互矢量层)随时翻回 kEnableEPlanRoadRibbon。
+constexpr bool kEnableMvtRoadField = false;
 /// E 方案路网几何通道(P1+P2 已落地:ribbon 单 pass + commit 同源采样贴地
 /// + 地形代次重钳)。置 true 时与 D2 场互斥 —— RoadFieldSource 自动跳过;
 /// 真机验证通过后再执行 P3(D2 场物理退役)。
-constexpr bool kEnableEPlanRoadRibbon = true;
+constexpr bool kEnableEPlanRoadRibbon = false;
 
 // 贴地体的高度范围不在这里配:SceneRenderPipeline 每帧从**可见地形瓦片的
 // 包围体**汇总(O(可见瓦片数),零采样),相机飞到哪都对。
@@ -136,7 +139,7 @@ constexpr size_t kMvtTileCacheRaw = 256;
 
 constexpr bool kEnableTerrainForDemo = true;
 constexpr bool kUseGaodeSatelliteForDemo = true;
-constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;
+constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
 constexpr bool kEnableRobotExpressiveGltfDemo = false;
 // 开启后 config.gltf 指向 tree.i3dm(覆盖 RobotExpressive),用于实例化基线测量。
 // tree.i3dm 是世界锚定内容,相机随之移到样本真实位置(宾州)低空俯视。
