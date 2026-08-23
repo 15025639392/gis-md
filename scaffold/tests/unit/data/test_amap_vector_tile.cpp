@@ -1,0 +1,187 @@
+#include <gtest/gtest.h>
+#include <zlib.h>
+
+#include "earth_engine/data/AmapVectorTile.h"
+
+#include <cstring>
+#include <cstdio>
+#include <cstdlib>
+#include <vector>
+
+using namespace earth_engine;
+
+namespace {
+
+std::vector<uint8_t> gzipCompress(const std::vector<uint8_t>& input) {
+    z_stream strm;
+    std::memset(&strm, 0, sizeof(strm));
+    deflateInit2(&strm, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY);
+    std::vector<uint8_t> out(deflateBound(&strm, input.size()));
+    strm.next_in = const_cast<uint8_t*>(input.data());
+    strm.avail_in = static_cast<uInt>(input.size());
+    strm.next_out = out.data();
+    strm.avail_out = static_cast<uInt>(out.size());
+    deflate(&strm, Z_FINISH);
+    out.resize(strm.total_out);
+    deflateEnd(&strm);
+    return out;
+}
+
+void putVarint(std::vector<uint8_t>& b, uint64_t v) {
+    while (v >= 0x80) {
+        b.push_back(static_cast<uint8_t>(v | 0x80));
+        v >>= 7;
+    }
+    b.push_back(static_cast<uint8_t>(v));
+}
+
+void putTag(std::vector<uint8_t>& b, int field, int wire) {
+    putVarint(b, (static_cast<uint64_t>(field) << 3) | wire);
+}
+
+void putVarintField(std::vector<uint8_t>& b, int field, uint64_t v) {
+    putTag(b, field, 0);
+    putVarint(b, v);
+}
+
+void putBytesField(std::vector<uint8_t>& b, int field,
+                   const std::vector<uint8_t>& v) {
+    putTag(b, field, 2);
+    putVarint(b, v.size());
+    b.insert(b.end(), v.begin(), v.end());
+}
+
+std::vector<uint8_t> makeContainer(const std::vector<uint8_t>& protobuf) {
+    const auto gz = gzipCompress(protobuf);
+    std::vector<uint8_t> out;
+    const uint32_t n = static_cast<uint32_t>(gz.size());
+    out.push_back(static_cast<uint8_t>(n >> 24));
+    out.push_back(static_cast<uint8_t>(n >> 16));
+    out.push_back(static_cast<uint8_t>(n >> 8));
+    out.push_back(static_cast<uint8_t>(n));
+    out.insert(out.end(), gz.begin(), gz.end());
+    return out;
+}
+
+// zigzag(v) = (v<<1) ^ (v>>63 语义:非负 → 2v)。
+void putZigzag(std::vector<uint8_t>& b, int64_t v) {
+    putVarint(b, static_cast<uint64_t>((v << 1) ^ (v >> 63)));
+}
+
+// 类型 3(建筑)层:一个 ClassGroup(classCode=20009, geomType=13),
+// 一个 Feature → Part { blob=三角形 zigzag 几何, height=36 }。
+std::vector<uint8_t> makeBuildingTile() {
+    std::vector<uint8_t> part;
+    {
+        std::vector<uint8_t> blob;
+        const int64_t pts[6] = {0, 0, 10, 0, 0, 10};  // (0,0)->(10,0)->(10,10)
+        for (int64_t v : pts) putZigzag(blob, v);
+        putBytesField(part, 3, blob);
+        putVarintField(part, 5, 36);
+    }
+    std::vector<uint8_t> feature;
+    putBytesField(feature, 4, part);
+    std::vector<uint8_t> cg;
+    putVarintField(cg, 1, 20009);
+    putVarintField(cg, 3, 13);
+    putBytesField(cg, 4, feature);
+    std::vector<uint8_t> content;
+    putBytesField(content, 1, cg);
+    std::vector<uint8_t> layer;
+    putVarintField(layer, 1, 14);
+    putVarintField(layer, 2, 13038);
+    putVarintField(layer, 3, 6785);
+    putVarintField(layer, 4, 3);
+    putBytesField(layer, 5, content);
+    putVarintField(layer, 8, 4);
+    std::vector<uint8_t> tile;
+    putVarintField(tile, 1, 14);
+    putVarintField(tile, 2, 13038);
+    putVarintField(tile, 3, 6785);
+    putBytesField(tile, 4, layer);
+    std::vector<uint8_t> root;
+    putBytesField(root, 1, tile);
+    const std::vector<uint8_t> ver{'v', '2'};
+    putBytesField(root, 2, ver);
+    return makeContainer(root);
+}
+
+}  // namespace
+
+TEST(AmapVectorTileTest, DecodesBuildingContainer) {
+    const auto container = makeBuildingTile();
+    std::vector<AmapDecodedLayerPart> parts;
+    std::string err;
+    ASSERT_TRUE(decodeAmapTile(container.data(), container.size(), parts, &err))
+        << err;
+    ASSERT_EQ(1u, parts.size());
+    const AmapDecodedLayerPart& p = parts[0];
+    EXPECT_EQ(14, p.z);
+    EXPECT_EQ(13038, p.x);
+    EXPECT_EQ(6785, p.y);
+    EXPECT_EQ(3, p.type);
+    ASSERT_EQ(1u, p.features.size());
+    const AmapDecodedFeature& f = p.features[0];
+    EXPECT_EQ(20009, f.classCode);
+    EXPECT_EQ(13, f.geomType);
+    EXPECT_DOUBLE_EQ(36.0, f.height);
+    ASSERT_EQ(1u, f.rings.size());
+    ASSERT_EQ(3u, f.rings[0].size());
+    EXPECT_DOUBLE_EQ(0.0, f.rings[0][0].first);
+    EXPECT_DOUBLE_EQ(0.0, f.rings[0][0].second);
+    EXPECT_DOUBLE_EQ(10.0, f.rings[0][1].first);
+    EXPECT_DOUBLE_EQ(0.0, f.rings[0][1].second);
+    EXPECT_DOUBLE_EQ(10.0, f.rings[0][2].first);
+    EXPECT_DOUBLE_EQ(10.0, f.rings[0][2].second);
+}
+
+TEST(AmapVectorTileTest, RejectsBadLengthHeader) {
+    auto container = makeBuildingTile();
+    container[0] ^= 0xff;  // 破坏大端长度头
+    std::vector<AmapDecodedLayerPart> parts;
+    std::string err;
+    EXPECT_FALSE(decodeAmapTile(container.data(), container.size(), parts, &err));
+    EXPECT_FALSE(err.empty());
+}
+
+TEST(AmapVectorTileTest, RejectsCorruptGzip) {
+    auto container = makeBuildingTile();
+    container[container.size() / 2] ^= 0xff;  // 破坏 deflate 流
+    std::vector<AmapDecodedLayerPart> parts;
+    std::string err;
+    EXPECT_FALSE(decodeAmapTile(container.data(), container.size(), parts, &err));
+}
+
+TEST(AmapVectorTileTest, PoiEntrySharesContainerPath) {
+    const auto container = makeBuildingTile();
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapPoiTile(container.data(), container.size(), parts));
+    ASSERT_EQ(1u, parts.size());
+    EXPECT_EQ(3, parts[0].type);
+}
+
+// 真样本校准:设置 AMAP_SAMPLE_TILE=<真实瓦片路径> 时解码并打印结构。
+// 仓库不携带高德数据,默认跳过。
+TEST(AmapVectorTileTest, DecodesRealSampleWhenProvided) {
+    const char* path = std::getenv("AMAP_SAMPLE_TILE");
+    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
+    FILE* f = std::fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::rewind(f);
+    ASSERT_GT(len, 0L);
+    std::vector<uint8_t> raw(static_cast<size_t>(len));
+    ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+    std::fclose(f);
+
+    std::vector<AmapDecodedLayerPart> parts;
+    std::string err;
+    ASSERT_TRUE(decodeAmapTile(raw.data(), raw.size(), parts, &err)) << err;
+    EXPECT_FALSE(parts.empty());
+    for (const auto& p : parts) {
+        std::printf("layer z=%d x=%d y=%d type=%d features=%zu\n", p.z, p.x,
+                    p.y, p.type, p.features.size());
+    }
+}

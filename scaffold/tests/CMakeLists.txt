@@ -1054,6 +1054,12 @@ add_executable(test_mvt_decoder
 target_link_libraries(test_mvt_decoder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_mvt_decoder COMMAND test_mvt_decoder)
 
+add_executable(test_amap_vector_tile
+    unit/data/test_amap_vector_tile.cpp
+)
+target_link_libraries(test_amap_vector_tile PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_amap_vector_tile COMMAND test_amap_vector_tile)
+
 add_executable(test_line_field_rasterizer
     unit/data/test_line_field_rasterizer.cpp
 )
@@ -1295,6 +1301,16 @@ if(Python3_Interpreter_FOUND)
         COMMAND ${Python3_EXECUTABLE}
                 ${CMAKE_CURRENT_SOURCE_DIR}/../tools/check_hdr_variant_integrity.py
                 --src ${CMAKE_CURRENT_SOURCE_DIR}/../src)
+    # GLSL 编译守卫(地形 T-P6 方案 B):host 无真 GL 时,至少把主要 GLSL ES
+    # 源(含 createShaders 注入后的最终形态)离线交给 glslangValidator 编译,
+    # 语法/接口错在 ctest 直接炸,不再等真机肉眼验;HDR 冻结态注入变体同批
+    # 编译(L-P3 首次被自动化触碰)。glslang 缺失时脚本显式 SKIP 退出 0,
+    # 安装见 tools/fetch_glslang.sh(产物在 scaffold/build/tools/glslang)。
+    add_test(
+        NAME test_glsl_compile
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../tools/check_glsl_compile.py
+                --src ${CMAKE_CURRENT_SOURCE_DIR}/../src)
 else()
-    message(STATUS "未找到 Python3,跳过 test_ai_index_refs / test_hdr_variant_integrity")
+    message(STATUS "未找到 Python3,跳过 test_ai_index_refs / test_hdr_variant_integrity / test_glsl_compile")
 endif()
