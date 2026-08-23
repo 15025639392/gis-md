@@ -174,6 +174,7 @@ private:
         Gltf120Instanced,   ///< 120B glTF + 7 条 instance 矩阵属性
         Terrain20,          ///< 20B：pos(12)+uv(8)，normal 由 shader 计算
         VectorLine48,       ///< 48B 矢量线 ribbon：pos(12)+prev(12)+next(12)+side(4)+lengthSoFar(4)+color(4,RGBA8)
+        VectorExtrusion28,  ///< 28B V6 建筑挤出：pos(12)+normal(12)+color(4,RGBA8)
         VectorStencilLine24,///< 24B P6d stencil 贴地线墙带：pos(12)+extrude(12)
         VectorFill16,       ///< 16B 矢量 fill：pos(12)+color(4,RGBA8)
         VectorPageMesh20,   ///< 20B C-2c 页存储矢量：pos(2f)+extrude(2f)+color(4,RGBA8)
