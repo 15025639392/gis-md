@@ -322,7 +322,8 @@ static void mvtFetchTile(const TileKey& key,
 
 // ---- C2 步骤5:高德矢量瓦片垂直切片 ----
 // 定义在文件尾部(gRenderThread 之后),见 amapLoadDemoTile。
-static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z);
+static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z,
+                             bool regionsOnly);
 
 
 static double androidUptimeSeconds();
@@ -851,14 +852,12 @@ static bool createEngine() {
         // stencil fill。样式按 amap_class/amap_kind 粗配色(样式 fidelity
         // 后续 port @xinzhi/amap-style)。
         if (minimal_globe_demo::kEnableAmapVectorDemo) {
-            auto amapLayer = std::make_unique<FeatureRenderLayer>(
-                "amap-vector", gRenderDevice.get(), Ellipsoid::WGS84());
             FeatureRenderStyle as;
-            as.altitudeMode = FeatureAltitudeMode::ClampToGround;
-            as.terrainClampRibbon = true;
-            as.stencilFillEnabled = false;  // 区域单 pass 平面 fill(省近景 stencil)
-            as.heightOffset = 2.5;          // 抬升防 z-fight
-            as.clampDensifyMeters = 50.0;
+            // amap.com 复刻:平面渲染(无地形耦合)。Absolute + 抬升,
+            // 不贴地采样、不细分(用瓦片原始密度)、无地形代次重钳——
+            // 消除缩放时的重钳风暴与近景 stencil 片元成本。
+            as.altitudeMode = FeatureAltitudeMode::Absolute;
+            as.heightOffset = 2.5;  // 抬升防 z-fight
             as.lineWidthPx = 3.0f;
             as.lineColorExpr = StyleExpression::match(
                 "amap_class",
@@ -874,15 +873,31 @@ static bool createEngine() {
                  {"61",
                   StyleExpression::literal({0.48f, 0.80f, 0.50f, 0.60f})}},
                 StyleExpression::literal({0.71f, 0.71f, 0.71f, 0.55f}));
-            amapLayer->setStyle(as);
-            auto* amapPtr = amapLayer.get();
-            gEngine->addFeatureRenderLayer(std::move(amapLayer));
+            // 粗源:面(水/绿地)z10 网格(重庆 106.5E/29.5N → z10 815_344)。
+            auto regionLayer = std::make_unique<FeatureRenderLayer>(
+                "amap-regions", gRenderDevice.get(), Ellipsoid::WGS84());
+            regionLayer->setStyle(as);
+            auto* regionPtr = regionLayer.get();
+            gEngine->addFeatureRenderLayer(std::move(regionLayer));
             for (int dx = -1; dx <= 1; ++dx) {
                 for (int dy = -1; dy <= 1; ++dy) {
-                    amapLoadDemoTile(amapPtr, 13038 + dx, 5505 + dy, 14);
+                    amapLoadDemoTile(regionPtr, 815 + dx, 344 + dy, 10, true);
                 }
             }
-            LOGI("AmapVectorDemo: layer installed, 9 tiles queued");
+            // 主源:路网/建筑/轨道 z14 网格。
+            auto mainLayer = std::make_unique<FeatureRenderLayer>(
+                "amap-vector", gRenderDevice.get(), Ellipsoid::WGS84());
+            mainLayer->setStyle(as);
+            auto* mainPtr = mainLayer.get();
+            gEngine->addFeatureRenderLayer(std::move(mainLayer));
+            for (int dx = -1; dx <= 1; ++dx) {
+                for (int dy = -1; dy <= 1; ++dy) {
+                    amapLoadDemoTile(mainPtr, 13038 + dx, 5505 + dy, 14,
+                                     false);
+                }
+            }
+            LOGI("AmapVectorDemo: coarse(z10 regions) + main(z14) installed, "
+                 "18 tiles queued");
         }
 
         // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。**不在任何
@@ -2187,9 +2202,12 @@ static std::vector<uint8_t> amapPostBlocking(
     return std::move(st->result);
 }
 
-static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z) {
+// regionsOnly=true:只保留 type2(面),用于粗源(z10,水/绿地,低顶点量,
+// overzoom 对齐 amapVectorLayers 的粗源);false:只保留 type1/3/4(主源 z14)。
+static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z,
+                             bool regionsOnly) {
     LOGI("AmapDemo: enqueue %d_%d_%d", x, y, z);
-    std::thread([layer, x, y, z]() {
+    std::thread([layer, x, y, z, regionsOnly]() {
         const std::string key = minimal_globe_demo::kAmapWebKey;
         const std::string referer = minimal_globe_demo::kAmapReferer;
         const std::string initUrl =
@@ -2248,6 +2266,7 @@ static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z) {
             }
             std::vector<Feature> feats;
             for (const auto& p : parts) {
+                if (regionsOnly ? (p.type != 2) : (p.type == 2)) continue;
                 auto fs = amapDecodedPartToFeatures(p, true);
                 feats.insert(feats.end(), std::make_move_iterator(fs.begin()),
                              std::make_move_iterator(fs.end()));
