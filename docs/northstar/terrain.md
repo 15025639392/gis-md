@@ -37,7 +37,7 @@
 |---|---|---|---|---|---|
 | **T-V1** | 地形三角形不应在默认视角下横跨数十像素 | 【观感】 | ❌ `推断` | 整条高度链钉死 65×65 → **133 m/三角形,默认相机下横跨 ~46 px**(1080 屏)/~100 px(2400 屏)。参照系 Cesium World Terrain 自适应 TIN 有效 ~10–30 m,**我们粗一个数量级**(gap 文档 §1.1–1.3) | 抬到 256 可拿回 16.6 m,代价顶点数 16×、高度纹理层 16× 显存 —— **未实测,需取舍** |
 | **T-V2** | 坡面不出现逐三角形亮度台阶(刻面) | 【观感】 | ⚠️ `推断` | 法线与几何解耦**已落地**,机制自证通过(探针 93.47% 屏幕像素走新分支)。但画面几乎没变 —— 收益被 T-V3 闸住(gap 文档 §4.4) | 一张法线贴图 + 槽 23;**未量化** |
-| **T-V3** | 地形有可读的明暗起伏(relief 不被光照压平) | 【观感】 | 🔒 待你拍板 `推断` | `directional = smoothstep(0,1,NdotL)` 实测**中位 0.992** → 高太阳角下饱和,relief 着色仅 ~1% 亮度。新旧法线夹角中位 3.0°/p95 >12° 却看不出来,根因在此(gap 文档 §4.5) | 改光照动态范围是**观感取向决策**,非纯技术项 |
+| **T-V3** | 地形有可读的明暗起伏(relief 不被光照压平) | 【观感】 | ✅ 代码已落地,观感 A/B 待你拍板 | 修复已落地(2026-08-12,`1a939be70`):四个地形片元 shader 收敛为单一治理点 `TerrainSurfaceLightGLSL.h`,弃用 smoothstep、改线性 Lambert(`clamp(NdotL*0.9+0.3)`,Cesium/osgEarth 同款),GLSL/MSL 双写同步;header 注释直接引用本节 0.992 测量为动机。**剩余**:①真机 A/B 拍板线性曲线的实际观感(可临时切回 smoothstep 版对比);②MSL 两变体 sunTint 仍为内部常量未参数化(B4,随 Metal 端口统一) | 0(GPU 零增量) |
 
 | **T-V9** | 运动中地表不得出现黑格/黑带(瓦片画不满自己的地理范围) | 【机制】 | ⚠️ 修复已落地,**验证加强**(2026-08-22):9480 帧(含平移 + 2 轮全局↔33km 脚本化缩放,跨度覆盖 z6-12 全部行)`spanMis=0` 持续、肉眼无黑带。**转 ✅ 仍差你手捏合一轮**(脚本化缩放≠捏合,粘滞现象的证据等级按原判据收口) | **根因=共享位移模板按 `{schemeId,z,row,gridSize}` 缓存,由第一个来要的瓦片 bounds 定型且永久不自愈**;跨度不同的瓦片落到同一键 → 后来者拿到半宽模板,几何只铺一半、四周露背景。真机取证:`spanMis>0` 的 43 帧 dark 均值 0.0735,`spanMis=0` 的 8 帧 0.0003(**差 245 倍**);经度倍率恒为精确 2.000 = `rootTilesX` 差一倍的两套切片方案。修法=把地理跨度并进缓存键 | 0(键多两个混合项;真有多套跨度时多存几份模板) |
 
@@ -45,6 +45,9 @@
 
 **T-V1/T-V2/T-V3 的依赖顺序**(gap 文档 §三的排序,已按"最干净"排):
 T-V3 **必须先于** T-V1 —— 不解决光照压平,几何抬到 16.6 m 也照不出来。
+**2026-08-12 起该前置已解除**:T-V3 的代码改动已落地(线性 Lambert,见上行),
+高太阳角下 relief 不再被 smoothstep 饱和压掉;T-V1/T-V2 的收益现只受
+几何密度与法线细节本身限制,不再被光照闸住。
 
 无阴影、无 AO(`ssao`/`ambientOcclusion` 全库零命中)。gap 文档判定:
 几何还是 133 m 时加阴影意义不大,列第二梯队。**本文不为其立判据**,
@@ -160,7 +163,7 @@ zoom 维度**,判定却留在旧维度 —— 这是 T-V7 此前失效的成因,
 | **T-P3** | fill 代理构建同步且无帧预算封顶:`TileUpdateSelectionWorkRunner.h:237` 对每个可见瓦片循环调用 `ensureFillProxy`,`fillStartMs` 仅事后计时,无 break/budget | ✅ 已量化(2026-08-22 host,Release -O2 arm64):每瓦全量构建 mean 0.072ms(median 0.054,grid16;grid8 0.017/grid32 0.218,~grid² 缩放);burst 32/64/128 瓦一帧 = 3.8/5.0/10.6ms;稳态签名早退 0.00003ms;高度采样增量 0.006ms/瓦。**不立项**:单瓦成本已足够低,帧预算收益有限;该循环里更贵的影像 prefetch 半程已有 `frameResourceBudget` 节流。若真机 churn 尖刺仍现,先分解 `prefetchFill`(fill 构建 vs 影像映射),勿先封构建。证据:`test_fill_proxy_build_cost` 4 测试(Debug 1.09ms/瓦是 -O0 放大 ~15× 的假象,勿用) |
 | **T-P5** | 谁和谁撞了同一个模板键**未定位**:`std::hash<SchemeId>` 哈希的是 interned 指针,本该区分两套 scheme —— 所以要么两者被 intern 成同一 handle,要么某调用点用 A 的 key 配了 B 的 bounds。T-V9 的修法是结构性兜底(键含跨度),**没修元凶** | ✅ 已定位=**结构上不可达**+看门日志已加(2026-08-22 真机+静态):① `SchemeId::intern` 按字符串判等,不同 scheme 字符串必不同 handle(64 位哈希碰撞可忽略);② 两处 `acquire()` 调用点 key/bounds 同源一致(无 A key 配 B bounds);③ 唯一残余理论风险=同 scheme 字符串不同几何(OpenGlobus 三分区),当前 app 单 scheme(XYZ-WebMercator)不可达。新增 `TEMPLATE_BUILD`/`TEMPLATE_SCHEME_MISMATCH` 节流日志(请求方 vs 建模方 schemeId 字符串,命中比对 O(1) 指针)。真机 9480 帧(平移+2 轮全局↔33km 缩放):`spanMis=0`、0 次 scheme mismatch |
 | **T-P4** | HDR 变体常数是 provisional:`TerrainSurfaceLightGLSL.h:52` 的 `shadowFloor=0.15`/`ambientScale=0.6` 明标未定,真正调参在 T2 对着 tonemap 输出做 | 有主(T2),flag 默认关 |
-| **T-P6**<br>(验证债,非性能) | **shader 在 host 上没有执行级守卫**:测试进程里没有任何真 GL 设备,GLSL 只能靠肉眼在真机上验。后果已兑现一次 —— GPU 烘焙 `sampleH` 漏移植 CPU 的 no-data 角剔除,两份实现静默分叉很久无人发现(T-V10 根因①)。**注意这不是"CPU 那份多余"**:GPU 烘焙是帧内路径(`SceneRenderPipeline.cpp:236` 每帧 flush,靠 RTT + `setFramebufferColorLayer`),没有 device/没有帧的场合根本不可达,删掉 CPU 等于把仅有的可执行实现也删掉 | **未量化**。解法排序:①host 离屏 GL(EGL/OSMesa 无窗口 context)跑真实 bake pass 与 CPU 版逐 texel 对拍 —— 一次性投入,之后所有 shader 改动都受益,**我押这个**;②黄金向量对拍(CPU 存 golden,真机诊断开关跑 GPU bake 比对)—— 便宜但要真机在手,进不了 ctest。<br>"只留 GPU 一条路"的前置条件是三件事同时成立:MSL/SPIR-V 补齐 + 真 Metal 设备验过(均属 T-V8 欠账)+ 本条解决 |
+| **T-P6**<br>(验证债,非性能) | **shader 在 host 上没有执行级守卫**:测试进程里没有任何真 GL 设备,GLSL 只能靠肉眼在真机上验。后果已兑现一次 —— GPU 烘焙 `sampleH` 漏移植 CPU 的 no-data 角剔除,两份实现静默分叉很久无人发现(T-V10 根因①)。**注意这不是"CPU 那份多余"**:GPU 烘焙是帧内路径(`SceneRenderPipeline.cpp:236` 每帧 flush,靠 RTT + `setFramebufferColorLayer`),没有 device/没有帧的场合根本不可达,删掉 CPU 等于把仅有的可执行实现也删掉 | **方案 B 已落地(2026-08-24)**:新增 `test_glsl_compile`(`tools/check_glsl_compile.py` + `tools/fetch_glslang.sh`),把主要 GLSL ES 源(含 createShaders 注入后的最终形态:terrain/gltf/instanced/vector/point/label/bake/SkyBox/FXAA)离线编译,**HDR 冻结态注入变体同批编译**(L-P3 首次被自动化触碰);45 PASS / 41 显式 SKIP。**仍未覆盖**:①大气/tonemap/aerial fog(依赖 C++ 生成函数拼装,Python 复制会引入第二事实源)②MSL(需 Metal 编译器)③数值级 CPU↔GPU 逐 texel 对拍 —— ①②③归方案 A(host 离屏 GL),留触发制。其余:**未量化**。解法排序:①host 离屏 GL(EGL/OSMesa 无窗口 context)跑真实 bake pass 与 CPU 版逐 texel 对拍 —— 一次性投入,之后所有 shader 改动都受益,**我押这个**;②黄金向量对拍(CPU 存 golden,真机诊断开关跑 GPU bake 比对)—— 便宜但要真机在手,进不了 ctest。<br>"只留 GPU 一条路"的前置条件是三件事同时成立:MSL/SPIR-V 补齐 + 真 Metal 设备验过(均属 T-V8 欠账)+ 本条解决 |
 | **T-P7**<br>(候选,发热线程 2026-08-18 交;矢量 P9 转此) | **高度纹理烘焙同步现烘,churn 期尖刺**:`TerrainDisplacementTemplatePool::acquireHeightTexture` 缓存未命中即现烘现传;**dense 档有 `denseBudget` 逐帧限流,coarse 档无**。平移带新瓦入视触发 → `rebuildCachedDrawCommands` 内 `rebuild=` 尖刺。属 **T-P3 同类**(sync、弱/无帧预算、churn 尖刺),机制不同(高度层烘焙 vs fill 代理) | **部分量化**:release -O2 debuggable 真机(2026-08-18)测到单次 `rebuild=16ms rebuilds=1`/瓦。⚠️⚠️**caveat**:①debug -O0 曾把同路径放大到 `rebuild=129ms`(**假象,必 release 评估**);②直接分解慢帧 `engine` 证实成本在 **`build=` 阶段**(`upd=` 瓦片选择仅 0.5ms、`submit`/`terrUpd` 各 ~0.5ms、`vector=` ~1.3ms、`swap` ~1ms)——本烘焙(`rebuild=`)是 build 里**唯一可复现的尖刺**;③更大的间歇 `build=40-60ms` 尖刺 run 间不一致、buildBreakdown 抓不到对应分量 = 噪声,logcat wall-clock 分不清计算 vs 渲染线程小核调度(`cpu=` 混杂 4-7,见 vector 侧 ADPF 老问题),须 simpleperf 才能归因。**低优先、measure-driven**:静态发热已由层1(引擎侧太阳角门控,`d53b53718`)根治,运动 borderline 非缺陷级。修向:coarse 档也加逐帧烘焙预算(仿 dense `denseBudget` / vector P6 字形 4ms)。**先决**:该不该修取决于 simpleperf 归因(可复现 9-16ms 本条 vs 间歇 40-60ms 噪声/调度)——**曾误判在 Tileset 选择,已 `upd=0.5ms` 直接证伪** |
 
 ---
@@ -180,7 +183,7 @@ zoom 维度**,判定却留在旧维度 —— 这是 T-V7 此前失效的成因,
 |---|---|---|
 | **编号命名空间 `T-` 前缀** | 我押带前缀(vector 已占 V1–V24,无前缀必歧义)。**此刻零成本可改,一旦被引用即不可逆** | 全文 |
 | **本文推断判据的校对** | 除 A 节触发点外全是 `推断`。请优先校 T-V1/T-V6/T-V7 —— 这三条我押的"什么算好"可能根本不是你要的 | T-V1 / T-V6 / T-V7 |
-| **T-V3 光照动态范围** | gap 文档已判定为观感取向决策。它**闸住 T-V2 的全部收益、也闸住 T-V1** —— 是几何质感这条线的实际瓶颈,建议先于 T-V1 拍 | T-V1 / T-V2 / T-V3 |
+| **T-V3 光照动态范围** | **代码已落地**(2026-08-12,`1a939be70`,线性 Lambert 单一治理点 `TerrainSurfaceLightGLSL.h`),不再闸住 T-V1/T-V2。剩余 = **真机 A/B 拍板观感**(临时切回 smoothstep 版对比即可)+ MSL sunTint 参数化(B4) | T-V1 / T-V2 / T-V3 |
 | **T-V7 真机验收** | 修复已落地但只验到单测层。要不要我打包 APK 推真机看 z0-5? | T-V7 |
 
 ---

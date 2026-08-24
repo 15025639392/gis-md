@@ -130,7 +130,7 @@
 
 ### ⚠️ 短板 / 已知债(来源:`terrain.md` T-P*、AI_INDEX)
 - **几何密度钉死粗一个数量级**(T-V1,推断):65×65 在 z12 只有 133m/顶点,抬 256 全局代价"顶点 16×、显存 16×"未实测。
-- **光照压平 relief**(T-V3,🔒 待拍板):`directional=smoothstep(NdotL)` 实测中位 0.992,relief 着色仅约 1% 亮度——**闸住 T-V1/T-V2 全部收益**。
+- **光照压平 relief**(T-V3):**代码已修复**(2026-08-12,`1a939be70`,线性 Lambert 单一治理点 `TerrainSurfaceLightGLSL.h`,弃用 smoothstep);剩余 = 真机 A/B 拍板观感 + MSL sunTint 参数化(B4)。不再闸住 T-V1/T-V2。
 - **Metal 后端地形能力不对等**(T-V8/T-P1/T-P2):Metal 从未绑定地形高度纹理,GPU 位移在 Metal 上休眠;GPU 烘焙仅 GLES。均有安全回退,是"未做"非"做错"。
 - **GPU shader 无执行级守卫**(T-P6):host 测试无真 GL,GLSL 只能真机肉眼验;T-V10 根因①正是 GPU 侧漏移植静默分叉的直接证据。
 - **fill 代理同步无帧预算封顶**(T-P3/T-V6,未量化):每可见瓦片循环 `ensureFillProxy` 无 break/budget,只在首见/换页帧密集暴露。

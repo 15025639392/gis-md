@@ -310,6 +310,13 @@ A/B **30.1% 像素发生变化** —— 路径确实在工作。
 即逐通道 p95 仅 ≈ 4/255 的亮度变化。算术自洽：
 `Δcolor ≈ base × 0.28 × (dsmoothstep/dx) × ΔNdotL ≈ base × 1%`。
 
+> **状态更新（2026-08-12，commit `1a939be70`）**：本节的 smoothstep 饱和问题
+> 已按此诊断修复——四个地形片元 shader 收敛为单一治理点
+> `TerrainSurfaceLightGLSL.h`，弃用 smoothstep、改线性 Lambert
+> （`clamp(NdotL*0.9+0.3)`，Cesium/osgEarth 同款），GLSL/MSL 双写同步。
+> 上表 0.992 描述的是修复前行为。剩余 = 真机 A/B 拍板线性曲线观感
+> （可临时切回 smoothstep 版对比）+ MSL sunTint 参数化（B4）。
+
 **判据 3（性能）：debug 构建下 `Engine.render.total` 7.94ms vs 基线 7.75ms**，
 落在单次 run 的 DVFS 噪声带内（见 `device-dvfs-frame-time-noise`）。
 **release 下的正式测量尚未做。**
