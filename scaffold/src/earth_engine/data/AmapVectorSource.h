@@ -25,6 +25,45 @@ struct AmapToFeatures {
     }
 };
 
+/// amap POI 解码特质:字节流 → Feature 列表(点标签)。
+/// 用 decodeAmapPoiTile 解码(type 0 通用 POI 点),经
+/// amapDecodedPartToFeatures 转 Point Feature(name/rank/subKey)。
+struct AmapPoiDecodeTraits {
+    static bool decode(const uint8_t* data, size_t size,
+                       std::vector<Feature>& out, std::string* error) {
+        std::vector<AmapDecodedLayerPart> parts;
+        if (!decodeAmapPoiTile(data, size, parts, error)) {
+            return false;
+        }
+        for (const auto& p : parts) {
+            if (p.type != 0) continue;  // 只取通用 POI 点层
+            auto fs = amapDecodedPartToFeatures(p, true);
+            out.insert(out.end(), std::make_move_iterator(fs.begin()),
+                       std::make_move_iterator(fs.end()));
+        }
+        return true;
+    }
+
+    static size_t approxBytes(const std::vector<Feature>& feats) {
+        constexpr size_t kMapNodeBytes = 56;
+        constexpr size_t kVecHeaderBytes = 24;
+        size_t bytes = sizeof(std::vector<Feature>) +
+                       feats.capacity() * sizeof(Feature);
+        for (const Feature& f : feats) {
+            bytes += f.rings.capacity() * kVecHeaderBytes;
+            for (const auto& ring : f.rings) {
+                bytes += ring.capacity() * sizeof(Cartographic);
+            }
+            bytes += f.properties.size() * kMapNodeBytes;
+            for (const auto& kv : f.properties) {
+                if (kv.first.size() > 15) bytes += kv.first.size();
+                if (kv.second.size() > 15) bytes += kv.second.size();
+            }
+        }
+        return bytes;
+    }
+};
+
 /// amap 解码特质:字节流 → Feature 列表。
 /// RegionsOnly 编译期开关:粗源(z10 区域)只要 type2 面,主源(z14)只要
 /// type1/3/4 —— 过滤在 worker 解码期做,不进缓存。
@@ -63,6 +102,10 @@ using AmapRegionsVectorSource = VectorTileSourceT<
 /// amap 主源(z14:路网/建筑/轨道,type1/3/4)。
 using AmapMainVectorSource = VectorTileSourceT<
     std::vector<Feature>, AmapDecodeTraits<false>, AmapToFeatures>;
+
+/// amap POI 源(z14:type 0 通用 POI 点标签)。
+using AmapPoiVectorSource = VectorTileSourceT<
+    std::vector<Feature>, AmapPoiDecodeTraits, AmapToFeatures>;
 
 /// 高德瓦片地理矩形(弧度,4326 等距圆柱 2:1)。
 /// 与 AmapGeographicScheme::tileToRectangle 同数学;GLESView 的

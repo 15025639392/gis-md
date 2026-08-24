@@ -268,3 +268,51 @@ TEST(AmapVectorTileTest, DecodesRealSampleWhenProvided) {
                     p.y, p.type, p.features.size());
     }
 }
+
+// POI 真实样本:AMAP_POI_SAMPLE_TILE=<poi 瓦片> 时解码,断言 type 0
+// 通用 POI 层带 name/坐标/rank。
+TEST(AmapVectorTileTest, DecodesRealPoiSampleWhenProvided) {
+    const char* path = std::getenv("AMAP_POI_SAMPLE_TILE");
+    if (!path) GTEST_SKIP() << "AMAP_POI_SAMPLE_TILE unset";
+    FILE* f = std::fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::rewind(f);
+    ASSERT_GT(len, 0L);
+    std::vector<uint8_t> raw(static_cast<size_t>(len));
+    ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+    std::fclose(f);
+
+    std::vector<AmapDecodedLayerPart> parts;
+    std::string err;
+    ASSERT_TRUE(decodeAmapPoiTile(raw.data(), raw.size(), parts, &err)) << err;
+    bool sawType0 = false;
+    size_t poiCount = 0;
+    FILE* diag = std::fopen("/tmp/amap_poi.txt", "w");
+    ASSERT_NE(nullptr, diag);
+    for (const auto& p : parts) {
+        if (p.type != 0) continue;
+        sawType0 = true;
+        for (const auto& feat : p.features) {
+            ++poiCount;
+            if (feat.name.empty() || feat.rings.empty()) {
+                std::fprintf(diag, "POI cc=%d subKey=%d name=<empty> "
+                                   "rings=%zu\n",
+                             feat.classCode, feat.subKey, feat.rings.size());
+                continue;
+            }
+            std::fprintf(diag,
+                         "POI cc=%d subKey=%d name=%s rank=%d "
+                         "anchor=(%.0f,%.0f)\n",
+                         feat.classCode, feat.subKey, feat.name.c_str(),
+                         feat.rank, feat.rings[0][0].first,
+                         feat.rings[0][0].second);
+            if (poiCount >= 5) break;
+        }
+        if (poiCount >= 5) break;
+    }
+    std::fclose(diag);
+    EXPECT_TRUE(sawType0) << "POI tile should contain type-0 label layer";
+    EXPECT_GT(poiCount, 0u) << "type-0 layer should have POI features";
+}

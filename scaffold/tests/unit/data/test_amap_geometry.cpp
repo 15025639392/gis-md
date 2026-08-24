@@ -428,3 +428,106 @@ TEST(AmapGeometryTest, RealSampleType2TrianglesBounded) {
         << "type2 triangles per polygon unreasonably high (fragment "
            "mis-merge)";
 }
+
+// 真实样本:type2 面覆盖的经纬度范围占瓦片比例。
+// 若 kind=3 水系面覆盖过大(如整瓦),说明裁剪/判定仍有问题 → 大面积蓝。
+TEST(AmapGeometryTest, RealSampleType2Coverage) {
+    const char* path = std::getenv("AMAP_SAMPLE_TILE");
+    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
+    FILE* f = std::fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::rewind(f);
+    std::vector<uint8_t> raw(static_cast<size_t>(len));
+    ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+    std::fclose(f);
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(raw.data(), raw.size(), parts));
+    // 瓦片经纬度跨度(4326 网格):z 档 360/2^z × 180/2^z。
+    FILE* diag = std::fopen("/tmp/amap_coverage.txt", "w");
+    ASSERT_NE(nullptr, diag);
+    for (const auto& p : parts) {
+        if (p.type != 2) continue;
+        const double tileW = 360.0 / std::exp2(p.z);
+        const double tileH = 180.0 / std::exp2(p.z);
+        const auto feats = amapDecodedPartToFeatures(p);
+        for (const auto& feat : feats) {
+            if (feat.type != GeometryType::Polygon) continue;
+            const std::string kind =
+                feat.properties.count("amap_kind")
+                    ? feat.properties.at("amap_kind")
+                    : "-";
+            double mnx = 1e9, mxx = -1e9, mny = 1e9, mxy = -1e9;
+            for (const auto& ring : feat.rings) {
+                for (const auto& c : ring) {
+                    const double lon = c.longitude() * 180.0 / 3.14159265358979323846;
+                    const double lat = c.latitude() * 180.0 / 3.14159265358979323846;
+                    mnx = std::min(mnx, lon);
+                    mxx = std::max(mxx, lon);
+                    mny = std::min(mny, lat);
+                    mxy = std::max(mxy, lat);
+                }
+            }
+            const double coverX = (mxx - mnx) / tileW;
+            const double coverY = (mxy - mny) / tileH;
+            std::fprintf(diag, "kind=%s rings=%zu coverX=%.2f coverY=%.2f\n",
+                         kind.c_str(), feat.rings.size(), coverX, coverY);
+        }
+    }
+    std::fclose(diag);
+}
+
+// 真样本:每个 type2 面经纬度是否落在瓦片边界内(裁剪生效的判据)。
+// 覆盖异常(115×)说明裁剪失效或坐标换算错误。
+TEST(AmapGeometryTest, RealSampleType2InsideTile) {
+    const char* path = std::getenv("AMAP_SAMPLE_TILE");
+    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
+    FILE* f = std::fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::rewind(f);
+    std::vector<uint8_t> raw(static_cast<size_t>(len));
+    ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+    std::fclose(f);
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(raw.data(), raw.size(), parts));
+    const double kDeg = 180.0 / 3.14159265358979323846;
+    FILE* diag = std::fopen("/tmp/amap_inside.txt", "w");
+    ASSERT_NE(nullptr, diag);
+    for (const auto& p : parts) {
+        if (p.type != 2) continue;
+        const double tileW = 360.0 / std::exp2(p.z);
+        const double tileH = 180.0 / std::exp2(p.z);
+        const double west = (p.x / std::exp2(p.z)) * 360.0 - 180.0;
+        const double north = 90.0 - (p.y / std::exp2(p.z)) * 180.0;
+        const auto feats = amapDecodedPartToFeatures(p);
+        for (const auto& feat : feats) {
+            if (feat.type != GeometryType::Polygon) continue;
+            for (const auto& ring : feat.rings) {
+                for (const auto& c : ring) {
+                    const double lon = c.longitude() * kDeg;
+                    const double lat = c.latitude() * kDeg;
+                    const bool inside =
+                        lon >= west - 0.05 && lon <= west + tileW + 0.05 &&
+                        lat >= north - tileH - 0.05 &&
+                        lat <= north + 0.05;
+                    if (!inside) {
+                        std::fprintf(diag,
+                                     "OUT tile %d_%d_%d kind=%s "
+                                     "lon=%.4f lat=%.4f tile=[%.4f,%.4f]x"
+                                     "[%.4f,%.4f]\n",
+                                     p.x, p.y, p.z,
+                                     feat.properties.count("amap_kind")
+                                         ? feat.properties.at("amap_kind").c_str()
+                                         : "-",
+                                     lon, lat, west, west + tileW,
+                                     north - tileH, north);
+                    }
+                }
+            }
+        }
+    }
+    std::fclose(diag);
+}

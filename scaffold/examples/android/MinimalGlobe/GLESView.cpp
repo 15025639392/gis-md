@@ -219,8 +219,10 @@ static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
 // 建筑)各一实例,共享同一 worker 池,各自树限定 zoom 档。 ----
 static std::unique_ptr<AmapRegionsVectorSource> gAmapRegionsSource;
 static std::unique_ptr<AmapMainVectorSource> gAmapMainSource;
+static std::unique_ptr<AmapPoiVectorSource> gAmapPoiSource;
 static FeatureRenderLayer* gAmapRegionsLayer = nullptr;  // Engine 持有
 static FeatureRenderLayer* gAmapMainLayer = nullptr;     // Engine 持有
+static FeatureRenderLayer* gAmapPoiLayer = nullptr;      // Engine 持有
 // E1:MVT 解码 + 镶嵌的 worker 池。独立于引擎的瓦片加载池 —— 底图镶嵌是
 // 突发型重负载(换 zoom 时整视口一起来),混进地形/影像池会挤掉它们的
 // 加载额度。2 线程:再多也只是把内存峰值抬高,commit 侧本就有帧预算。
@@ -362,7 +364,7 @@ static void amapCleanupCompleted() {
 /// 回调 (statusCode, body) 在任意线程;**任何失败路径都必须回调**,否则
 /// MvtTileFetchCacheT 的 in-flight 永不解除、树 pending 永不消化 ——
 /// 失败回调 status != 200 或空 body,由 cache 记失败账本。
-static void amapFetchTile(const TileKey& key,
+static void amapFetchTile(const TileKey& key, int requestType,
                           std::function<void(int, std::vector<uint8_t>)> cb) {
     const std::string webKey = minimal_globe_demo::kAmapWebKey;
     const std::string referer = minimal_globe_demo::kAmapReferer;
@@ -401,15 +403,15 @@ static void amapFetchTile(const TileKey& key,
     };
 
     // 阶段 2:POST get_tile manifest → 解析签名 URL → 阶段 3。
-    auto fetchManifest = [key, referer, cb, fetchSignedUrl, allocId, hold,
-                          release](const std::string& version) {
+    auto fetchManifest = [key, requestType, referer, cb, fetchSignedUrl,
+                          allocId, hold, release](const std::string& version) {
         AmapManifestConfig cfg;
         cfg.key = minimal_globe_demo::kAmapWebKey;
         cfg.referer = referer;
         cfg.version = version;
         const std::string url = buildGetTileUrl(cfg);
         const std::string bodyStr = buildGetTileBody(
-            {{key.x, key.y, key.z, 1}}, cfg, version);
+            {{key.x, key.y, key.z, requestType}}, cfg, version);
         const uint64_t id = allocId();
         auto handle = CurlMultiRequestScheduler::shared().post(
             url, std::vector<uint8_t>(bodyStr.begin(), bodyStr.end()),
@@ -540,6 +542,7 @@ static void clearDemoEngineObjects() {
     gMvtSource.reset();
     gAmapRegionsSource.reset();
     gAmapMainSource.reset();
+    gAmapPoiSource.reset();
     gMvtWorkerPool.reset();
     {
         std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
@@ -558,6 +561,7 @@ static void clearDemoEngineObjects() {
     gMvtBasemapLayer = nullptr;   // Engine 持有,随 gEngine 一起销毁
     gAmapRegionsLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
     gAmapMainLayer = nullptr;     // Engine 持有,随 gEngine 一起销毁
+    gAmapPoiLayer = nullptr;      // Engine 持有,随 gEngine 一起销毁
     gDemoFeatureLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
     gEditHandleLayer = nullptr;
     gClusterLayer = nullptr;
@@ -1153,7 +1157,7 @@ static bool createEngine() {
                        MvtTileFetchCacheT<std::vector<Feature>,
                                           AmapDecodeTraits<true>>::
                            FetchCallback cb) {
-                        amapFetchTile(k, std::move(cb));
+                        amapFetchTile(k, 1, std::move(cb));
                     },
                     minimal_globe_demo::kMvtTileCacheDecoded,
                     minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
@@ -1194,7 +1198,7 @@ static bool createEngine() {
                        MvtTileFetchCacheT<std::vector<Feature>,
                                           AmapDecodeTraits<false>>::
                            FetchCallback cb) {
-                        amapFetchTile(k, std::move(cb));
+                        amapFetchTile(k, 1, std::move(cb));
                     },
                     minimal_globe_demo::kMvtTileCacheDecoded,
                     minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
@@ -1226,6 +1230,61 @@ static bool createEngine() {
             gAmapMainSource = std::make_unique<AmapMainVectorSource>(
                 mOpts, std::move(mSinks), mainCache, gMvtWorkerPool);
             LOGI("AmapE3: main source installed (z12-14, amap 4326 grid)");
+
+            // POI 源:type 0 通用 POI 点标签(z14)。点符号 + 名称文字。
+            FeatureRenderStyle ps;
+            ps.altitudeMode = FeatureAltitudeMode::Absolute;
+            ps.heightOffset = 2.5;
+            ps.pointSizePx = 5.0f;
+            ps.pointColor = {0.95f, 0.55f, 0.25f, 0.95f};
+            ps.pointImage = "circle";
+            ps.labelProperty = "name";
+            ps.labelSizePx = 16.0f;
+            ps.labelOffsetPx = 10.0f;
+            ps.labelColor = {0.15f, 0.20f, 0.30f, 0.95f};
+            ps.labelHaloColor = {1.0f, 1.0f, 1.0f, 0.85f};
+            ps.labelHaloPx = 1.5f;
+            auto poiLayer = std::make_unique<FeatureRenderLayer>(
+                "amap-poi", gRenderDevice.get(), Ellipsoid::WGS84());
+            poiLayer->setStyle(ps);
+            gAmapPoiLayer = poiLayer.get();
+            gEngine->addFeatureRenderLayer(std::move(poiLayer));
+            auto poiCache =
+                std::make_shared<MvtTileFetchCacheT<
+                    std::vector<Feature>, AmapPoiDecodeTraits>>(
+                    [](const TileKey& k,
+                       MvtTileFetchCacheT<std::vector<Feature>,
+                                          AmapPoiDecodeTraits>::
+                           FetchCallback cb) {
+                        amapFetchTile(k, 2, std::move(cb));
+                    },
+                    minimal_globe_demo::kMvtTileCacheDecoded,
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+            AmapPoiVectorSource::Options pOpts;
+            pOpts.tree.minZoom = 14;
+            pOpts.tree.maxZoom = 14;
+            pOpts.tree.scheme = TileScheme::createAmapGeographic();
+            pOpts.tree.maxTilesPerView = 256;
+            AmapPoiVectorSource::Sinks pSinks;
+            FeatureRenderLayer* pLayer = gAmapPoiLayer;
+            pSinks.tessellate =
+                [pLayer](const TileKey& key,
+                         std::vector<Feature>&& features) {
+                    return FeatureRenderLayer::tessellateTileMesh(
+                        pLayer->workerTessellationContextForArea(
+                            amapTileRectangle(key)),
+                        features);
+                };
+            pSinks.commit = [pLayer](const TileKey& key,
+                                     FeatureTileMesh&& mesh) {
+                pLayer->commitTileMesh(key, std::move(mesh));
+            };
+            pSinks.drop = [pLayer](const TileKey& key) {
+                pLayer->dropTileMesh(key);
+            };
+            gAmapPoiSource = std::make_unique<AmapPoiVectorSource>(
+                pOpts, std::move(pSinks), poiCache, gMvtWorkerPool);
+            LOGI("AmapE3: POI source installed (z14, type-0 labels)");
         }
 
         // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。**不在任何
@@ -1852,9 +1911,9 @@ static void renderFrame() {
                  static_cast<unsigned long long>(cs.rawHits));
         }
     }
-    // C2/E3:高德矢量双源驱动(与 gMvtSource 同契约:渲染线程 update)。
-    // 两源独立树(z10 粗档 / z12-14 主档),共享 worker 池与版本探测。
-    if (gAmapRegionsSource || gAmapMainSource) {
+    // C2/E3:高德矢量三源驱动(与 gMvtSource 同契约:渲染线程 update)。
+    // 独立树(z10 粗档 / z12-14 主档 / z14 POI),共享 worker 池与版本探测。
+    if (gAmapRegionsSource || gAmapMainSource || gAmapPoiSource) {
         amapCleanupCompleted();  // 渲染线程剪除已完成句柄(见该函数注释)
         const Ellipsoid& wgs84 = Ellipsoid::WGS84();
         const Cartographic camCarto =
@@ -1877,6 +1936,12 @@ static void renderFrame() {
             amapPending = amapPending ||
                           gAmapMainSource->tree().pendingCount() > 0 ||
                           gAmapMainSource->hasTessellationInFlight();
+        }
+        if (gAmapPoiSource) {
+            gAmapPoiSource->update(viewRect, camHeight);
+            amapPending = amapPending ||
+                          gAmapPoiSource->tree().pendingCount() > 0 ||
+                          gAmapPoiSource->hasTessellationInFlight();
         }
         if (amapPending) {
             gEngine->requestRender("amapPending");

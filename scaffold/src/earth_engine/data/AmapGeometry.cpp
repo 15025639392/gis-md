@@ -295,6 +295,31 @@ std::vector<Feature> amapDecodedPartToFeatures(
         // type2 区域按 kind 决定 scale(大区域 60/80 走 line-grid);
         // 其余类型 scale 与 kind 无关。
         const double scale = amapCoordScale(part.type, part.z, f.kind);
+        // type 0:POI 点标签。anchor = 单点 plain unsigned(2048×1024 空间,
+        // scale 4),转 Point Feature。
+        if (part.type == 0) {
+            for (const auto& ring : f.rings) {
+                if (ring.empty()) continue;
+                Feature feat;
+                feat.type = GeometryType::Point;
+                const auto& pt = ring[0];
+                Cartographic c = amapTileLocalToLngLat(
+                    part.x, part.y, part.z, pt.first * scale,
+                    pt.second * scale);
+                if (toWgs84) c = Gcj02CoordinateTransform::toWgs84(c);
+                feat.rings = {{{c}}};
+                feat.properties["amap_class"] = std::to_string(f.classCode);
+                feat.properties["amap_subkey"] = std::to_string(f.subKey);
+                feat.properties["amap_rank"] = std::to_string(f.rank);
+                feat.properties["amap_minzoom"] = std::to_string(f.minZoom);
+                feat.properties["amap_maxzoom"] = std::to_string(f.maxZoom);
+                if (!f.name.empty()) {
+                    feat.properties["name"] = f.name;
+                }
+                out.push_back(std::move(feat));
+            }
+            continue;
+        }
         if (isLine) {
             for (const auto& ring : f.rings) {
                 Feature feat;

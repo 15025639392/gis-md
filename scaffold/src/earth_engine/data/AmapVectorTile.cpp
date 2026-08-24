@@ -354,9 +354,258 @@ bool decodeAmapTile(const uint8_t* data, size_t size,
 bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                        std::vector<AmapDecodedLayerPart>& out,
                        std::string* error) {
-    // POI 组与主组共享容器/层/类组结构;标签类几何(单点 unsigned)与
-    // name 语义在 POI 专项接入时补全。
-    return decodeAmapTile(data, size, out, error);
+    // POI 组(参考 xinzhi-map decodeAmapPoiTile):
+    //   type 0 = 通用 POI 点标签层;type 4 = 轨道线 + 站点标签;
+    //   type 1 = 路名;type 2 = 边界线。
+    // type 0 走 POI 标签解码;其余类型委托主解码(decodeAmapTile 已覆盖
+    // type 1/2/3/4,保持 PoiEntrySharesContainerPath 等既有语义)。
+    std::vector<uint8_t> inflated;
+    if (!inflateContainer(data, size, inflated, error)) return false;
+
+    // 主解码(完整):覆盖 type 1/2/3/4 与容器结构,保持既有语义。
+    if (!decodeAmapTile(data, size, out, error)) return false;
+    // 对 type 0 层用 POI 标签解码覆盖(主解码不含 POI 点标签语义)。
+
+    Reader root;
+    root.p = inflated.data();
+    root.n = inflated.size();
+    int field = 0, wire = 0;
+    while (root.tag(field, wire)) {
+        if (wire != 2) {
+            root.ok = false;
+            break;
+        }
+        const uint64_t len = root.varint();
+        if (!root.ok || len > std::numeric_limits<size_t>::max()) break;
+        const uint8_t* tile = nullptr;
+        if (!root.bytes(static_cast<size_t>(len), tile)) break;
+        if (field != 1) continue;  // root: Tile #1
+
+        Reader t;
+        t.p = tile;
+        t.n = static_cast<size_t>(len);
+        int tf = 0, tw = 0;
+        while (t.tag(tf, tw)) {
+            if (tw != 2) {
+                (void)t.varint();
+                continue;
+            }
+            const uint64_t tlen = t.varint();
+            if (!t.ok || tlen > std::numeric_limits<size_t>::max()) break;
+            const uint8_t* layer = nullptr;
+            if (!t.bytes(static_cast<size_t>(tlen), layer)) break;
+            if (tf != 4) continue;  // Tile: repeated Layer #4
+
+            Reader l;
+            l.p = layer;
+            l.n = static_cast<size_t>(tlen);
+            AmapDecodedLayerPart part;
+            const uint8_t* content = nullptr;
+            size_t contentLen = 0;
+            int lf = 0, lw = 0;
+            while (l.tag(lf, lw)) {
+                if (lw == 0) {
+                    const uint64_t v = l.varint();
+                    if (lf == 1) part.z = static_cast<int>(v);
+                    if (lf == 2) part.x = static_cast<int>(v);
+                    if (lf == 3) part.y = static_cast<int>(v);
+                    if (lf == 4) part.type = static_cast<int>(v);
+                } else if (lw == 2) {
+                    const uint64_t clen = l.varint();
+                    if (!l.ok || clen > std::numeric_limits<size_t>::max()) {
+                        l.ok = false;
+                        break;
+                    }
+                    const uint8_t* sub = nullptr;
+                    if (!l.bytes(static_cast<size_t>(clen), sub)) break;
+                    if (lf == 5) {
+                        content = sub;
+                        contentLen = static_cast<size_t>(clen);
+                    }
+                } else {
+                    l.ok = false;
+                    break;
+                }
+            }
+            // 仅 type 0(通用 POI 点)走标签解码;其余类型暂跳过。
+            if (!content || part.type != 0) {
+                if (part.type == 0) {
+                    out.push_back(std::move(part));
+                }
+                continue;
+            }
+
+            // content → repeated ClassGroup(任意 LEN 字段)。
+            Reader c;
+            c.p = content;
+            c.n = contentLen;
+            int cf = 0, cw = 0;
+            while (c.tag(cf, cw)) {
+                if (cw != 2) {
+                    (void)c.varint();
+                    continue;
+                }
+                const uint64_t clen = c.varint();
+                if (!c.ok || clen > std::numeric_limits<size_t>::max()) break;
+                const uint8_t* cg = nullptr;
+                if (!c.bytes(static_cast<size_t>(clen), cg)) break;
+
+                // ClassGroup:PointFeatureSameStyle { mainKey #1, subKey #2,
+                // Feature #4 }。默认 mainKey=12024(商户)、subKey=1。
+                Reader g;
+                g.p = cg;
+                g.n = static_cast<size_t>(clen);
+                int classCode = 12024, subKey = 1;
+                std::vector<const uint8_t*> feats;
+                std::vector<size_t> featLens;
+                int gf = 0, gw = 0;
+                while (g.tag(gf, gw)) {
+                    if (gw == 0) {
+                        const uint64_t v = g.varint();
+                        if (gf == 1) classCode = static_cast<int>(v);
+                        if (gf == 2) subKey = static_cast<int>(v);
+                    } else if (gw == 2) {
+                        const uint64_t flen = g.varint();
+                        if (!g.ok ||
+                            flen > std::numeric_limits<size_t>::max()) {
+                            g.ok = false;
+                            break;
+                        }
+                        const uint8_t* fs = nullptr;
+                        if (!g.bytes(static_cast<size_t>(flen), fs)) break;
+                        if (gf == 4) {
+                            feats.push_back(fs);
+                            featLens.push_back(static_cast<size_t>(flen));
+                        }
+                    } else {
+                        g.ok = false;
+                        break;
+                    }
+                }
+                for (size_t fi = 0; fi < feats.size(); ++fi) {
+                    Reader fr;
+                    fr.p = feats[fi];
+                    fr.n = featLens[fi];
+                    // Feature:PointFeatureMulti { minZoom #1, maxZoom #2,
+                    // rank #3, repeated label #4 }。
+                    int minZoom = 18, maxZoom = 30, rank = 0;
+                    std::vector<std::pair<const uint8_t*, size_t>> labels;
+                    int ff = 0, fw = 0;
+                    while (fr.tag(ff, fw)) {
+                        if (fw == 0) {
+                            const uint64_t v = fr.varint();
+                            if (ff == 1) minZoom = static_cast<int>(v);
+                            if (ff == 2) maxZoom = static_cast<int>(v);
+                            if (ff == 3) rank = static_cast<int>(v);
+                        } else if (fw == 2) {
+                            const uint64_t ll = fr.varint();
+                            if (!fr.ok ||
+                                ll > std::numeric_limits<size_t>::max()) {
+                                fr.ok = false;
+                                break;
+                            }
+                            const uint8_t* sub = nullptr;
+                            if (!fr.bytes(static_cast<size_t>(ll), sub)) break;
+                            if (ff == 4) labels.emplace_back(sub, static_cast<size_t>(ll));
+                        } else {
+                            fr.ok = false;
+                            break;
+                        }
+                    }
+                    // 每个 label 一个 POI 点。
+                    for (const auto& [lb, ll] : labels) {
+                        Reader lr;
+                        lr.p = lb;
+                        lr.n = ll;
+                        AmapDecodedFeature feat;
+                        feat.classCode = classCode;
+                        feat.kind = subKey;
+                        feat.subKey = subKey;
+                        feat.minZoom = minZoom;
+                        feat.maxZoom = maxZoom;
+                        feat.rank = rank;
+                        feat.geomType = 1;  // Point
+                        int lf2 = 0, lw2 = 0;
+                        int nf = 0, nw = 0;
+                        const uint8_t* sb = nullptr;
+                        std::pair<double, double> anchor;
+                        bool hasAnchor = false;
+                        while (lr.tag(lf2, lw2)) {
+                            if (lf2 == 1 && lw2 == 2) {
+                                // name { name #1 (utf-8 str) }
+                                const uint64_t nl = lr.varint();
+                                if (!lr.ok ||
+                                    nl > std::numeric_limits<size_t>::max()) {
+                                    lr.ok = false;
+                                    break;
+                                }
+                                const uint8_t* nb = nullptr;
+                                if (!lr.bytes(static_cast<size_t>(nl), nb)) break;
+                                Reader nr;
+                                nr.p = nb;
+                                nr.n = static_cast<size_t>(nl);
+                                while (nr.tag(nf, nw)) {
+                                    if (nf == 1 && nw == 2) {
+                                        const uint64_t sl = nr.varint();
+                                        if (!nr.bytes(static_cast<size_t>(sl), sb)) break;
+                                        feat.name.assign(
+                                            reinterpret_cast<const char*>(sb),
+                                            static_cast<size_t>(sl));
+                                    } else if (nw == 2) {
+                                        const uint64_t sl = nr.varint();
+                                        sb = nullptr;
+                                        if (!nr.bytes(static_cast<size_t>(sl), sb)) break;
+                                    } else if (nw == 0) {
+                                        (void)nr.varint();
+                                    } else {
+                                        nr.ok = false;
+                                        break;
+                                    }
+                                }
+                            } else if (lf2 == 4 && lw2 == 2) {
+                                // 坐标 blob:单点 plain unsigned(x 后 y,
+                                // **无 protobuf tag**,参考 zigzagFirst=false)。
+                                const uint64_t gl = lr.varint();
+                                if (!lr.ok ||
+                                    gl > std::numeric_limits<size_t>::max()) {
+                                    lr.ok = false;
+                                    break;
+                                }
+                                const uint8_t* gb = nullptr;
+                                if (!lr.bytes(static_cast<size_t>(gl), gb)) break;
+                                Reader gr;
+                                gr.p = gb;
+                                gr.n = static_cast<size_t>(gl);
+                                if (gr.i < gr.n) {
+                                    const uint64_t vx = gr.varint();
+                                    const uint64_t vy =
+                                        gr.i < gr.n ? gr.varint() : 0;
+                                    anchor = {static_cast<double>(vx),
+                                              static_cast<double>(vy)};
+                                    hasAnchor = true;
+                                }
+                            } else if (lw2 == 2) {
+                                const uint64_t sl = lr.varint();
+                                sb = nullptr;
+                                if (!lr.bytes(static_cast<size_t>(sl), sb)) break;
+                            } else if (lw2 == 0) {
+                                (void)lr.varint();
+                            } else {
+                                lr.ok = false;
+                                break;
+                            }
+                        }
+                        if (hasAnchor) {
+                            feat.rings = {{{anchor.first, anchor.second}}};
+                        }
+                        part.features.push_back(std::move(feat));
+                    }
+                }
+            }
+            out.push_back(std::move(part));
+        }
+    }
+    return true;
 }
 
 }  // namespace earth_engine

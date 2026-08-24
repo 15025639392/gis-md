@@ -40,6 +40,14 @@ struct AmapDecodedFeature {
     double height = 0.0;
     /// 名称(道路名/POI 标签;Feature 字段 6 若为 string)。
     std::string name;
+    /// POI 点标签(参考 xinzhi-map decodePoiFeature):
+    /// minZoom/maxZoom = 显示级窗口(onset/hide),rank = 碰撞优先级。
+    /// 仅 type 0/4 点标签层有;默认 minZoom=18/maxZoom=30/rank=0。
+    int minZoom = 18;
+    int maxZoom = 30;
+    int rank = 0;
+    /// POI 类别 subKey(PointFeatureSameStyle #2;默认 1)。
+    int subKey = 1;
 };
 
 struct AmapDecodedLayerPart {
