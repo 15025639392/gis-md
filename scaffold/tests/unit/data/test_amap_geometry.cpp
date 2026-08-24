@@ -208,6 +208,36 @@ TEST(AmapGeometryTest, DecodedPartGroupsHoleIntoPolygon) {
     EXPECT_GT(features[0].rings[1].size(), 0u);
 }
 
+// 互不嵌套的独立碎片:即使绕向相反(一正一负),也不得合并成"外环+孔"。
+// 旧实现把负面积环一律当孔并入前一个外环 → CDT 在碎片之间大面积填充
+// (大量错误三角形的根因)。每个独立碎片应是独立 Polygon。
+TEST(AmapGeometryTest, DisjointRingsStaySeparatePolygons) {
+    AmapDecodedLayerPart part;
+    part.z = 10;
+    part.x = 815;
+    part.y = 344;
+    part.type = 2;
+    AmapDecodedFeature f;
+    f.classCode = 30001;
+    f.geomType = 3;
+    f.rings = {
+        // 第一个独立面(正绕向):canonical x∈[2000,7200], y∈[496,3696]。
+        {{500, 100}, {1800, 100}, {1800, 900}, {500, 900}},
+        // 第二个独立面(负绕向,远离第一个):canonical x∈[300,1500] 之外,
+        // y∈[496,3696] —— 互不包含。
+        {{100, 100}, {100, 900}, {400, 900}, {400, 100}},
+    };
+    part.features.push_back(std::move(f));
+
+    const auto features = amapDecodedPartToFeatures(part, /*toWgs84=*/false);
+    // 两个独立碎片 → 两个独立 polygon,不是外环+孔。
+    ASSERT_EQ(2u, features.size());
+    EXPECT_EQ(GeometryType::Polygon, features[0].type);
+    EXPECT_EQ(GeometryType::Polygon, features[1].type);
+    EXPECT_EQ(1u, features[0].rings.size());
+    EXPECT_EQ(1u, features[1].rings.size());
+}
+
 // 单环(无孔)区域:归一化只补闭合点(高德环开放),不改变绕向/坐标。
 TEST(AmapGeometryTest, EvenOddWindingSingleRingUntouched) {
     std::vector<std::pair<double, double>> ring = {
@@ -362,4 +392,39 @@ TEST(AmapGeometryTest, RealSampleHolePolygonsTessellate) {
     EXPECT_EQ(emptyFill, 0u)
         << "core surface (kind) hole polygons must tessellate";
     EXPECT_EQ(tinyFill, 0u) << "hole polygons must not degenerate";
+}
+
+// 真实样本:type2 面三角化后三角形总数应合理(碎片不再错误合并成
+// "外环+孔",否则 CDT 在碎片间大面积填充 → 三角形数爆炸)。
+TEST(AmapGeometryTest, RealSampleType2TrianglesBounded) {
+    const char* path = std::getenv("AMAP_SAMPLE_TILE");
+    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
+    FILE* f = std::fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::rewind(f);
+    std::vector<uint8_t> raw(static_cast<size_t>(len));
+    ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+    std::fclose(f);
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(raw.data(), raw.size(), parts));
+    const Ellipsoid& e = Ellipsoid::WGS84();
+    size_t polygons = 0;
+    size_t totalTris = 0;
+    for (const auto& p : parts) {
+        if (p.type != 2) continue;
+        for (const auto& feat : amapDecodedPartToFeatures(p)) {
+            if (feat.type != GeometryType::Polygon) continue;
+            ++polygons;
+            const auto fill = PolygonTessellator::tessellate(feat, e);
+            totalTris += fill.fillIndices.size() / 3;
+        }
+    }
+    EXPECT_GT(polygons, 0u);
+    // 每面平均三角形应受环点数约束(≈2×环点数,而非碎片间大面积填充)。
+    // 用宽松上界:均值 < 500(正常面几十~几百,错误合并会到数千)。
+    EXPECT_LT(totalTris / std::max<size_t>(1, polygons), 500u)
+        << "type2 triangles per polygon unreasonably high (fragment "
+           "mis-merge)";
 }

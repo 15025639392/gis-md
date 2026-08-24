@@ -430,7 +430,59 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 flush();  // 新外环 → 结束上一分组
                 pending.push_back(toCarto(ring));
             } else {
-                pending.push_back(toCarto(ring));  // 孔,加入当前外环
+                // 负面积环:仅当**被当前外环包含**才是孔(参考 mapbox
+                // classifyRings:孔必须在外环内)。互不嵌套的独立碎片
+                // 即使绕向为负也应是独立外环 —— 旧实现一律并入前一个
+                // 外环,CDT 在碎片之间大面积填充(大量错误三角形根因)。
+                // 用环内点(面积符号无关)做包含测试:取当前环内一点,
+                // 判断它是否在 pending 外环内。
+                bool insideOuter = false;
+                if (!pending.empty()) {
+                    const auto& outer = pending.front();
+                    // pending 存的是 Cartographic(经纬度),包含测试要用
+                    // 同一坐标;经纬度 lat 与 canonical y 同号,直接用。
+                    auto testPt = [&](const std::vector<Cartographic>& r) {
+                        double mnx = 1e18, mxx = -1e18, mny = 1e18,
+                               mxy = -1e18;
+                        for (const auto& c : r) {
+                            mnx = std::min(mnx, c.longitude());
+                            mxx = std::max(mxx, c.longitude());
+                            mny = std::min(mny, c.latitude());
+                            mxy = std::max(mxy, c.latitude());
+                        }
+                        return std::make_pair((mnx + mxx) * 0.5,
+                                              (mny + mxy) * 0.5);
+                    };
+                    const auto mid = testPt(outer);
+                    // 射线法点在环内(经纬度坐标,与 ring 同符号语义)。
+                    auto pointInPoly = [](const std::vector<Cartographic>& r,
+                                          double px, double py) {
+                        bool inside = false;
+                        const size_t n = r.size();
+                        for (size_t i = 0, j = n - 1; i < n; j = i++) {
+                            const double xi = r[i].longitude();
+                            const double yi = r[i].latitude();
+                            const double xj = r[j].longitude();
+                            const double yj = r[j].latitude();
+                            if (((yi > py) != (yj > py)) &&
+                                (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
+                                inside = !inside;
+                            }
+                        }
+                        return inside;
+                    };
+                    // 孔自身的中点必须在外环内(孔 ⊂ 外环)。
+                    const auto holeMid = testPt(toCarto(ring));
+                    insideOuter =
+                        pointInPoly(outer, holeMid.first, holeMid.second);
+                }
+                if (insideOuter) {
+                    pending.push_back(toCarto(ring));  // 孔,加入当前外环
+                } else {
+                    // 独立碎片(负绕向但互不嵌套):作为独立外环。
+                    flush();
+                    pending.push_back(toCarto(ring));
+                }
             }
         }
         flush();
