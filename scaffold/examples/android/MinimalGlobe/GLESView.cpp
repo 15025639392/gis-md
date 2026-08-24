@@ -1064,13 +1064,64 @@ static bool createEngine() {
             as.altitudeMode = FeatureAltitudeMode::Absolute;
             as.heightOffset = 2.5;  // 抬升防 z-fight
             as.lineWidthPx = 3.0f;
+            // 道路逐 code 配色(@xinzhi/amap-style spec colors.roads 首档色):
+            // 高速深蓝 → 省道县道浅蓝 → 巷弄更浅,体现路网层级。
             as.lineColorExpr = StyleExpression::match(
                 "amap_class",
-                {{"20004",
-                  StyleExpression::literal({0.85f, 0.89f, 0.93f, 0.92f})},
+                {{"20001",
+                  StyleExpression::literal({0.431f, 0.592f, 0.733f, 0.95f})},
+                 {"20002",
+                  StyleExpression::literal({0.675f, 0.737f, 0.792f, 0.95f})},
+                 {"20003",
+                  StyleExpression::literal({0.725f, 0.804f, 0.851f, 0.95f})},
+                 {"20004",
+                  StyleExpression::literal({0.749f, 0.812f, 0.867f, 0.95f})},
+                 {"20007",
+                  StyleExpression::literal({0.808f, 0.859f, 0.902f, 0.95f})},
+                 {"20008",
+                  StyleExpression::literal({0.824f, 0.875f, 0.925f, 0.95f})},
                  {"20009",
-                  StyleExpression::literal({0.67f, 0.71f, 0.80f, 0.88f})}},
-                StyleExpression::literal({0.76f, 0.80f, 0.87f, 0.82f}));
+                  StyleExpression::literal({0.816f, 0.875f, 0.910f, 0.95f})},
+                 {"20011",
+                  StyleExpression::literal({0.486f, 0.706f, 0.902f, 0.95f})},
+                 {"20012",
+                  StyleExpression::literal({0.859f, 0.890f, 0.945f, 0.95f})},
+                 {"20013",
+                  StyleExpression::literal({0.859f, 0.890f, 0.945f, 0.95f})},
+                 {"20018",
+                  StyleExpression::literal({0.859f, 0.882f, 0.918f, 0.95f})},
+                 {"20023",
+                  StyleExpression::literal({0.855f, 0.855f, 0.855f, 0.95f})},
+                 {"20030",
+                  StyleExpression::literal({0.796f, 0.812f, 0.827f, 0.95f})}},
+                StyleExpression::literal({0.800f, 0.840f, 0.880f, 0.90f}));
+            // 路宽随 zoom 变化(spec widthStops 简化):高速 20001 在
+            // z10→3px、z12→4、z14→6,小级别更细。
+            as.lineWidthExpr = StyleExpression::match(
+                "amap_class",
+                {{"20001",
+                  StyleExpression::interpolateLinear(
+                      StyleExpression::zoom(),
+                      {{10.0, StyleExpression::literal(3.0)},
+                       {12.0, StyleExpression::literal(4.0)},
+                       {14.0, StyleExpression::literal(6.0)},
+                       {17.0, StyleExpression::literal(8.0)}})},
+                 {"20004",
+                  StyleExpression::interpolateLinear(
+                      StyleExpression::zoom(),
+                      {{10.0, StyleExpression::literal(2.0)},
+                       {13.0, StyleExpression::literal(3.0)},
+                       {16.0, StyleExpression::literal(5.0)}})},
+                 {"20009",
+                  StyleExpression::interpolateLinear(
+                      StyleExpression::zoom(),
+                      {{15.0, StyleExpression::literal(1.0)},
+                       {17.0, StyleExpression::literal(3.0)}})}},
+                StyleExpression::interpolateLinear(
+                    StyleExpression::zoom(),
+                    {{10.0, StyleExpression::literal(2.0)},
+                     {14.0, StyleExpression::literal(3.0)},
+                     {17.0, StyleExpression::literal(4.0)}}));
             // fill 按 classCode+kind 分流(amap_fillkey),配色对齐
             // @xinzhi/amap-style palette:
             //   30001 kind 61 → 绿地掩膜 #ace798;
