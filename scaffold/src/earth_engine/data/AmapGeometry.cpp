@@ -500,12 +500,13 @@ bool amapBytesToFeatures(const uint8_t* data, size_t size,
     for (const auto& p : parts) {
         if (p.type == 2) {
             if (!regionsOnly) {
-                // 主源(z14):只保留 30001 层水系(kind 3,样式浅蓝);
+                // 主源(z14):只保留 30001 层水系/绿地(kind 63/61);
                 // 30002 地块与 30001 其他 kind 主源不画(地块走粗源浅灰)。
                 AmapDecodedLayerPart kept = p;
                 kept.features.clear();
                 for (const auto& f : p.features) {
-                    if (f.classCode == 30001 && f.kind == 3) {
+                    if (f.classCode == 30001 &&
+                        (f.kind == 63 || f.kind == 61)) {
                         kept.features.push_back(f);
                     }
                 }

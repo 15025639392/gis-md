@@ -1071,15 +1071,21 @@ static bool createEngine() {
                  {"20009",
                   StyleExpression::literal({0.67f, 0.71f, 0.80f, 0.88f})}},
                 StyleExpression::literal({0.76f, 0.80f, 0.87f, 0.82f}));
-            // fill 按 classCode+kind 分流(amap_fillkey):
-            //   30001 层 kind 3 → 水系浅蓝(实测值,参考 spec 63 水系);
-            //   其余(30001 其他 kind / 30002 地块)→ 浅灰(spec
-            //   regionBlocks fallback #eeeeee),不再误用 kind 3/4/5 当水。
+            // fill 按 classCode+kind 分流(amap_fillkey),配色对齐
+            // @xinzhi/amap-style palette:
+            //   30001 kind 61 → 绿地掩膜 #ace798;
+            //   30001 kind 63 → 水系 #80dfff;
+            //   其余(30002 地块等)→ land 底色 #eff3f6。
             as.fillColorExpr = StyleExpression::match(
                 "amap_fillkey",
-                {{"30001:3",
-                  StyleExpression::literal({0.38f, 0.75f, 1.00f, 0.65f})}},
-                StyleExpression::literal({0.93f, 0.93f, 0.93f, 0.85f}));
+                {{"30001:61",
+                  StyleExpression::literal(
+                      {0.675f, 0.906f, 0.596f, 0.90f})},
+                 {"30001:63",
+                  StyleExpression::literal(
+                      {0.502f, 0.875f, 1.00f, 0.90f})}},
+                StyleExpression::literal(
+                    {0.937f, 0.953f, 0.965f, 1.00f}));
             if (!gMvtWorkerPool) {
                 gMvtWorkerPool = std::make_shared<ThreadPool>(2);
             }

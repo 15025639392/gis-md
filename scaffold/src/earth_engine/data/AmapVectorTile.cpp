@@ -129,9 +129,9 @@ void parseFeature(Reader& f, int classCode, int geomType, int layerType,
         if (wire == 0) {
             const uint64_t v = f.varint();
             // type2 区域:Feature #4 varint = primary kind。实测 z10 粗源
-            // 3=水系、5=绿地,其余为建成区地块(2/4/6-12/19-54 等);
-            // 大区域 60/80 走 line-grid(见 amapCoordScale)。参考
-            // xinzhi-map decodeRegionFeature 的 #4 kind / #1 rank。
+            // 61=绿地、63=水系,30002 地块 20/23 等;大区域 60/80 走
+            // line-grid(见 amapCoordScale)。参考 xinzhi-map
+            // decodeRegionFeature 的 #4 kind / #1 rank。
             if (layerType == 2 && field == 4 && feat.kind == 0) {
                 feat.kind = static_cast<int>(v);
             }
@@ -322,7 +322,13 @@ bool decodeContainer(const uint8_t* data, size_t size,
                         fr.p = feats[fi];
                         fr.n = featLens[fi];
                         AmapDecodedFeature feat;
-                        feat.kind = kind;
+            // type2 区域的 kind 在 **Feature #4 varint**(参考
+            // xinzhi-map decodeRegionFeature),ClassGroup #2 的
+            // kind 不是同一语义(实测 ClassGroup #2 得 3/5,
+            // Feature #4 得 61/63/20/23)。type2 不预置,由
+            // parseFeature 读 Feature #4;其余类型保留 ClassGroup
+            // 值(建筑/轨道用 classCode 分层)。
+                        if (part.type != 2) feat.kind = kind;
                         parseFeature(fr, classCode, geomType, part.type, feat);
                         if (!feat.rings.empty() || !feat.name.empty()) {
                             part.features.push_back(std::move(feat));
