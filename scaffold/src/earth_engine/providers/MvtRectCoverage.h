@@ -67,6 +67,63 @@ struct TileXY {
     int y = 0;
 };
 
+/// WGS84 unit-mercator 矩形 → GCJ unit-mercator(中心点 fromWgs84 常量
+/// 平移)。**仅用于选取高德 4326 源瓦**:Amap 网格是 GCJ,页是 WGS 时先把
+/// 矩形搬到 GCJ 再 coverage,±500m 被瓦边界向外取整吸收。
+inline MercatorRect shiftRectWgs84ToGcj(const MercatorRect& rect) {
+    const double cu = 0.5 * (rect.x0 + rect.x1);
+    const double cv = 0.5 * (rect.y0 + rect.y1);
+    const Cartographic wgs = Cartographic::fromRadians(
+        longitudeFromUnitX(cu), latitudeFromUnitY(cv));
+    const Cartographic gcj = Gcj02CoordinateTransform::fromWgs84(wgs);
+    const double du = unitXFromLongitude(gcj.longitude()) - cu;
+    const double dv = unitYFromLatitude(gcj.latitude()) - cv;
+    return MercatorRect{rect.x0 + du, rect.y0 + dv, rect.x1 + du,
+                        rect.y1 + dv};
+}
+
+/// 高德 4326 等距圆柱网格(z0=1×1 整世界,y=0 在北)覆盖 lon/lat 矩形的
+/// 数据瓦。与 `TileScheme::createAmapGeographic` 同数学。
+inline std::vector<TileXY> amapGeographicCoverage(double westRad,
+                                                  double southRad,
+                                                  double eastRad,
+                                                  double northRad,
+                                                  int dataZ) {
+    const int n = 1 << std::max(0, dataZ);
+    const auto clampTile = [n](int v) {
+        return std::max(0, std::min(v, n - 1));
+    };
+    const double westDeg = westRad * 180.0 / kPi;
+    const double eastDeg = eastRad * 180.0 / kPi;
+    const double southDeg = southRad * 180.0 / kPi;
+    const double northDeg = northRad * 180.0 / kPi;
+    const int tx0 = clampTile(
+        static_cast<int>(std::floor((westDeg + 180.0) / 360.0 * n)));
+    const int tx1 = clampTile(std::max(
+        tx0, static_cast<int>(std::ceil((eastDeg + 180.0) / 360.0 * n)) - 1));
+    const int ty0 = clampTile(
+        static_cast<int>(std::floor((90.0 - northDeg) / 180.0 * n)));
+    const int ty1 = clampTile(std::max(
+        ty0, static_cast<int>(std::ceil((90.0 - southDeg) / 180.0 * n)) - 1));
+    std::vector<TileXY> out;
+    out.reserve(static_cast<size_t>(tx1 - tx0 + 1) * (ty1 - ty0 + 1));
+    for (int ty = ty0; ty <= ty1; ++ty) {
+        for (int tx = tx0; tx <= tx1; ++tx) {
+            out.push_back(TileXY{tx, ty});
+        }
+    }
+    return out;
+}
+
+/// unit-mercator 矩形 → 高德 4326 数据瓦。v 南向,故 y0 对应北。
+inline std::vector<TileXY> amapCoverageFromUnitRect(const MercatorRect& rect,
+                                                    int dataZ) {
+    return amapGeographicCoverage(longitudeFromUnitX(rect.x0),
+                                  latitudeFromUnitY(rect.y1),
+                                  longitudeFromUnitX(rect.x1),
+                                  latitudeFromUnitY(rect.y0), dataZ);
+}
+
 /// 覆盖 rect 的 dataZ 级瓦片集合。右/下边界用 ceil-1:边界恰在瓦缝
 /// (无 GCJ 平移时的常态)不多取一排。行主序枚举。
 inline std::vector<TileXY> coverage(const MercatorRect& rect, int dataZ) {

@@ -136,15 +136,11 @@ std::vector<std::vector<std::pair<double, double>>> amapNormalizeEvenOddWinding(
     const std::vector<std::vector<std::pair<double, double>>>& rings) {
     const size_t n = rings.size();
 
-    // 高德瓦片环是**开放**的(瓦片边界裁剪产物):面积/点在环内判定、
-    // 后续 CDT 三角化都要求闭合。先补闭合点(首点 != 尾点时追加首点)。
+    // 高德瓦片环是**开放**的(瓦片边界裁剪产物)。**不能在这里直线补闭合点**:
+    // 角点碎片(瓦片角 + 远处簇)直线闭合会自交,CDT/earcut 都会溢出
+    // (实测 2-19×/1.89M×)。面积/点在环内判定天然按首尾环绕语义计算,
+    // 开放环也能算;闭合交给后续 Sutherland-Hodgman 裁剪(沿瓦窗口闭合)。
     std::vector<std::vector<std::pair<double, double>>> closed = rings;
-    for (auto& ring : closed) {
-        if (ring.size() >= 3 &&
-            !(ring.front() == ring.back())) {
-            ring.push_back(ring.front());
-        }
-    }
     if (n <= 1) return closed;
 
     std::vector<double> areas(n);
@@ -287,6 +283,70 @@ std::vector<std::pair<double, double>> amapClipPolygonRing(
     return r.size() >= 3 ? r : std::vector<std::pair<double, double>>{};
 }
 
+std::vector<std::pair<double, double>> amapCloseRingAlongWindow(
+    std::vector<std::pair<double, double>> ring,
+    double winMinX, double winMaxX, double winMinY, double winMaxY) {
+    if (ring.size() < 3) return {};
+    const auto& a = ring.front();
+    const auto& b = ring.back();
+    if (a.first == b.first && a.second == b.second) return ring;  // 已闭合
+
+    const double span =
+        std::max({winMaxX - winMinX, winMaxY - winMinY, 1.0});
+    const double eps = 1e-9 * span;
+    auto onEdge = [&](const std::pair<double, double>& p) {
+        return std::abs(p.first - winMinX) <= eps ||
+               std::abs(p.first - winMaxX) <= eps ||
+               std::abs(p.second - winMinY) <= eps ||
+               std::abs(p.second - winMaxY) <= eps;
+    };
+    if (!onEdge(a) || !onEdge(b)) {
+        // 首尾都在窗口内:完全在窗口内的开放碎片,直线补首点;是否退化
+        // 由调用方的 ratio 过滤判定。
+        ring.push_back(a);
+        return ring;
+    }
+
+    // 窗口角点 CCW:左下 → 右下 → 右上 → 左上。
+    const std::array<std::pair<double, double>, 4> corners = {{
+        {winMinX, winMinY}, {winMaxX, winMinY},
+        {winMaxX, winMaxY}, {winMinX, winMaxY}}};
+    auto edgeId = [&](const std::pair<double, double>& p) -> int {
+        if (std::abs(p.second - winMinY) <= eps) return 0;  // bottom
+        if (std::abs(p.first - winMaxX) <= eps) return 1;   // right
+        if (std::abs(p.second - winMaxY) <= eps) return 2;  // top
+        return 3;                                            // left
+    };
+    const int ea = edgeId(a);
+    const int eb = edgeId(b);
+    if (ea == eb) {
+        // 同一边上的两点:直线连接即窗沿段,等价于沿边界闭合。
+        ring.push_back(a);
+        return ring;
+    }
+    auto boundaryPath = [&](int delta) {
+        std::vector<std::pair<double, double>> out;
+        int i = eb;
+        while (true) {
+            i = (i + delta + 4) % 4;
+            out.push_back(corners[static_cast<size_t>(i)]);
+            if (i == ea) break;
+        }
+        out.push_back(a);
+        return out;
+    };
+    auto closedA = ring;
+    for (const auto& p : boundaryPath(+1)) closedA.push_back(p);
+    auto closedB = ring;
+    for (const auto& p : boundaryPath(-1)) closedB.push_back(p);
+    // 两条候选路径分别与环组成两个互补的闭合环(一条走角,一条绕其余
+    // 三边)。选择与环自身绕向同号者:归一化后外环 area>0(CCW)、孔
+    // area<0(CW),闭合不得改变填充侧。
+    const double s = ringSignedArea(ring);
+    return (ringSignedArea(closedA) > 0.0) == (s >= 0.0) ? closedA
+                                                         : closedB;
+}
+
 std::vector<Feature> amapDecodedPartToFeatures(
     const AmapDecodedLayerPart& part, bool toWgs84) {
     std::vector<Feature> out;
@@ -403,11 +463,25 @@ std::vector<Feature> amapDecodedPartToFeatures(
             std::vector<Cartographic> pts;
             // 瓦片裁剪仅用于 type2 区域(跨边界大掩膜/条带);type3 建筑
             // footprint 在瓦片内,裁剪会破坏庭院孔(孔盖外环 → 空 fill)。
-            const bool doClip = part.type == 2;
-            const auto& src = doClip
-                ? amapClipPolygonRing(ring, -256.0, 8192.0 + 256.0,
-                                      -256.0, 4096.0 + 256.0)
-                : ring;
+            // 裁剪窗口 = **±256 buffer**([-256,8448]×[-256,4352]),与参考
+            // 实现 xinzhi-map / 高德 JSAPI 的 POLY_CLIP_BUFFER=256 一致。
+            // 高德瓦片面按瓦分块,相邻瓦的水体块在接缝处不一定精确重合
+            // (源数据留 buffer 就是为了容忍这个):精确瓦窗会把跨缝块
+            // 裁到缝上,块与块之间露出缝;buffer 让块延伸进邻瓦覆盖接缝。
+            // 同色 fill 在带内重叠不可见;水/绿地与陆地底色异色时带内
+            // 重叠由绘制顺序/深度解决(与参考 2D 合成同构)。
+            std::vector<std::pair<double, double>> src;
+            if (part.type == 2) {
+                const auto clipped =
+                    amapClipPolygonRing(ring, -256.0, 8192.0 + 256.0,
+                                        -256.0, 4096.0 + 256.0);
+                if (clipped.size() < 3) return pts;  // 窗外无幸存
+                src = amapCloseRingAlongWindow(clipped, -256.0,
+                                               8192.0 + 256.0, -256.0,
+                                               4096.0 + 256.0);
+            } else {
+                src = ring;
+            }
             pts.reserve(src.size());
             for (const auto& pt : src) {
                 // 归一化/裁剪在「翻转后」坐标(与 lat 同号);toCarto 传回
@@ -418,12 +492,6 @@ std::vector<Feature> amapDecodedPartToFeatures(
                     kAmapExtentY - pt.second);
                 if (toWgs84) c = Gcj02CoordinateTransform::toWgs84(c);
                 pts.push_back(c);
-            }
-            // 裁剪后环在窗口边闭合;若仍开放(首尾不同)补首点。
-            if (pts.size() >= 3 &&
-                !(pts.front().longitude() == pts.back().longitude() &&
-                  pts.front().latitude() == pts.back().latitude())) {
-                pts.push_back(pts.front());
             }
             return pts;
         };
@@ -438,6 +506,10 @@ std::vector<Feature> amapDecodedPartToFeatures(
             if (f.kind > 0) {
                 feat.properties["amap_kind"] = std::to_string(f.kind);
             }
+            // regionBlocks(30002)按 subKey 逐用地类型上色(@xinzhi/amap-style
+            // colors.regionBlocks);subKey 缺省 1 → 兜底 $block。30001 仍按
+            // kind(61 绿地 / 63 水系 / 15 海洋)。
+            feat.properties["amap_subkey"] = std::to_string(f.subKey);
             // fill 配色分流键:classCode 区分数据层(30001 水/绿地、
             // 30002 地块),kind 是层内细分。合成单键供 StyleExpression
             // match(它只支持单属性匹配)。
@@ -450,10 +522,18 @@ std::vector<Feature> amapDecodedPartToFeatures(
             out.push_back(std::move(feat));
         };
         for (const auto& ring : groups) {
+            // 退化开放碎片(完全在裁剪窗口内、裁剪后仍开放):toCarto 返回空,
+            // 丢弃。若它是外环,先结束当前分组(避免后续孔错误并入)。
+            auto carto = toCarto(ring);
+            if (carto.empty()) {
+                const double a = ringSignedArea(ring);
+                if (a > 0.0) flush();
+                continue;
+            }
             const double area = ringSignedArea(ring);
             if (area > 0.0) {
                 flush();  // 新外环 → 结束上一分组
-                pending.push_back(toCarto(ring));
+                pending.push_back(std::move(carto));
             } else {
                 // 负面积环:仅当**被当前外环包含**才是孔(参考 mapbox
                 // classifyRings:孔必须在外环内)。互不嵌套的独立碎片
@@ -497,16 +577,16 @@ std::vector<Feature> amapDecodedPartToFeatures(
                         return inside;
                     };
                     // 孔自身的中点必须在外环内(孔 ⊂ 外环)。
-                    const auto holeMid = testPt(toCarto(ring));
+                    const auto holeMid = testPt(carto);
                     insideOuter =
                         pointInPoly(outer, holeMid.first, holeMid.second);
                 }
                 if (insideOuter) {
-                    pending.push_back(toCarto(ring));  // 孔,加入当前外环
+                    pending.push_back(std::move(carto));  // 孔,加入当前外环
                 } else {
                     // 独立碎片(负绕向但互不嵌套):作为独立外环。
                     flush();
-                    pending.push_back(toCarto(ring));
+                    pending.push_back(std::move(carto));
                 }
             }
         }
@@ -524,30 +604,21 @@ bool amapBytesToFeatures(const uint8_t* data, size_t size,
     }
     for (const auto& p : parts) {
         if (p.type == 2) {
-            if (!regionsOnly) {
-                // 主源(z14):只保留 30001 层水系/绿地(kind 63/61);
-                // 30002 地块与 30001 其他 kind 主源不画(地块走粗源浅灰)。
-                AmapDecodedLayerPart kept = p;
-                kept.features.clear();
-                for (const auto& f : p.features) {
-                    if (f.classCode == 30001 &&
-                        (f.kind == 63 || f.kind == 61)) {
-                        kept.features.push_back(f);
-                    }
-                }
-                auto fs = amapDecodedPartToFeatures(kept, true);
-                out.insert(out.end(), std::make_move_iterator(fs.begin()),
-                           std::make_move_iterator(fs.end()));
-            } else {
-                auto fs = amapDecodedPartToFeatures(p, true);
-                out.insert(out.end(), std::make_move_iterator(fs.begin()),
-                           std::make_move_iterator(fs.end()));
-            }
+            // type2 面:粗源(z10 大掩膜)与主源(z12-14 细地块/水/绿地)都要。
+            // 主源缺 type2 = 30002 城市地块层整层消失,粗源绿地/水系大掩膜
+            // 裸露成整片绿色(与 amap.com 观感不符,spec fl-30002/fl-water/
+            // fl-green 都是 main 源)。
+            // [1:1 坐标空间] amap.com 网页在 GCJ-02 空间渲染;我们此前把数据
+            // GCJ→WGS84 转换后上 WGS84 球,同一相机数字下多边形整体偏移
+            // ~400m(≈屏幕 1/3),形状与网页对不上。改为保留 GCJ 原生坐标。
+            auto fs = amapDecodedPartToFeatures(p, false);
+            out.insert(out.end(), std::make_move_iterator(fs.begin()),
+                       std::make_move_iterator(fs.end()));
             continue;
         }
         // type1 线 / type3 建筑 / type4 轨道:主源才要。
         if (regionsOnly) continue;
-        auto fs = amapDecodedPartToFeatures(p, true);
+        auto fs = amapDecodedPartToFeatures(p, false);
         out.insert(out.end(), std::make_move_iterator(fs.begin()),
                    std::make_move_iterator(fs.end()));
     }

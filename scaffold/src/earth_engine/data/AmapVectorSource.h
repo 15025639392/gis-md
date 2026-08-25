@@ -37,7 +37,8 @@ struct AmapPoiDecodeTraits {
         }
         for (const auto& p : parts) {
             if (p.type != 0) continue;  // 只取通用 POI 点层
-            auto fs = amapDecodedPartToFeatures(p, true);
+            // [1:1 坐标空间] 与区域/路网一致:保留 GCJ 原生坐标对齐 amap.com。
+            auto fs = amapDecodedPartToFeatures(p, false);
             out.insert(out.end(), std::make_move_iterator(fs.begin()),
                        std::make_move_iterator(fs.end()));
         }

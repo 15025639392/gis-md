@@ -180,7 +180,85 @@ TEST(AmapGeometryTest, ClipPolygonRingKeepsInsideWindow) {
     EXPECT_GE(clipped.size(), 4u);
 }
 
+// 裁剪后的开放环沿窗口边界闭合(参考高德 JSAPI polygonclip 语义),
+// 不是直线补首点;闭合后首尾同点、全部顶点在窗口内、面积不翻转。
+TEST(AmapGeometryTest, CloseRingAlongWindowCrossingRing) {
+    // canonical 空间 x∈[0,8192]、y∈[0,4096]。裁剪后的开放弧:首点在
+    // 左边界、末点在顶边界(跨两条不同窗口边),闭合必须沿窗口边界走
+    // 角点路径,而不是直线弦。
+    const std::vector<std::pair<double, double>> ring = {
+        {0.0, 1000.0}, {1000.0, 2000.0}, {2000.0, 3000.0},
+        {4000.0, 4096.0}};
+    const auto clipped =
+        amapClipPolygonRing(ring, 0.0, 8192.0, 0.0, 4096.0);
+    ASSERT_GE(clipped.size(), 3u);
+    // 裁剪后开放(首尾在窗口边界上、互不相同)。
+    ASSERT_FALSE(clipped.front() == clipped.back());
+    // 首尾确实在两条不同边上(左 / 顶)。
+    const auto& f = clipped.front();
+    const auto& l = clipped.back();
+    EXPECT_TRUE(std::abs(f.first) < 1e-6);
+    EXPECT_TRUE(std::abs(l.second - 4096.0) < 1e-6);
+
+    const auto closed =
+        amapCloseRingAlongWindow(clipped, 0.0, 8192.0, 0.0, 4096.0);
+    ASSERT_GE(closed.size(), 4u);
+    // 闭合:首尾同点。
+    EXPECT_TRUE(closed.front() == closed.back());
+    for (const auto& p : closed) {
+        EXPECT_GE(p.first, 0.0 - 1e-6);
+        EXPECT_LE(p.first, 8192.0 + 1e-6);
+        EXPECT_GE(p.second, 0.0 - 1e-6);
+        EXPECT_LE(p.second, 4096.0 + 1e-6);
+    }
+    // 闭合路径经过窗口角点(沿边界走,不是直线弦)。
+    bool sawCorner = false;
+    for (const auto& p : closed) {
+        if ((std::abs(p.first) < 1e-6 || std::abs(p.first - 8192.0) < 1e-6) &&
+            (std::abs(p.second) < 1e-6 ||
+             std::abs(p.second - 4096.0) < 1e-6)) {
+            sawCorner = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(sawCorner);
+}
+
+// 窗沿闭合保持绕向:归一化后的外环(area>0)闭合后仍为正面积(CCW),
+// 不会因为补的是窗沿路径而翻转填充侧。
+TEST(AmapGeometryTest, CloseRingAlongWindowPreservesWinding) {
+    auto area = [](const std::vector<std::pair<double, double>>& r) {
+        double sum = 0.0;
+        const size_t n = r.size();
+        for (size_t i = 0, j = n - 1; i < n; j = i++) {
+            sum += (r[j].first + r[i].first) *
+                   (r[j].second - r[i].second);
+        }
+        return sum / 2.0;
+    };
+    // CCW 大弧:左边界 (0,800) → 内部弧 → 右边界 (8192,3300)。
+    const std::vector<std::pair<double, double>> ring = {
+        {0.0, 800.0}, {1000.0, 1000.0}, {4000.0, 3400.0},
+        {8192.0, 3300.0}};
+    EXPECT_GT(area(ring), 0.0);  // 隐式直线闭合为正 → 外环
+    const auto closed =
+        amapCloseRingAlongWindow(ring, 0.0, 8192.0, 0.0, 4096.0);
+    EXPECT_GT(area(closed), 0.0);
+}
+
+// 窗口内开放碎片(首尾都在窗口内)直线补首点,不沿窗沿(没有窗沿可走);
+// 这里是真实小水体(水塘/河流段),直线闭合即其本体。
+TEST(AmapGeometryTest, CloseRingAlongWindowInsideFragmentStraight) {
+    const std::vector<std::pair<double, double>> ring = {
+        {100.0, 100.0}, {300.0, 100.0}, {300.0, 300.0}, {100.0, 300.0}};
+    const auto closed =
+        amapCloseRingAlongWindow(ring, 0.0, 8192.0, 0.0, 4096.0);
+    ASSERT_EQ(ring.size() + 1, closed.size());
+    EXPECT_TRUE(closed.front() == closed.back());
+}
+
 // 解码 → 归一化 → Feature 分组:外环与孔进同一个 Polygon,孔不再独立成面。
+// 环须闭合(窗口内开放环=退化碎片,见 EvenOddWinding* 的语义说明)。
 TEST(AmapGeometryTest, DecodedPartGroupsHoleIntoPolygon) {
     AmapDecodedLayerPart part;
     part.z = 10;
@@ -192,10 +270,10 @@ TEST(AmapGeometryTest, DecodedPartGroupsHoleIntoPolygon) {
     f.geomType = 3;  // Polygon
     f.rings = {
         // 大海外环(同向 CW)。scale 4 → canonical x∈[2000,7200],
-        // y∈[400,3600](翻转后 [496,3696])全在窗口内。
-        {{500, 100}, {1800, 100}, {1800, 900}, {500, 900}},
+        // y∈[400,3600](翻转后 [496,3696])全在窗口内。闭合(首尾同点)。
+        {{500, 100}, {1800, 100}, {1800, 900}, {500, 900}, {500, 100}},
         // 岛屿内环(同向 CW)。
-        {{800, 200}, {1500, 200}, {1500, 700}, {800, 700}},
+        {{800, 200}, {1500, 200}, {1500, 700}, {800, 700}, {800, 200}},
     };
     part.features.push_back(std::move(f));
 
@@ -209,6 +287,7 @@ TEST(AmapGeometryTest, DecodedPartGroupsHoleIntoPolygon) {
 }
 
 // 互不嵌套的独立碎片:即使绕向相反(一正一负),也不得合并成"外环+孔"。
+// 环闭合(窗口内开放环=退化碎片被过滤)。
 // 旧实现把负面积环一律当孔并入前一个外环 → CDT 在碎片之间大面积填充
 // (大量错误三角形的根因)。每个独立碎片应是独立 Polygon。
 TEST(AmapGeometryTest, DisjointRingsStaySeparatePolygons) {
@@ -222,10 +301,10 @@ TEST(AmapGeometryTest, DisjointRingsStaySeparatePolygons) {
     f.geomType = 3;
     f.rings = {
         // 第一个独立面(正绕向):canonical x∈[2000,7200], y∈[496,3696]。
-        {{500, 100}, {1800, 100}, {1800, 900}, {500, 900}},
+        {{500, 100}, {1800, 100}, {1800, 900}, {500, 900}, {500, 100}},
         // 第二个独立面(负绕向,远离第一个):canonical x∈[300,1500] 之外,
         // y∈[496,3696] —— 互不包含。
-        {{100, 100}, {100, 900}, {400, 900}, {400, 100}},
+        {{100, 100}, {100, 900}, {400, 900}, {400, 100}, {100, 100}},
     };
     part.features.push_back(std::move(f));
 
@@ -238,20 +317,19 @@ TEST(AmapGeometryTest, DisjointRingsStaySeparatePolygons) {
     EXPECT_EQ(1u, features[1].rings.size());
 }
 
-// 单环(无孔)区域:归一化只补闭合点(高德环开放),不改变绕向/坐标。
+// 单环(无孔)区域:归一化不补闭合点(高德环开放;闭合交给裁剪/三角化,
+// 直线补点会把角点碎片闭成自交针)。保持开放、不改变坐标。
 TEST(AmapGeometryTest, EvenOddWindingSingleRingUntouched) {
     std::vector<std::pair<double, double>> ring = {
         {100, 100}, {200, 100}, {200, 200}, {100, 200}};
     const auto groups = amapNormalizeEvenOddWinding({ring});
     ASSERT_EQ(1u, groups.size());
-    // 开放环补闭合点 → size+1,首尾相同。
-    ASSERT_EQ(ring.size() + 1, groups[0].size());
+    // 不补闭合点 → size 不变,首尾仍不同(开放)。
+    ASSERT_EQ(ring.size(), groups[0].size());
     for (size_t i = 0; i < ring.size(); ++i) {
         EXPECT_DOUBLE_EQ(ring[i].first, groups[0][i].first);
         EXPECT_DOUBLE_EQ(ring[i].second, groups[0][i].second);
     }
-    EXPECT_DOUBLE_EQ(groups[0].front().first, groups[0].back().first);
-    EXPECT_DOUBLE_EQ(groups[0].front().second, groups[0].back().second);
 }
 
 // 真样本端到端:AMAP_SAMPLE_TILE 指向真实瓦片时,解码→转换全部落在瓦片
@@ -308,6 +386,47 @@ TEST(AmapGeometryTest, RealSampleConvertsToChongqingBounds) {
         if (sawRegionKind) break;
     }
     EXPECT_TRUE(sawRegionKind) << "type2 region kind must be decoded";
+}
+
+// 真样本:type2 区域必须产出 Polygon Feature(窗沿闭合前,跨瓦开放弧被
+// "首尾不同即丢弃"规则全部过滤 → 0 面 → 真机整屏露地球底色)。
+TEST(AmapGeometryTest, RealSampleRegionProducesPolygons) {
+    const char* path = std::getenv("AMAP_SAMPLE_TILE");
+    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
+    FILE* f = std::fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::rewind(f);
+    std::vector<uint8_t> raw(static_cast<size_t>(len));
+    ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+    std::fclose(f);
+
+    std::vector<Feature> feats;
+    std::string err;
+    ASSERT_TRUE(amapBytesToFeatures(raw.data(), raw.size(), /*regionsOnly=*/true,
+                                    feats, &err));
+    size_t polys = 0;
+    size_t closedRings = 0;
+    for (const auto& feat : feats) {
+        if (feat.type != GeometryType::Polygon) continue;
+        ++polys;
+        for (const auto& ring : feat.rings) {
+            if (!ring.empty() &&
+                ring.front().longitude() == ring.back().longitude() &&
+                ring.front().latitude() == ring.back().latitude()) {
+                ++closedRings;
+            }
+        }
+    }
+    EXPECT_GT(polys, 0u) << "window-closed rings must produce polygons";
+    // 窗沿闭合后喂给三角化的环全部首尾闭合。
+    size_t totalRings = 0;
+    for (const auto& feat : feats) {
+        if (feat.type != GeometryType::Polygon) continue;
+        totalRings += feat.rings.size();
+    }
+    EXPECT_EQ(totalRings, closedRings);
 }
 
 // 真实样本:type2/3 多环 feature 应合并为「外环+孔」单 Polygon(不再每个环

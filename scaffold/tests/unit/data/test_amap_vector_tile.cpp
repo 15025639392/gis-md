@@ -152,6 +152,10 @@ std::vector<uint8_t> makeRegionTile() {
     std::vector<uint8_t> feature;
     {
         std::vector<uint8_t> ring;
+        // type2 region blob 头部:[10, zigzag(±(n+1))] —— 10 常量类型
+        // 标记,第二项带符号点数(n=4 → zigzag(5)=10)。环本体在其后。
+        putZigzag(ring, 10);
+        putZigzag(ring, 5);  // n+1=5 → zigzag(5)=10
         // 增量:(0,0)->(10,0)->(10,10)->(-10,-10) 闭合回原点。
         const int64_t pts[8] = {0, 0, 10, 0, 0, 10, -10, -10};
         for (int64_t v : pts) putZigzag(ring, v);
@@ -216,6 +220,9 @@ TEST(AmapVectorTileTest, DecodesRegionContainerWithFeature6Rings) {
     EXPECT_EQ(30001, f.classCode);  // 缺省类
     ASSERT_EQ(1u, f.rings.size());
     ASSERT_EQ(4u, f.rings[0].size());
+    // 头部 (10, 10) 不得作为环首点:首点 = 头部后的绝对 (0,0)。
+    EXPECT_DOUBLE_EQ(0.0, f.rings[0][0].first);
+    EXPECT_DOUBLE_EQ(0.0, f.rings[0][0].second);
     EXPECT_DOUBLE_EQ(0.0, f.rings[0][3].first);
 }
 

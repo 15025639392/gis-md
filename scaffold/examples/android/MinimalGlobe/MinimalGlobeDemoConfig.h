@@ -97,6 +97,9 @@ constexpr bool kEnableEPlanRoadRibbon = false;
 /// 面 drape 通路的栅格样式(water/building 色块)。颜色与几何通路退役前的
 /// fillColorExpr 对齐;线不在此配(走下方场解算样式)。
 VectorRasterStyle makeMvtDrapeStyle();
+/// 高德 type2 面 drape 样式:地块 / 绿地 / 水系,配色对齐 GLESView 几何通路
+/// 退役前的 fillColorExpr(@xinzhi/amap-style palette)。
+VectorRasterStyle makeAmapDrapeStyle();
 
 /// 刀2 场解算的线样式(只消费 line 通道):highway 分级 + 线宽随页 zoom
 /// 分档(styleZoom=页 z,跟屏幕清晰度走)。线色在 FS uniform 统一给出,
@@ -143,9 +146,11 @@ constexpr size_t kMvtTileCacheRaw = 256;
 constexpr bool kEnableTerrainForDemo = false;
 constexpr bool kUseGaodeSatelliteForDemo = false;
 constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;
-/// C2 步骤5 垂直切片:直接拉高德矢量瓦片(type1 组)→ 解码 → WGS84 →
-/// FeatureRenderLayer(E 贴地 ribbon + 面 fill)。开时关掉栅格路网 overlay
-/// 避免同瓦双画。
+/// [1:1 对照临时] 隐藏建筑(90001 透明 + 关挤出),只留 fill(地块/绿地/水系)
+/// 与 amap.com 参考对照。对照完翻回 false。
+constexpr bool kHideAmapBuildingsForCompare = true;
+/// 高德矢量:type2 面走 VectorFill(z10 粗源,V30 地球网格);drape overlay
+/// 仍注册但无地形页则不出。type1/3 路网+建筑走主源 FeatureRenderLayer。
 constexpr bool kEnableAmapVectorDemo = true;
 /// 高德 web key(dev;产品换 key 只改这里,referer 白名单见
 /// kAmapReferer)。

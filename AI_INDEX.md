@@ -1780,6 +1780,18 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 | `requestTile` | .cpp:108-159 | 矩形(可选 GCJ 平移)→ coverage 数据瓦网格 → 逐 slot cache->request(命中同步回调/在途搭车由 cache 负责) |
 | `decodeTile` | .cpp:168-170 | 同步整瓦栅格化(按 dataMaxZoom),测试/调试 |
 
+### AmapDrapeImageryProvider.h / .cpp
+
+高德 type2 面 V1 drape:已解码 Polygon Feature 栅格化冒充影像,进 TerrainPageStore。与 MVT `VectorDrapeImageryProvider` 同一出口(页合成/失败回透明图/weak 线程池)。页网格 Web Mercator,源瓦 Amap 4326;选瓦 `amapCoverageFromUnitRect`(WGS 页先 `shiftRectWgs84ToGcj`)。覆盖瓦超过 maxSourceTiles 回透明图,避免远景 z10 爆炸。
+
+| Item | Lines | Description |
+|---|---|---|
+| `Assembly` | .cpp:35-47 | 一次 requestTile 聚合态:holders 为 Feature 列表,样式按值快照 |
+| `runAssembly` | .cpp:49-73 | 取消仍回调 nullptr;收集 Polygon → `rasterizeFeaturePolygonsRect` |
+| `completeIfReady` | .cpp:75-85 | weak pool lock enqueue / 失败就地 |
+| `requestTile` | .cpp:109-164 | 页矩形→4326 coverage→逐 slot cache;超 maxSourceTiles 透明图 |
+| `decodeTile` | .cpp:166-180 | 同步解码 type2 + 整 unit 平面栅格化 |
+
 
 ### RoadFieldSource.h / .cpp
 
@@ -3031,9 +3043,9 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 |---|---|---|
 | `FeaturePickResult` | .h:31-48 | 拾取结果(featureId + 命中位置/环号/顶点号) |
 | `FeatureAltitudeMode` | .h:50-55 | 高度模式:贴地 / 相对 / 绝对 |
-| `FeatureRenderStyle` | .h:57-118 | 样式(表达式驱动,见 `StyleExpression`) |
-| `FeatureTerrainSampling` | .h:120-144 | 贴地采样参数(细分间距 / Steiner 点) |
-| `FeatureRenderLayer` | .h:146- | 主体 |
+| `FeatureRenderStyle` | .h:64-156 | 样式(表达式驱动,见 `StyleExpression`;`globeFillMaxEdgeMeters` 默认 400) |
+| `FeatureTerrainSampling` | .h:160-184 | 贴地采样参数(细分间距 / Steiner 点) |
+| `FeatureRenderLayer` | .h:186- | 主体 |
 
 | 方法 | 行 | 说明 |
 |---|---|---|
@@ -3244,6 +3256,7 @@ MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDr
 | `pathTouchesCanvas` (file-local) | .cpp:135-155 | 画布外 bbox 剔除(overzoom 性能地板);bbox 不相交 ⇒ 不可能包围画布,跳过恒安全 |
 | `rasterizeMvtRect` | .cpp:157-292 | 主入口:逐层×fill/line 两遍×逐源瓦仿射;styleZoom 用页 zoom 求值层区间与 filter |
 | `rasterizeMvtTile` | .cpp:300-301 | E4 兼容便捷形:单瓦整图 = z0 原点 + 全 unit 平面矩形,坐标数学与 E4 逐位等价 |
+| `rasterizeFeaturePolygonsRect` | .cpp:338 | Amap type2 drape:经纬度 Polygon → 同一套扫描线;layer 匹配 amap_fillkey |
 
 
 ### data/ — 矢量数据管线 — FeatureStore / FeatureBucketGrid / FeatureClusterIndex / FeatureSnapQuery / PolygonTessellator / LineTessellator / StyleExpression / StyleFilter / GeoJsonParser / GeoJsonImporter / MvtVectorSource / VectorTileTree / MvtFeatureConverter / VectorTileMeshBuilder
@@ -3256,7 +3269,7 @@ MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDr
 | `FeatureBucketGrid` (105) | `packCell` (FeatureBucketGrid.cpp:20)、`cellX`/`cellY` (FeatureBucketGrid.cpp:25/:29)、`bucketFor` (FeatureBucketGrid.cpp:33) | 按格分桶(桶 = GPU 上传粒度) |
 | `FeatureClusterIndex` (255) | `build` (FeatureClusterIndex.cpp:36)、`levelIndexForZoom` (FeatureClusterIndex.cpp:157)、`toCluster` (FeatureClusterIndex.cpp:169)、`query` (FeatureClusterIndex.cpp:183) | 点聚合。**只出索引,渲染归应用层**(269 个点 → 12 个簇) |
 | `FeatureSnapQuery` (121) | `closestPointOnSegment` (FeatureSnapQuery.cpp:16)、`nearest` (FeatureSnapQuery.cpp:32) | 编辑吸附 |
-| `PolygonTessellator` (234) | `quantize`/`coordKey` (PolygonTessellator.cpp:20/:24)、`tessellate` (PolygonTessellator.cpp:33) | 面镶嵌(内部走 CDT) |
+| `PolygonTessellator` (349) | `quantize`/`coordKey` (PolygonTessellator.cpp:22/:26)、`tessellate` (PolygonTessellator.cpp:60) | 面镶嵌(lng/lat CDT → ECEF;`maxEdgeMeters>0` 时边弧细分+内部 Steiner) |
 | `LineTessellator` (94) | `dist3` (LineTessellator.cpp:12)、`tessellate` (LineTessellator.cpp:19) | 线镶嵌 |
 | `StyleExpression` (207) | `literal` (StyleExpression.cpp:29/:36)、`literalString` (StyleExpression.cpp:44)、`get` (StyleExpression.cpp:51)、`zoom` (StyleExpression.cpp:58)、`match` (StyleExpression.cpp:64)、`lerpValues` (StyleExpression.cpp:11) | 样式表达式树。⚠️ `String` 必须用**独立命名**的 `literalString`,重载会歧义 |
 | `StyleFilter` (169) | `compare` (StyleFilter.cpp:31/:41)、`in` (StyleFilter.cpp:54)、`zoomCompare` (StyleFilter.cpp:63)、`SourceLayerRule` (.h:80) | 运行期过滤 —— 分级取舍搬回样式侧,瓦片不再靠切图时 `-j` 预筛 |

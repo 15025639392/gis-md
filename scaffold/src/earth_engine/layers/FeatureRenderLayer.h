@@ -65,6 +65,13 @@ struct FeatureRenderStyle {
     std::array<float, 4> fillColor{0.25f, 0.55f, 0.95f, 0.35f};
     std::array<float, 4> lineColor{1.00f, 0.80f, 0.10f, 0.90f};
     float lineWidthPx = 4.0f;
+    /// 图层可见 zoom 窗口(web 墨卡托惯例 zoom ≈ log2(赤道周长/视高),
+    /// 与 widthExpr 口径一致)。默认 [0, 24] 恒可见。粗源 LOD 用它做
+    /// **近景让位**:z10 面源在 zoom > maxZoom 时整体不渲染(命令不发、
+    /// 不参与收敛),由主源 z12-14 细面承接 —— 否则粗像素块与细面叠加
+    /// 会呈现「破破烂烂」的双层边。
+    double minZoom = 0.0;
+    double maxZoom = 24.0;
     /// dash(P6d 收尾):period = 一节「划+空」总长(m,贴地世界米制,
     /// 随透视近大远小),0 = 实线;onFraction = 划段占比 ∈ (0,1]。
     /// stencil 线与方案 A ribbon 两路径同语义。
@@ -150,6 +157,13 @@ struct FeatureRenderStyle {
     /// fill(单 pass,贴地采样 + heightOffset 抬升,掠视有轻微视差)。
     /// 底图级大面(水/绿地)近景 stencil fill rate 高,关掉换单 pass。
     bool stencilFillEnabled = true;
+    /// 面外环描边开关。**默认关**:高德复刻里面(地块/水/绿地)不描边;
+    /// 裁剪到瓦片边界后,外环含瓦片角点,若用路网配色描边会画出
+    /// 「从瓦片角发散的灰色射线」。开时描边色取 lineColor/lineColorExpr。
+    bool fillOutlineEnabled = false;
+    /// VectorFill 地球网格边长上限(米)。>0 时 PolygonTessellator 细分
+    /// 约束边并撒内部 Steiner,避免斜视大三角被近平面裁成射线。0 = 关。
+    double globeFillMaxEdgeMeters = 0.0;  // [A/B] 射线诊断:关 V30 细分
 };
 
 /// 地形高程采样注入(P3)。与 Tileset 解耦:Scene 接线真实地形,host 测试

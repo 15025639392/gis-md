@@ -4,8 +4,11 @@
 #include "earth_engine/data/Feature.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/math/Vec3.h"
 
+#include <algorithm>
 #include <cmath>
+#include <optional>
 
 using namespace earth_engine;
 
@@ -149,4 +152,81 @@ TEST(PolygonTessellatorTest, VertexTouchingEdgeStaysSane) {
         ASSERT_LT(idx, fill.positions.size());
     }
     EXPECT_GT(fillArea3D(fill), 0.0);
+}
+
+namespace {
+
+double maxTriangleEdgeMeters(const TessellatedFill& fill) {
+    double m = 0.0;
+    for (size_t i = 0; i + 2 < fill.fillIndices.size(); i += 3) {
+        const Vec3& a = fill.positions[fill.fillIndices[i]];
+        const Vec3& b = fill.positions[fill.fillIndices[i + 1]];
+        const Vec3& c = fill.positions[fill.fillIndices[i + 2]];
+        m = std::max(m, (b - a).length());
+        m = std::max(m, (c - b).length());
+        m = std::max(m, (a - c).length());
+    }
+    return m;
+}
+
+double maxChordSagMeters(const TessellatedFill& fill, const Ellipsoid& e) {
+    double sag = 0.0;
+    auto consider = [&](const Vec3& a, const Vec3& b) {
+        const Vec3 mid = (a + b) * 0.5;
+        const std::optional<Vec3> surf = e.tryScaleToGeodeticSurface(mid);
+        if (!surf) return;
+        sag = std::max(sag, (*surf - mid).length());
+    };
+    for (size_t i = 0; i + 2 < fill.fillIndices.size(); i += 3) {
+        const Vec3& a = fill.positions[fill.fillIndices[i]];
+        const Vec3& b = fill.positions[fill.fillIndices[i + 1]];
+        const Vec3& c = fill.positions[fill.fillIndices[i + 2]];
+        consider(a, b);
+        consider(b, c);
+        consider(c, a);
+    }
+    return sag;
+}
+
+}  // namespace
+
+TEST(PolygonTessellatorTest, GlobeSubdivKeepsTriangleEdgesShort) {
+    // ~1.15° 方形(赤道约 127km)。不细分时对角线跨过整面;细分后边长
+    // 落在 maxEdge 的 √2 邻域(网格斜边)。
+    Feature f = polygon({square(0.0, 0.0, 0.02, 0.02, false)});
+    const auto coarse =
+        PolygonTessellator::tessellate(f, Ellipsoid::WGS84(), 0.0, nullptr, 0.0);
+    const auto fine = PolygonTessellator::tessellate(
+        f, Ellipsoid::WGS84(), 0.0, nullptr, 10000.0);
+    ASSERT_FALSE(coarse.fillIndices.empty());
+    ASSERT_FALSE(fine.fillIndices.empty());
+    EXPECT_GT(maxTriangleEdgeMeters(coarse), 50000.0);
+    EXPECT_LT(maxTriangleEdgeMeters(fine), 10000.0 * 1.8);
+    EXPECT_GT(fine.positions.size(), coarse.positions.size());
+}
+
+TEST(PolygonTessellatorTest, GlobeSubdivReducesChordSag) {
+    Feature f = polygon({square(0.0, 0.0, 0.02, 0.02, false)});
+    const Ellipsoid& e = Ellipsoid::WGS84();
+    const auto coarse = PolygonTessellator::tessellate(f, e, 0.0, nullptr, 0.0);
+    const auto fine = PolygonTessellator::tessellate(f, e, 0.0, nullptr, 10000.0);
+    EXPECT_GT(maxChordSagMeters(coarse, e), 50.0);
+    EXPECT_LT(maxChordSagMeters(fine, e), 15.0);
+}
+
+TEST(PolygonTessellatorTest, DefaultMaxEdgeDoesNotChangeSmallSquare) {
+    Feature f = polygon({square(0.10, 0.10, 0.11, 0.11, false)});
+    auto fill = PolygonTessellator::tessellate(f, Ellipsoid::WGS84());
+    EXPECT_EQ(4u, fill.positions.size());
+    EXPECT_EQ(6u, fill.fillIndices.size());
+}
+
+TEST(PolygonTessellatorTest, SubMaxEdgePolygonSkipsGlobeGrid) {
+    // ~255m 方形 < 400m:边不拆、不撒 Steiner,保持 2 三角。
+    constexpr double kSpan = 4.0e-5;
+    Feature f = polygon({square(0.10, 0.10, 0.10 + kSpan, 0.10 + kSpan, false)});
+    auto fill = PolygonTessellator::tessellate(
+        f, Ellipsoid::WGS84(), 0.0, nullptr, 400.0);
+    EXPECT_EQ(4u, fill.positions.size());
+    EXPECT_EQ(6u, fill.fillIndices.size());
 }

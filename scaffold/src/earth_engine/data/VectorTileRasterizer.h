@@ -4,6 +4,7 @@
 #include <functional>
 #include <vector>
 
+#include "Feature.h"
 #include "MvtDecoder.h"
 #include "VectorRasterStyle.h"
 
@@ -80,5 +81,17 @@ VectorRasterImage rasterizeMvtRect(const std::vector<MvtTileRef>& tiles,
 /// E4 兼容便捷形:单瓦整图(rect=整张瓦、styleZoom=zoom)。测试与调试用。
 VectorRasterImage rasterizeMvtTile(const MvtTile& tile, int zoom,
                                    const VectorRasterStyle& style, int size);
+
+/// 把已是经纬度(弧度)的 Polygon Feature 画进 mercator 目标矩形。
+///
+/// Amap type2 drape 入口:解码侧已完成 tile-local 裁剪 / even-odd 归一化 /
+/// GCJ→WGS84,本函数只做球面→unit mercator→画布,扫描线与
+/// `rasterizeMvtRect` 共用。`paint.layer` 对 Amap 匹配 `amap_fillkey`
+/// (空或 `"*"` = 全收,再叠加 `paint.filter`)。`toTargetUnit` 与
+/// `rasterizeMvtRect` 同语义(GCJ 页网格传 `wgsUnitToGcjUnit`)。
+VectorRasterImage rasterizeFeaturePolygonsRect(
+    const std::vector<const Feature*>& features, const MercatorRect& rect,
+    int styleZoom, const VectorRasterStyle& style, int size,
+    const UnitTransform* toTargetUnit = nullptr);
 
 } // namespace earth_engine

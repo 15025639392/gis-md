@@ -306,4 +306,147 @@ VectorRasterImage rasterizeMvtTile(const MvtTile& tile, int zoom,
                             style, size);
 }
 
+namespace {
+
+constexpr double kPiRaster = 3.14159265358979323846;
+
+double unitXFromLng(double lngRad) { return lngRad / (2.0 * kPiRaster) + 0.5; }
+
+double unitYFromLat(double latRad) {
+    return 0.5 -
+           std::log(std::tan(kPiRaster / 4.0 + latRad / 2.0)) /
+               (2.0 * kPiRaster);
+}
+
+bool featureMatchesPaint(const Feature& feature,
+                         const VectorRasterLayerPaint& paint, int styleZoom) {
+    if (feature.type != GeometryType::Polygon) return false;
+    if (paint.filter &&
+        !paint.filter->matches(&feature.properties, styleZoom)) {
+        return false;
+    }
+    if (paint.layer.empty() || paint.layer == "*") return true;
+    auto hit = [&](const char* key) {
+        const auto it = feature.properties.find(key);
+        return it != feature.properties.end() && it->second == paint.layer;
+    };
+    return hit("amap_fillkey") || hit("mvt_layer");
+}
+
+}  // namespace
+
+VectorRasterImage rasterizeFeaturePolygonsRect(
+    const std::vector<const Feature*>& features, const MercatorRect& rect,
+    int styleZoom, const VectorRasterStyle& style, int size,
+    const UnitTransform* toTargetUnit) {
+    VectorRasterImage out;
+    if (size <= 0) return out;
+    const double rectW = rect.x1 - rect.x0;
+    const double rectH = rect.y1 - rect.y0;
+    if (!(rectW > 0.0) || !(rectH > 0.0)) return out;
+    const int ss = std::clamp(style.supersample, 1, 4);
+    const int hi = size * ss;
+
+    std::vector<uint8_t> buffer(static_cast<size_t>(hi) * hi * 4);
+    for (size_t i = 0; i < buffer.size(); i += 4) {
+        buffer[i + 0] = style.background[0];
+        buffer[i + 1] = style.background[1];
+        buffer[i + 2] = style.background[2];
+        buffer[i + 3] = style.background[3];
+    }
+
+    auto mapPoint = [&](const Cartographic& c, double& px, double& py) {
+        double u = unitXFromLng(c.longitude());
+        double v = unitYFromLat(c.latitude());
+        if (toTargetUnit) (*toTargetUnit)(u, v);
+        px = (u - rect.x0) / rectW * hi;
+        py = (v - rect.y0) / rectH * hi;
+    };
+
+    auto ringTouches = [&](const std::vector<Cartographic>& ring,
+                           double pad) -> bool {
+        if (ring.empty()) return false;
+        double px0 = 0, px1 = 0, py0 = 0, py1 = 0;
+        bool first = true;
+        for (const Cartographic& c : ring) {
+            double px, py;
+            mapPoint(c, px, py);
+            if (first) {
+                px0 = px1 = px;
+                py0 = py1 = py;
+                first = false;
+            } else {
+                px0 = std::min(px0, px);
+                px1 = std::max(px1, px);
+                py0 = std::min(py0, py);
+                py1 = std::max(py1, py);
+            }
+        }
+        return px1 + pad >= 0.0 &&
+               px0 - pad <= static_cast<double>(hi) &&
+               py1 + pad >= 0.0 &&
+               py0 - pad <= static_cast<double>(hi);
+    };
+
+    Canvas canvas;
+    std::vector<Edge> edges;
+    for (const VectorRasterLayerPaint& paint : style.layers) {
+        if (styleZoom < paint.minZoom || styleZoom > paint.maxZoom) continue;
+        const std::array<uint8_t, 4>& color = paint.fillColor;
+        if (color[3] == 0) continue;
+        canvas.reset(hi);
+        edges.clear();
+        bool any = false;
+        for (const Feature* feature : features) {
+            if (!feature || !featureMatchesPaint(*feature, paint, styleZoom)) {
+                continue;
+            }
+            for (const auto& ring : feature->rings) {
+                if (ring.size() < 3 || !ringTouches(ring, 0.0)) continue;
+                any = true;
+                double ax, ay, bx, by;
+                for (size_t i = 0; i + 1 < ring.size(); ++i) {
+                    mapPoint(ring[i], ax, ay);
+                    mapPoint(ring[i + 1], bx, by);
+                    addEdge(edges, ax, ay, bx, by);
+                }
+                const Cartographic& last = ring.back();
+                const Cartographic& firstPt = ring.front();
+                if (last.longitude() != firstPt.longitude() ||
+                    last.latitude() != firstPt.latitude()) {
+                    mapPoint(last, ax, ay);
+                    mapPoint(firstPt, bx, by);
+                    addEdge(edges, ax, ay, bx, by);
+                }
+            }
+        }
+        if (!any) continue;
+        fillEdges(edges, canvas);
+        blendLayer(canvas, color, buffer);
+    }
+
+    out.size = size;
+    out.rgba.assign(static_cast<size_t>(size) * size * 4, 0);
+    const int samples = ss * ss;
+    for (int y = 0; y < size; ++y) {
+        for (int x = 0; x < size; ++x) {
+            int acc[4] = {0, 0, 0, 0};
+            for (int sy = 0; sy < ss; ++sy) {
+                const uint8_t* row =
+                    buffer.data() +
+                    (static_cast<size_t>(y * ss + sy) * hi + x * ss) * 4;
+                for (int sx = 0; sx < ss; ++sx) {
+                    for (int c = 0; c < 4; ++c) acc[c] += row[sx * 4 + c];
+                }
+            }
+            uint8_t* dst =
+                out.rgba.data() + (static_cast<size_t>(y) * size + x) * 4;
+            for (int c = 0; c < 4; ++c) {
+                dst[c] = static_cast<uint8_t>(acc[c] / samples);
+            }
+        }
+    }
+    return out;
+}
+
 } // namespace earth_engine

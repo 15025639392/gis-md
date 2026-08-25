@@ -49,6 +49,11 @@ protected:
         ASSERT_TRUE(renderer_->initialize());
         layer_ = std::make_unique<FeatureRenderLayer>(
             "edit-test", &device_, Ellipsoid::WGS84());
+        // 编辑测例锁「fill+outline」双命令拓扑(与引入
+        // fillOutlineEnabled=false 默认前一致);面外环描边开关本身另测。
+        FeatureRenderStyle style = layer_->style();
+        style.fillOutlineEnabled = true;
+        layer_->setStyle(style);
 
         // 约 40km 高度垂直俯视 (0,0):0.05° ≈ 5.5km 在视野内。
         const Vec3 surface =

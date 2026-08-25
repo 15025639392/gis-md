@@ -53,6 +53,7 @@
 #include <nlohmann/json.hpp>
 #include "earth_engine/style/StyleDocument.h"
 #include "earth_engine/providers/VectorDrapeImageryProvider.h"
+#include "earth_engine/providers/AmapDrapeImageryProvider.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
@@ -213,16 +214,17 @@ static std::vector<FeatureId> gEditHandleIds;
 static FeatureRenderLayer* gMvtBasemapLayer = nullptr;  // Engine 持有所有权
 static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
 
-// ---- C2/E3:高德矢量瓦片引擎级源(替换 demo 切片的 FeatureStore 灌注)。
-// 同一套 VectorTileSourceT 调度:树选择 + worker 解码/镶嵌 + 渲染线程
-// 整瓦原子替换(tile-bucket 常驻命令)。粗源(z10 区域)与主源(z14 路网/
-// 建筑)各一实例,共享同一 worker 池,各自树限定 zoom 档。 ----
+// ---- C2/E3:高德矢量。type2 面:无地形时走 VectorFill(V30 地球网格);
+// drape overlay 仍注册,无页则不出。路网/建筑/POI 仍主源 FeatureRenderLayer。 ----
+static std::shared_ptr<AmapDrapeImageryProvider::RegionCache> gAmapRegionCache;
 static std::unique_ptr<AmapRegionsVectorSource> gAmapRegionsSource;
+static std::unique_ptr<AmapRegionsVectorSource> gAmapWater12Source;
 static std::unique_ptr<AmapMainVectorSource> gAmapMainSource;
 static std::unique_ptr<AmapPoiVectorSource> gAmapPoiSource;
 static FeatureRenderLayer* gAmapRegionsLayer = nullptr;  // Engine 持有
-static FeatureRenderLayer* gAmapMainLayer = nullptr;     // Engine 持有
-static FeatureRenderLayer* gAmapPoiLayer = nullptr;      // Engine 持有
+static FeatureRenderLayer* gAmapWater12Layer = nullptr;  // Engine 持有
+static FeatureRenderLayer* gAmapMainLayer = nullptr;  // Engine 持有
+static FeatureRenderLayer* gAmapPoiLayer = nullptr;  // Engine 持有
 // E1:MVT 解码 + 镶嵌的 worker 池。独立于引擎的瓦片加载池 —— 底图镶嵌是
 // 突发型重负载(换 zoom 时整视口一起来),混进地形/影像池会挤掉它们的
 // 加载额度。2 线程:再多也只是把内存峰值抬高,commit 侧本就有帧预算。
@@ -540,7 +542,9 @@ static void clearDemoEngineObjects() {
     // MVT 源先停:它持有 basemap 层 store 的引用(层归 Engine 所有),
     // 且在飞的 HttpRequest 句柄析构即取消。
     gMvtSource.reset();
+    gAmapRegionCache.reset();
     gAmapRegionsSource.reset();
+    gAmapWater12Source.reset();
     gAmapMainSource.reset();
     gAmapPoiSource.reset();
     gMvtWorkerPool.reset();
@@ -559,7 +563,6 @@ static void clearDemoEngineObjects() {
         gAmapFetch.versionProbing = false;
     }
     gMvtBasemapLayer = nullptr;   // Engine 持有,随 gEngine 一起销毁
-    gAmapRegionsLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
     gAmapMainLayer = nullptr;     // Engine 持有,随 gEngine 一起销毁
     gAmapPoiLayer = nullptr;      // Engine 持有,随 gEngine 一起销毁
     gDemoFeatureLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
@@ -814,6 +817,53 @@ static bool createEngine() {
                  minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);
         }
 
+        // ---- 高德 type2 面 V1 drape:必须在 installScene 之前注册 overlay。
+        if (minimal_globe_demo::kEnableAmapVectorDemo) {
+            if (!gMvtWorkerPool) {
+                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
+            }
+            if (!gAmapRegionCache) {
+                gAmapRegionCache =
+                    std::make_shared<AmapDrapeImageryProvider::RegionCache>(
+                        [](const TileKey& k,
+                           AmapDrapeImageryProvider::RegionCache::
+                               FetchCallback cb) {
+                            amapFetchTile(k, 1, std::move(cb));
+                        },
+                        minimal_globe_demo::kMvtTileCacheDecoded,
+                        minimal_globe_demo::kMvtTileCacheRaw,
+                        gMvtWorkerPool);
+            }
+            AmapDrapeImageryProvider::Options aopts;
+            aopts.id = "amap-drape";
+            aopts.minZoom = 0;
+            aopts.dataMinZoom = 10;
+            aopts.dataMaxZoom = 10;
+            aopts.advertisedMaxZoom =
+                minimal_globe_demo::kMeasureImageryMaxZoom;
+            aopts.tileSize = 256;
+            aopts.style = minimal_globe_demo::makeAmapDrapeStyle();
+            aopts.gcj02SourceGrid =
+                minimal_globe_demo::kUseGaodeSatelliteForDemo;
+            auto amapDrape = std::make_unique<AmapDrapeImageryProvider>(
+                std::move(aopts), gAmapRegionCache, gMvtWorkerPool);
+            RasterOverlay::Options aoopts;
+            aoopts.role = RasterOverlayRole::AnnotationOverlay;
+            aoopts.priority = RasterOverlayPriority::Normal;
+            aoopts.blocksCompleteRenderable = false;
+            aoopts.georeference =
+                minimal_globe_demo::kUseGaodeSatelliteForDemo
+                    ? RasterOverlayGeoreference::Gcj02WebMercator
+                    : RasterOverlayGeoreference::Standard;
+            gSdkFacade->addCustomImageryOverlay(
+                std::move(amapDrape), TileScheme::createXYZWebMercator(),
+                aoopts);
+            LOGI("AmapDrape type2 overlay installed (data z10, advertised z%d, "
+                 "gcj=%d)",
+                 minimal_globe_demo::kMeasureImageryMaxZoom,
+                 minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);
+        }
+
         gSdkFacade->installScene(
             minimal_globe_demo::makeDefaultDemoSceneConfig(&sourceOverrides));
 
@@ -1055,11 +1105,7 @@ static bool createEngine() {
                  minimal_globe_demo::kMvtBasemapMaxZoom);
         }
 
-        // ---- C2 步骤5:高德矢量瓦片 demo(垂直切片)----
-        // 拉重庆 3×3 瓦片(type1 组:道路/区域/建筑),解码→WGS84→灌
-        // FeatureStore,线走 E 贴地 ribbon(terrainClampRibbon),面走
-        // stencil fill。样式按 amap_class/amap_kind 粗配色(样式 fidelity
-        // 后续 port @xinzhi/amap-style)。
+        // ---- 高德矢量:type2 面 VectorFill(z10)垫底,再上路网/建筑/POI。----
         if (minimal_globe_demo::kEnableAmapVectorDemo) {
             FeatureRenderStyle as;
             // amap.com 复刻:平面渲染(无地形耦合)。Absolute + 抬升,
@@ -1126,45 +1172,121 @@ static bool createEngine() {
                     {{10.0, StyleExpression::literal(2.0)},
                      {14.0, StyleExpression::literal(3.0)},
                      {17.0, StyleExpression::literal(4.0)}}));
-            // fill 按 classCode+kind 分流(amap_fillkey),配色对齐
-            // @xinzhi/amap-style palette:
-            //   30001 kind 61 → 绿地掩膜 #ace798;
-            //   30001 kind 63 → 水系 #80dfff;
-            //   其余(30002 地块等)→ land 底色 #eff3f6。
+            // fill 按 classCode 分流,配色对齐 @xinzhi/amap-style palette:
+            //   30001 → kind(61 绿地 #ace798 / 63 水系 #80dfff / 15 海洋);
+            //   30002 → regionBlocks 逐 subKey 用地类型色(colors.regionBlocks,
+            //            缺省 subKey=1 → 兜底 $block #eeeeee);
+            //   其余 → land 底色 #eff3f6。
+            const auto kLand = StyleExpression::literal(
+                {0.937f, 0.953f, 0.965f, 1.00f});
+            const auto kBlock = StyleExpression::literal(
+                {0.933f, 0.933f, 0.933f, 1.00f});  // #eeeeee
+            const auto kGreen = StyleExpression::literal(
+                {0.675f, 0.906f, 0.596f, 1.00f});  // #ace798,fill-opacity=1(golden)
+            const auto kWater = StyleExpression::literal(
+                {0.502f, 0.875f, 1.00f, 1.00f});   // #80dfff,fill-opacity=1(golden)
+            auto color = [](const char* hex, float a = 1.0f) {
+                auto hv = [](char c) -> int {
+                    if (c >= '0' && c <= '9') return c - '0';
+                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+                    return 0;
+                };
+                const int r = hv(hex[0]) * 16 + hv(hex[1]);
+                const int g = hv(hex[2]) * 16 + hv(hex[3]);
+                const int b = hv(hex[4]) * 16 + hv(hex[5]);
+                return StyleExpression::literal(
+                    {r / 255.0f, g / 255.0f, b / 255.0f, a});
+            };
+            const auto kRegionBlocks = StyleExpression::match(
+                "amap_subkey",
+                {{"3", color("d7edfc")},  {"4", color("e1eef7")},
+                 {"5", color("b8eea4")},  {"6", color("daeafb")},
+                 {"7", color("e9eaf0")},  {"8", color("e9e9f6")},
+                 {"9", color("ade999")},  {"10", color("f8cacd")},
+                 {"11", color("e0e7fb")}, {"12", color("e1eef7")},
+                 {"19", color("92ecbe")}, {"20", color("92ecbe")},
+                 {"21", color("92ecbe")}, {"22", color("f0f7fa")},
+                 {"23", color("e6daf4")}, {"24", color("f4dcc1")},
+                 {"25", color("d1dcf5")}, {"26", color("dae6ae")},
+                 {"27", color("e5e2af")}, {"28", color("c6e4dc")},
+                 {"29", color("f6d4d4")}, {"30", color("ebcded")},
+                 {"31", color("d7edfc")}, {"32", color("e1eef7")},
+                 {"33", color("b8eea4")}, {"34", color("daeafb")},
+                 {"35", color("e9eaf0")}, {"36", color("e9e9f6")},
+                 {"37", color("ade999")}, {"38", color("e0e7fb")},
+                 {"41", color("faf8f5")}, {"42", color("e5f1f8")},
+                 {"43", color("e5f1f8")}, {"44", color("5fe3dc")},
+                 {"45", color("ffbab9")}, {"46", color("82dff9")},
+                 {"47", color("cfc7dc")}, {"49", color("ffedb0")},
+                 {"50", color("80c2ff")}, {"53", color("e4ecf6")},
+                 {"54", color("ffd76c", 0.298f)}},
+                kBlock);
             as.fillColorExpr = StyleExpression::match(
-                "amap_fillkey",
-                {{"30001:61",
-                  StyleExpression::literal(
-                      {0.675f, 0.906f, 0.596f, 0.90f})},
-                 {"30001:63",
-                  StyleExpression::literal(
-                      {0.502f, 0.875f, 1.00f, 0.90f})}},
-                StyleExpression::literal(
-                    {0.937f, 0.953f, 0.965f, 1.00f}));
+                "amap_class",
+                {{"30001",
+                  // ⚠️ z14 主源 type2 水/绿地**不渲染**(透明):实测 z14 档案
+                  // 在该区域的河道是错位碎片(与 amap.com/z12 真河位差
+                  // ~300-900m),叠加 z12 水层会产生平行双带 = 「瓦片横条
+                  // 状错位」。水/绿地统一由常显 z12 水层(amap-water12)
+                  // 提供;本层只保留 30002 地块与路网/建筑/POI。
+                  StyleExpression::literal({0.0f, 0.0f, 0.0f, 0.0f})},
+                 {"30002", kRegionBlocks}},
+                kLand);
+            if (minimal_globe_demo::kHideAmapBuildingsForCompare) {
+                // [1:1 对照临时] 建筑透明 + 关挤出:深色挤出体是 fill 对照
+                // 的最大噪声源(纯黑建筑问题另行修)。90001 匹配不到时走
+                // 原 fillColorExpr。
+                as.buildingExtrusion = false;
+                as.fillColorExpr = StyleExpression::match(
+                    "amap_class",
+                    {{"90001",
+                      StyleExpression::literal(
+                          {0.0f, 0.0f, 0.0f, 0.0f})}},
+                    as.fillColorExpr);
+            }
             if (!gMvtWorkerPool) {
                 gMvtWorkerPool = std::make_shared<ThreadPool>(2);
             }
-            // 粗源:面(水/绿地)z10 网格。树固定 z10 档(overzoom 钳制)。
-            auto regionLayer = std::make_unique<FeatureRenderLayer>(
+            // 粗源 z10 type2 → VectorFill(V30 地球网格)。无地形时 drape
+            // 不出画,这条才是水/绿地的上屏路。先挂垫底。
+            FeatureRenderStyle rs;
+            rs.altitudeMode = FeatureAltitudeMode::Absolute;
+            rs.heightOffset = 2.5;
+            rs.fillColorExpr = as.fillColorExpr;
+            rs.lineColor = {0.0f, 0.0f, 0.0f, 0.0f};
+            rs.lineWidthPx = 0.0f;
+            rs.buildingExtrusion = false;
+            rs.stencilFillEnabled = false;
+            // [A/B] V30 细分与 CDT even-odd flood-fill 不兼容(细分后
+            // 填成碎点/网格,真机实证),保持关闭。
+            rs.globeFillMaxEdgeMeters = 0.0;
+            // z10 粗源只在远景显示:zoom ≤ 11.5(camHeight ≳ 13.8km)时
+            // 出粗面;近景(zoom > 11.5)让位给主源 z12-14 细面,避免
+            // 粗像素块盖在细面上 = 双源叠加「破破烂烂」。
+            rs.maxZoom = 11.5;
+            auto regionsLayer = std::make_unique<FeatureRenderLayer>(
                 "amap-regions", gRenderDevice.get(), Ellipsoid::WGS84());
-            regionLayer->setStyle(as);
-            gAmapRegionsLayer = regionLayer.get();  // Engine 将持有所有权
-            gEngine->addFeatureRenderLayer(std::move(regionLayer));
-            auto regionsCache =
-                std::make_shared<MvtTileFetchCacheT<
-                    std::vector<Feature>, AmapDecodeTraits<true>>>(
-                    [](const TileKey& k,
-                       MvtTileFetchCacheT<std::vector<Feature>,
-                                          AmapDecodeTraits<true>>::
-                           FetchCallback cb) {
-                        amapFetchTile(k, 1, std::move(cb));
-                    },
-                    minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+            regionsLayer->setStyle(rs);
+            gAmapRegionsLayer = regionsLayer.get();
+            gEngine->addFeatureRenderLayer(std::move(regionsLayer));
+            if (!gAmapRegionCache) {
+                gAmapRegionCache =
+                    std::make_shared<AmapDrapeImageryProvider::RegionCache>(
+                        [](const TileKey& k,
+                           AmapDrapeImageryProvider::RegionCache::
+                               FetchCallback cb) {
+                            amapFetchTile(k, 1, std::move(cb));
+                        },
+                        minimal_globe_demo::kMvtTileCacheDecoded,
+                        minimal_globe_demo::kMvtTileCacheRaw,
+                        gMvtWorkerPool);
+            }
             AmapRegionsVectorSource::Options rOpts;
             rOpts.tree.minZoom = 10;
             rOpts.tree.maxZoom = 10;
             rOpts.tree.scheme = TileScheme::createAmapGeographic();
+            rOpts.tree.maxTilesPerView = 256;
             AmapRegionsVectorSource::Sinks rSinks;
             FeatureRenderLayer* rLayer = gAmapRegionsLayer;
             rSinks.tessellate =
@@ -1183,9 +1305,76 @@ static bool createEngine() {
                 rLayer->dropTileMesh(key);
             };
             gAmapRegionsSource = std::make_unique<AmapRegionsVectorSource>(
-                rOpts, std::move(rSinks), regionsCache, gMvtWorkerPool);
-            LOGI("AmapE3: regions source installed (z10, amap 4326 grid)");
+                rOpts, std::move(rSinks), gAmapRegionCache, gMvtWorkerPool);
+            LOGI("AmapE3: regions VectorFill installed (z10 type2, globeFill 400m)");
+
+            // ---- 常显 z12 粗水层:复刻 amap.com 的「粗档水底 + 细档面」叠层。----
+            // 引擎 tile-bucket 做 LOD 替换(z14 子瓦加载后 z12 父瓦被替换),
+            // 而 z14 水体块在瓦缝有源数据空档(实测 280m)→ 只剩 z14 时河
+            // 流断。amap.com 同视野同时拉 z8/z10/z12/z14 全档,粗档水是
+            // 连续大掩膜(实测 z12 视野区 4.97% 连续河带),垫在细块下盖住
+            // 接缝。这里加一个树恒 z12、样式只出 30001(水/绿地)的常显层,
+            // 注册在 z14 主层之前 = 画在其下。
+            auto water12Layer = std::make_unique<FeatureRenderLayer>(
+                "amap-water12", gRenderDevice.get(), Ellipsoid::WGS84());
+            FeatureRenderStyle w12s;
+            w12s.altitudeMode = FeatureAltitudeMode::Absolute;
+            w12s.heightOffset = 2.5;
+            const auto kTransparent = StyleExpression::literal(
+                {0.0f, 0.0f, 0.0f, 0.0f});
+            w12s.fillColorExpr = StyleExpression::match(
+                "amap_class",
+                {{"30001",
+                  StyleExpression::match(
+                      "amap_kind",
+                      {{"61", kGreen}, {"63", kWater}, {"15", kWater}},
+                      kTransparent)}},
+                kTransparent);
+            w12s.lineColor = {0.0f, 0.0f, 0.0f, 0.0f};
+            w12s.lineWidthPx = 0.0f;
+            w12s.buildingExtrusion = false;
+            w12s.stencilFillEnabled = false;
+            w12s.globeFillMaxEdgeMeters = 0.0;
+            water12Layer->setStyle(w12s);
+            gAmapWater12Layer = water12Layer.get();
+            gEngine->addFeatureRenderLayer(std::move(water12Layer));
+            auto water12Cache =
+                std::make_shared<AmapDrapeImageryProvider::RegionCache>(
+                    [](const TileKey& k,
+                       AmapDrapeImageryProvider::RegionCache::
+                           FetchCallback cb) {
+                        amapFetchTile(k, 1, std::move(cb));
+                    },
+                    minimal_globe_demo::kMvtTileCacheDecoded,
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+            AmapRegionsVectorSource::Options w12Opts;
+            w12Opts.tree.minZoom = 12;
+            w12Opts.tree.maxZoom = 12;
+            w12Opts.tree.scheme = TileScheme::createAmapGeographic();
+            w12Opts.tree.maxTilesPerView = 256;
+            AmapRegionsVectorSource::Sinks w12Sinks;
+            FeatureRenderLayer* w12Layer = gAmapWater12Layer;
+            w12Sinks.tessellate =
+                [w12Layer](const TileKey& key,
+                           std::vector<Feature>&& features) {
+                    return FeatureRenderLayer::tessellateTileMesh(
+                        w12Layer->workerTessellationContextForArea(
+                            amapTileRectangle(key)),
+                        features);
+                };
+            w12Sinks.commit = [w12Layer](const TileKey& key,
+                                         FeatureTileMesh&& mesh) {
+                w12Layer->commitTileMesh(key, std::move(mesh));
+            };
+            w12Sinks.drop = [w12Layer](const TileKey& key) {
+                w12Layer->dropTileMesh(key);
+            };
+            gAmapWater12Source = std::make_unique<AmapRegionsVectorSource>(
+                w12Opts, std::move(w12Sinks), water12Cache, gMvtWorkerPool);
+            LOGI("AmapE3: water12 base installed (z12 type2, water/green only)");
+
             // 主源:路网/建筑/轨道 z14 网格。树 z12-14(近景放开细档)。
+            // type2 面由 regions 层出,本层解码期跳过。
             auto mainLayer = std::make_unique<FeatureRenderLayer>(
                 "amap-vector", gRenderDevice.get(), Ellipsoid::WGS84());
             mainLayer->setStyle(as);
@@ -1911,9 +2100,9 @@ static void renderFrame() {
                  static_cast<unsigned long long>(cs.rawHits));
         }
     }
-    // C2/E3:高德矢量三源驱动(与 gMvtSource 同契约:渲染线程 update)。
-    // 独立树(z10 粗档 / z12-14 主档 / z14 POI),共享 worker 池与版本探测。
-    if (gAmapRegionsSource || gAmapMainSource || gAmapPoiSource) {
+    // C2/E3:高德矢量几何源驱动(type2 VectorFill + 主源 + POI)。
+    if (gAmapRegionsSource || gAmapWater12Source || gAmapMainSource ||
+        gAmapPoiSource) {
         amapCleanupCompleted();  // 渲染线程剪除已完成句柄(见该函数注释)
         const Ellipsoid& wgs84 = Ellipsoid::WGS84();
         const Cartographic camCarto =
@@ -1926,10 +2115,27 @@ static void renderFrame() {
         const double camHeight = std::max(1.0, camCarto.height());
         bool amapPending = false;
         if (gAmapRegionsSource) {
-            gAmapRegionsSource->update(viewRect, camHeight);
+            // z10 粗源 LOD 近景让位(与 regions 层 maxZoom=11.5 同口径):
+            // zoom > 11.5 时不更新粗源树,不再拉取/镶嵌 z10 面,避免与
+            // 主源 z12-14 细面叠加成「破破烂烂」的双层边,也省带宽。
+            const double regionsZoom = std::min(
+                24.0, std::max(0.0,
+                               std::log2(4.0e7 / camHeight)));
+            if (regionsZoom <= 11.5) {
+                gAmapRegionsSource->update(viewRect, camHeight);
+                amapPending = amapPending ||
+                              gAmapRegionsSource->tree().pendingCount() > 0 ||
+                              gAmapRegionsSource->hasTessellationInFlight();
+            }
+        }
+        // 常显 z12 粗水层:与 regions 层不同,近景也拉取(它垫在细块下
+        // 盖住 z14 瓦缝空档,是 amap.com 同款叠层)。树恒 z12,不随
+        // 相机 zoom 门控。
+        if (gAmapWater12Source) {
+            gAmapWater12Source->update(viewRect, camHeight);
             amapPending = amapPending ||
-                          gAmapRegionsSource->tree().pendingCount() > 0 ||
-                          gAmapRegionsSource->hasTessellationInFlight();
+                          gAmapWater12Source->tree().pendingCount() > 0 ||
+                          gAmapWater12Source->hasTessellationInFlight();
         }
         if (gAmapMainSource) {
             gAmapMainSource->update(viewRect, camHeight);
@@ -2117,15 +2323,21 @@ static void renderFrame() {
         // 北极星 Phase 0 测量台:每帧(采样)打相机真实位姿,消除"nadir/oblique"
         // 猜测——用它标注每个 measure stop 的实际视角。
         const auto& camTrace = gEngine->presentationTrace().camera;
+        const Cartographic camPos =
+            Ellipsoid::WGS84().cartesianToCartographic(
+                gEngine->camera().position());
         LOGI("CamPose frame=%llu center=%.5f,%.5f camH=%.1f targetH=%.1f "
-             "pitchDeg=%.2f headingDeg=%.2f",
+             "pitchDeg=%.2f headingDeg=%.2f camPos=%.5f,%.5f,%.1f",
              static_cast<unsigned long long>(frameId),
              camTrace.targetLongitudeDegrees,
              camTrace.targetLatitudeDegrees,
              camTrace.cameraHeightMeters,
              camTrace.targetHeightMeters,
              camTrace.pitchRadians * 180.0 / M_PI,
-             camTrace.headingRadians * 180.0 / M_PI);
+             camTrace.headingRadians * 180.0 / M_PI,
+             camPos.longitude() * 180.0 / M_PI,
+             camPos.latitude() * 180.0 / M_PI,
+             camPos.height());
     }
 
     // ---- 阶段 3/4/5 机制信号 ----

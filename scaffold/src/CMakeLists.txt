@@ -541,6 +541,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/XYZImageryProvider.cpp
     earth_engine/providers/VectorDrapeImageryProvider.h
     earth_engine/providers/VectorDrapeImageryProvider.cpp
+    earth_engine/providers/AmapDrapeImageryProvider.h
+    earth_engine/providers/AmapDrapeImageryProvider.cpp
     earth_engine/providers/MvtRectCoverage.h
     earth_engine/providers/RoadFieldSource.h
     earth_engine/providers/RoadFieldSource.cpp

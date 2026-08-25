@@ -97,6 +97,28 @@ VectorRasterStyle makeMvtDrapeStyleNight() {
     return style;
 }
 
+VectorRasterStyle makeAmapDrapeStyle() {
+    VectorRasterStyle style;
+    style.background = {0, 0, 0, 0};
+
+    VectorRasterLayerPaint land;
+    land.layer = "*";
+    land.filter = StyleFilter::negate(StyleFilter::in(
+        "amap_fillkey", {"30001:61", "30001:63"}));
+    land.fillColor = {239, 243, 246, 255};  // #eff3f6
+
+    VectorRasterLayerPaint park;
+    park.layer = "30001:61";
+    park.fillColor = {172, 231, 152, 230};  // #ace798
+
+    VectorRasterLayerPaint water;
+    water.layer = "30001:63";
+    water.fillColor = {128, 223, 255, 230};  // #80dfff
+
+    style.layers = {land, park, water};
+    return style;
+}
+
 VectorRasterStyle makeMvtRoadFieldStyle() {
     using C = StyleFilter::Compare;
     // highway 分级:与几何通路退役前的分级表同源(zoom 固定于**页 z**,

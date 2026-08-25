@@ -568,7 +568,8 @@ void FeatureRenderLayer::tessellateFeatureInto(
             } else {
                 TessellatedFill fill = PolygonTessellator::tessellate(
                     *geometry, ctx.ellipsoid, tessHeightOffset,
-                    steinerPoints.empty() ? nullptr : &steinerPoints);
+                    steinerPoints.empty() ? nullptr : &steinerPoints,
+                    ctx.style.globeFillMaxEdgeMeters);
                 if (!fill.positions.empty() && !fill.fillIndices.empty()) {
                     ensureOrigin(fill.positions.front());
                     const uint32_t base =
@@ -588,6 +589,9 @@ void FeatureRenderLayer::tessellateFeatureInto(
                 }
             }
             // 外环 outline。孔环 outline 留后续。
+            // ⚠️ 默认关(fillOutlineEnabled=false):裁剪到瓦片边界的面外环
+            // 含瓦片角点,用路网配色描边会在瓦片角画出成簇灰色射线。
+            if (!ctx.style.fillOutlineEnabled) break;
             if (stencilLine) {
                 // P6d:闭合墙带体(首尾 wrap)。
                 appendLineVolume(ctx, geometry->rings.front(), /*closed=*/true,
@@ -2043,6 +2047,19 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     syncLabelWorkTicket();
     if (!visible_ || !renderDevice_) return;
     if (!frameState.camera) return;
+
+    // LOD 粗源 zoom 门控:近景由主源细面承接时,粗源整层不发命令。
+    // zoom 口径与 widthExpr 一致(log2(赤道周长/视高))。
+    if (style_.minZoom > 0.0 || style_.maxZoom < 24.0) {
+        const double camHeight = ellipsoid_.cartesianToCartographic(
+                                     frameState.camera->position())
+                                     .height();
+        const double zoomLevel = std::min(
+            24.0, std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
+        if (zoomLevel < style_.minZoom || zoomLevel > style_.maxZoom) {
+            return;
+        }
+    }
 
     // 文字标注(P5b):缓存图集指针(重镶/预览路径无 Renderer 引用);字体
     // 就绪状态翻转 → 全部桶重镶补标注(字体注入通常晚于要素导入)。

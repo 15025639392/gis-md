@@ -1212,6 +1212,12 @@ add_executable(test_vector_drape_provider
 target_link_libraries(test_vector_drape_provider PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_vector_drape_provider COMMAND test_vector_drape_provider)
 
+add_executable(test_amap_drape_provider
+    unit/providers/test_amap_drape_provider.cpp
+)
+target_link_libraries(test_amap_drape_provider PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_amap_drape_provider COMMAND test_amap_drape_provider)
+
 add_executable(test_raster_overlay_lifecycle
     unit/providers/test_raster_overlay_lifecycle.cpp
 )

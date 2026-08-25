@@ -101,11 +101,27 @@ int64_t zigzag(uint64_t v) {
 }
 
 void decodeBlob(const uint8_t* blob, size_t len,
-                std::vector<std::pair<double, double>>& ring) {
+                std::vector<std::pair<double, double>>& ring,
+                bool skipHeader = false) {
     Reader r;
     r.p = blob;
     r.n = len;
     int64_t x = 0, y = 0;
+    if (skipHeader) {
+        // type2 区域 ring blob 前 2 个 varint 是**头部**,不是坐标:
+        //   [10, zigzag(±(n+1))]
+        // 10 为常量类型标记(实测 604/604 blob,z10 与 z14 一致);第二项
+        // 是带符号点数(环点数 n):y≥0 → varint=2(n+1),y<0 → 2n+1,
+        // 即 zigzag 解码后 = ±(n+1)。环本体从第 3 个 varint 开始
+        // (绝对首点 + zigzag 增量)。
+        //
+        // ⚠️ 不跳头部 = 把头部 (5, ±(n+1)) 当成环首点:每个环多一个
+        // 「瓦内假点 + 大跳变」边,河流/绿地掩膜被切成大量碎片
+        // (真机破破烂烂的根因;实测水环 522/523 首跳 >80)。
+        (void)r.varint();
+        (void)r.varint();
+        if (!r.ok) return;
+    }
     while (r.i < r.n && r.ok) {
         const uint64_t dx = r.varint();
         if (!r.ok || r.i >= r.n) break;
@@ -182,7 +198,8 @@ void parseFeature(Reader& f, int classCode, int geomType, int layerType,
             } else if (field == 6 && layerType == 2) {
                 // type2 区域:Feature #6 为 repeated ring blob。
                 std::vector<std::pair<double, double>> ring;
-                decodeBlob(sub, static_cast<size_t>(len), ring);
+                decodeBlob(sub, static_cast<size_t>(len), ring,
+                           /*skipHeader=*/true);
                 if (!ring.empty()) feat.rings.push_back(std::move(ring));
             } else if (field == 6) {
                 // 名称(标签/道路名),字符串。

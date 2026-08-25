@@ -3,10 +3,12 @@
 #include "ConstrainedDelaunay.h"
 #include "../core/geodesy/Cartographic.h"
 #include "../core/geodesy/Ellipsoid.h"
+#include "../core/math/Vec3.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <optional>
 #include <unordered_map>
 
 namespace earth_engine {
@@ -28,13 +30,39 @@ uint64_t coordKey(double lng, double lat) {
     return a * 1000003ull ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2));
 }
 
+constexpr int kMaxPiecesPerEdge = 256;
+constexpr int kMaxInteriorSteiner = 4096;
+constexpr double kEarthRadiusMeters = 6378137.0;
+
+bool pointInRingsEvenOdd(double lng, double lat,
+                         const std::vector<std::vector<Cartographic>>& rings) {
+    bool inside = false;
+    for (const auto& ring : rings) {
+        const size_t n = ring.size();
+        if (n < 3) continue;
+        for (size_t i = 0, j = n - 1; i < n; j = i++) {
+            const double yi = ring[i].latitude();
+            const double yj = ring[j].latitude();
+            if ((yi > lat) != (yj > lat)) {
+                const double xAtY =
+                    ring[j].longitude() +
+                    (ring[i].longitude() - ring[j].longitude()) *
+                        (lat - ring[j].latitude()) / (yi - yj);
+                if (lng < xAtY) inside = !inside;
+            }
+        }
+    }
+    return inside;
+}
+
 } // namespace
 
 TessellatedFill PolygonTessellator::tessellate(
     const Feature& feature,
     const Ellipsoid& ellipsoid,
     double heightOffset,
-    const std::vector<Cartographic>* steinerPoints) {
+    const std::vector<Cartographic>* steinerPoints,
+    double maxEdgeMeters) {
     TessellatedFill out;
     if (feature.type != GeometryType::Polygon || feature.rings.empty()) {
         return out;
@@ -84,10 +112,97 @@ TessellatedFill PolygonTessellator::tessellate(
         }
     }
 
+    // 地球网格:约束边按椭球弦长切开,再在面内撒 Steiner。不做的话 CDT
+    // 对角线可以跨过整个水面/地块,斜视近裁就是射线。
+    if (maxEdgeMeters > 0.0 && !constraints.empty()) {
+        std::vector<ConstrainedDelaunay::Edge> split;
+        std::vector<uint32_t> newOutline;
+        split.reserve(constraints.size() * 2);
+        newOutline.reserve(outline.size() * 2);
+        for (const auto& e : constraints) {
+            const Cartographic& ca = uniqueCart[e.first];
+            const Cartographic& cb = uniqueCart[e.second];
+            const Vec3 pa = ellipsoid.cartographicToCartesian(Cartographic(
+                ca.longitude(), ca.latitude(), ca.height() + heightOffset));
+            const Vec3 pb = ellipsoid.cartographicToCartesian(Cartographic(
+                cb.longitude(), cb.latitude(), cb.height() + heightOffset));
+            const double chord = (pb - pa).length();
+            const int pieces = std::max(
+                1, std::min(kMaxPiecesPerEdge,
+                            static_cast<int>(std::ceil(chord / maxEdgeMeters))));
+            uint32_t prev = e.first;
+            for (int p = 1; p < pieces; ++p) {
+                const double t = static_cast<double>(p) / static_cast<double>(pieces);
+                const Vec3 mix = pa * (1.0 - t) + pb * t;
+                const std::optional<Vec3> surf =
+                    ellipsoid.tryScaleToGeodeticSurface(mix);
+                if (!surf.has_value()) continue;
+                const Cartographic cc = ellipsoid.cartesianToCartographic(*surf);
+                const double h = ca.height() + (cb.height() - ca.height()) * t;
+                const uint32_t id = internUnique(
+                    Cartographic(cc.longitude(), cc.latitude(), h));
+                if (id == prev) continue;
+                split.emplace_back(prev, id);
+                newOutline.push_back(prev);
+                newOutline.push_back(id);
+                prev = id;
+            }
+            if (e.second != prev) {
+                split.emplace_back(prev, e.second);
+                newOutline.push_back(prev);
+                newOutline.push_back(e.second);
+            }
+        }
+        constraints = std::move(split);
+        outline = std::move(newOutline);
+    }
+
     // 内部 Steiner 散点(P3 贴地):进唯一点表参与 CDT,无约束边。落在
     // 环外/与已有点重合的经 intern 去重与 flood-fill 自然无害。
     if (steinerPoints) {
         for (const Cartographic& c : *steinerPoints) internUnique(c);
+    }
+
+    if (maxEdgeMeters > 0.0 && !uniqueCart.empty()) {
+        double west = uniqueCart[0].longitude();
+        double east = uniqueCart[0].longitude();
+        double south = uniqueCart[0].latitude();
+        double north = uniqueCart[0].latitude();
+        for (const Cartographic& c : uniqueCart) {
+            west = std::min(west, c.longitude());
+            east = std::max(east, c.longitude());
+            south = std::min(south, c.latitude());
+            north = std::max(north, c.latitude());
+        }
+        double step = maxEdgeMeters / kEarthRadiusMeters;
+        const double spanLng = std::max(0.0, east - west);
+        const double spanLat = std::max(0.0, north - south);
+        // bbox 已经短于 maxEdge → 边也不会拆,内部再撒点只会把小建筑
+        // 打成几十三角,host 测例/近景 footprint 都吃亏。
+        int nx = static_cast<int>(std::floor(spanLng / step));
+        int ny = static_cast<int>(std::floor(spanLat / step));
+        if (nx >= 1 || ny >= 1) {
+            nx = std::max(1, nx);
+            ny = std::max(1, ny);
+            if (nx * ny > kMaxInteriorSteiner) {
+                const double scale = std::sqrt(
+                    static_cast<double>(nx * ny) /
+                    static_cast<double>(kMaxInteriorSteiner));
+                step *= scale;
+                nx = std::max(1, static_cast<int>(std::floor(spanLng / step)));
+                ny = std::max(1, static_cast<int>(std::floor(spanLat / step)));
+            }
+            for (int iy = 0; iy < ny; ++iy) {
+                const double lat = south + (iy + 0.5) * step;
+                if (lat >= north) break;
+                for (int ix = 0; ix < nx; ++ix) {
+                    const double lng = west + (ix + 0.5) * step;
+                    if (lng >= east) break;
+                    if (!pointInRingsEvenOdd(lng, lat, feature.rings)) continue;
+                    internUnique(Cartographic(lng, lat, 0.0));
+                }
+            }
+        }
     }
 
     if (points2D.size() < 3 || constraints.empty()) return out;

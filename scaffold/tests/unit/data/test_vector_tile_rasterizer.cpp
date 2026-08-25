@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
 
+#include "earth_engine/data/Feature.h"
 #include "earth_engine/data/VectorTileRasterizer.h"
+#include "earth_engine/core/geodesy/Cartographic.h"
 
 using namespace earth_engine;
 
@@ -265,4 +267,73 @@ TEST(VectorTileRasterizerRectTest, OffCanvasCullKeepsEnclosingRing) {
     const auto outside = rasterizeMvtRect(
         refs, MercatorRect{0.6, 0.1, 0.7, 0.2}, 12, style, 16);
     EXPECT_EQ(pixel(outside, 8, 8).a, 0);
+}
+
+namespace {
+
+Feature lonLatRectPolygon(double west, double south, double east, double north,
+                          std::string fillKey) {
+    Feature f;
+    f.type = GeometryType::Polygon;
+    f.rings = {{Cartographic(west, south), Cartographic(east, south),
+                Cartographic(east, north), Cartographic(west, north),
+                Cartographic(west, south)}};
+    if (!fillKey.empty()) f.properties["amap_fillkey"] = std::move(fillKey);
+    return f;
+}
+
+}  // namespace
+
+TEST(VectorTileRasterizerFeatureTest, PolygonFillsCorrectHalfOfWorld) {
+    // 西半球矩形 → z0 整幅 unit 平面的左半应填、右半空。
+    Feature poly = lonLatRectPolygon(-3.141592653589793, -0.8, 0.0, 0.8,
+                                     "30001:63");
+    VectorRasterLayerPaint paint;
+    paint.layer = "30001:63";
+    paint.fillColor = {0, 0, 255, 255};
+    VectorRasterStyle style;
+    style.layers = {paint};
+    style.supersample = 1;
+
+    const auto img = rasterizeFeaturePolygonsRect(
+        {&poly}, MercatorRect{0.0, 0.0, 1.0, 1.0}, 10, style, 32);
+    ASSERT_EQ(img.size, 32);
+    EXPECT_EQ(pixel(img, 8, 16).a, 255) << "西半球应填充";
+    EXPECT_EQ(pixel(img, 24, 16).a, 0) << "东半球应透明";
+}
+
+TEST(VectorTileRasterizerFeatureTest, FillKeyMismatchIsSkipped) {
+    Feature poly = lonLatRectPolygon(-1.0, -0.5, 1.0, 0.5, "30001:61");
+    VectorRasterLayerPaint paint;
+    paint.layer = "30001:63";
+    paint.fillColor = {0, 0, 255, 255};
+    VectorRasterStyle style;
+    style.layers = {paint};
+    style.supersample = 1;
+    const auto img = rasterizeFeaturePolygonsRect(
+        {&poly}, MercatorRect{0.0, 0.0, 1.0, 1.0}, 10, style, 16);
+    EXPECT_EQ(pixel(img, 8, 8).a, 0);
+}
+
+TEST(VectorTileRasterizerFeatureTest, HoleIsCarvedOut) {
+    Feature poly;
+    poly.type = GeometryType::Polygon;
+    poly.rings = {
+        {Cartographic(-1.0, -0.5), Cartographic(1.0, -0.5),
+         Cartographic(1.0, 0.5), Cartographic(-1.0, 0.5)},
+        {Cartographic(-0.2, -0.1), Cartographic(-0.2, 0.1),
+         Cartographic(0.2, 0.1), Cartographic(0.2, -0.1)},
+    };
+    poly.properties["amap_fillkey"] = "30001:63";
+    VectorRasterLayerPaint paint;
+    paint.layer = "30001:63";
+    paint.fillColor = {0, 255, 0, 255};
+    VectorRasterStyle style;
+    style.layers = {paint};
+    style.supersample = 1;
+    const auto img = rasterizeFeaturePolygonsRect(
+        {&poly}, MercatorRect{0.0, 0.0, 1.0, 1.0}, 10, style, 64);
+    // lng=-0.6 → unit x≈0.405 → px≈26,在外环内、孔外。
+    EXPECT_GT(pixel(img, 26, 32).a, 0) << "外环内应填充";
+    EXPECT_EQ(pixel(img, 32, 32).a, 0) << "孔中心应挖空";
 }

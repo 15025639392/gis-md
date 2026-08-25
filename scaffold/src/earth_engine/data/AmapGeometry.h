@@ -71,6 +71,23 @@ std::vector<std::pair<double, double>> amapClipPolygonRing(
     const std::vector<std::pair<double, double>>& ring,
     double minX, double maxX, double minY, double maxY);
 
+/// 裁剪后的开放环**沿裁剪窗口闭合**(不是直线)。
+///
+/// Sutherland–Hodgman 裁剪把跨窗口环切成一段开放弧:首尾落在窗口边界上,
+/// 数据语义里真正补完它的边是**窗口边界的路径**(参考高德 JSAPI
+/// clipPolygon 的 polygonclip 语义)。若首尾在窗口边界上,这里沿边界补
+/// 路径(两条候选路径选与环自身绕向同号者 —— 归一化后外环 area>0、
+/// 孔 area<0,闭合不得翻转绕向);首尾在窗口内 = 完全在窗口内的小水体
+/// (水塘/河流段),直线补首点。region blob 头已正确跳过(见
+/// AmapVectorTile.cpp),环是真实边界,不再需要 ratio 退化过滤 ——
+/// 旧过滤为「头部误当首点」产生的假碎片而设,会误杀细长河流段。
+///
+/// @param ring 裁剪后的开放环(canonical tile-local 坐标,可空)。
+/// @return 闭合后的环;不足 3 点返回空。
+std::vector<std::pair<double, double>> amapCloseRingAlongWindow(
+    std::vector<std::pair<double, double>> ring,
+    double winMinX, double winMaxX, double winMinY, double winMaxY);
+
 /// 一个解码层 → 引擎 Feature 列表。
 /// - type1/4:每个 ring 一条 LineString(properties["amap_class"]=classCode);
 /// - type2/3:环先经 amapNormalizeEvenOddWinding 归一化,每个「外环+孔环」

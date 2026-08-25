@@ -57,6 +57,11 @@ protected:
         ASSERT_TRUE(renderer_->initialize());
         layer_ = std::make_unique<FeatureRenderLayer>(
             "test-features", &device_, Ellipsoid::WGS84());
+        // 命令/桶契约测例锁精确拓扑,不是地球网格。生产默认 400m,
+        // densify 由 GlobeFillDensifySplitsLargePolygon 单独打开。
+        FeatureRenderStyle style = layer_->style();
+        style.globeFillMaxEdgeMeters = 0.0;
+        layer_->setStyle(style);
 
         camera_.lookAt(Vec3(1.5e7, 0.0, 0.0), Vec3(0.0, 0.0, 0.0),
                        Vec3(0.0, 0.0, 1.0));
@@ -86,6 +91,10 @@ protected:
 // ============================================================
 
 TEST_F(FeatureRenderLayerTest, PolygonEmitsFillAndOutlineCommands) {
+    // 本测例验证「fill + outline」双命令拓扑:显式打开描边(生产默认关)。
+    FeatureRenderStyle style = layer_->style();
+    style.fillOutlineEnabled = true;
+    layer_->setStyle(style);
     layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
 
     RenderCommandList commands = build();
@@ -123,6 +132,56 @@ TEST_F(FeatureRenderLayerTest, PolygonEmitsFillAndOutlineCommands) {
     EXPECT_EQ(24, line->indexCount);
     // 方形 CDT:4 顶点 → 2 三角形 = 6 索引
     EXPECT_EQ(6, fill->indexCount);
+}
+
+TEST_F(FeatureRenderLayerTest, PolygonDefaultEmitsFillOnly) {
+    // 高德复刻默认不描面外环(裁剪后外环含瓦片角点,描边会甩出灰射线);
+    // 默认样式下多边形只出 fill 命令。
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(RenderCommandKind::VectorFill, commands[0].kind);
+}
+
+TEST_F(FeatureRenderLayerTest, MaxZoomGatesCoarseLodLayer) {
+    // LOD 粗源近景让位:zoom > maxZoom 时整层不发命令(主源细面承接)。
+    FeatureRenderStyle style = layer_->style();
+    style.maxZoom = 11.5;
+    layer_->setStyle(style);
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
+
+    // 相机 ~3.2km 高(zoom≈13.6 > 11.5):粗源被门控,无命令。
+    const auto surface =
+        Ellipsoid::WGS84().cartographicToCartesian(Cartographic(0, 0));
+    camera_.lookAt(surface * 1.0005, Vec3(0.0, 0.0, 0.0),
+                   Vec3(0.0, 0.0, 1.0));
+    RenderCommandList commands = build();
+    EXPECT_TRUE(commands.empty());
+
+    // 放远相机(恢复 fixture 高空位姿,zoom≈2):恢复渲染。
+    camera_.lookAt(Vec3(1.5e7, 0.0, 0.0), Vec3(0.0, 0.0, 0.0),
+                   Vec3(0.0, 0.0, 1.0));
+    commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(RenderCommandKind::VectorFill, commands[0].kind);
+}
+
+TEST_F(FeatureRenderLayerTest, GlobeFillDensifySplitsLargePolygon) {
+    // 0.1° ≈ 11km 方形,默认 400m 网格必须把 2 三角拆开,否则斜视近裁
+    // 会把 ECEF 大三角裁成射线(VectorFill 水系/绿地的根因)。
+    FeatureRenderStyle style = layer_->style();
+    style.globeFillMaxEdgeMeters = 400.0;
+    layer_->setStyle(style);
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
+    RenderCommandList commands = build();
+    const RenderCommand* fill = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorFill) fill = &cmd;
+    }
+    ASSERT_NE(nullptr, fill);
+    EXPECT_GT(fill->indexCount, 6);
+    EXPECT_EQ(0, fill->indexCount % 3);
 }
 
 TEST_F(FeatureRenderLayerTest, LineStringEmitsOnlyLineCommand) {
@@ -417,6 +476,9 @@ TEST_F(FeatureRenderLayerTest, CrossTileWindowAbsorbsGenerationDrift) {
 TEST_F(FeatureRenderLayerTest, OutOfHorizonBucketEmitsNoCommands) {
     // 视口桶裁剪:相机(星下点 0°E/0°N,高 ~8.6e6m,地平线角 ~65°)看不到
     // 的桶不出命令。视野内 polygon 出 fill+outline 两条;150°E 的桶被裁。
+    FeatureRenderStyle style = layer_->style();
+    style.fillOutlineEnabled = true;
+    layer_->setStyle(style);
     layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
     layer_->store().addFeature(makePolygon(150.0, 0.0, 0.1));
 
@@ -431,6 +493,9 @@ TEST_F(FeatureRenderLayerTest, OutOfHorizonBucketEmitsNoCommands) {
 TEST_F(FeatureRenderLayerTest, OversizedFeatureDrawnRegardlessOfView) {
     // 超大要素(bounds 跨 cell)归 oversized 桶,视口查询恒纳入——即便
     // 其中心在地平线外,也保守出命令(不可漏画)。
+    FeatureRenderStyle style = layer_->style();
+    style.fillOutlineEnabled = true;
+    layer_->setStyle(style);
     layer_->store().addFeature(makePolygon(150.0, 0.0, 5.0));
 
     RenderCommandList commands = build();
@@ -520,6 +585,9 @@ TEST_F(FeatureRenderLayerTest, VerticesAreBucketOriginRelative) {
 
 TEST_F(FeatureRenderLayerTest, DirtyBucketRebuildIsIncremental) {
     // 两个远隔要素 → 两个桶(cell 0.02rad,隔 >2° 必不同桶)
+    FeatureRenderStyle style = layer_->style();
+    style.fillOutlineEnabled = true;
+    layer_->setStyle(style);
     const FeatureId idA =
         layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
     layer_->store().addFeature(makePolygon(10.0, 33.0, 0.1));
@@ -560,6 +628,9 @@ TEST_F(FeatureRenderLayerTest, RemovingLastFeatureDropsBucket) {
 
 TEST_F(FeatureRenderLayerTest, SameBucketFeaturesShareOneCommandPair) {
     // 两个近邻小要素落同桶 → 仍是一对 fill/line 命令(合桶绘制)
+    FeatureRenderStyle style = layer_->style();
+    style.fillOutlineEnabled = true;
+    layer_->setStyle(style);
     layer_->store().addFeature(makePolygon(6.000, 29.000, 0.002));
     layer_->store().addFeature(makePolygon(6.003, 29.003, 0.002));
 
@@ -1420,6 +1491,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
 TEST_F(FeatureRenderLayerTest, ClampedPolygonOutlineBecomesClosedLineVolume) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.fillOutlineEnabled = true;
     layer_->setStyle(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
@@ -1488,6 +1560,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineDashSplitsIntoClosedBodies) {
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
     style.lineDashPeriodMeters = 300.0f;
     style.lineDashOnFraction = 0.5f;
+    style.fillOutlineEnabled = true;
     layer_->setStyle(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
