@@ -35,6 +35,7 @@ android {
         // debugSymbolLevel FULL 保留符号以便 simpleperf 归因。
         // 用法:./build_apk.sh release   (或 ./gradlew assembleRelease)
         release {
+            applicationIdSuffix ".codexverify"
             signingConfig signingConfigs.debug
             minifyEnabled false
             ndk {

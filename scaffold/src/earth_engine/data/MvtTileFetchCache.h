@@ -87,6 +87,17 @@ public:
     };
     Stats stats() const;
 
+    /// State of the last failure for a key.  The consumer uses this to keep
+    /// the tile tree retryable during the cache's backoff window, while still
+    /// honoring the cache's bounded terminal-failure policy.
+    struct FailureInfo {
+        bool known = false;
+        bool retryable = false;
+        double retryNotBeforeMs = 0.0;
+        int failureCount = 0;
+    };
+    FailureInfo failureInfo(const TileKey& key) const;
+
 private:
     struct State {
         std::mutex mutex;
@@ -368,6 +379,21 @@ MvtTileFetchCacheT<Payload, DecodeTraits>::stats() const {
                  state_->map.size(),    state_->rawMap.size(),
                  state_->rawBytes,      state_->residentBytes,
                  state_->failureSkips};
+}
+
+template <typename Payload, typename DecodeTraits>
+typename MvtTileFetchCacheT<Payload, DecodeTraits>::FailureInfo
+MvtTileFetchCacheT<Payload, DecodeTraits>::failureInfo(const TileKey& key) const {
+    const uint64_t dk = detail::packDataKey(key.z, key.x, key.y);
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    auto it = state_->failures.find(dk);
+    if (it == state_->failures.end()) return {};
+    const auto& f = it->second;
+    return FailureInfo{
+        true,
+        f.failureCount <= TileRetryBackoffPolicy::kMaxSourceRetries,
+        f.retryNotBeforeMs,
+        f.failureCount};
 }
 
 /// MVT 解码特质:MvtTile 载荷 + decodeMvtTile 字节解码 + 近似字节统计。

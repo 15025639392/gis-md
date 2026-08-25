@@ -66,8 +66,9 @@ struct AmapPoiDecodeTraits {
 };
 
 /// amap 解码特质:字节流 → Feature 列表。
-/// RegionsOnly 编译期开关:粗源(z10 区域)只要 type2 面,主源(z14)只要
-/// type1/3/4 —— 过滤在 worker 解码期做,不进缓存。
+/// RegionsOnly 编译期开关:粗源(z10/z12 区域)保留 type2 面,主源(z12-14)
+/// 保留 type1/3/4 与 30002 地块面，过滤 30001 水/绿地——过滤在 worker
+/// 解码期做,不进缓存。
 template <bool RegionsOnly>
 struct AmapDecodeTraits {
     static bool decode(const uint8_t* data, size_t size,
@@ -100,7 +101,8 @@ struct AmapDecodeTraits {
 using AmapRegionsVectorSource = VectorTileSourceT<
     std::vector<Feature>, AmapDecodeTraits<true>, AmapToFeatures>;
 
-/// amap 主源(z14:路网/建筑/轨道,type1/3/4)。
+/// amap 主源(z12-14:路网/建筑/轨道与地块,type1/2/3/4；30001 水/绿地
+/// 由 z12 water source 唯一提供)。
 using AmapMainVectorSource = VectorTileSourceT<
     std::vector<Feature>, AmapDecodeTraits<false>, AmapToFeatures>;
 

@@ -28,10 +28,19 @@ fi
 
 echo "=== APK built: $(ls -lh "$APK" | awk '{print $5}') ==="
 
+# Release has an applicationIdSuffix so it can coexist with the debug/base
+# install.  Keep install and launch on the same package; launching the base
+# package here used to make visual verification run an older APK by mistake.
+PACKAGE="com.earthengine.minimalglobe.codexverify"
+# The manifest keeps the Java class in the base namespace even when the
+# release applicationId gets the .codexverify suffix.
+ACTIVITY="$PACKAGE/com.earthengine.minimalglobe.MainActivity"
+
 echo "=== Installing to device ==="
 adb install -r "$APK"
 
 echo "=== Launching app ==="
-adb shell am start -n com.earthengine.minimalglobe/.MainActivity
+adb shell am force-stop "$PACKAGE"
+adb shell am start -n "$ACTIVITY"
 
 echo "=== Done ==="

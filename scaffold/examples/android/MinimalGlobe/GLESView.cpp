@@ -1373,8 +1373,9 @@ static bool createEngine() {
                 w12Opts, std::move(w12Sinks), water12Cache, gMvtWorkerPool);
             LOGI("AmapE3: water12 base installed (z12 type2, water/green only)");
 
-            // 主源:路网/建筑/轨道 z14 网格。树 z12-14(近景放开细档)。
-            // type2 面由 regions 层出,本层解码期跳过。
+            // 主源:路网/建筑/轨道与 30002 地块 z12-14 网格。30001
+            // 水/绿地在 AmapDecodeTraits<false> 解码期过滤，由 water12
+            // 唯一提供，避免 z14 错位水体参与 tessellation。
             auto mainLayer = std::make_unique<FeatureRenderLayer>(
                 "amap-vector", gRenderDevice.get(), Ellipsoid::WGS84());
             mainLayer->setStyle(as);
@@ -1395,6 +1396,10 @@ static bool createEngine() {
             mOpts.tree.minZoom = 12;
             mOpts.tree.maxZoom = 14;
             mOpts.tree.scheme = TileScheme::createAmapGeographic();
+            // 高德矢量主档位是 z12/z14；z13 manifest 虽返回成功但载荷
+            // 为空。让树在 canonical z13 时稳定使用 z12，避免空档参与
+            // LOD 换代；达到 z14 的近景仍使用完整细档。
+            mOpts.tree.supportedZooms = {12, 14};
             // 近景 z14 视口约 84 瓦(1.5km 高),默认 64 会把它压到 z13
             // —— 而 z13 组是空瓦(81B),主源将永远无内容。抬高闸让 z14
             // 进入;瓦数上界仍由相机视口矩形天然限制(见 horizonViewRect)。

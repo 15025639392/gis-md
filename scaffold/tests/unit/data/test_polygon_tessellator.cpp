@@ -74,6 +74,15 @@ TEST(PolygonTessellatorTest, PolygonWithHole) {
     EXPECT_EQ(16u, fill.outlineIndices.size()); // 外 4 + 孔 4 = 8 边
 }
 
+TEST(PolygonTessellatorTest, CoincidentEdgesCancelModuloTwo) {
+    // 两个重合方环在 even-odd 语义下互相抵消。约束若只做集合去重,
+    // 会错误保留一堵墙并填出整块面；按出现次数取奇偶后应为空。
+    const auto ring = square(0.12, 0.12, 0.13, 0.13, false);
+    const auto fill = PolygonTessellator::tessellate(
+        polygon({ring, ring}), Ellipsoid::WGS84());
+    EXPECT_TRUE(fill.fillIndices.empty());
+}
+
 TEST(PolygonTessellatorTest, NonPolygonReturnsEmpty) {
     Feature pt;
     pt.type = GeometryType::Point;

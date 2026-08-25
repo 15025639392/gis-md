@@ -176,7 +176,12 @@ private:
         /// 带规则代次:setLayerRules 之后在途的任务用的是旧规则,回来时按
         /// 代次丢弃 —— 否则旧规则的网格会盖掉新规则刚镶好的。
         std::vector<std::tuple<TileKey, FeatureTileMesh, uint64_t>> meshes;
-        std::vector<TileKey> failed;
+        struct FailedTile {
+            TileKey key;
+            double retryNotBeforeMs = 0.0;
+            bool retryable = false;
+        };
+        std::vector<FailedTile> failed;
     };
 
     void ingestInbox();
@@ -209,6 +214,7 @@ private:
     /// gating 账本对账槽(见 syncWorkTickets)。仅喂审计,当前零行为影响。
     WorkTicketSlot loadSlot_;    ///< Landing: fetch/decode + worker 镶嵌在途
     WorkTicketSlot commitSlot_;  ///< Pumped: 已镶好待 commit
+    WorkTicketSlot retrySlot_;   ///< Pumped: 等待获取缓存退避截止时间
 };
 
 /// MVT 载荷 → 引擎 Feature 列表的默认特质(层过滤 + 转换)。
@@ -331,16 +337,19 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
     if (tileCache_) {
         for (const TileKey& key : result.requestTiles) {
             std::weak_ptr<Inbox> weakInbox = inbox_;
+            auto tileCache = tileCache_;
             tileCache_->request(
                 key,
-                [key, weakInbox](std::shared_ptr<const Payload> tile) {
+                [key, weakInbox, tileCache](std::shared_ptr<const Payload> tile) {
                     auto inbox = weakInbox.lock();
                     if (!inbox) return;
                     std::lock_guard<std::mutex> lock(inbox->mutex);
                     if (tile) {
                         inbox->decoded.emplace_back(key, std::move(tile));
                     } else {
-                        inbox->failed.push_back(key);
+                        const auto failure = tileCache->failureInfo(key);
+                        inbox->failed.push_back(
+                            {key, failure.retryNotBeforeMs, failure.retryable});
                     }
                 });
         }
@@ -505,6 +514,12 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::
     const bool pumped = !readyMeshes_.empty();
     loadSlot_.reconcile(WorkLedger::Kind::Landing, "mvtVectorLoad", landing);
     commitSlot_.reconcile(WorkLedger::Kind::Pumped, "mvtVectorCommit", pumped);
+    // 退避截止时间本身不是 Landing（没有网络/worker 会自然释放令牌），
+    // 但按需渲染若此时入睡就永远不会再调用 update。短暂持有独立 Pumped
+    // 令牌，直到下一帧释放 retryNotBefore_ 并重新发起请求；缓存自身仍
+    // 决定网络退避和最多两次重试，不会因这里保帧而产生网络风暴。
+    retrySlot_.reconcile(WorkLedger::Kind::Pumped, "mvtVectorRetry",
+                         tree_.hasRetryPending());
 }
 
 template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>
@@ -529,7 +544,7 @@ template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>
 void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::ingestInbox() {
     std::vector<std::pair<TileKey, std::shared_ptr<const Payload>>> decoded;
     std::vector<std::tuple<TileKey, FeatureTileMesh, uint64_t>> meshes;
-    std::vector<TileKey> failed;
+    std::vector<typename Inbox::FailedTile> failed;
     {
         std::lock_guard<std::mutex> lock(inbox_->mutex);
         decoded.swap(inbox_->decoded);
@@ -545,8 +560,12 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::ingestInbox() {
         if (epoch != rulesEpoch_) continue;
         readyMeshes_[key] = std::move(mesh);
     }
-    for (const TileKey& key : failed) {
-        tree_.markFailed(key);
+    for (const auto& failure : failed) {
+        if (failure.retryable) {
+            tree_.markFailedUntil(failure.key, failure.retryNotBeforeMs);
+        } else {
+            tree_.markFailed(failure.key);
+        }
     }
 }
 

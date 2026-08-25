@@ -21,7 +21,7 @@ namespace earth_engine {
 /// content { repeated ClassGroup(实测字段 1) }
 /// ClassGroup { classCode #1(实测;参考文档亦可 #2), geomType #3(实测;参考 #2),
 ///              repeated Feature #4 }
-/// Feature  { ..., repeated Part #4 }
+/// Feature  { ..., repeated Part #4; type2 使用 #6 { repeated ring #1=blob } }
 /// Part     { blob #3 = 几何(全 zigzag 增量), height #5(参考 varint;实测
 ///            当前版本为 bytes,待校准——见 decodeAmapTile 注释) }
 ///
@@ -31,6 +31,10 @@ namespace earth_engine {
 struct AmapDecodedFeature {
     int classCode = 0;
     int geomType = 0;
+    /// type2 content.#2 carries boundary/coastline line features alongside
+    /// the region polygons in content.#1. Keep this semantic bit separate
+    /// from the enclosing layer type so conversion cannot fill the lines.
+    bool lineGeometry = false;
     /// 类组字段 2:type2 区域 = kind(水63/绿地61/建筑块20-27…),
     /// type3 建筑 = cat。样式配色按它分。
     int kind = 0;

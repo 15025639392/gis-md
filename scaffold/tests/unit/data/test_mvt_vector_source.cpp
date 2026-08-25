@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <chrono>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -183,7 +184,7 @@ TEST(MvtVectorSource, ReentryRetessellatesWithoutRefetch) {
     EXPECT_EQ(refetchOfOriginals, 0u) << "重入零重拉取";
 }
 
-TEST(MvtVectorSource, FailedFetchMarksFailedNoRerequest) {
+TEST(MvtVectorSource, FailedFetchHonorsBackoffWithoutImmediateRerequest) {
     FakeFetch fetch;
     fetch.statusCode = 404;
     FakeSinks sinks;
@@ -199,6 +200,37 @@ TEST(MvtVectorSource, FailedFetchMarksFailedNoRerequest) {
     EXPECT_GT(source.tree().failedCount(), 0u);
     EXPECT_EQ(sinks.tessellateCalls, 0);
     EXPECT_TRUE(sinks.committed.empty());
+}
+
+TEST(MvtVectorSource, TemporaryFailureRetriesAndRecovers) {
+    FakeFetch fetch;
+    fetch.statusCode = 504;
+    FakeSinks sinks;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
+
+    const Rectangle view = rectDeg(1, 1, 2, 2);
+    source.update(view, heightForZoom(4));
+    const size_t firstBatch = fetch.requested.size();
+    ASSERT_GT(firstBatch, 0u);
+
+    source.update(view, heightForZoom(4));
+    EXPECT_EQ(fetch.requested.size(), firstBatch)
+        << "退避截止前不得重新穿透到网络";
+    EXPECT_GT(source.tree().failedCount(), 0u);
+
+    fetch.statusCode = 200;
+    fetch.body = makePointTile("pois");
+    std::this_thread::sleep_for(std::chrono::milliseconds(600));
+    source.update(view, heightForZoom(4));
+    EXPECT_GT(fetch.requested.size(), firstBatch)
+        << "退避截止后必须重新请求瞬时失败瓦片";
+
+    source.update(view, heightForZoom(4));
+    source.update(view, heightForZoom(4));
+    source.update(view, heightForZoom(4));
+    EXPECT_GT(source.activeTileCount(), 0u);
+    EXPECT_EQ(source.tree().failedCount(), 0u)
+        << "成功回灌必须清除临时失败状态";
 }
 
 TEST(MvtVectorSource, ZoomChangeSwapsTilesNoLeftovers) {
@@ -427,6 +459,10 @@ TEST(MvtTileFetchCache, FailedTileRetriesAtMostTwiceThenGivesUp) {
     // 初始失败 → 计数 1,退避 500ms;退避窗口内的重请求被跳过,不发网络。
     EXPECT_EQ(get(), nullptr);
     EXPECT_EQ(networkCalls, 1);
+    auto firstFailure = cache.failureInfo(key);
+    EXPECT_TRUE(firstFailure.known);
+    EXPECT_TRUE(firstFailure.retryable);
+    EXPECT_EQ(firstFailure.failureCount, 1);
     get();
     EXPECT_EQ(networkCalls, 1) << "退避中不应重发网络";
     EXPECT_GE(cache.stats().failureSkips, 1u);
@@ -440,6 +476,10 @@ TEST(MvtTileFetchCache, FailedTileRetriesAtMostTwiceThenGivesUp) {
     std::this_thread::sleep_for(std::chrono::milliseconds(1100));
     EXPECT_EQ(get(), nullptr);
     EXPECT_EQ(networkCalls, 3) << "第二次重试应发网络";
+    auto terminalFailure = cache.failureInfo(key);
+    EXPECT_TRUE(terminalFailure.known);
+    EXPECT_FALSE(terminalFailure.retryable);
+    EXPECT_EQ(terminalFailure.failureCount, 3);
 
     // 用尽:任意次请求都不再发网络。
     const int callsBefore = networkCalls;

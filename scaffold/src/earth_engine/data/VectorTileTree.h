@@ -4,6 +4,7 @@
 #include "../core/math/Rectangle.h"
 #include "../tiling/TileKey.h"
 #include "../tiling/TileScheme.h"
+#include "../debug/PerfTimer.h"
 
 #include <algorithm>
 #include <array>
@@ -11,6 +12,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -80,11 +82,19 @@ public:
         int maxTilesPerView = 64;
         /// 目标 zoom 偏置(正 = 更细)。
         double zoomBias = 0.0;
+        /// 可选的数据档位白名单。非空时，目标 zoom 会向下吸附到
+        /// 不超过目标的最近档位；若目标低于首个档位则选首个档位。
+        /// 这用于数据源存在跳档(例如高德只有 z12/z14、没有 z13)
+        /// 的场景，避免把空档当作已加载的 LOD。
+        std::vector<int> supportedZooms;
         /// 瓦片体系。空 = XYZ WebMercator(默认)。
         /// 高德用 4326 等距圆柱网格(2:1,见
         /// TileScheme::createAmapGeographic),树的选择/回退全部只经
         /// scheme 换算,不关心载荷坐标系。
         std::shared_ptr<TileScheme> scheme;
+        /// 单调时钟注入点，仅供失败退避判定与确定性测试。空时使用
+        /// steady_clock；不参与正常瓦片选择成本。
+        std::function<double()> nowMs;
     };
 
     struct UpdateResult {
@@ -113,13 +123,29 @@ public:
         // 目标 zoom:视高定档;desired 超闸则整体降 zoom 重枚举
         // (掠视地平线矩形在高 zoom 会爆炸,不能只截断——截断会
         // 让留下的瓦片集偏向枚举顺序而不是视口代表性)。
-        int zoom = zoomForCameraHeight(cameraHeightMeters, options_);
+        auto snapSupportedZoom = [&](int candidate) {
+            if (options_.supportedZooms.empty()) return candidate;
+            int lower = std::numeric_limits<int>::min();
+            int first = std::numeric_limits<int>::max();
+            for (const int supported : options_.supportedZooms) {
+                if (supported < options_.minZoom ||
+                    supported > options_.maxZoom) {
+                    continue;
+                }
+                first = std::min(first, supported);
+                if (supported <= candidate) lower = std::max(lower, supported);
+            }
+            if (lower != std::numeric_limits<int>::min()) return lower;
+            return first == std::numeric_limits<int>::max() ? candidate : first;
+        };
+        int zoom = snapSupportedZoom(
+            zoomForCameraHeight(cameraHeightMeters, options_));
         struct Range {
             int minX, minY, maxX, maxY;
         };
         std::vector<Range> ranges;
         long long desiredCount = 0;
-        for (; zoom >= options_.minZoom; --zoom) {
+        for (;;) {
             ranges.clear();
             desiredCount = 0;
             for (const Rectangle& span : spans) {
@@ -129,9 +155,13 @@ public:
                 desiredCount += static_cast<long long>(r.maxX - r.minX + 1) *
                                 (r.maxY - r.minY + 1);
             }
-            if (desiredCount <= options_.maxTilesPerView) {
+            if (desiredCount <= options_.maxTilesPerView ||
+                zoom <= options_.minZoom) {
                 break;
             }
+            const int nextZoom = snapSupportedZoom(zoom - 1);
+            if (nextZoom >= zoom) break;
+            zoom = nextZoom;
         }
         zoom = std::max(zoom, options_.minZoom);
 
@@ -195,6 +225,9 @@ public:
         };
         std::vector<PendingRequest> requests;
         std::vector<TileKey> emitted;
+        std::unordered_set<TileKey> desiredKeys;
+        desiredKeys.reserve(static_cast<size_t>(std::max<long long>(
+            0, desiredCount)));
 
         // 后代顶替:t 的视口内区域能否被**已加载的后代完整覆盖**。
         // 沿途 touch:等着凑齐的细瓦也是 retain 的一部分,不 touch 会被
@@ -227,6 +260,7 @@ public:
             for (int y = r.minY; y <= r.maxY; ++y) {
                 for (int x = r.minX; x <= r.maxX; ++x) {
                     const TileKey ideal{schemeId_, zoom, x, y};
+                    desiredKeys.insert(ideal);
                     if (!coverByDescendants(ideal)) {
                         // 祖先回退:向上找最近的已加载粗瓦顶住(可能与别的
                         // 理想瓦已 emit 的细瓦重叠 —— 对符号是可忍受的轻
@@ -242,7 +276,7 @@ public:
                         }
                     }
                     if (!loaded_.count(ideal) && !pending_.count(ideal) &&
-                        !failed_.count(ideal)) {
+                        !isFailed(ideal)) {
                         // 理想瓦无论回退成不成都要请求:顶替只是过渡态
                         const long long dx = x - centerKey.x;
                         const long long dy = y - centerKey.y;
@@ -250,6 +284,13 @@ public:
                     }
                 }
             }
+        }
+        // 临时失败只对当前 desired 集有意义。离开视口后及时丢弃树侧
+        // deadline，避免按需渲染被不可见瓦片的 retry Pumped 令牌按住；
+        // 获取缓存仍保留有界失败账本，返回该视口时会继续遵守原退避。
+        for (auto it = retryNotBefore_.begin(); it != retryNotBefore_.end();) {
+            it = desiredKeys.count(it->first) ? std::next(it)
+                                               : retryNotBefore_.erase(it);
         }
         // 祖先可能被多个理想瓦共同选中 → 去重
         std::sort(emitted.begin(), emitted.end(),
@@ -311,6 +352,7 @@ public:
         }
         pending_.erase(key);
         failed_.erase(key);
+        retryNotBefore_.erase(key);
         auto [it, inserted] = loaded_.try_emplace(key);
         if (inserted && key.z >= 0 &&
             key.z < static_cast<int>(loadedPerZ_.size())) {
@@ -319,12 +361,25 @@ public:
         it->second.tile = std::move(tile);
         it->second.lastUsedFrame = frame_;
     }
-    /// 请求失败登记;失败瓦片不再重复请求,直到 clearFailed()。
+    /// 请求失败登记为终止失败;失败瓦片不再重复请求,直到 clearFailed()。
     void markFailed(const TileKey& key) {
         pending_.erase(key);
+        retryNotBefore_.erase(key);
         failed_.insert(key);
     }
-    void clearFailed() { failed_.clear(); }
+
+    /// 请求失败登记为临时失败。到达退避截止时间后，下一次 update 会
+    /// 自动释放该 key，使获取缓存的退避/重试策略重新获得请求控制权。
+    void markFailedUntil(const TileKey& key, double retryNotBeforeMs) {
+        pending_.erase(key);
+        failed_.erase(key);
+        retryNotBefore_[key] = retryNotBeforeMs;
+    }
+
+    void clearFailed() {
+        failed_.clear();
+        retryNotBefore_.clear();
+    }
 
     const Payload* loadedTile(const TileKey& key) const {
         auto it = loaded_.find(key);
@@ -339,7 +394,12 @@ public:
     }
     size_t loadedCount() const { return loaded_.size(); }
     size_t pendingCount() const { return pending_.size(); }
-    size_t failedCount() const { return failed_.size(); }
+    size_t failedCount() const {
+        return failed_.size() + retryNotBefore_.size();
+    }
+    /// 是否有等待退避截止时间的临时失败瓦片。调用方在按需渲染模式下
+    /// 将其视为短暂 Pumped 工作，确保截止时间到达前仍会有帧驱动重试。
+    bool hasRetryPending() const { return !retryNotBefore_.empty(); }
 
     const TileScheme& scheme() const { return *scheme_; }
     const Options& options() const { return options_; }
@@ -400,6 +460,16 @@ private:
         }
     }
 
+    bool isFailed(const TileKey& key) {
+        if (failed_.count(key)) return true;
+        auto it = retryNotBefore_.find(key);
+        if (it == retryNotBefore_.end()) return false;
+        const double nowMs = options_.nowMs ? options_.nowMs() : perf::nowMs();
+        if (nowMs < it->second) return true;
+        retryNotBefore_.erase(it);
+        return false;
+    }
+
     Options options_;
     std::shared_ptr<TileScheme> scheme_;
     SchemeId schemeId_;
@@ -410,6 +480,7 @@ private:
     std::array<int, 32> loadedPerZ_{};
     std::unordered_set<TileKey> pending_;
     std::unordered_set<TileKey> failed_;
+    std::unordered_map<TileKey, double> retryNotBefore_;
     uint64_t frame_ = 0;
 };
 

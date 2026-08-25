@@ -2,6 +2,7 @@
 #include <zlib.h>
 
 #include "earth_engine/data/AmapVectorTile.h"
+#include "earth_engine/data/AmapGeometry.h"
 
 #include <cstring>
 #include <cstdio>
@@ -148,22 +149,71 @@ std::vector<uint8_t> makeLineTile() {
     return makeBlobLayer(1, cg);
 }
 
-std::vector<uint8_t> makeRegionTile() {
+std::vector<uint8_t> makeRegionTile(int classCode = 0) {
     std::vector<uint8_t> feature;
     {
-        std::vector<uint8_t> ring;
-        // type2 region blob 头部:[10, zigzag(±(n+1))] —— 10 常量类型
-        // 标记,第二项带符号点数(n=4 → zigzag(5)=10)。环本体在其后。
-        putZigzag(ring, 10);
-        putZigzag(ring, 5);  // n+1=5 → zigzag(5)=10
-        // 增量:(0,0)->(10,0)->(10,10)->(-10,-10) 闭合回原点。
-        const int64_t pts[8] = {0, 0, 10, 0, 0, 10, -10, -10};
-        for (int64_t v : pts) putZigzag(ring, v);
-        putBytesField(feature, 6, ring);  // 实测:type2 区域 Feature#6 环
+        std::vector<uint8_t> rings;
+        // Feature#6 的真实结构是 repeated #1 = length-delimited ring
+        // blobs。每个 blob 的首点是 zigzag absolute，后续是 delta。
+        std::vector<uint8_t> first;
+        const int64_t firstPts[8] = {7, 8, 10, 0, 0, 10, -10, -10};
+        for (int64_t v : firstPts) putZigzag(first, v);
+        putBytesField(rings, 1, first);
+
+        std::vector<uint8_t> second;
+        const int64_t secondPts[6] = {30, 40, 5, 0, 0, 5};
+        for (int64_t v : secondPts) putZigzag(second, v);
+        putBytesField(rings, 1, second);
+
+        putBytesField(feature, 6, rings);  // type2 Feature#6 nested message
     }
-    std::vector<uint8_t> cg;  // 无 classCode → 默认 30001
+    std::vector<uint8_t> cg;
+    if (classCode != 0) putVarintField(cg, 1, classCode);
     putBytesField(cg, 4, feature);
     return makeBlobLayer(2, cg);
+}
+
+std::vector<uint8_t> makeRegionWithBoundaryTile(int boundaryClass = 20014) {
+    std::vector<uint8_t> regionFeature;
+    {
+        std::vector<uint8_t> rings;
+        std::vector<uint8_t> blob;
+        const int64_t pts[6] = {10, 10, 20, 0, 0, 20};
+        for (int64_t v : pts) putZigzag(blob, v);
+        putBytesField(rings, 1, blob);
+        putBytesField(regionFeature, 6, rings);
+    }
+    std::vector<uint8_t> regionGroup;
+    putVarintField(regionGroup, 1, 30001);
+    putBytesField(regionGroup, 4, regionFeature);
+
+    std::vector<uint8_t> boundaryPart;
+    {
+        std::vector<uint8_t> blob;
+        const int64_t pts[6] = {100, 100, 30, 0, 0, 40};
+        for (int64_t v : pts) putZigzag(blob, v);
+        putBytesField(boundaryPart, 3, blob);
+    }
+    std::vector<uint8_t> boundaryFeature;
+    putBytesField(boundaryFeature, 4, boundaryPart);
+    std::vector<uint8_t> boundaryGroup;
+    if (boundaryClass != 0) putVarintField(boundaryGroup, 1, boundaryClass);
+    putBytesField(boundaryGroup, 4, boundaryFeature);
+
+    std::vector<uint8_t> content;
+    putBytesField(content, 1, regionGroup);
+    putBytesField(content, 2, boundaryGroup);
+    std::vector<uint8_t> layer;
+    putVarintField(layer, 1, 14);
+    putVarintField(layer, 2, 13038);
+    putVarintField(layer, 3, 6785);
+    putVarintField(layer, 4, 2);
+    putBytesField(layer, 5, content);
+    std::vector<uint8_t> tile;
+    putBytesField(tile, 4, layer);
+    std::vector<uint8_t> root;
+    putBytesField(root, 1, tile);
+    return makeContainer(root);
 }
 
 }  // namespace
@@ -218,12 +268,80 @@ TEST(AmapVectorTileTest, DecodesRegionContainerWithFeature6Rings) {
     ASSERT_EQ(1u, parts[0].features.size());
     const AmapDecodedFeature& f = parts[0].features[0];
     EXPECT_EQ(30001, f.classCode);  // 缺省类
-    ASSERT_EQ(1u, f.rings.size());
+    ASSERT_EQ(2u, f.rings.size());
     ASSERT_EQ(4u, f.rings[0].size());
-    // 头部 (10, 10) 不得作为环首点:首点 = 头部后的绝对 (0,0)。
-    EXPECT_DOUBLE_EQ(0.0, f.rings[0][0].first);
-    EXPECT_DOUBLE_EQ(0.0, f.rings[0][0].second);
-    EXPECT_DOUBLE_EQ(0.0, f.rings[0][3].first);
+    ASSERT_EQ(3u, f.rings[1].size());
+    // #1 的 framing 不能作为坐标；首点必须保留为 geometry blob
+    // 内的 absolute zigzag 坐标，且第二个 ring 必须从独立 cursor 开始。
+    EXPECT_DOUBLE_EQ(7.0, f.rings[0][0].first);
+    EXPECT_DOUBLE_EQ(8.0, f.rings[0][0].second);
+    EXPECT_DOUBLE_EQ(7.0, f.rings[0][3].first);
+    EXPECT_DOUBLE_EQ(30.0, f.rings[1][0].first);
+    EXPECT_DOUBLE_EQ(40.0, f.rings[1][0].second);
+}
+
+TEST(AmapVectorTileTest, DecodesType2Content2BoundaryAsLine) {
+    const auto container = makeRegionWithBoundaryTile();
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(container.data(), container.size(), parts));
+    ASSERT_EQ(1u, parts.size());
+    ASSERT_EQ(2u, parts[0].features.size());
+
+    const auto& region = parts[0].features[0];
+    EXPECT_EQ(30001, region.classCode);
+    EXPECT_FALSE(region.lineGeometry);
+
+    const auto& boundary = parts[0].features[1];
+    EXPECT_EQ(20014, boundary.classCode);
+    EXPECT_TRUE(boundary.lineGeometry);
+    EXPECT_EQ(2, boundary.geomType);
+    ASSERT_EQ(1u, boundary.rings.size());
+    ASSERT_EQ(3u, boundary.rings[0].size());
+
+    const auto features = amapDecodedPartToFeatures(parts[0], false);
+    ASSERT_EQ(2u, features.size());
+    EXPECT_EQ(GeometryType::Polygon, features[0].type);
+    EXPECT_EQ(GeometryType::LineString, features[1].type);
+    EXPECT_EQ("20014", features[1].properties.at("amap_class"));
+}
+
+TEST(AmapVectorTileTest, DefaultsType2Content2BoundaryClassTo20016) {
+    const auto container = makeRegionWithBoundaryTile(0);
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(container.data(), container.size(), parts));
+    ASSERT_EQ(1u, parts.size());
+    ASSERT_EQ(2u, parts[0].features.size());
+    const auto& boundary = parts[0].features[1];
+    EXPECT_TRUE(boundary.lineGeometry);
+    EXPECT_EQ(20016, boundary.classCode);
+    EXPECT_EQ(2, boundary.geomType);
+}
+
+TEST(AmapVectorTileTest, MainSourceFiltersWaterButKeepsBlockRegions) {
+    const auto water = makeRegionTile();  // default class 30001
+    std::vector<Feature> mainWater;
+    std::string error;
+    ASSERT_TRUE(amapBytesToFeatures(water.data(), water.size(), false,
+                                    mainWater, &error))
+        << error;
+    EXPECT_TRUE(mainWater.empty());
+
+    std::vector<Feature> regionWater;
+    ASSERT_TRUE(amapBytesToFeatures(water.data(), water.size(), true,
+                                    regionWater, &error))
+        << error;
+    EXPECT_FALSE(regionWater.empty());
+
+    const auto blocks = makeRegionTile(30002);
+    std::vector<Feature> mainBlocks;
+    ASSERT_TRUE(amapBytesToFeatures(blocks.data(), blocks.size(), false,
+                                    mainBlocks, &error))
+        << error;
+    ASSERT_FALSE(mainBlocks.empty());
+    for (const auto& feature : mainBlocks) {
+        ASSERT_TRUE(feature.properties.count("amap_class"));
+        EXPECT_EQ("30002", feature.properties.at("amap_class"));
+    }
 }
 
 TEST(AmapVectorTileTest, RejectsBadLengthHeader) {

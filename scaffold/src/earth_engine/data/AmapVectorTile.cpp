@@ -101,27 +101,14 @@ int64_t zigzag(uint64_t v) {
 }
 
 void decodeBlob(const uint8_t* blob, size_t len,
-                std::vector<std::pair<double, double>>& ring,
-                bool skipHeader = false) {
+                std::vector<std::pair<double, double>>& ring) {
     Reader r;
     r.p = blob;
     r.n = len;
     int64_t x = 0, y = 0;
-    if (skipHeader) {
-        // type2 区域 ring blob 前 2 个 varint 是**头部**,不是坐标:
-        //   [10, zigzag(±(n+1))]
-        // 10 为常量类型标记(实测 604/604 blob,z10 与 z14 一致);第二项
-        // 是带符号点数(环点数 n):y≥0 → varint=2(n+1),y<0 → 2n+1,
-        // 即 zigzag 解码后 = ±(n+1)。环本体从第 3 个 varint 开始
-        // (绝对首点 + zigzag 增量)。
-        //
-        // ⚠️ 不跳头部 = 把头部 (5, ±(n+1)) 当成环首点:每个环多一个
-        // 「瓦内假点 + 大跳变」边,河流/绿地掩膜被切成大量碎片
-        // (真机破破烂烂的根因;实测水环 522/523 首跳 >80)。
-        (void)r.varint();
-        (void)r.varint();
-        if (!r.ok) return;
-    }
+    // Geometry blobs use an absolute zigzag-encoded first point followed by
+    // zigzag-encoded deltas.  The protobuf framing of type2 Feature#6 is
+    // handled by parseFeature; it must never be fed into this cursor.
     while (r.i < r.n && r.ok) {
         const uint64_t dx = r.varint();
         if (!r.ok || r.i >= r.n) break;
@@ -134,9 +121,10 @@ void decodeBlob(const uint8_t* blob, size_t len,
 }
 
 void parseFeature(Reader& f, int classCode, int geomType, int layerType,
-                  AmapDecodedFeature& feat) {
+                  AmapDecodedFeature& feat, bool lineGeometry = false) {
     feat.classCode = classCode;
-    feat.geomType = geomType;
+    feat.geomType = lineGeometry ? 2 : geomType;
+    feat.lineGeometry = lineGeometry;
     // 几何所在 Part 字段按层类型区分(实测):type1 线 = Part{blob #5};
     // type3 建筑 / type4 轨道 = Part{blob #3};type2 区域 = Feature #6 环。
     const int partBlobField = (layerType == 1) ? 5 : 3;
@@ -196,11 +184,38 @@ void parseFeature(Reader& f, int classCode, int geomType, int layerType,
                 }
                 if (!ring.empty()) feat.rings.push_back(std::move(ring));
             } else if (field == 6 && layerType == 2) {
-                // type2 区域:Feature #6 为 repeated ring blob。
-                std::vector<std::pair<double, double>> ring;
-                decodeBlob(sub, static_cast<size_t>(len), ring,
-                           /*skipHeader=*/true);
-                if (!ring.empty()) feat.rings.push_back(std::move(ring));
+                // type2 区域:Feature #6 是一个嵌套 protobuf 消息:
+                //   repeated field #1 (wire=2) = geometry ring blob.
+                // 不能把 #6 的 tag/length 当成坐标，也不能把多个 #1
+                // payload 串到同一个 cursor；每个 blob 都必须从自己的
+                // 绝对首点独立解码。
+                Reader rings;
+                rings.p = sub;
+                rings.n = static_cast<size_t>(len);
+                int rf = 0, rw = 0;
+                while (rings.tag(rf, rw)) {
+                    if (rw == 2) {
+                        const uint64_t rlen = rings.varint();
+                        if (!rings.ok ||
+                            rlen > std::numeric_limits<size_t>::max()) {
+                            rings.ok = false;
+                            break;
+                        }
+                        const uint8_t* rsub = nullptr;
+                        if (!rings.bytes(static_cast<size_t>(rlen), rsub)) {
+                            break;
+                        }
+                        if (rf != 1) continue;
+                        std::vector<std::pair<double, double>> ring;
+                        decodeBlob(rsub, static_cast<size_t>(rlen), ring);
+                        if (!ring.empty()) feat.rings.push_back(std::move(ring));
+                    } else if (rw == 0) {
+                        (void)rings.varint();
+                    } else {
+                        rings.ok = false;
+                        break;
+                    }
+                }
             } else if (field == 6) {
                 // 名称(标签/道路名),字符串。
                 feat.name.assign(reinterpret_cast<const char*>(sub),
@@ -302,11 +317,14 @@ bool decodeContainer(const uint8_t* data, size_t size,
                     Reader g;
                     g.p = cg;
                     g.n = static_cast<size_t>(clen);
+                    const bool boundaryGroup = part.type == 2 && cf == 2;
                     // classCode 只在字段 1(实测 type1=20009 在 #1);
-                    // type2 区域 #1 缺省,默认 30001;type3 建筑合成 90001。
-                    const int defaultClass = part.type == 1 ? 20004
-                                             : part.type == 2 ? 30001
-                                                               : 90001;
+                    // type2 区域 #1 缺省 30001;boundary #2 缺省 20016;
+                    // type3 建筑合成 90001。
+                    const int defaultClass =
+                        part.type == 1 ? 20004
+                        : part.type == 2 ? (boundaryGroup ? 20016 : 30001)
+                                          : 90001;
                     int classCode = defaultClass, geomType = 0, kind = 0;
                     int gf = 0, gw = 0;
                     std::vector<const uint8_t*> feats;
@@ -345,8 +363,9 @@ bool decodeContainer(const uint8_t* data, size_t size,
             // Feature #4 得 61/63/20/23)。type2 不预置,由
             // parseFeature 读 Feature #4;其余类型保留 ClassGroup
             // 值(建筑/轨道用 classCode 分层)。
-                        if (part.type != 2) feat.kind = kind;
-                        parseFeature(fr, classCode, geomType, part.type, feat);
+                        if (part.type != 2 || boundaryGroup) feat.kind = kind;
+                        parseFeature(fr, classCode, geomType, part.type, feat,
+                                     boundaryGroup);
                         if (!feat.rings.empty() || !feat.name.empty()) {
                             part.features.push_back(std::move(feat));
                         }

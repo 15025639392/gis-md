@@ -30,6 +30,11 @@ uint64_t coordKey(double lng, double lat) {
     return a * 1000003ull ^ (b + 0x9e3779b97f4a7c15ull + (a << 6) + (a >> 2));
 }
 
+uint64_t edgeIndexKey(uint32_t a, uint32_t b) {
+    if (a > b) std::swap(a, b);
+    return (static_cast<uint64_t>(a) << 32) | b;
+}
+
 constexpr int kMaxPiecesPerEdge = 256;
 constexpr int kMaxInteriorSteiner = 4096;
 constexpr double kEarthRadiusMeters = 6378137.0;
@@ -329,6 +334,34 @@ TessellatedFill PolygonTessellator::tessellate(
             }
         }
         constraints = std::move(splitConstraints);
+    }
+
+    // The flood fill implements even-odd fill, so coincident constraint
+    // segments must also be reduced modulo two. Amap compound polygons contain
+    // adjacent strips that share exact or partially-overlapping edges; after
+    // the intersection split above those sub-segments have identical endpoints.
+    // Keeping one copy turns the shared seam into a wall and flips one side to
+    // outside, which later appears as stable triangular holes/wedges.
+    {
+        struct CountedEdge {
+            ConstrainedDelaunay::Edge edge;
+            uint32_t count = 0;
+        };
+        std::unordered_map<uint64_t, CountedEdge> counts;
+        counts.reserve(constraints.size());
+        for (const auto& edge : constraints) {
+            const uint64_t key = edgeIndexKey(edge.first, edge.second);
+            auto [it, inserted] = counts.emplace(key, CountedEdge{edge, 0});
+            ++it->second.count;
+        }
+        std::vector<ConstrainedDelaunay::Edge> oddConstraints;
+        oddConstraints.reserve(counts.size());
+        for (const auto& [key, counted] : counts) {
+            if ((counted.count & 1u) != 0u) {
+                oddConstraints.push_back(counted.edge);
+            }
+        }
+        constraints = std::move(oddConstraints);
     }
 
     std::vector<uint32_t> tris =

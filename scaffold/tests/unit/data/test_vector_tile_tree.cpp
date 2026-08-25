@@ -44,6 +44,28 @@ TEST(VectorTileTree, ZoomForCameraHeight) {
     EXPECT_EQ(VectorTileTree::zoomForCameraHeight(4.0e7, opt), 1);
 }
 
+TEST(VectorTileTree, SnapsToSupportedDataZoom) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 12;
+    opt.maxZoom = 14;
+    opt.maxTilesPerView = 256;
+    opt.supportedZooms = {12, 14};
+    VectorTileTree tree(opt);
+
+    // canonical z13 是高德空档，必须直接选 z12，不发 z13 请求。
+    auto z13 = tree.update(rectDeg(106.45, 29.60, 106.46, 29.61),
+                           heightForZoom(13));
+    ASSERT_FALSE(z13.requestTiles.empty());
+    for (const TileKey& key : z13.requestTiles) EXPECT_EQ(key.z, 12);
+
+    // 更近时仍能进入高德有效的 z14 档位。
+    VectorTileTree fine(opt);
+    auto z14 = fine.update(rectDeg(106.45, 29.60, 106.46, 29.61),
+                           heightForZoom(14));
+    ASSERT_FALSE(z14.requestTiles.empty());
+    for (const TileKey& key : z14.requestTiles) EXPECT_EQ(key.z, 14);
+}
+
 TEST(VectorTileTree, OverzoomClampsToMaxZoom) {
     VectorTileTree::Options opt;
     opt.maxZoom = 3;
@@ -123,6 +145,29 @@ TEST(VectorTileTree, FailedTilesNotReRequestedUntilCleared) {
     EXPECT_TRUE(std::find(cleared.requestTiles.begin(),
                           cleared.requestTiles.end(),
                           key) != cleared.requestTiles.end());
+}
+
+TEST(VectorTileTree, TemporaryFailureRetriesOnlyAfterDeadline) {
+    double nowMs = 1000.0;
+    VectorTileTree::Options opt;
+    opt.nowMs = [&]() { return nowMs; };
+    VectorTileTree tree(opt);
+    const Rectangle view = rectDeg(1, 1, 2, 2);
+    auto initial = tree.update(view, heightForZoom(4));
+    ASSERT_FALSE(initial.requestTiles.empty());
+    const TileKey key = initial.requestTiles.front();
+
+    tree.markFailedUntil(key, 1500.0);
+    auto before = tree.update(view, heightForZoom(4));
+    EXPECT_EQ(std::find(before.requestTiles.begin(), before.requestTiles.end(),
+                        key),
+              before.requestTiles.end());
+    EXPECT_GT(tree.failedCount(), 0u);
+
+    nowMs = 1500.0;
+    auto due = tree.update(view, heightForZoom(4));
+    EXPECT_NE(std::find(due.requestTiles.begin(), due.requestTiles.end(), key),
+              due.requestTiles.end());
 }
 
 // ---------------------------------------------------------------------------
