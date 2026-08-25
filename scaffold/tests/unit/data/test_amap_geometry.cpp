@@ -557,12 +557,15 @@ TEST(AmapGeometryTest, RealSampleLinesStayInTheirLayerTileGrid) {
     constexpr double kBuffer = 256.0;
     for (const auto& part : parts) {
         for (const auto& feature : part.features) {
-            if (part.type != 1 && part.type != 4 && !feature.lineGeometry) {
+            if (feature.polygonGeometry ||
+                (part.type != 1 && part.type != 4 && !feature.lineGeometry)) {
                 continue;
             }
             const int geometryType = feature.lineGeometry ? 1 : part.type;
             const double scale =
-                amapCoordScale(geometryType, part.z, feature.kind);
+                feature.coordScale > 0.0
+                    ? feature.coordScale
+                    : amapCoordScale(geometryType, part.z, feature.kind);
             for (const auto& ring : feature.rings) {
                 for (const auto& point : ring) {
                     const double x = point.first * scale;
@@ -981,7 +984,11 @@ TEST(AmapGeometryTest, RealSampleType2FeatureDiagnostics) {
                     p.features.size());
         for (size_t i = 0; i < p.features.size(); ++i) {
             const auto& src = p.features[i];
-            const double scale = amapCoordScale(p.type, p.z, src.kind);
+            const int geometryType = src.lineGeometry ? 1 : p.type;
+            const double scale =
+                src.coordScale > 0.0
+                    ? src.coordScale
+                    : amapCoordScale(geometryType, p.z, src.kind);
             if (dumpRings && src.classCode == 30001) {
                 auto signedArea = [](const auto& ring) {
                     double sum = 0.0;

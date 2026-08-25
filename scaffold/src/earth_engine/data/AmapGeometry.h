@@ -18,7 +18,8 @@ namespace earth_engine {
 ///   type0 POI 标签:z6-14 → scale 4(原始 2048×1024),z3 → 8;
 ///   type1 线 / type4 轨道:z14+ → scale 2(原始 4096×2048),
 ///                          z6-12 → 4,z3 → 8;
-///   type2 区域:恒 scale 4(原始 2048×1024,kind 60/80 大区域除外,后续);
+///   type2/type4 区域:默认 scale 4(原始 2048×1024),kind 60/64/80
+///                     改走对应 zoom 的 line-grid scale;
 ///   type3 建筑:scale 1/16(原始 131072×65536)。
 /// 转换后可选 GCJ-02 → WGS84 反偏移(引擎已有 Gcj02CoordinateTransform)。
 /// 层类型 → tile-local 原始整数坐标抬进规范 8192×4096 空间的倍率。
@@ -76,9 +77,9 @@ std::vector<std::pair<double, double>> amapClipPolygonRing(
     double minX, double maxX, double minY, double maxY);
 
 /// 一个解码层 → 引擎 Feature 列表。
-/// - type1/4:每个 ring 一条 LineString(properties["amap_class"]=classCode);
-/// - type2/3:环先经 amapNormalizeEvenOddWinding 归一化,每个「外环+孔环」
-///   组合成一个 Polygon(rings[0]=外环,rings[1..]=孔,三角化自动挖孔)。
+/// - type1 与 type4 content.#1:每个 ring 一条 LineString;
+/// - type2、type3 与 type4 content.#3:区域环经 winding 归一化后输出
+///   Polygon；type4 的 line/area 由 feature 显式语义区分。
 /// toWgs84=true 时做 GCJ 反偏移(默认)。
 std::vector<Feature> amapDecodedPartToFeatures(
     const AmapDecodedLayerPart& part, bool toWgs84 = true);

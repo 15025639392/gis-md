@@ -122,22 +122,30 @@ void decodeBlob(const uint8_t* blob, size_t len,
 }
 
 void parseFeature(Reader& f, int classCode, int geomType, int layerType,
-                  AmapDecodedFeature& feat, bool lineGeometry = false) {
+                  AmapDecodedFeature& feat, bool lineGeometry = false,
+                  bool polygonGeometry = false) {
     feat.classCode = classCode;
-    feat.geomType = lineGeometry ? 2 : geomType;
+    feat.geomType = polygonGeometry ? 3 : (lineGeometry ? 2 : geomType);
     feat.lineGeometry = lineGeometry;
+    feat.polygonGeometry = polygonGeometry;
     // 几何所在 Part 字段按层类型区分(实测):type1 线 = Part{blob #5};
-    // type3 建筑 / type4 轨道 = Part{blob #3};type2 区域 = Feature #6 环。
+    // type3 建筑 / type4 content.#1 轨道 = Part{blob #3};
+    // type2 与 type4 content.#3 区域 = Feature #6 环。
     const int partBlobField = (layerType == 1) ? 5 : 3;
     int field = 0, wire = 0;
     while (f.tag(field, wire)) {
         if (wire == 0) {
             const uint64_t v = f.varint();
-            // type2 区域:Feature #4 varint = primary kind。实测 z10 粗源
+            // 区域:Feature #4 varint = primary kind。实测 z10 粗源
             // 61=绿地、63=水系,30002 地块 20/23 等;大区域 60/80 走
             // line-grid(见 amapCoordScale)。参考 xinzhi-map
             // decodeRegionFeature 的 #4 kind / #1 rank。
-            if (layerType == 2 && field == 4 && feat.kind == 0) {
+            if ((layerType == 2 || polygonGeometry) && field == 1 &&
+                feat.rank == 0) {
+                feat.rank = static_cast<int>(v);
+            }
+            if ((layerType == 2 || polygonGeometry) && field == 4 &&
+                feat.kind == 0) {
                 feat.kind = static_cast<int>(v);
             }
         } else if (wire == 2) {
@@ -184,8 +192,8 @@ void parseFeature(Reader& f, int classCode, int geomType, int layerType,
                     }
                 }
                 if (!ring.empty()) feat.rings.push_back(std::move(ring));
-            } else if (field == 6 && layerType == 2) {
-                // type2 区域:Feature #6 是一个嵌套 protobuf 消息:
+            } else if (field == 6 && (layerType == 2 || polygonGeometry)) {
+                // 区域 Feature #6 是一个嵌套 protobuf 消息:
                 //   repeated field #1 (wire=2) = geometry ring blob.
                 // 不能把 #6 的 tag/length 当成坐标，也不能把多个 #1
                 // payload 串到同一个 cursor；每个 blob 都必须从自己的
@@ -319,14 +327,17 @@ bool decodeContainer(const uint8_t* data, size_t size,
                     g.p = cg;
                     g.n = static_cast<size_t>(clen);
                     const bool boundaryGroup = part.type == 2 && cf == 2;
+                    const bool type4RegionGroup = part.type == 4 && cf == 3;
                     // classCode 只在字段 1(实测 type1=20009 在 #1);
                     // type2 区域 #1 缺省 30001;boundary #2 缺省 20016;
                     // type3 建筑合成 90001。
                     const int defaultClass =
                         part.type == 1 ? 20004
-                        : part.type == 2 ? (boundaryGroup ? 20016 : 30001)
-                                          : 90001;
-                    int classCode = defaultClass, geomType = 0, kind = 0;
+                        : (part.type == 2 || type4RegionGroup)
+                              ? (boundaryGroup ? 20016 : 30001)
+                              : 90001;
+                    int classCode = defaultClass, geomType = 0, kind = 0,
+                        subKey = 1;
                     int gf = 0, gw = 0;
                     std::vector<const uint8_t*> feats;
                     std::vector<size_t> featLens;
@@ -334,7 +345,10 @@ bool decodeContainer(const uint8_t* data, size_t size,
                         if (gw == 0) {
                             const uint64_t v = g.varint();
                             if (gf == 1) classCode = static_cast<int>(v);
-                            if (gf == 2) kind = static_cast<int>(v);
+                            if (gf == 2) {
+                                kind = static_cast<int>(v);
+                                subKey = static_cast<int>(v);
+                            }
                             if (gf == 2 || gf == 3) {
                                 geomType = static_cast<int>(v);
                             }
@@ -358,15 +372,28 @@ bool decodeContainer(const uint8_t* data, size_t size,
                         fr.p = feats[fi];
                         fr.n = featLens[fi];
                         AmapDecodedFeature feat;
-            // type2 区域的 kind 在 **Feature #4 varint**(参考
+            // 区域的 kind 在 **Feature #4 varint**(参考
             // xinzhi-map decodeRegionFeature),ClassGroup #2 的
             // kind 不是同一语义(实测 ClassGroup #2 得 3/5,
             // Feature #4 得 61/63/20/23)。type2 不预置,由
-            // parseFeature 读 Feature #4;其余类型保留 ClassGroup
-            // 值(建筑/轨道用 classCode 分层)。
-                        if (part.type != 2 || boundaryGroup) feat.kind = kind;
+            // parseFeature 读 Feature #4;其余类型保留 ClassGroup #2
+            // 值(建筑 cat/轨道 subKey)。
+                        feat.subKey = subKey;
+                        if (boundaryGroup && classCode == 20017) {
+                            // Building-level detail lines use a dedicated
+                            // 16384x8192 grid (real z14 samples hit both exact
+                            // maxima), unlike ordinary 4096x2048 boundaries.
+                            feat.coordScale = 0.5;
+                        }
+                        if ((part.type != 2 && !type4RegionGroup) ||
+                            boundaryGroup) {
+                            feat.kind = kind;
+                        }
+                        const bool lineGeometry =
+                            boundaryGroup || part.type == 1 ||
+                            (part.type == 4 && !type4RegionGroup);
                         parseFeature(fr, classCode, geomType, part.type, feat,
-                                     boundaryGroup);
+                                     lineGeometry, type4RegionGroup);
                         if (!feat.rings.empty() || !feat.name.empty()) {
                             part.features.push_back(std::move(feat));
                         }

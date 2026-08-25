@@ -17,11 +17,12 @@ namespace earth_engine {
 /// Layer  { z #1, x #2, y #3, type #4, content #5, #8 }
 ///   type 1 = 线(道路/轨道), type 2 = 面(区域/水/绿地),
 ///   type 3 = 建筑(footprint + height,仅 z14 容器内以 z15 子层出现),
-///   type 4 = 轨道线;POI 组(type=2 请求)另有 0/1/4 标签类。
-/// content { repeated ClassGroup(实测字段 1) }
-/// ClassGroup { classCode #1(实测;参考文档亦可 #2), geomType #3(实测;参考 #2),
+///   type 4 = content.#1 轨道线 + content.#3 区域面;POI 组(type=2 请求)
+///            另有 0/1/4 标签类。
+/// content { repeated ClassGroup(字段随 layer type 分流) }
+/// ClassGroup { classCode #1, subKey #2, resolution #3,
 ///              repeated Feature #4 }
-/// Feature  { ..., repeated Part #4; type2 使用 #6 { repeated ring #1=blob } }
+/// Feature  { ..., repeated Part #4;区域面使用 #6 { repeated ring #1=blob } }
 /// Part     { blob #3 = 几何(全 zigzag 增量), height #5(参考 varint;实测
 ///            当前版本为 bytes,待校准——见 decodeAmapTile 注释) }
 ///
@@ -35,8 +36,16 @@ struct AmapDecodedFeature {
     /// the region polygons in content.#1. Keep this semantic bit separate
     /// from the enclosing layer type so conversion cannot fill the lines.
     bool lineGeometry = false;
-    /// 类组字段 2:type2 区域 = kind(水63/绿地61/建筑块20-27…),
-    /// type3 建筑 = cat。样式配色按它分。
+    /// type4 content.#3 carries region polygons next to transit lines in
+    /// content.#1. The enclosing layer is still type4, so retain the area
+    /// semantic explicitly instead of treating every type4 feature as a line.
+    bool polygonGeometry = false;
+    /// Optional schema-specific multiplier into canonical 8192x4096 space.
+    /// Zero means derive it from layer type/zoom/kind. Amap class 20017 uses
+    /// a dedicated 16384x8192 detail grid at z14, so its multiplier is 0.5.
+    double coordScale = 0.0;
+    /// 区域 Feature #4:kind(水63/绿地61/建筑块20-27、type4 场地64),
+    /// 建筑类组字段 2:cat。样式配色按它分。
     int kind = 0;
     /// 环/折线:rings[0] = 一条;建筑每个 Part 一个环。坐标 = 瓦片局部整数。
     std::vector<std::vector<std::pair<double, double>>> rings;

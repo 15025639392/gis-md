@@ -381,14 +381,20 @@ std::vector<std::pair<double, double>> amapClipPolygonRing(
 std::vector<Feature> amapDecodedPartToFeatures(
     const AmapDecodedLayerPart& part, bool toWgs84) {
     std::vector<Feature> out;
-    const bool isLine = part.type == 1 || part.type == 4;
     for (const auto& f : part.features) {
-        // type2 区域按 kind 决定 scale(大区域 60/80 走 line-grid);
+        const bool isRegion = part.type == 2 || f.polygonGeometry;
+        const bool isLine = !f.polygonGeometry &&
+                            (part.type == 1 || part.type == 4);
+        // 区域按 kind 决定 scale(60/64/80 走 line-grid);
         // 其余类型 scale 与 kind 无关。
         // type2 content.#2 boundary lines use the line-grid scale even though
         // they remain in a type2 layer container.
-        const int geometryLayerType = f.lineGeometry ? 1 : part.type;
-        const double scale = amapCoordScale(geometryLayerType, part.z, f.kind);
+        const int geometryLayerType =
+            f.lineGeometry ? 1 : (f.polygonGeometry ? 2 : part.type);
+        const double scale =
+            f.coordScale > 0.0
+                ? f.coordScale
+                : amapCoordScale(geometryLayerType, part.z, f.kind);
         // type 0:POI 点标签。anchor = 单点 plain unsigned(2048×1024 空间,
         // scale 4),转 Point Feature。
         if (part.type == 0) {
@@ -476,7 +482,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
             continue;
         }
 
-        // type2 区域:环全部同向(even-odd 掩膜),归一化为
+        // type2 与 type4 content.#3 区域:环全部同向(even-odd 掩膜),归一化为
         // 「外环 + 孔环」分组,每组一个 Polygon(三角化自动挖孔)。
         // 归一化保证:外环 area>0,孔 area<0,且每个外环后紧跟它的孔
         // (下一个外环之前)。消费端按绕向符号分组即可,无需重算嵌套。
@@ -516,7 +522,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
         // Complex compound masks (multiple clipped components/strips) use the
         // triangle-piece path below; it preserves even-odd coverage without
         // inventing a bridge when clipping splits a concave ring.
-        if (part.type == 2 && f.kind > 0 && f.rings.size() <= 2) {
+        if (isRegion && f.kind > 0 && f.rings.size() <= 2) {
             // Kind surfaces already normalize into outer-followed-by-holes
             // groups. Preserve those groups directly; the tessellator's
             // modulo-two constraint handling resolves their shared seams
@@ -567,7 +573,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
             continue;
         }
 
-        if (part.type == 2 &&
+        if (isRegion &&
             (f.rings.size() > 2 ||
              (f.kind == 0 && touchesTileBoundary && hasOpenRing))) {
             // 先对原始 even-odd 约束整体 CDT,再对每个凸三角形做窗口
@@ -687,7 +693,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
             // 两者都按 modulo 隐式闭合。这里不能再沿窗口边界补一条
             // “候选路径”，否则会把同一个 clipped polygon 改成互补区域。
             std::vector<std::pair<double, double>> src;
-            if (part.type == 2) {
+            if (isRegion) {
                 const auto clipped =
                     amapClipPolygonRing(ring, -256.0, 8192.0 + 256.0,
                                         -256.0, 4096.0 + 256.0);
