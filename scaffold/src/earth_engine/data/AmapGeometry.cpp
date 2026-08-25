@@ -184,6 +184,12 @@ bool amapRegionUsesLineGrid(int regionKind) {
 }
 
 double amapCoordScale(int layerType, int layerZ, int regionKind) {
+    // POI label anchors use a dedicated 2048×1024 grid at every data zoom
+    // except z3.  They are not line geometry: reusing the z14 line scale (2)
+    // compresses every label into half a tile and can place it in unrelated
+    // water.  Keep this contract at the shared conversion boundary so both
+    // the live POI source and direct geometry tests use the same rule.
+    if (layerType == 0) return layerZ <= 3 ? 8.0 : 4.0;
     if (layerType == 3) return 8192.0 / 131072.0;  // 建筑 1/16
     if (layerType == 2) {
         // 普通区域恒 2048×1024(任意 zoom);大区域 kind 60/80 走 line-grid。
@@ -401,6 +407,11 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 feat.properties["amap_rank"] = std::to_string(f.rank);
                 feat.properties["amap_minzoom"] = std::to_string(f.minZoom);
                 feat.properties["amap_maxzoom"] = std::to_string(f.maxZoom);
+                // FeatureRenderLayer sorts ascending (smaller = earlier),
+                // while Amap rank uses larger = more important.  Negate at
+                // the adapter boundary so the per-tile symbol budget keeps
+                // Amap's important labels first.
+                feat.properties["rank"] = std::to_string(-f.rank);
                 if (!f.name.empty()) {
                     feat.properties["name"] = f.name;
                 }

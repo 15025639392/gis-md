@@ -37,6 +37,9 @@ bool pointInRingXY(const std::vector<std::pair<double, double>>& ring,
 }  // namespace
 
 TEST(AmapGeometryTest, CoordScalePerType) {
+    // POI labels use a 2048×1024 grid, not the z14 line grid.
+    EXPECT_EQ(4.0, amapCoordScale(0, 14));
+    EXPECT_EQ(8.0, amapCoordScale(0, 3));
     EXPECT_EQ(2.0, amapCoordScale(1, 14));
     EXPECT_EQ(4.0, amapCoordScale(1, 10));
     EXPECT_EQ(8.0, amapCoordScale(1, 3));
@@ -48,6 +51,36 @@ TEST(AmapGeometryTest, CoordScalePerType) {
     EXPECT_EQ(4.0, amapCoordScale(2, 10, 80));
     EXPECT_NEAR(1.0 / 16.0, amapCoordScale(3, 14), 1e-9);
     EXPECT_EQ(2.0, amapCoordScale(4, 14));
+}
+
+TEST(AmapGeometryTest, PoiZ14AnchorUsesFullLabelGrid) {
+    AmapDecodedLayerPart part;
+    part.z = 14;
+    part.x = 13038;
+    part.y = 5505;
+    part.type = 0;
+    AmapDecodedFeature f;
+    f.classCode = 12024;
+    f.name = "center";
+    f.rank = 7;
+    // Native POI extent is 2048×1024.  The center must remain the tile
+    // center after scale 4 + bottom-up Y flip; the old line scale 2 moved it
+    // to (2048,3072), i.e. one quarter tile west and one quarter south.
+    f.rings = {{{1024.0, 512.0}}};
+    part.features.push_back(std::move(f));
+
+    const auto features = amapDecodedPartToFeatures(part, false);
+    ASSERT_EQ(1u, features.size());
+    ASSERT_EQ(GeometryType::Point, features[0].type);
+    EXPECT_EQ("-7", features[0].properties.at("rank"));
+    const double expectedLon =
+        (part.x + 0.5) / std::exp2(part.z) * 360.0 - 180.0;
+    const double expectedLat =
+        90.0 - (part.y + 0.5) / std::exp2(part.z) * 180.0;
+    EXPECT_NEAR(expectedLon,
+                features[0].rings[0][0].longitude() * kRadToDeg, 1e-9);
+    EXPECT_NEAR(expectedLat,
+                features[0].rings[0][0].latitude() * kRadToDeg, 1e-9);
 }
 
 TEST(AmapGeometryTest, TileLocalToLngLatFlipY) {
@@ -504,6 +537,46 @@ TEST(AmapGeometryTest, RealSampleConvertsToChongqingBounds) {
         if (sawRegionKind) break;
     }
     EXPECT_TRUE(sawRegionKind) << "type2 region kind must be decoded";
+}
+
+TEST(AmapGeometryTest, RealSampleLinesStayInTheirLayerTileGrid) {
+    const char* path = std::getenv("AMAP_SAMPLE_TILE");
+    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
+    FILE* f = std::fopen(path, "rb");
+    ASSERT_NE(nullptr, f);
+    std::fseek(f, 0, SEEK_END);
+    const long len = std::ftell(f);
+    std::rewind(f);
+    std::vector<uint8_t> raw(static_cast<size_t>(len));
+    ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+    std::fclose(f);
+
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapTile(raw.data(), raw.size(), parts));
+    size_t linePoints = 0;
+    constexpr double kBuffer = 256.0;
+    for (const auto& part : parts) {
+        for (const auto& feature : part.features) {
+            if (part.type != 1 && part.type != 4 && !feature.lineGeometry) {
+                continue;
+            }
+            const int geometryType = feature.lineGeometry ? 1 : part.type;
+            const double scale =
+                amapCoordScale(geometryType, part.z, feature.kind);
+            for (const auto& ring : feature.rings) {
+                for (const auto& point : ring) {
+                    const double x = point.first * scale;
+                    const double y = 4096.0 - point.second * scale;
+                    EXPECT_GE(x, -kBuffer);
+                    EXPECT_LE(x, 8192.0 + kBuffer);
+                    EXPECT_GE(y, -kBuffer);
+                    EXPECT_LE(y, 4096.0 + kBuffer);
+                    ++linePoints;
+                }
+            }
+        }
+    }
+    EXPECT_GT(linePoints, 0u);
 }
 
 // 真样本:type2 区域必须产出 Polygon Feature(窗沿闭合前,跨瓦开放弧被

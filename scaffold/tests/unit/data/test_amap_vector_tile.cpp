@@ -216,6 +216,50 @@ std::vector<uint8_t> makeRegionWithBoundaryTile(int boundaryClass = 20014) {
     return makeContainer(root);
 }
 
+// POI type0:Feature#4 label，其中 label#3 是字符串 id、label#4 是
+// plain-unsigned 单点坐标。通用 decoder 会把 label 当 Part、把 id 当
+// geometry blob；专项 decoder 必须替换掉那份伪 type0 结果。
+std::vector<uint8_t> makePoiTile() {
+    const std::vector<uint8_t> nameBytes = {'c', 'o', 'u', 'r', 't'};
+    std::vector<uint8_t> nameBox;
+    putBytesField(nameBox, 1, nameBytes);
+
+    std::vector<uint8_t> coord;
+    putVarint(coord, 1024);  // native 2048×1024 grid center
+    putVarint(coord, 512);
+
+    std::vector<uint8_t> label;
+    putBytesField(label, 1, nameBox);
+    const std::vector<uint8_t> idBytes = {'A', 'B', 'C', 'D', 'E', 'F'};
+    putBytesField(label, 3, idBytes);
+    putBytesField(label, 4, coord);
+
+    std::vector<uint8_t> feature;
+    putVarintField(feature, 1, 14);
+    putVarintField(feature, 2, 30);
+    putVarintField(feature, 3, 7);
+    putBytesField(feature, 4, label);
+
+    std::vector<uint8_t> group;
+    putVarintField(group, 1, 12024);
+    putVarintField(group, 2, 5);
+    putBytesField(group, 4, feature);
+
+    std::vector<uint8_t> content;
+    putBytesField(content, 1, group);
+    std::vector<uint8_t> layer;
+    putVarintField(layer, 1, 14);
+    putVarintField(layer, 2, 13039);
+    putVarintField(layer, 3, 5497);
+    putVarintField(layer, 4, 0);
+    putBytesField(layer, 5, content);
+    std::vector<uint8_t> tile;
+    putBytesField(tile, 4, layer);
+    std::vector<uint8_t> root;
+    putBytesField(root, 1, tile);
+    return makeContainer(root);
+}
+
 }  // namespace
 
 TEST(AmapVectorTileTest, DecodesBuildingContainer) {
@@ -369,6 +413,42 @@ TEST(AmapVectorTileTest, PoiEntrySharesContainerPath) {
     EXPECT_EQ(3, parts[0].type);
 }
 
+TEST(AmapVectorTileTest, PoiDecoderReplacesGenericType0Garbage) {
+    const auto container = makePoiTile();
+
+    // Prove the fixture exercises the historical failure: generic decoding
+    // sees label#3 id bytes as one bogus geometry ring.
+    std::vector<AmapDecodedLayerPart> generic;
+    ASSERT_TRUE(decodeAmapTile(container.data(), container.size(), generic));
+    ASSERT_EQ(1u, generic.size());
+    ASSERT_EQ(0, generic[0].type);
+    ASSERT_FALSE(generic[0].features.empty());
+    EXPECT_TRUE(generic[0].features[0].name.empty());
+    // The explicit group class can survive generic decoding; the invariant
+    // that proves pollution is an id-derived ring with no POI name.
+    EXPECT_EQ(12024, generic[0].features[0].classCode);
+    EXPECT_FALSE(generic[0].features[0].rings.empty());
+
+    std::vector<AmapDecodedLayerPart> parts;
+    ASSERT_TRUE(decodeAmapPoiTile(container.data(), container.size(), parts));
+    std::vector<const AmapDecodedLayerPart*> pointParts;
+    for (const auto& part : parts) {
+        if (part.type == 0) pointParts.push_back(&part);
+    }
+    ASSERT_EQ(1u, pointParts.size());
+    ASSERT_EQ(1u, pointParts[0]->features.size());
+    const auto& poi = pointParts[0]->features[0];
+    EXPECT_EQ(12024, poi.classCode);
+    EXPECT_EQ(5, poi.subKey);
+    EXPECT_EQ(1, poi.geomType);
+    EXPECT_EQ("court", poi.name);
+    EXPECT_EQ(7, poi.rank);
+    ASSERT_EQ(1u, poi.rings.size());
+    ASSERT_EQ(1u, poi.rings[0].size());
+    EXPECT_DOUBLE_EQ(1024.0, poi.rings[0][0].first);
+    EXPECT_DOUBLE_EQ(512.0, poi.rings[0][0].second);
+}
+
 // 真样本校准:设置 AMAP_SAMPLE_TILE=<真实瓦片路径> 时解码并打印结构。
 // 仓库不携带高德数据,默认跳过。
 TEST(AmapVectorTileTest, DecodesRealSampleWhenProvided) {
@@ -414,30 +494,24 @@ TEST(AmapVectorTileTest, DecodesRealPoiSampleWhenProvided) {
     ASSERT_TRUE(decodeAmapPoiTile(raw.data(), raw.size(), parts, &err)) << err;
     bool sawType0 = false;
     size_t poiCount = 0;
-    FILE* diag = std::fopen("/tmp/amap_poi.txt", "w");
-    ASSERT_NE(nullptr, diag);
     for (const auto& p : parts) {
         if (p.type != 0) continue;
         sawType0 = true;
         for (const auto& feat : p.features) {
             ++poiCount;
-            if (feat.name.empty() || feat.rings.empty()) {
-                std::fprintf(diag, "POI cc=%d subKey=%d name=<empty> "
-                                   "rings=%zu\n",
-                             feat.classCode, feat.subKey, feat.rings.size());
-                continue;
-            }
-            std::fprintf(diag,
-                         "POI cc=%d subKey=%d name=%s rank=%d "
-                         "anchor=(%.0f,%.0f)\n",
-                         feat.classCode, feat.subKey, feat.name.c_str(),
-                         feat.rank, feat.rings[0][0].first,
-                         feat.rings[0][0].second);
-            if (poiCount >= 5) break;
+            // Generic decoder output must not leak into the POI stream.
+            EXPECT_NE(90001, feat.classCode);
+            EXPECT_EQ(1, feat.geomType);
+            ASSERT_EQ(1u, feat.rings.size());
+            ASSERT_EQ(1u, feat.rings[0].size());
+            const double maxX = p.z <= 3 ? 1024.0 : 2048.0;
+            const double maxY = p.z <= 3 ? 512.0 : 1024.0;
+            EXPECT_GE(feat.rings[0][0].first, 0.0);
+            EXPECT_LE(feat.rings[0][0].first, maxX);
+            EXPECT_GE(feat.rings[0][0].second, 0.0);
+            EXPECT_LE(feat.rings[0][0].second, maxY);
         }
-        if (poiCount >= 5) break;
     }
-    std::fclose(diag);
     EXPECT_TRUE(sawType0) << "POI tile should contain type-0 label layer";
     EXPECT_GT(poiCount, 0u) << "type-0 layer should have POI features";
 }

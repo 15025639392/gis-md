@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
 
 namespace earth_engine {
@@ -107,6 +108,38 @@ bool parseTileUrls(const std::string& json, std::vector<AmapTileUrl>& out,
             out.push_back(std::move(entry));
         }
     }
+    return true;
+}
+
+bool selectAmapTileUrl(const std::vector<AmapTileUrl>& urls,
+                       const AmapTileRequest& request, AmapTileUrl& out,
+                       std::string* error) {
+    const std::string expectedId = std::to_string(request.x) + "_" +
+                                   std::to_string(request.y) + "_" +
+                                   std::to_string(request.z);
+    std::string expectedGroup;
+    if (request.type == 1) {
+        expectedGroup = "building_region_road_transit";
+    } else if (request.type == 2) {
+        expectedGroup = "poi_region_road_transit";
+    } else {
+        if (error) *error = "amap: unsupported tile request type=" +
+                            std::to_string(request.type);
+        return false;
+    }
+    const auto it = std::find_if(
+        urls.begin(), urls.end(), [&](const AmapTileUrl& candidate) {
+            return candidate.id == expectedId &&
+                   candidate.group == expectedGroup && !candidate.url.empty();
+        });
+    if (it == urls.end()) {
+        if (error) {
+            *error = "amap: manifest has no matching URL for " + expectedGroup +
+                     "/" + expectedId;
+        }
+        return false;
+    }
+    out = *it;
     return true;
 }
 

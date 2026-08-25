@@ -418,7 +418,7 @@ static void amapFetchTile(const TileKey& key, int requestType,
         auto handle = CurlMultiRequestScheduler::shared().post(
             url, std::vector<uint8_t>(bodyStr.begin(), bodyStr.end()),
             "application/x-www-form-urlencoded",
-            [cb, fetchSignedUrl, referer, release, id](
+            [cb, fetchSignedUrl, key, requestType, release, id](
                 int statusCode, std::vector<uint8_t> body) {
                 if (statusCode != 200 || body.empty()) {
                     cb(0, {});
@@ -434,7 +434,16 @@ static void amapFetchTile(const TileKey& key, int requestType,
                     release(id);
                     return;
                 }
-                fetchSignedUrl(urls[0].url);
+                AmapTileUrl selected;
+                const AmapTileRequest request{key.x, key.y, key.z,
+                                              requestType};
+                if (!selectAmapTileUrl(urls, request, selected, &err)) {
+                    LOGE("AmapDemo: manifest URL mismatch: %s", err.c_str());
+                    cb(0, {});
+                    release(id);
+                    return;
+                }
+                fetchSignedUrl(selected.url);
                 release(id);
             },
             HttpRequestOptions(HttpRequestPriority::Low,
@@ -2894,11 +2903,16 @@ static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z,
                 return;
             }
             if (urls.empty()) return;
+            AmapTileUrl selected;
+            if (!selectAmapTileUrl(urls, reqs[0], selected, &err)) {
+                LOGE("AmapDemo: manifest URL mismatch: %s", err.c_str());
+                return;
+            }
             HttpRequestOptions tileOpts;
             tileOpts.headers = {{"Referer", cfg.referer}};
             const auto tileBody =
                 CurlMultiRequestScheduler::shared().getBlocking(
-                    urls[0].url, tileOpts);
+                    selected.url, tileOpts);
             std::vector<AmapDecodedLayerPart> parts;
             if (!decodeAmapTile(tileBody.data(), tileBody.size(), parts)) {
                 LOGE("AmapDemo: tile decode failed");

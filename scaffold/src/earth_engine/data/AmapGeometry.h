@@ -15,12 +15,14 @@ namespace earth_engine {
 /// 参考 amap_geometry.js/amap_reproject.js 实测结论)。各层 type 的原始
 /// extent 不同,解码器产出原始整数坐标,这里按层 type/zoom 取 coordScale
 /// 抬进规范空间:
+///   type0 POI 标签:z6-14 → scale 4(原始 2048×1024),z3 → 8;
 ///   type1 线 / type4 轨道:z14+ → scale 2(原始 4096×2048),
 ///                          z6-12 → 4,z3 → 8;
 ///   type2 区域:恒 scale 4(原始 2048×1024,kind 60/80 大区域除外,后续);
 ///   type3 建筑:scale 1/16(原始 131072×65536)。
 /// 转换后可选 GCJ-02 → WGS84 反偏移(引擎已有 Gcj02CoordinateTransform)。
 /// 层类型 → tile-local 原始整数坐标抬进规范 8192×4096 空间的倍率。
+/// type0 POI 标签:z6-14 → 4(2048×1024),z3 → 8(1024×512);
 /// type1 线 / type4 轨道:z14+ → 2(4096×2048),z6-12 → 4,z3 → 8;
 /// type2 区域:默认恒 4(2048×1024,任意 zoom),**大区域 kind 60/80
 /// (type4 的 kind 64)例外** —— 它们走 line-grid(同 type1,见

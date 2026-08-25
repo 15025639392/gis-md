@@ -2,6 +2,7 @@
 
 #include <zlib.h>
 
+#include <algorithm>
 #include <cstring>
 #include <limits>
 
@@ -400,6 +401,18 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
 
     // 主解码(完整):覆盖 type 1/2/3/4 与容器结构,保持既有语义。
     if (!decodeAmapTile(data, size, out, error)) return false;
+    // The generic building/region decoder does not know the POI label schema:
+    // it interprets label/id payloads as Part geometry and emits bogus type-0
+    // rings (often class 90001, empty name).  Keep generic type 1/2/4 entries
+    // that this container legitimately shares, but discard every generic
+    // type-0 part before appending the authoritative POI-label decode below.
+    // Otherwise AmapPoiDecodeTraits would render those id bytes as real points
+    // and they can occupy the per-tile symbol budget before named POIs.
+    out.erase(std::remove_if(out.begin(), out.end(),
+                             [](const AmapDecodedLayerPart& part) {
+                                 return part.type == 0;
+                             }),
+              out.end());
     // 对 type 0 层用 POI 标签解码覆盖(主解码不含 POI 点标签语义)。
 
     Reader root;

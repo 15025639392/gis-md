@@ -68,6 +68,13 @@ std::string buildGetTileBody(const std::vector<AmapTileRequest>& requests,
 bool parseTileUrls(const std::string& json, std::vector<AmapTileUrl>& out,
                    std::string* error = nullptr);
 
+/// Select the URL for one requested tile/layer from a manifest response.
+/// contain_range responses may include neighbors and both data groups; never
+/// bind an arbitrary first URL to the current Tree key.
+bool selectAmapTileUrl(const std::vector<AmapTileUrl>& urls,
+                       const AmapTileRequest& request, AmapTileUrl& out,
+                       std::string* error = nullptr);
+
 /// 版本探测:GET initBase?key= → {tile:"{\"v\":\"yy_mm_dd_hh\",…}"}
 /// (双重解码)。失败返回 false;cfg.version 非空时直接返回其值。
 bool resolveTileVersion(const AmapManifestConfig& cfg,

@@ -89,6 +89,31 @@ TEST(AmapTileManifestTest, ParseTileUrlsNoDataIsOk) {
     EXPECT_TRUE(urls.empty());
 }
 
+TEST(AmapTileManifestTest, SelectsRequestedGroupAndIdNotFirstUrl) {
+    const std::vector<AmapTileUrl> urls = {
+        {"building_region_road_transit", "13038_6784_14", "neighbor"},
+        {"poi_region_road_transit", "13038_6785_14", "poi"},
+        {"building_region_road_transit", "13038_6785_14", "requested"},
+    };
+    AmapTileUrl selected;
+    std::string err;
+    ASSERT_TRUE(selectAmapTileUrl(urls, {13038, 6785, 14, 1}, selected, &err))
+        << err;
+    EXPECT_EQ("requested", selected.url);
+}
+
+TEST(AmapTileManifestTest, RejectsMissingRequestedGroupOrId) {
+    const std::vector<AmapTileUrl> urls = {
+        {"building_region_road_transit", "13038_6784_14", "neighbor"},
+        {"poi_region_road_transit", "13038_6785_14", "poi"},
+    };
+    AmapTileUrl selected;
+    std::string err;
+    EXPECT_FALSE(
+        selectAmapTileUrl(urls, {13038, 6785, 14, 1}, selected, &err));
+    EXPECT_NE(std::string::npos, err.find("13038_6785_14"));
+}
+
 TEST(AmapTileManifestTest, ResolveTileVersionDoubleDecodes) {
     AmapManifestConfig cfg;
     cfg.key = "k";
