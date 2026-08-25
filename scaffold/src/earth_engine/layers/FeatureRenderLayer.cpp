@@ -151,6 +151,22 @@ std::string resolveString(
     return v->string();
 }
 
+int resolveInteger(const StyleExpression::Ptr& expr,
+                   const std::unordered_map<std::string, std::string>& properties,
+                   int fallback) {
+    if (!expr) return fallback;
+    const auto v = expr->evaluate(&properties, std::nan(""));
+    if (!v || v->kind() != StyleValue::Kind::Number ||
+        !std::isfinite(v->number())) {
+        return fallback;
+    }
+    const double bounded = std::max(
+        static_cast<double>(std::numeric_limits<int>::min()),
+        std::min(static_cast<double>(std::numeric_limits<int>::max()),
+                 v->number()));
+    return static_cast<int>(std::lround(bounded));
+}
+
 /// 单个符号 quad 的几何/采样解析(P6c)。尺寸单位 = pointSizePx 的倍数:
 /// 内置形状是边长 1 的正方 quad;位图图标高 1、宽按源图宽高比。
 struct ResolvedSymbol {
@@ -268,8 +284,8 @@ void FeatureRenderLayer::setStyle(const FeatureRenderStyle& s) {
     // P6b 表达式语义校验:颜色 = 数据驱动(镶嵌期无 zoom 上下文,引用
     // zoom 的颜色表达式恒求值失败 → 直接剥离降级字面量并警告);宽度/
     // 尺寸 = zoom 驱动(每帧无属性上下文,引用属性同理)。
-    auto sanitize = [this](StyleExpression::Ptr& expr, bool allowProperties,
-                           bool allowZoom, const char* name) {
+    auto sanitize = [](StyleExpression::Ptr& expr, bool allowProperties,
+                       bool allowZoom, const char* name) {
         if (!expr) return;
         if ((!allowZoom && expr->referencesZoom()) ||
             (!allowProperties && expr->referencesProperties())) {
@@ -285,6 +301,7 @@ void FeatureRenderLayer::setStyle(const FeatureRenderStyle& s) {
     sanitize(style_.fillColorExpr, true, false, "fillColor");
     sanitize(style_.lineColorExpr, true, false, "lineColor");
     sanitize(style_.pointColorExpr, true, false, "pointColor");
+    sanitize(style_.paintOrderExpr, true, false, "paintOrder");
     sanitize(style_.lineWidthExpr, false, true, "lineWidth");
     sanitize(style_.pointSizeExpr, false, true, "pointSize");
     sanitize(style_.pointImageExpr, true, false, "pointImage");
@@ -453,23 +470,27 @@ int FeatureRenderLayer::syncDirtyBuckets() {
 void FeatureRenderLayer::tessellateFeatureInto(
     const TessellationContext& ctx,
     const Feature& feature,
+    int paintOrder,
     const AreaSampleFn& sample,
     Vec3& origin,
     bool& hasOrigin,
-    std::vector<float>& fillVerts,
-    std::vector<uint32_t>& fillIndices,
-    std::vector<float>& lineVerts,
-    std::vector<uint32_t>& lineIndices,
-    std::vector<float>& pointVerts,
-    std::vector<uint32_t>& pointIndices,
-    std::vector<float>& labelVerts,
-    std::vector<uint32_t>& labelIndices,
-    std::vector<LabelEntry>& labelEntries,
+    PaintGeometryCpu& fillRange,
+    PaintGeometryCpu& lineRange,
+    PaintGeometryCpu& pointRange,
+    LabelGeometryCpu& labelRange,
     VolumeCpuGroups& volumeGroups,
     VolumeCpuGroups& lineVolumeGroups,
-    std::vector<float>* lineClampSourceOut,
-    std::vector<float>* extrudeVertsOut,
-    std::vector<uint32_t>* extrudeIndicesOut) {
+    PaintGeometryCpu& extrudeRange) {
+    std::vector<float>& fillVerts = fillRange.verts;
+    std::vector<uint32_t>& fillIndices = fillRange.indices;
+    std::vector<float>& lineVerts = lineRange.verts;
+    std::vector<uint32_t>& lineIndices = lineRange.indices;
+    std::vector<float>& pointVerts = pointRange.verts;
+    std::vector<uint32_t>& pointIndices = pointRange.indices;
+    std::vector<float>& labelVerts = labelRange.verts;
+    std::vector<uint32_t>& labelIndices = labelRange.indices;
+    std::vector<LabelEntry>& labelEntries = labelRange.entries;
+    std::vector<float>* lineClampSourceOut = &lineRange.clampSource;
     // P6b 数据驱动色:镶嵌期逐要素求值(上下文 = 属性,无 zoom),失败
     // 回落图层字面量;打包 RGBA8 烘进顶点流。
     const std::array<float, 4> fillColor =
@@ -552,19 +573,19 @@ void FeatureRenderLayer::tessellateFeatureInto(
             // V6 建筑挤出:带 amap_height 的 Polygon → 墙带 + CDT 顶面,
             // 不产平 fill / stencil / outline(与面路径互斥)。
             const bool extrudeBuilding =
-                ctx.style.buildingExtrusion && extrudeVertsOut &&
+                ctx.style.buildingExtrusion &&
                 feature.properties.count("amap_height");
             if (extrudeBuilding) {
                 appendExtrusionVolume(ctx, *geometry, fillColor, origin,
-                                     hasOrigin, *extrudeVertsOut,
-                                     *extrudeIndicesOut);
+                                     hasOrigin, extrudeRange.verts,
+                                     extrudeRange.indices);
                 break;
             }
             if (stencilFill) {
                 // 体积从原始 footprint 出(2D 拓扑,高度由采样范围决定),
                 // 按解析色归组(每组独立命令对,不同色互不污染)。
-                appendFillVolume(ctx, feature, sample, fillColor, origin,
-                                 hasOrigin, volumeGroups);
+                appendFillVolume(ctx, feature, paintOrder, sample, fillColor,
+                                 origin, hasOrigin, volumeGroups);
             } else {
                 TessellatedFill fill = PolygonTessellator::tessellate(
                     *geometry, ctx.ellipsoid, tessHeightOffset,
@@ -594,8 +615,8 @@ void FeatureRenderLayer::tessellateFeatureInto(
             if (!ctx.style.fillOutlineEnabled) break;
             if (stencilLine) {
                 // P6d:闭合墙带体(首尾 wrap)。
-                appendLineVolume(ctx, geometry->rings.front(), /*closed=*/true,
-                                 lineColor, origin, hasOrigin,
+                appendLineVolume(ctx, geometry->rings.front(), paintOrder,
+                                 /*closed=*/true, lineColor, origin, hasOrigin,
                                  lineVolumeGroups);
                 break;
             }
@@ -618,8 +639,9 @@ void FeatureRenderLayer::tessellateFeatureInto(
             if (stencilLine) {
                 // P6d:每条 ring 一条开放墙带体。
                 for (const auto& ring : geometry->rings) {
-                    appendLineVolume(ctx, ring, /*closed=*/false, lineColor,
-                                     origin, hasOrigin, lineVolumeGroups);
+                    appendLineVolume(ctx, ring, paintOrder, /*closed=*/false,
+                                     lineColor, origin, hasOrigin,
+                                     lineVolumeGroups);
                 }
                 break;
             }
@@ -847,6 +869,7 @@ constexpr double kVolumeMarginMeters = 120.0;
 void FeatureRenderLayer::appendFillVolume(
     const TessellationContext& ctx,
     const Feature& feature,
+    int paintOrder,
     const AreaSampleFn& sample,
     const std::array<float, 4>& fillColor,
     Vec3& origin,
@@ -855,7 +878,8 @@ void FeatureRenderLayer::appendFillVolume(
     if (feature.rings.empty() || feature.rings.front().size() < 3) return;
 
     // P6b:按解析色归组(同色体积并集计数,组间独立命令对)。
-    VolumeCpuGroup& group = volumeGroups[packColorU32(fillColor)];
+    VolumeCpuGroup& group = volumeGroups[{paintOrder, packColorU32(fillColor)}];
+    group.paintOrder = paintOrder;
     group.color = fillColor;
     std::vector<float>& volumeVerts = group.verts;
     std::vector<uint32_t>& volumeIndices = group.indices;
@@ -1020,6 +1044,7 @@ void FeatureRenderLayer::appendFillVolume(
 void FeatureRenderLayer::appendLineVolume(
     const TessellationContext& ctx,
     const std::vector<Cartographic>& points,
+    int paintOrder,
     bool closed,
     const std::array<float, 4>& lineColor,
     Vec3& origin,
@@ -1118,7 +1143,9 @@ void FeatureRenderLayer::appendLineVolume(
         (closed ? (centers[0] - centers[n - 1]).length() : 0.0);
     if (totalLength <= 0.0) return;
 
-    VolumeCpuGroup& group = lineVolumeGroups[packColorU32(lineColor)];
+    VolumeCpuGroup& group =
+        lineVolumeGroups[{paintOrder, packColorU32(lineColor)}];
+    group.paintOrder = paintOrder;
     group.color = lineColor;
     std::vector<float>& verts = group.verts;
     std::vector<uint32_t>& indices = group.indices;
@@ -1271,26 +1298,32 @@ bool FeatureRenderLayer::uploadBucketGpu(
     const Vec3& origin,
     const std::vector<float>& fillVerts,
     const std::vector<uint32_t>& fillIndices,
+    const std::vector<PaintRange>& fillRanges,
     const std::vector<float>& lineVerts,
     const std::vector<uint32_t>& lineIndices,
+    const std::vector<PaintRange>& lineRanges,
     const std::vector<float>& pointVerts,
     const std::vector<uint32_t>& pointIndices,
+    const std::vector<PaintRange>& pointRanges,
     std::vector<float>&& labelVerts,
     const std::vector<uint32_t>& labelIndices,
+    const std::vector<PaintRange>& labelRanges,
     std::vector<LabelEntry>&& labelEntries,
     const VolumeCpuGroups& volumeGroups,
     const VolumeCpuGroups& lineVolumeGroups,
     const std::vector<float>& extrudeVerts,
     const std::vector<uint32_t>& extrudeIndices,
+    const std::vector<PaintRange>& extrudeRanges,
     BucketGpu& out) const {
     out = BucketGpu{};
     out.origin = origin;
     auto uploadGroups =
         [&](const VolumeCpuGroups& cpu,
             std::vector<BucketGpu::VolumeGroupGpu>& gpuOut) {
-            for (const auto& [colorKey, group] : cpu) {
+            for (const auto& [groupKey, group] : cpu) {
                 if (group.indices.empty()) continue;
                 BucketGpu::VolumeGroupGpu gpu;
+                gpu.paintOrder = group.paintOrder;
                 gpu.color = group.color;
                 gpu.vertexBuffer = makeBuffer(renderDevice_,
                                               group.verts.data(),
@@ -1318,6 +1351,11 @@ bool FeatureRenderLayer::uploadBucketGpu(
             labelIndices.size() * sizeof(uint32_t), BufferDesc::Type::Index);
         if (out.labelVertexBuffer && out.labelIndexBuffer) {
             out.labelIndexCount = static_cast<int>(labelIndices.size());
+            for (const PaintRange& range : labelRanges) {
+                out.labelRanges.push_back(BucketGpu::PaintRangeGpu{
+                    range.paintOrder, static_cast<int>(range.indexOffset),
+                    static_cast<int>(range.indexCount)});
+            }
             // CPU 副本随桶常驻:placement 改 opacity 分量后整桶重传。
             out.labelVertsCpu = std::move(labelVerts);
             out.labelEntries = std::move(labelEntries);
@@ -1332,6 +1370,11 @@ bool FeatureRenderLayer::uploadBucketGpu(
             pointIndices.size() * sizeof(uint32_t), BufferDesc::Type::Index);
         if (out.pointVertexBuffer && out.pointIndexBuffer) {
             out.pointIndexCount = static_cast<int>(pointIndices.size());
+            for (const PaintRange& range : pointRanges) {
+                out.pointRanges.push_back(BucketGpu::PaintRangeGpu{
+                    range.paintOrder, static_cast<int>(range.indexOffset),
+                    static_cast<int>(range.indexCount)});
+            }
         }
     }
     if (!fillIndices.empty()) {
@@ -1343,6 +1386,11 @@ bool FeatureRenderLayer::uploadBucketGpu(
             fillIndices.size() * sizeof(uint32_t), BufferDesc::Type::Index);
         if (out.fillVertexBuffer && out.fillIndexBuffer) {
             out.fillIndexCount = static_cast<int>(fillIndices.size());
+            for (const PaintRange& range : fillRanges) {
+                out.fillRanges.push_back(BucketGpu::PaintRangeGpu{
+                    range.paintOrder, static_cast<int>(range.indexOffset),
+                    static_cast<int>(range.indexCount)});
+            }
         }
     }
     if (!lineIndices.empty()) {
@@ -1354,6 +1402,11 @@ bool FeatureRenderLayer::uploadBucketGpu(
             lineIndices.size() * sizeof(uint32_t), BufferDesc::Type::Index);
         if (out.lineVertexBuffer && out.lineIndexBuffer) {
             out.lineIndexCount = static_cast<int>(lineIndices.size());
+            for (const PaintRange& range : lineRanges) {
+                out.lineRanges.push_back(BucketGpu::PaintRangeGpu{
+                    range.paintOrder, static_cast<int>(range.indexOffset),
+                    static_cast<int>(range.indexCount)});
+            }
         }
     }
     if (!extrudeIndices.empty()) {
@@ -1367,6 +1420,11 @@ bool FeatureRenderLayer::uploadBucketGpu(
         if (out.extrudeVertexBuffer && out.extrudeIndexBuffer) {
             out.extrudeIndexCount =
                 static_cast<int>(extrudeIndices.size());
+            for (const PaintRange& range : extrudeRanges) {
+                out.extrudeRanges.push_back(BucketGpu::PaintRangeGpu{
+                    range.paintOrder, static_cast<int>(range.indexOffset),
+                    static_cast<int>(range.indexCount)});
+            }
         }
     }
     return out.fillIndexCount > 0 || out.lineIndexCount > 0 ||
@@ -1386,10 +1444,17 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     std::vector<FeatureId> ids(memberIds->begin(), memberIds->end());
     std::sort(ids.begin(), ids.end());
 
+    std::map<int, PaintGeometryCpu> fillGroups;
+    std::map<int, PaintGeometryCpu> lineGroups;
+    std::map<int, PaintGeometryCpu> pointGroups;
+    std::map<int, LabelGeometryCpu> labelGroups;
+    std::map<int, PaintGeometryCpu> extrudeGroups;
     std::vector<float> fillVerts;      // xyz,相对桶原点
     std::vector<uint32_t> fillIndices;
-    std::vector<float> lineVerts;      // 11 float/顶点(VectorLine44)
+    std::vector<PaintRange> fillRanges;
+    std::vector<float> lineVerts;      // 12 float/顶点(VectorLine48)
     std::vector<uint32_t> lineIndices;
+    std::vector<PaintRange> lineRanges;
     std::vector<float> pointVerts;     // kPointVertexFloats/顶点
     std::vector<uint32_t> pointIndices;
     std::vector<float> labelVerts;     // 8 float/顶点(anchor+offsetPx+uv+opacity)
@@ -1401,6 +1466,7 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     bool hasOrigin = false;
     std::vector<float> extrudeVerts;  // V6 建筑挤出(7 float/顶点)
     std::vector<uint32_t> extrudeIndices;
+    std::vector<PaintRange> extrudeRanges;
 
     // 贴地采样器:桶内全部要素的 rings 并集区域,一次收集候选瓦片。
     std::vector<std::vector<Cartographic>> allRings;
@@ -1416,14 +1482,27 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
         if (fid == previewFeatureId_) continue;  // 预览摘除中,走瞬态路径
         const Feature* feature = store_.getFeature(fid);
         if (!feature) continue;
-        tessellateFeatureInto(tessellationContext(), *feature, sample,
+        const int paintOrder = resolvePaintOrder(style_, *feature);
+        tessellateFeatureInto(tessellationContext(), *feature, paintOrder,
+                              sample,
                               origin, hasOrigin,
-                              fillVerts, fillIndices, lineVerts, lineIndices,
-                              pointVerts, pointIndices,
-                              labelVerts, labelIndices, labelEntries,
-                              volumeGroups, lineVolumeGroups, nullptr,
-                              &extrudeVerts, &extrudeIndices);
+                              fillGroups[paintOrder], lineGroups[paintOrder],
+                              pointGroups[paintOrder], labelGroups[paintOrder],
+                              volumeGroups, lineVolumeGroups,
+                              extrudeGroups[paintOrder]);
     }
+
+    flattenPaintRanges(fillGroups, 4, fillVerts, fillIndices, &fillRanges);
+    flattenPaintRanges(lineGroups, kLineVertexFloats, lineVerts, lineIndices,
+                       &lineRanges);
+    std::vector<PaintRange> pointRanges;
+    flattenPaintRanges(pointGroups, kPointVertexFloats, pointVerts,
+                       pointIndices, &pointRanges);
+    std::vector<PaintRange> labelRanges;
+    flattenLabelRanges(labelGroups, labelVerts, labelIndices, labelEntries,
+                       &labelRanges);
+    flattenPaintRanges(extrudeGroups, 7, extrudeVerts, extrudeIndices,
+                       &extrudeRanges);
 
     if (fillIndices.empty() && lineIndices.empty() && pointIndices.empty() &&
         labelIndices.empty() && volumeGroups.empty() &&
@@ -1433,13 +1512,14 @@ void FeatureRenderLayer::rebuildBucket(BucketKey key) {
     }
 
     BucketGpu gpu;
-    if (!uploadBucketGpu(origin, fillVerts, fillIndices,
-                         lineVerts, lineIndices,
-                         pointVerts, pointIndices,
+    if (!uploadBucketGpu(origin, fillVerts, fillIndices, fillRanges,
+                         lineVerts, lineIndices, lineRanges,
+                         pointVerts, pointIndices, pointRanges,
                          std::move(labelVerts), labelIndices,
+                         labelRanges,
                          std::move(labelEntries),
                          volumeGroups, lineVolumeGroups,
-                         extrudeVerts, extrudeIndices, gpu)) {
+                         extrudeVerts, extrudeIndices, extrudeRanges, gpu)) {
         // buffer 创建失败:丢弃本桶,脏区已消费 → 下次编辑该桶时重试。
         buckets_.erase(key);
         return;
@@ -1456,6 +1536,75 @@ bool FeatureRenderLayer::stencilClassificationSupported() const {
     return renderDevice_ && renderDevice_->supportsStencilClassification();
 }
 
+int FeatureRenderLayer::resolvePaintOrder(const FeatureRenderStyle& style,
+                                          const Feature& feature) {
+    return resolveInteger(style.paintOrderExpr, feature.properties,
+                          style.paintOrder);
+}
+
+void FeatureRenderLayer::flattenPaintRanges(
+    const std::map<int, PaintGeometryCpu>& ranges, size_t floatsPerVertex,
+    std::vector<float>& verts, std::vector<uint32_t>& indices,
+    std::vector<PaintRange>* outRanges, std::vector<float>* clampSource) {
+    verts.clear();
+    indices.clear();
+    if (clampSource) clampSource->clear();
+    if (outRanges) outRanges->clear();
+    for (const auto& [paintOrder, group] : ranges) {
+        if (group.indices.empty()) continue;
+        const uint32_t baseVertex =
+            static_cast<uint32_t>(verts.size() / floatsPerVertex);
+        const uint32_t indexOffset = static_cast<uint32_t>(indices.size());
+        verts.insert(verts.end(), group.verts.begin(), group.verts.end());
+        for (uint32_t index : group.indices) {
+            indices.push_back(baseVertex + index);
+        }
+        if (clampSource) {
+            clampSource->insert(clampSource->end(), group.clampSource.begin(),
+                                group.clampSource.end());
+        }
+        if (outRanges) {
+            outRanges->push_back(PaintRange{
+                paintOrder, indexOffset,
+                static_cast<uint32_t>(group.indices.size())});
+        }
+    }
+}
+
+void FeatureRenderLayer::flattenLabelRanges(
+    const std::map<int, LabelGeometryCpu>& ranges,
+    std::vector<float>& verts,
+    std::vector<uint32_t>& indices,
+    std::vector<LabelEntry>& entries,
+    std::vector<PaintRange>* outRanges) {
+    constexpr size_t kLabelVertexFloats = 8;
+    verts.clear();
+    indices.clear();
+    entries.clear();
+    if (outRanges) outRanges->clear();
+    for (const auto& [paintOrder, group] : ranges) {
+        if (group.indices.empty()) continue;
+        const uint32_t baseVertex =
+            static_cast<uint32_t>(verts.size() / kLabelVertexFloats);
+        const uint32_t indexOffset = static_cast<uint32_t>(indices.size());
+        const size_t floatOffset = verts.size();
+        verts.insert(verts.end(), group.verts.begin(), group.verts.end());
+        for (uint32_t index : group.indices) {
+            indices.push_back(baseVertex + index);
+        }
+        for (const LabelEntry& source : group.entries) {
+            LabelEntry entry = source;
+            entry.vertexFloatStart += floatOffset;
+            entries.push_back(std::move(entry));
+        }
+        if (outRanges) {
+            outRanges->push_back(PaintRange{
+                paintOrder, indexOffset,
+                static_cast<uint32_t>(group.indices.size())});
+        }
+    }
+}
+
 FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
     const TessellationContext& ctx, const std::vector<Feature>& features) {
     TileMeshCpu mesh;
@@ -1463,36 +1612,44 @@ FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
     // 本函数即丢弃(它们要图集,必须渲染线程)。**不能**图省事传同一组容器
     // —— point 顶点混进 fill 流会让 stride 对不上,画出乱码三角。
     // stencil 体不再丢弃:贴地瓦片的内容全在里面。
-    std::vector<float> pointVerts;
-    std::vector<uint32_t> pointIndices;
-    std::vector<float> labelVerts;
-    std::vector<uint32_t> labelIndices;
-    std::vector<LabelEntry> labelEntries;
+    std::map<int, PaintGeometryCpu> fillGroups;
+    std::map<int, PaintGeometryCpu> lineGroups;
+    std::map<int, PaintGeometryCpu> extrudeGroups;
 
     // 贴地采样器恒空:worker 拿不到地形瓦片注册表(那是渲染线程状态)。
     // 贴地改由 ctx 的区域高度范围驱动 —— 那是一对标量,可安全跨线程。
     const AreaSampleFn noSample;
 
     for (const Feature& feature : features) {
+        const int paintOrder = resolvePaintOrder(ctx.style, feature);
         // 点要素不定型 quad,进实例表(TileSymbolCpu):纯计算部分(锚点
         // 投影 + 样式表达式求值)worker 做完,图集相关留给准入定型。
         if (feature.type == GeometryType::Point) {
-            appendTileSymbol(ctx, feature, mesh);
+            appendTileSymbol(ctx, feature, paintOrder, mesh);
             continue;
         }
-        tessellateFeatureInto(ctx, feature, noSample, mesh.origin,
-                              mesh.hasOrigin, mesh.fillVerts, mesh.fillIndices,
-                              mesh.lineVerts, mesh.lineIndices, pointVerts,
-                              pointIndices, labelVerts, labelIndices,
-                              labelEntries, mesh.fillVolumeGroups,
-                              mesh.lineVolumeGroups, &mesh.lineClampSource,
-                              &mesh.extrudeVerts, &mesh.extrudeIndices);
+        PaintGeometryCpu discardedPoint;
+        LabelGeometryCpu discardedLabel;
+        tessellateFeatureInto(ctx, feature, paintOrder, noSample, mesh.origin,
+                              mesh.hasOrigin, fillGroups[paintOrder],
+                              lineGroups[paintOrder], discardedPoint,
+                              discardedLabel, mesh.fillVolumeGroups,
+                              mesh.lineVolumeGroups,
+                              extrudeGroups[paintOrder]);
     }
+    flattenPaintRanges(fillGroups, 4, mesh.fillVerts, mesh.fillIndices,
+                       &mesh.fillRanges);
+    flattenPaintRanges(lineGroups, kLineVertexFloats, mesh.lineVerts,
+                       mesh.lineIndices, &mesh.lineRanges,
+                       &mesh.lineClampSource);
+    flattenPaintRanges(extrudeGroups, 7, mesh.extrudeVerts,
+                       mesh.extrudeIndices, &mesh.extrudeRanges);
     return mesh;
 }
 
 void FeatureRenderLayer::appendTileSymbol(const TessellationContext& ctx,
                                           const Feature& feature,
+                                          int paintOrder,
                                           TileMeshCpu& mesh) {
     if (feature.rings.empty() || feature.rings[0].empty()) return;
     const Cartographic& c = feature.rings[0][0];
@@ -1504,6 +1661,8 @@ void FeatureRenderLayer::appendTileSymbol(const TessellationContext& ctx,
     }
 
     TileSymbolCpu sym;
+    sym.paintOrder = paintOrder;
+    sym.hasPaintOrder = true;
     sym.lonRad = c.longitude();
     sym.latRad = c.latitude();
     sym.heightM = c.height();
@@ -1538,6 +1697,7 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
     // 片元也被钉在「可见瓦数 × 上限」内。截断丢的是数据侧最不重要的尾部。
     std::vector<float> pointVerts;
     std::vector<uint32_t> pointIndices;
+    std::vector<PaintRange> pointRanges;
     std::vector<BucketGpu::TileLabelSource> labelSources;
     if (!mesh.symbols.empty()) {
         constexpr size_t kMaxSymbolsPerTile = 128;
@@ -1551,7 +1711,7 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
             mesh.symbols.resize(kMaxSymbolsPerTile);
         }
         buildTileSymbolGpu(mesh.symbols, mesh.origin, key.z, pointVerts,
-                           pointIndices, labelSources);
+                           pointIndices, pointRanges, labelSources);
     }
 
     // 符号刀A/B 诊断:worker→commit 链路的落点计数(排查「数据有点但屏上
@@ -1575,11 +1735,14 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
     clampTileLineHeights(mesh);
     static const std::vector<uint32_t> kNoIndices;
     if (!uploadBucketGpu(mesh.origin, mesh.fillVerts, mesh.fillIndices,
-                         mesh.lineVerts, mesh.lineIndices, pointVerts,
-                         pointIndices, std::vector<float>(), kNoIndices,
+                         mesh.fillRanges, mesh.lineVerts, mesh.lineIndices,
+                         mesh.lineRanges, pointVerts,
+                         pointIndices, pointRanges,
+                         std::vector<float>(), kNoIndices,
+                         std::vector<PaintRange>(),
                          std::vector<LabelEntry>(), mesh.fillVolumeGroups,
                          mesh.lineVolumeGroups, mesh.extrudeVerts,
-                         mesh.extrudeIndices, gpu)) {
+                         mesh.extrudeIndices, mesh.extrudeRanges, gpu)) {
         return;
     }
     const auto tBake = PClock::now();
@@ -1612,6 +1775,7 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
 void FeatureRenderLayer::buildTileSymbolGpu(
     const std::vector<TileSymbolCpu>& symbols, const Vec3& origin, int tileZ,
     std::vector<float>& pointVerts, std::vector<uint32_t>& pointIndices,
+    std::vector<PaintRange>& pointRanges,
     std::vector<BucketGpu::TileLabelSource>& labelSrc) {
     pointVerts.reserve(symbols.size() * 4 * kPointVertexFloats);
     pointIndices.reserve(symbols.size() * 6);
@@ -1621,38 +1785,57 @@ void FeatureRenderLayer::buildTileSymbolGpu(
     // 与 T2 判定都读它)。故地形代次变化必须重钳 —— 见
     // reclampTileBucketSymbols,别再指望"瓦片换代重 commit 时自愈"
     // (瓦片换代只有缩放才触发,静止加载期不会发生)。
+    std::map<int, std::vector<const TileSymbolCpu*>> groups;
+    for (const TileSymbolCpu& s : symbols) {
+        const int paintOrder = s.hasPaintOrder ? s.paintOrder
+                                               : style_.paintOrder;
+        groups[paintOrder].push_back(&s);
+    }
     std::vector<std::vector<Cartographic>> anchorRing(1);
     anchorRing[0].reserve(symbols.size());
-    for (const TileSymbolCpu& s : symbols) {
-        anchorRing[0].emplace_back(s.lonRad, s.latRad, 0.0);
+    for (const auto& [paintOrder, group] : groups) {
+        for (const TileSymbolCpu* s : group) {
+            anchorRing[0].emplace_back(s->lonRad, s->latRad, 0.0);
+        }
     }
     const AreaSampleFn groundSample = makeClampSampler(anchorRing);
     // [V29 刀2] 本瓦 commit = 一次匹配 pass 的认领集(语义见 crossTileIdFor)。
     std::unordered_set<uint64_t> claimedIds;
-    for (const TileSymbolCpu& s : symbols) {
-        double h = s.heightM;
-        if (groundSample) {
-            const auto ground = groundSample(s.lonRad, s.latRad);
-            if (ground) h = *ground;
+    for (const auto& [paintOrder, group] : groups) {
+        const uint32_t indexOffset = static_cast<uint32_t>(pointIndices.size());
+        for (const TileSymbolCpu* sp : group) {
+            const TileSymbolCpu& s = *sp;
+            double h = s.heightM;
+            if (groundSample) {
+                const auto ground = groundSample(s.lonRad, s.latRad);
+                if (ground) h = *ground;
+            }
+            const Vec3 anchor = ellipsoid_.cartographicToCartesian(
+                Cartographic(s.lonRad, s.latRad, h + style_.heightOffset));
+            const Vec3 rel = anchor - origin;
+            const std::array<float, 3> relF{static_cast<float>(rel.x()),
+                                            static_cast<float>(rel.y()),
+                                            static_cast<float>(rel.z())};
+            const ResolvedSymbol sym =
+                resolveSymbol(s.icon, style_.pointAnchor, iconAtlas_);
+            appendSymbolQuad(relF, sym, s.colorPacked, pointVerts,
+                             pointIndices);
+            // 符号刀B/C:带 name 的实例记标签源(烘焙推迟到
+            // bakeTileBucketLabels —— 字体可能晚于 commit 就绪)。id 经
+            // crossTileIdFor 跨瓦继承 —— 瓦片换代(z13→z14 同一 POI,MVT
+            // 逐瓦量化坐标略异)时 placement 的 fade/避让账本连续,不闪。
+            if (!s.name.empty()) {
+                const uint64_t id = crossTileIdFor(
+                    s.name, s.lonRad, s.latRad, tileZ, &claimedIds);
+                labelSrc.push_back(BucketGpu::TileLabelSource{
+                    paintOrder, relF, anchor, id, s.name});
+            }
         }
-        const Vec3 anchor = ellipsoid_.cartographicToCartesian(
-            Cartographic(s.lonRad, s.latRad, h + style_.heightOffset));
-        const Vec3 rel = anchor - origin;
-        const std::array<float, 3> relF{static_cast<float>(rel.x()),
-                                        static_cast<float>(rel.y()),
-                                        static_cast<float>(rel.z())};
-        const ResolvedSymbol sym =
-            resolveSymbol(s.icon, style_.pointAnchor, iconAtlas_);
-        appendSymbolQuad(relF, sym, s.colorPacked, pointVerts, pointIndices);
-        // 符号刀B/C:带 name 的实例记标签源(烘焙推迟到
-        // bakeTileBucketLabels —— 字体可能晚于 commit 就绪)。id 经
-        // crossTileIdFor 跨瓦继承 —— 瓦片换代(z13→z14 同一 POI,MVT
-        // 逐瓦量化坐标略异)时 placement 的 fade/避让账本连续,不闪。
-        if (!s.name.empty()) {
-            const uint64_t id = crossTileIdFor(s.name, s.lonRad, s.latRad,
-                                               tileZ, &claimedIds);
-            labelSrc.push_back(
-                BucketGpu::TileLabelSource{relF, anchor, id, s.name});
+        const uint32_t indexCount =
+            static_cast<uint32_t>(pointIndices.size()) - indexOffset;
+        if (indexCount > 0) {
+            pointRanges.push_back(
+                PaintRange{paintOrder, indexOffset, indexCount});
         }
     }
 }
@@ -1661,12 +1844,13 @@ void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
     if (gpu.tileSymbolSources.empty() || !renderDevice_) return;
     std::vector<float> pointVerts;
     std::vector<uint32_t> pointIndices;
+    std::vector<PaintRange> pointRanges;
     std::vector<BucketGpu::TileLabelSource> labelSrc;
     // tileZ 只喂 crossTileIdFor 的量化格;重钳时锚点未动,id 必然命中既有
     // 条目(同名同位),传 0 会让它按最粗格匹配 —— 用标签源里的既有 id
     // 更直接,故这里重建后逐条沿用旧 id(顺序与 commit 时一致)。
     buildTileSymbolGpu(gpu.tileSymbolSources, gpu.origin, 0, pointVerts,
-                       pointIndices, labelSrc);
+                       pointIndices, pointRanges, labelSrc);
     if (labelSrc.size() == gpu.tileLabelSources.size()) {
         for (size_t i = 0; i < labelSrc.size(); ++i) {
             labelSrc[i].featureId = gpu.tileLabelSources[i].featureId;
@@ -1684,6 +1868,12 @@ void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
         gpu.pointVertexBuffer = std::move(vb);
         gpu.pointIndexBuffer = std::move(ib);
         gpu.pointIndexCount = static_cast<int>(pointIndices.size());
+        gpu.pointRanges.clear();
+        for (const PaintRange& range : pointRanges) {
+            gpu.pointRanges.push_back(BucketGpu::PaintRangeGpu{
+                range.paintOrder, static_cast<int>(range.indexOffset),
+                static_cast<int>(range.indexCount)});
+        }
     }
     // 标签:锚点变了,glyph quad 要按新 rel 重烘(bakeTileBucketLabels 以
     // labelIndexCount>0 早退,故先清零)
@@ -1692,6 +1882,7 @@ void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
     gpu.labelBakeSettled = false;  // V27:重钳重烘,清稳态标志
     gpu.labelVertexBuffer.reset();
     gpu.labelIndexBuffer.reset();
+    gpu.labelRanges.clear();
     gpu.labelVertsCpu.clear();
     gpu.labelEntries.clear();
     bakeTileBucketLabels(gpu);
@@ -1972,14 +2163,19 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
             if (did < missing.size()) return;  // 下帧接着补(本函数幂等)
         }
     }
+    std::map<int, LabelGeometryCpu> labelGroups;
+    for (const BucketGpu::TileLabelSource& src : gpu.tileLabelSources) {
+        LabelGeometryCpu& group = labelGroups[src.paintOrder];
+        appendLabelTextQuads(*glyphAtlas_, style_, src.featureId,
+                             src.anchorEcef, src.rel, src.name, group.verts,
+                             group.indices, group.entries);
+    }
     std::vector<float> labelVerts;
     std::vector<uint32_t> labelIndices;
     std::vector<LabelEntry> labelEntries;
-    for (const BucketGpu::TileLabelSource& src : gpu.tileLabelSources) {
-        appendLabelTextQuads(*glyphAtlas_, style_, src.featureId,
-                             src.anchorEcef, src.rel, src.name, labelVerts,
-                             labelIndices, labelEntries);
-    }
+    std::vector<PaintRange> labelRanges;
+    flattenLabelRanges(labelGroups, labelVerts, labelIndices, labelEntries,
+                       &labelRanges);
     if (labelIndices.empty()) {
         // 无可显示字形 = 稳态(非在途),谓词不再计入(见 labelBakeSettled)。
         gpu.labelBakeSettled = true;
@@ -2016,6 +2212,12 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
     gpu.labelVertexBuffer = std::move(vb);
     gpu.labelIndexBuffer = std::move(ib);
     gpu.labelIndexCount = static_cast<int>(labelIndices.size());
+    gpu.labelRanges.clear();
+    for (const PaintRange& range : labelRanges) {
+        gpu.labelRanges.push_back(BucketGpu::PaintRangeGpu{
+            range.paintOrder, static_cast<int>(range.indexOffset),
+            static_cast<int>(range.indexCount)});
+    }
     gpu.labelVertsCpu = std::move(labelVerts);
     gpu.labelEntries = std::move(labelEntries);
     gpu.labelBakeSettled = true;
@@ -2163,31 +2365,58 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         previewFeature.rings = previewRings_;
         std::vector<float> fillVerts;
         std::vector<uint32_t> fillIndices;
+        std::vector<PaintRange> fillRanges;
         std::vector<float> lineVerts;
         std::vector<uint32_t> lineIndices;
+        std::vector<PaintRange> lineRanges;
         std::vector<float> pointVerts;
         std::vector<uint32_t> pointIndices;
+        std::vector<PaintRange> pointRanges;
         std::vector<float> labelVerts;
         std::vector<uint32_t> labelIndices;
+        std::vector<PaintRange> labelRanges;
         std::vector<LabelEntry> labelEntries;
         VolumeCpuGroups volumeGroups;
         VolumeCpuGroups lineVolumeGroups;
+        std::map<int, PaintGeometryCpu> fillGroups;
+        std::map<int, PaintGeometryCpu> lineGroups;
+        std::map<int, PaintGeometryCpu> pointGroups;
+        std::map<int, LabelGeometryCpu> labelGroups;
+        std::map<int, PaintGeometryCpu> extrudeGroups;
+        std::vector<float> extrudeVerts;
+        std::vector<uint32_t> extrudeIndices;
+        std::vector<PaintRange> extrudeRanges;
         Vec3 origin = Vec3::zero();
         bool hasOrigin = false;
+        const int previewPaintOrder =
+            resolvePaintOrder(style_, previewFeature);
         tessellateFeatureInto(tessellationContext(), previewFeature,
+                              previewPaintOrder,
                               makeClampSampler(previewRings_),
                               origin, hasOrigin,
-                              fillVerts, fillIndices,
-                              lineVerts, lineIndices,
-                              pointVerts, pointIndices,
-                              labelVerts, labelIndices, labelEntries,
-                              volumeGroups, lineVolumeGroups);
+                              fillGroups[previewPaintOrder],
+                              lineGroups[previewPaintOrder],
+                              pointGroups[previewPaintOrder],
+                              labelGroups[previewPaintOrder],
+                              volumeGroups, lineVolumeGroups,
+                              extrudeGroups[previewPaintOrder]);
+        flattenPaintRanges(fillGroups, 4, fillVerts, fillIndices, &fillRanges);
+        flattenPaintRanges(lineGroups, kLineVertexFloats, lineVerts,
+                           lineIndices, &lineRanges);
+        flattenPaintRanges(pointGroups, kPointVertexFloats, pointVerts,
+                           pointIndices, &pointRanges);
+        flattenLabelRanges(labelGroups, labelVerts, labelIndices,
+                           labelEntries, &labelRanges);
+        flattenPaintRanges(extrudeGroups, 7, extrudeVerts, extrudeIndices,
+                           &extrudeRanges);
         if (hasOrigin) {
             previewGpuValid_ = uploadBucketGpu(
-                origin, fillVerts, fillIndices, lineVerts, lineIndices,
-                pointVerts, pointIndices, std::move(labelVerts),
-                labelIndices, std::move(labelEntries),
-                volumeGroups, lineVolumeGroups, {}, {}, previewGpu_);
+                origin, fillVerts, fillIndices, fillRanges,
+                lineVerts, lineIndices, lineRanges,
+                pointVerts, pointIndices, pointRanges, std::move(labelVerts),
+                labelIndices, labelRanges, std::move(labelEntries),
+                volumeGroups, lineVolumeGroups, extrudeVerts, extrudeIndices,
+                extrudeRanges, previewGpu_);
         }
     }
 
@@ -2664,8 +2893,9 @@ void FeatureRenderLayer::appendBucketCommands(
                     16 * sizeof(float));
 
         // P6 stencil 贴地(方案 B):体积按解析色分组(P6b),每组一对相邻
-        // 命令。stable_sort 按 order(29)保持插入序 → 体 pass 必在色 pass
-        // 前;色 pass op ZERO 顺手清零,组间不串。组内多要素并集计数。
+        // 命令。两 phase 共享普通矢量的 MVP order，由 vectorPaintOrder
+        // 决定其相对水/绿地/用地/道路的压盖顺序；同组 stable_sort 保持
+        // 体 pass 在色 pass 前，色 pass op ZERO 顺手清零，组间不串。
         // **契约**:色 pass 恒用 pos-only + uniform 纯色。分类着色的是地形
         // 像素、光栅化的却是体表面,任何"从体面插值 varying 再决定 fragment
         // 外观"的做法(pattern/渐变/沿线里程)在侧视下都有视差,线 dash 已
@@ -2675,6 +2905,7 @@ void FeatureRenderLayer::appendBucketCommands(
             if (group.indexCount <= 0 || !fillShader) continue;
             RenderCommand vol;
             vol.kind = RenderCommandKind::VectorStencil;
+            vol.vectorPaintOrder = group.paintOrder;
             vol.stencilPhase = StencilPhase::ClassifyVolume;
             vol.owner = layerId_;
             vol.pass = "color";
@@ -2708,7 +2939,7 @@ void FeatureRenderLayer::appendBucketCommands(
             commands.push_back(std::move(col));
         }
 
-        // P6d stencil 贴地线:墙带体命令对(同 order 29 + 插入序紧邻契约;
+        // P6d stencil 贴地线:墙带体命令对(同 MVP order + ordinal，插入序紧邻契约;
         // 每组色 pass op ZERO 清零,与 fill 组间互不串)。宽度在 VS 按眼深
         // 换算世界米挤出:halfW = u_halfWidthPerEyeZ * |ec.z|,
         // u_halfWidthPerEyeZ = lineWidthPx * tan(fovy/2) / vpH(即每米眼深
@@ -2728,6 +2959,7 @@ void FeatureRenderLayer::appendBucketCommands(
                 if (group.indexCount <= 0) continue;
                 RenderCommand vol;
                 vol.kind = RenderCommandKind::VectorStencil;
+                vol.vectorPaintOrder = group.paintOrder;
                 vol.stencilPhase = StencilPhase::ClassifyVolume;
                 vol.owner = layerId_;
                 vol.pass = "color";
@@ -2764,16 +2996,20 @@ void FeatureRenderLayer::appendBucketCommands(
             }
         }
 
-        if (gpu.fillIndexCount > 0 && renderer.vectorFillShader()) {
+        auto appendFill = [&](int paintOrder, int indexOffset,
+                              int indexCount) {
+            if (indexCount <= 0 || !renderer.vectorFillShader()) return;
             RenderCommand cmd;
             cmd.kind = RenderCommandKind::VectorFill;
+            cmd.vectorPaintOrder = paintOrder;
             cmd.owner = layerId_;
             cmd.pass = "color";
             cmd.frameId = frameState.frameId;
             cmd.shader = renderer.vectorFillShader();
             cmd.vertexBuffer = gpu.fillVertexBuffer.get();
             cmd.indexBuffer = gpu.fillIndexBuffer.get();
-            cmd.indexCount = gpu.fillIndexCount;
+            cmd.indexOffset = indexOffset;
+            cmd.indexCount = indexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
             cmd.vertexStride = 16;  // pos(12)+color(4,RGBA8)
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
@@ -2783,18 +3019,30 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.cullFace = false;
             cmd.uniforms["u_modelViewProjection"] = mvpUniform;
             commands.push_back(std::move(cmd));
+        };
+        if (!gpu.fillRanges.empty()) {
+            for (const auto& range : gpu.fillRanges) {
+                appendFill(range.paintOrder, range.indexOffset,
+                           range.indexCount);
+            }
+        } else {
+            appendFill(style_.paintOrder, 0, gpu.fillIndexCount);
         }
 
-        if (gpu.extrudeIndexCount > 0 && renderer.vectorExtrusionShader()) {
+        auto appendExtrusion = [&](int paintOrder, int indexOffset,
+                                   int indexCount) {
+            if (indexCount <= 0 || !renderer.vectorExtrusionShader()) return;
             RenderCommand cmd;
             cmd.kind = RenderCommandKind::VectorExtrusion;
+            cmd.vectorPaintOrder = paintOrder;
             cmd.owner = layerId_;
             cmd.pass = "color";
             cmd.frameId = frameState.frameId;
             cmd.shader = renderer.vectorExtrusionShader();
             cmd.vertexBuffer = gpu.extrudeVertexBuffer.get();
             cmd.indexBuffer = gpu.extrudeIndexBuffer.get();
-            cmd.indexCount = gpu.extrudeIndexCount;
+            cmd.indexOffset = indexOffset;
+            cmd.indexCount = indexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
             cmd.vertexStride = 28;  // pos(12)+normal(12)+color(4)
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
@@ -2808,18 +3056,30 @@ void FeatureRenderLayer::appendBucketCommands(
                 frameState.lightDir.z};
             cmd.uniforms["u_ambient"] = {0.25f};
             commands.push_back(std::move(cmd));
+        };
+        if (!gpu.extrudeRanges.empty()) {
+            for (const auto& range : gpu.extrudeRanges) {
+                appendExtrusion(range.paintOrder, range.indexOffset,
+                                range.indexCount);
+            }
+        } else {
+            appendExtrusion(style_.paintOrder, 0, gpu.extrudeIndexCount);
         }
 
-        if (gpu.lineIndexCount > 0 && lineShader) {
+        auto appendLine = [&](int paintOrder, int indexOffset,
+                              int indexCount) {
+            if (indexCount <= 0 || !lineShader) return;
             RenderCommand cmd;
             cmd.kind = RenderCommandKind::VectorLine;
+            cmd.vectorPaintOrder = paintOrder;
             cmd.owner = layerId_;
             cmd.pass = "color";
             cmd.frameId = frameState.frameId;
             cmd.shader = lineShader;
             cmd.vertexBuffer = gpu.lineVertexBuffer.get();
             cmd.indexBuffer = gpu.lineIndexBuffer.get();
-            cmd.indexCount = gpu.lineIndexCount;
+            cmd.indexOffset = indexOffset;
+            cmd.indexCount = indexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
             cmd.vertexStride =
                 static_cast<int>(kLineVertexFloats * sizeof(float));  // 48
@@ -2837,18 +3097,30 @@ void FeatureRenderLayer::appendBucketCommands(
                 style_.lineDashPeriodMeters};
             cmd.uniforms["u_dashOnFraction"] = {style_.lineDashOnFraction};
             commands.push_back(std::move(cmd));
+        };
+        if (!gpu.lineRanges.empty()) {
+            for (const auto& range : gpu.lineRanges) {
+                appendLine(range.paintOrder, range.indexOffset,
+                           range.indexCount);
+            }
+        } else {
+            appendLine(style_.paintOrder, 0, gpu.lineIndexCount);
         }
 
-        if (gpu.pointIndexCount > 0 && renderer.vectorPointShader()) {
+        auto appendPoint = [&](int paintOrder, int indexOffset,
+                               int indexCount) {
+            if (indexCount <= 0 || !renderer.vectorPointShader()) return;
             RenderCommand cmd;
             cmd.kind = RenderCommandKind::VectorPoint;
+            cmd.vectorPaintOrder = paintOrder;
             cmd.owner = layerId_;
             cmd.pass = "color";
             cmd.frameId = frameState.frameId;
             cmd.shader = renderer.vectorPointShader();
             cmd.vertexBuffer = gpu.pointVertexBuffer.get();
             cmd.indexBuffer = gpu.pointIndexBuffer.get();
-            cmd.indexCount = gpu.pointIndexCount;
+            cmd.indexOffset = indexOffset;
+            cmd.indexCount = indexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
             // anchor(12)+offsetUnit(8)+uv(8)+color(4,RGBA8)+shape(4)
             cmd.vertexStride = 36;
@@ -2878,19 +3150,31 @@ void FeatureRenderLayer::appendBucketCommands(
                                                       : nullptr);
             appendTerrainOcclusion(renderer, cmd);
             commands.push_back(std::move(cmd));
+        };
+        if (!gpu.pointRanges.empty()) {
+            for (const auto& range : gpu.pointRanges) {
+                appendPoint(range.paintOrder, range.indexOffset,
+                            range.indexCount);
+            }
+        } else {
+            appendPoint(style_.paintOrder, 0, gpu.pointIndexCount);
         }
 
-        if (gpu.labelIndexCount > 0 && renderer.vectorLabelShader() &&
-            glyphAtlas_ && glyphAtlas_->texture()) {
+        auto appendLabel = [&](int paintOrder, int indexOffset,
+                               int indexCount) {
+            if (indexCount <= 0 || !renderer.vectorLabelShader() ||
+                !glyphAtlas_ || !glyphAtlas_->texture()) return;
             RenderCommand cmd;
             cmd.kind = RenderCommandKind::VectorLabel;
+            cmd.vectorPaintOrder = paintOrder;
             cmd.owner = layerId_;
             cmd.pass = "color";
             cmd.frameId = frameState.frameId;
             cmd.shader = renderer.vectorLabelShader();
             cmd.vertexBuffer = gpu.labelVertexBuffer.get();
             cmd.indexBuffer = gpu.labelIndexBuffer.get();
-            cmd.indexCount = gpu.labelIndexCount;
+            cmd.indexOffset = indexOffset;
+            cmd.indexCount = indexCount;
             cmd.indexType = RenderCommand::IndexType::UInt32;
             cmd.vertexStride = 32;  // anchor(12)+offsetPx(8)+uv(8)+opacity(4)
             cmd.primitive = RenderCommand::PrimitiveType::Triangles;
@@ -2923,6 +3207,14 @@ void FeatureRenderLayer::appendBucketCommands(
                 style_.labelHaloPx / std::max(0.01f, glyphScale) *
                 GlyphAtlas::kSdfDistScale / 255.0f};
             commands.push_back(std::move(cmd));
+        };
+        if (!gpu.labelRanges.empty()) {
+            for (const auto& range : gpu.labelRanges) {
+                appendLabel(range.paintOrder, range.indexOffset,
+                            range.indexCount);
+            }
+        } else {
+            appendLabel(style_.paintOrder, 0, gpu.labelIndexCount);
         }
     }
 }

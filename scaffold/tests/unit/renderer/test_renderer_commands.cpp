@@ -815,6 +815,105 @@ TEST(RendererCommandTest, MvpSortPutsVectorLast) {
     EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
 }
 
+TEST(RendererCommandTest, MvpSortUsesVectorPaintOrderAcrossSameMvpPass) {
+    auto makeFill = [](const char* owner, int paintOrder) {
+        RenderCommand cmd;
+        cmd.kind = RenderCommandKind::VectorFill;
+        cmd.owner = owner;
+        cmd.pass = "color";
+        cmd.vectorPaintOrder = paintOrder;
+        cmd.depthTest = true;
+        cmd.depthWrite = false;
+        cmd.blend = true;
+        cmd.cullFace = false;
+        return cmd;
+    };
+    RenderCommandList commands{makeFill("water", 50), makeFill("land", 30),
+                               makeFill("green", 10)};
+    EXPECT_TRUE(mvpRenderCommandsNeedSort(commands));
+    EXPECT_TRUE(validateMvpRenderCommands(commands).has_value());
+    sortMvpRenderCommands(commands);
+    EXPECT_FALSE(mvpRenderCommandsNeedSort(commands));
+    ASSERT_EQ(3u, commands.size());
+    EXPECT_EQ("green", commands[0].owner);
+    EXPECT_EQ("land", commands[1].owner);
+    EXPECT_EQ("water", commands[2].owner);
+    EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
+}
+
+TEST(RendererCommandTest, MvpSortInterleavesStencilWithVectorPaintOrder) {
+    auto makeFill = [](int paintOrder) {
+        RenderCommand cmd;
+        cmd.kind = RenderCommandKind::VectorFill;
+        cmd.owner = "land";
+        cmd.pass = "color";
+        cmd.vectorPaintOrder = paintOrder;
+        cmd.depthTest = true;
+        cmd.depthWrite = false;
+        cmd.blend = true;
+        cmd.cullFace = false;
+        return cmd;
+    };
+    auto makeStencil = [](StencilPhase phase, int paintOrder) {
+        RenderCommand cmd;
+        cmd.kind = RenderCommandKind::VectorStencil;
+        cmd.owner = "water";
+        cmd.pass = "color";
+        cmd.stencilPhase = phase;
+        cmd.vectorPaintOrder = paintOrder;
+        cmd.depthTest = phase == StencilPhase::ClassifyVolume;
+        cmd.depthWrite = false;
+        cmd.blend = phase == StencilPhase::ClassifyColor;
+        cmd.cullFace = phase == StencilPhase::ClassifyColor;
+        if (cmd.cullFace) cmd.cullMode = RenderCommand::CullMode::Front;
+        return cmd;
+    };
+
+    // 低 ordinal 的普通用地必须先画，高 ordinal 的贴地水面随后覆盖；
+    // VectorStencil 不能因固定在独立 MVP pass 而整体跑到普通 fill 前。
+    RenderCommandList commands{
+        makeStencil(StencilPhase::ClassifyVolume, 50),
+        makeStencil(StencilPhase::ClassifyColor, 50),
+        makeFill(30),
+    };
+    sortMvpRenderCommands(commands);
+    ASSERT_EQ(3u, commands.size());
+    EXPECT_EQ(RenderCommandKind::VectorFill, commands[0].kind);
+    EXPECT_EQ(RenderCommandKind::VectorStencil, commands[1].kind);
+    EXPECT_EQ(RenderCommandKind::VectorStencil, commands[2].kind);
+    EXPECT_EQ(StencilPhase::ClassifyVolume, commands[1].stencilPhase);
+    EXPECT_EQ(StencilPhase::ClassifyColor, commands[2].stencilPhase);
+    EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
+}
+
+TEST(RendererCommandTest, VectorExtrusionIsBeforeLabels) {
+    RenderCommand extrusion;
+    extrusion.kind = RenderCommandKind::VectorExtrusion;
+    extrusion.owner = "building";
+    extrusion.pass = "color";
+    extrusion.vectorPaintOrder = 60;
+    extrusion.depthTest = true;
+    extrusion.depthWrite = true;
+    extrusion.blend = false;
+    extrusion.cullFace = false;
+
+    RenderCommand label;
+    label.kind = RenderCommandKind::VectorLabel;
+    label.owner = "label";
+    label.pass = "color";
+    label.depthTest = false;
+    label.depthWrite = false;
+    label.blend = true;
+    label.cullFace = false;
+
+    RenderCommandList commands{label, extrusion};
+    sortMvpRenderCommands(commands);
+    ASSERT_EQ(2u, commands.size());
+    EXPECT_EQ(RenderCommandKind::VectorExtrusion, commands[0].kind);
+    EXPECT_EQ(RenderCommandKind::VectorLabel, commands[1].kind);
+    EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
+}
+
 TEST(RendererCommandTest, MvpSortDrawsOpaqueGltfBeforeTranslucentBackToFront) {
     RenderCommand nearBlend;
     nearBlend.kind = RenderCommandKind::GltfPrimitive;

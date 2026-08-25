@@ -2571,15 +2571,14 @@ Fat, backend-neutral draw descriptor produced by command factories and consumed 
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| Slot constants | .h:14-19 | **`kMaxSurfaceImageryOverlays`** = 4 (.h:14), **`kGltfRasterOverlayTextureBase`** = 15 (.h:15), **`kMaxGltfRasterOverlays`** = 4 (.h:16), `kGltfWaterMaskTextureSlot` = 19 (.h:17-18), **`kGltfInstanceMatrixStride`** = 100 (.h:19). |
-| `RenderCommandKind` | .h:21-29 | Unknown, SkyBackground, AtmosphereBackground, SurfaceTile, GltfPrimitive, GltfPrimitiveInstanced, VectorOverlay. **No `GlobeSurface`** — the fallback-globe kind was removed with the globe-mesh deletion. |
-| `RenderCommand` struct | .h:33-138 | Identity (`owner`, `pass`, `stableKey`, `frameId`, `generation`, `terrainRenderContent`), raw GPU handles + `resourceKeepAlive` shared_ptrs, draw params (`vertexStride` 0=auto/32=surface/120=glTF, `instanceStride`), render state, translucent sort (`worldSortCenter`/`translucentSortDepth`), generic `uniforms` map, and fixed-storage hot-path surface/glTF uniform arrays (.h:93-137). |
-| Surface fixed uniforms | .h:76-105 | `surfaceModelViewProjection`, tile/clip UV, per-overlay UV+opacity, fog, water-mask, geometry/texture zoom, skirt index counts — avoids per-tile map/string alloc. |
-| glTF raster-overlay fixed uniforms | .h:126-137 | `_CESIUMOVERLAY_n`-style UVs/opacities/texCoordSets + water-mask; separate from surface samplers. |
-| `RenderCommandValidationError` | .h:110-112 | `{commandIndex, owner, message}`. |
-| `mvpRenderOrder(kind)` | .h:115, .cpp:108-130 | Draw-order map: Sky 0, SurfaceTile 10, GltfPrimitive(Instanced) 15, Atmosphere 20, VectorOverlay 30, Unknown 100. No GlobeSurface entry remains. |
-| `validateMvpRenderCommands` | .h:119-121, .cpp:118-209 | Hard contract for MVP chain. Returns `optional<...Error>` (empty=valid). Enforces monotonic pass order (.cpp:129-133), color pass, per-kind fixed depth/write/cull/blend, non-zero `generation`, matching `frameId`, back-to-front translucent glTF sort (.cpp:213-230), instanced requires count+buffer+stride (.cpp:177-190). **Terrain-primary exemption**: `owner=="terrain_primary_surface"` overlay allows all-off state (.cpp:123-130,173-183). Contract is enforced by throw at call site `SceneRenderPipeline.cpp:372-375` (`std::runtime_error` on any error). |
-| `sortMvpRenderCommands` | .h:123, .cpp:286-293 | `stable_sort` by `mvpCommandLess`: order → opaque-before-translucent glTF → translucent back-to-front by `translucentSortDepth` (.cpp:81-104). |
+| Slot constants | .h:17-51 | `kDefaultVectorPaintOrder`=1000；材质/影像/water/page-store/height/road-field 固定纹理槽；`kGltfInstanceMatrixStride`=100，`kTerrainInstanceStride`=128。 |
+| `RenderCommandKind` | .h:106-124 | Sky / atmosphere / glTF，以及 VectorOverlay/Fill/Line/Extrusion/Point/Label/Stencil。VectorLabel 独立 order 31；其余矢量共享 order 30，并由 `vectorPaintOrder` 细分。 |
+| `RenderCommand` struct | .h:142-300 | 身份、GPU 句柄、index range、固定渲染状态、`vectorPaintOrder`、stencil phase、透明排序、uniform 与 glTF 固定块。 |
+| `RenderCommandValidationError` | .h:302-307 | `{commandIndex, owner, message}`。 |
+| `mvpRenderOrder(kind)` | .h:309, .cpp:112-135 | Sky 0，glTF 15，atmosphere 20，普通矢量/Stencil 30，label 31，Unknown 100。 |
+| `mvpRenderCommandLess` / `mvpRenderCommandsNeedSort` | .h:312-313, .cpp:137-146 | 复用统一比较器；相同 MVP pass 时先比较 `vectorPaintOrder`，因此跨瓦片/跨几何类型的矢量层级也能触发 fast-path 排序。 |
+| `validateMvpRenderCommands` | .h:317-319, .cpp:148-322 | 校验 MVP order 与 vector ordinal 单调性，并锁死 glTF、fill/line、extrusion、point/label、stencil 两 phase 的状态契约。 |
+| `sortMvpRenderCommands` | .h:321, .cpp:324-329 | `stable_sort`：MVP order → vector ordinal → glTF opaque/translucent 与透明深度；相同 ordinal 保留 stencil volume/color 命令对顺序。 |
 
 ### RenderCommandStreamingSet.h / .cpp
 
@@ -2756,8 +2755,8 @@ OpenGL ES 3.0 backend implementing `renderer/RenderDevice.h`. Assumes caller own
 | `createFramebuffer` | .cpp:829-955 | Returns `nullptr` (MVP uses default FBO) |
 | `beginFrame` | .cpp:989-993 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:989-993) |
 | `submit` | .cpp:1279-1909 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1563-1563). Perf log every 120 submits or ≥25ms (.cpp:1627). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
-| `endFrame` | .cpp:2211-2225 | **No-op — `glFlush()` removed**; `eglSwapBuffers` (external) implicitly syncs, avoids blocking CPU→GPU parallelism |
-| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2261-2296 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
+| `endFrame` | .cpp:2230-2239 | 收尾可选 GPU timer；`eglSwapBuffers` 仍由外部负责 |
+| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2280-2315 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
 
 Per-command command-kind counters in `submit` (.cpp:1279-1909) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
 
@@ -3035,37 +3034,38 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 
 ### FeatureRenderLayer.h / .cpp
 
-矢量要素渲染层(2935 行,**本索引此前完全没有条目**)。以 `FeatureStore` 为数据源,
+矢量要素渲染层(3414 行,**本索引此前完全没有条目**)。以 `FeatureStore` 为数据源,
 镶嵌成 GPU 桶后出 RenderCommand;贴地、标签避让、拾取、编辑预览都在这里。
 矢量系统 P1-P6 的落点(总设计见 docs/issues 里的矢量系列)。
 
 | 类型 | 行 | 说明 |
 |---|---|---|
-| `FeaturePickResult` | .h:31-48 | 拾取结果(featureId + 命中位置/环号/顶点号) |
-| `FeatureAltitudeMode` | .h:50-55 | 高度模式:贴地 / 相对 / 绝对 |
-| `FeatureRenderStyle` | .h:64-156 | 样式(表达式驱动,见 `StyleExpression`;`globeFillMaxEdgeMeters` 默认 400) |
-| `FeatureTerrainSampling` | .h:160-184 | 贴地采样参数(细分间距 / Steiner 点) |
-| `FeatureRenderLayer` | .h:186- | 主体 |
+| `FeaturePickResult` | .h:38-55 | 拾取结果(featureId + 命中位置/环号/顶点号) |
+| `FeatureAltitudeMode` | .h:57-61 | 高度模式:贴地 / 绝对 |
+| `FeatureRenderStyle` | .h:64-171 | 样式(表达式驱动，含 `paintOrder` / `paintOrderExpr`) |
+| `FeatureTerrainSampling` | .h:175-199 | 贴地采样与区域高度范围 |
+| `FeatureRenderLayer` | .h:201-902 | 主体 |
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `setStyle` | .cpp:266-306 | 换样式并标脏;越界表达式在此剥离降级 |
-| `stencilClassificationSupported` | .cpp:1383-1386 | 后端静态能力位(渲染线程读设备,快照给 worker) |
-| `makeClampSampler` / `prepareClampedFeature` | .cpp:336-362 / :363-443 | 贴地方案 A:边细分 + Steiner 采高,与渲染网格**同源采样**(顶破根修)。⚠️ ctx 带区域高度范围时**整段跳过采样**,点取范围中点 —— worker 贴地的前提 |
-| `syncDirtyBuckets` | .cpp:444-452 | 每帧入口:重建脏桶,返回重建数 |
-| `tessellateFeatureInto` | .cpp:453-712 | 镶嵌总控(面/线/点/标签分派);线含逐顶点海拔渐变(`lineColorGradientByHeight` → `a_color`,2026-08-23) |
-| `appendFillVolume` / `appendLineVolume` | .cpp:795-967 / :968-1217 | 面体 / 线体几何生成(线含 dash、闭环 seam 复制)。体的高度跨度取自区域范围(有)或逐点采样(无);**取窄了该片区整片不显示** |
-| `uploadBucketGpu` | .cpp:1218-1309 | 桶上传;⚠️ fade/opacity 变化也必须回写(曾因"无变化早退"导致 opacity 永不回写) |
-| `rebuildBucket` | .cpp:1310-1382 | 单桶重建 |
-| `tessellateTileMesh` / `appendTileSymbol` / `commitTileMesh` / `buildTileSymbolGpu` / `reclampTileBucketSymbols` / `bakeTileBucketLabels` / `dropTileMesh` | .cpp:1387-1420 / :1421-1451 / :1452-1533 / :1534-1581 / :1582-1671 / :1672-1759 / :1760-1773 | MVT 底图路径:瓦片即桶,镶嵌在 worker 完成(E1)。贴地时产 stencil 体(与 fill/line 流**互斥**);点要素 worker 出 TileSymbolCpu 实例表,commit 采地面高+图集解析定型 quad(符号刀A);带 name 实例存标签源,bakeTileBucketLabels 在字体就绪时补烘 glyph quads+placement 登记(符号刀B,幂等)。⚠️ 锚点高度是采样当刻的地形代次,地形细化会把它埋掉 → reclampTileBucketSymbols 在代次变化时按 tileSymbolSources 重钳(V24/B.6)。⚠️ bake 里的新字形 SDF 栅格化 **2-3.5ms/字形**,故受 kGlyphRasterBudgetPerFrame 限流、缺字形整桶推迟(P6) |
-| `buildRenderCommands` | .cpp:1774-1941 | 出命令总入口 |
-| `visibleBucketKeys` | .cpp:1942-2011 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:2012-2110 | 标签避让 + fade + 地平线剔除(P5c) |
-| `dumpLabelLifecycle` | .cpp:2184-2293 | 七态只读聚合 dump(诊断基建):驻留×烘焙×placement×fade×回写×锚点代次一行看齐(第七态遮挡在 shader 侧读不到);demo 经 `setprop debug.ee.labeldump` 免重编译触发 |
-| `appendTerrainOcclusion` | .cpp:2313-2328 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:2329-2624 | 逐桶发命令:stencil 贴地面、贴地线、点符号/图标、标签 |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:2625-2640 / :2641-2647 / :2648-2673 | 编辑预览三接口(**编辑器本身不进引擎**,见该决策) |
-| `pick` | .cpp:2717-2935 | 要素拾取 |
+| `setStyle` | .cpp:282-323 | 换样式并标脏；越界表达式（含 paint order）在此剥离降级 |
+| `makeClampSampler` / `prepareClampedFeature` | .cpp:353-379 / :380-460 | 贴地方案 A:边细分 + Steiner 采高；区域高度范围可让 worker 跳过逐点采样 |
+| `syncDirtyBuckets` | .cpp:461-469 | 每帧入口:重建脏桶,返回重建数 |
+| `tessellateFeatureInto` | .cpp:470-784 | 镶嵌总控；接收已解析的 paint ordinal，并分派 fill/line/extrusion/stencil |
+| `appendFillVolume` / `appendLineVolume` | .cpp:867-1041 / :1042-1294 | 面体 / 线体按 `(paintOrder,color)` 分组，避免贴地路径丢失逐要素层级 |
+| `uploadBucketGpu` | .cpp:1297-1435 | 单几何类仍上传一对 VBO/IBO；paint ranges 保存 index offset/count，point/label 也按 ordinal 保存 ranges，stencil group 保存 ordinal |
+| `rebuildBucket` | .cpp:1436-1534 | 单桶重建 |
+| `stencilClassificationSupported` / `resolvePaintOrder` / `flattenPaintRanges` | .cpp:1535-1573 / :1539-1544 / :1545-1573 | 能力快照；属性表达式解析 ordinal；按 ordinal flatten 到共享 buffer ranges |
+| `tessellateTileMesh` / `appendTileSymbol` / `commitTileMesh` / `buildTileSymbolGpu` / `reclampTileBucketSymbols` | .cpp:1608-1682 / :1650-1682 / :1683-1773 / :1774-1843 / :1844-1895 | MVT worker 分组镶嵌、符号携带 ordinal、渲染线程按 ordinal 准入与重钳 |
+| `bakeTileBucketLabels` / `dropTileMesh` | .cpp:2133-2231 / :2232-2245 | 字体就绪后补烘标签并按 ordinal 分段；移除瓦片桶 |
+| `buildRenderCommands` | .cpp:2246-2525 | 出命令总入口 |
+| `visibleBucketKeys` | .cpp:2456-2525 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:2526-2624 | 标签避让 + fade + 地平线剔除(P5c) |
+| `dumpLabelLifecycle` | .cpp:2698-2807 | 七态只读聚合 dump |
+| `appendTerrainOcclusion` | .cpp:2827-2842 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:2843-3226 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:3227-3242 / :3243-3249 / :3250-3275 | 编辑预览三接口 |
+| `pick` | .cpp:3319-3537 | 要素拾取 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
@@ -3639,18 +3639,18 @@ Declarative config consumed by `installScene`. No logic; enums + POD structs.
 
 ### RenderCommand.h / RenderCommand.cpp
 
-Draw order is a fixed integer per `RenderCommandKind` (RenderCommand.h:21-29), resolved by `mvpRenderOrder()` (RenderCommand.cpp:108-130). `sortMvpRenderCommands()` (`.cpp:211-216`) does a `std::stable_sort` on `mvpCommandLess` (`.cpp:74-97`): primary key = order integer, then opaque-before-translucent glTF, then translucent glTF back-to-front by `translucentSortDepth` descending. `validateMvpRenderCommands()` (`.cpp:118-209`) hard-asserts per-kind pass/depth/cull/blend. **`GlobeSurface` is gone** — the `GlobeMesh`/`Globe` fallback path was deleted; live terrain is `SurfaceTile` + glTF `GltfPrimitive`.
+Draw order由 `mvpRenderOrder()` (RenderCommand.cpp:112-135) 和 `mvpCommandLess` (.cpp:81-108) 共同决定。`sortMvpRenderCommands()` (.cpp:324-329) 使用稳定排序：MVP pass → `vectorPaintOrder` → glTF 透明规则；`validateMvpRenderCommands()` (.cpp:148-322) 同时校验 pass 与矢量 ordinal 单调性。
 
 | RenderCommandKind | mvpRenderOrder | Lines |
 |---|---|---|
-| SkyBackground | **0** | .cpp:136-137 |
-| SurfaceTile | **10** | .cpp:138-139 |
-| GltfPrimitive / GltfPrimitiveInstanced | **15** | .cpp:107-109 |
-| AtmosphereBackground | **20** | .cpp:110-111 |
-| VectorOverlay | **30** | .cpp:145-146 |
-| Unknown / default | **100** | .cpp:112-114 |
+| SkyBackground | **0** | .cpp:114-115 |
+| GltfPrimitive / GltfPrimitiveInstanced | **15** | .cpp:116-118 |
+| AtmosphereBackground | **20** | .cpp:119-120 |
+| VectorOverlay / Fill / Line / Extrusion / Point / Stencil | **30** | .cpp:121-128 |
+| VectorLabel | **31** | .cpp:129-130 |
+| Unknown / default | **100** | .cpp:131-133 |
 
-Note: the enum comments (RenderCommand.h:23-28) still read "order 5" for Atmosphere and "order 10"/"order 15" — but the live `mvpRenderOrder` returns Sky=0, Surface=10, Gltf=15, **Atmosphere=20** (drawn after tiles), Vector=30. The enum no longer contains a `GlobeSurface` member; the only remaining kinds are `Unknown, SkyBackground, AtmosphereBackground, SurfaceTile, GltfPrimitive, GltfPrimitiveInstanced, VectorOverlay`.
+VectorStencil 与普通矢量共享 order 30，避免贴地几何被固定 pass 强制压到所有普通 fill 之前；两者的相对层级统一由 `vectorPaintOrder` 决定。Label 独立 order 31，始终晚于其它矢量。
 
 Per-kind fixed render state (defaults set in the Renderer command factories, enforced by `validateMvpRenderCommands`):
 

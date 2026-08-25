@@ -734,7 +734,7 @@ void SceneRenderPipeline::sortAndValidate(
     double& surfaceDiagnosticsMs,
     double& validateMs) const {
     const double sortStartMs = perf::nowMs();
-    bool needsSort = false;
+    const bool needsSort = mvpRenderCommandsNeedSort(context.commands);
     bool hasTranslucentGltf = false;
     for (size_t i = 1; i < context.commands.size(); ++i) {
         if (context.commands[i - 1].blend &&
@@ -742,11 +742,6 @@ void SceneRenderPipeline::sortAndValidate(
              context.commands[i - 1].kind ==
                  RenderCommandKind::GltfPrimitiveInstanced)) {
             hasTranslucentGltf = true;
-        }
-        if (mvpRenderOrder(context.commands[i - 1].kind) >
-            mvpRenderOrder(context.commands[i].kind)) {
-            needsSort = true;
-            break;
         }
     }
     if (!context.commands.empty()) {

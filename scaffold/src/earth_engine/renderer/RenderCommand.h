@@ -14,6 +14,8 @@
 
 namespace earth_engine {
 
+static constexpr int kDefaultVectorPaintOrder = 1000;
+
 static constexpr int kMaxSurfaceImageryOverlays = 4;
 static constexpr int kGltfRasterOverlayTextureBase = 15;
 static constexpr int kMaxGltfRasterOverlays = 4;
@@ -118,7 +120,7 @@ enum class RenderCommandKind {
     // P6 stencil 终态贴地(设计 §7.2 方案 B):面 fill 挤成水密体做阴影体
     // 分类,像素级贴合已渲染地形深度。同一体积几何两条相邻命令:
     // ClassifyVolume(z-fail 计数)→ ClassifyColor(stencil≠0 着色并清零)。
-    VectorStencil          // order 29: 分类 fill 压在其它矢量之下
+    VectorStencil          // order 30: 与普通矢量共享 paint ordinal 排序
 };
 
 /// VectorStencil 命令的阶段(后端据此设置 stencil/colorMask 组合)。
@@ -139,6 +141,9 @@ enum class TerrainSurfaceCommandSource {
 /// 由 Layer::buildRenderCommands() 生成，Renderer 收集并提交给 RenderDevice。
 struct RenderCommand {
     RenderCommandKind kind = RenderCommandKind::Unknown;
+    /// 矢量样式内的固定绘制层级；同 MVP pass 内数值越大越晚绘制。
+    /// 未显式分层的旧命令共享默认值，稳定排序保持既有插入顺序。
+    int vectorPaintOrder = kDefaultVectorPaintOrder;
     std::string owner;     // layer id（调试用）
     std::string pass;      // "depth" | "color" | "picking" | "shadow" | "postprocess"
     // Stable identity for long-lived renderables. Transient commands leave this
@@ -302,6 +307,10 @@ struct RenderCommandValidationError {
 
 /// MVP 3D globe 主链路固定顺序：surface -> vector。
 int mvpRenderOrder(RenderCommandKind kind);
+
+/// 完整 MVP 命令排序键比较，供 Scene fast-path 与稳定排序共用。
+bool mvpRenderCommandLess(const RenderCommand& a, const RenderCommand& b);
+bool mvpRenderCommandsNeedSort(const RenderCommandList& commands);
 
 /// 对 MVP 主链路的 pass/depth/cull/blend 状态做硬校验。
 /// 非 MVP 命令必须标为 Unknown 或新增独立 kind 后再定义规则。

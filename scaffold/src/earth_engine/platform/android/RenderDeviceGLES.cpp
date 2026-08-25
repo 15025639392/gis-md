@@ -1357,6 +1357,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
                 case RenderCommandKind::VectorOverlay:
                 case RenderCommandKind::VectorFill:
                 case RenderCommandKind::VectorLine:
+                case RenderCommandKind::VectorExtrusion:
                 case RenderCommandKind::VectorPoint:
                 case RenderCommandKind::VectorLabel:
                 case RenderCommandKind::VectorStencil:
@@ -1385,6 +1386,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             case RenderCommandKind::VectorOverlay:
             case RenderCommandKind::VectorFill:
             case RenderCommandKind::VectorLine:
+            case RenderCommandKind::VectorExtrusion:
             case RenderCommandKind::VectorPoint:
             case RenderCommandKind::VectorLabel:
             case RenderCommandKind::VectorStencil:

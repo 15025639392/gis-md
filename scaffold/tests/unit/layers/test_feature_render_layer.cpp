@@ -2,6 +2,7 @@
 
 #include "earth_engine/layers/FeatureRenderLayer.h"
 #include "earth_engine/renderer/IconAtlas.h"
+#include "earth_engine/renderer/GlyphAtlas.h"
 #include "earth_engine/renderer/Renderer.h"
 #include "earth_engine/renderer/SymbolShape.h"
 #include "earth_engine/scene/Camera.h"
@@ -142,6 +143,93 @@ TEST_F(FeatureRenderLayerTest, PolygonDefaultEmitsFillOnly) {
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
     EXPECT_EQ(RenderCommandKind::VectorFill, commands[0].kind);
+}
+
+TEST_F(FeatureRenderLayerTest, DefaultPaintOrderPreservesFillBeforePoint) {
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.01));
+    Feature point;
+    point.type = GeometryType::Point;
+    point.rings = {{Cartographic(6.005 * kDeg, 29.005 * kDeg)}};
+    layer_->store().addFeature(std::move(point));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    sortMvpRenderCommands(commands);
+    EXPECT_EQ(RenderCommandKind::VectorFill, commands[0].kind);
+    EXPECT_EQ(RenderCommandKind::VectorPoint, commands[1].kind);
+    EXPECT_EQ(kDefaultVectorPaintOrder, commands[0].vectorPaintOrder);
+    EXPECT_EQ(kDefaultVectorPaintOrder, commands[1].vectorPaintOrder);
+}
+
+TEST_F(FeatureRenderLayerTest, TilePaintRangesShareOneBufferPair) {
+    FeatureRenderStyle style = layer_->style();
+    style.buildingExtrusion = false;
+    style.paintOrderExpr = StyleExpression::match(
+        "surface",
+        {{"green", StyleExpression::literal(20.0)},
+         {"land", StyleExpression::literal(30.0)},
+         {"water", StyleExpression::literal(50.0)}},
+        StyleExpression::literal(0.0));
+    layer_->setStyle(style);
+
+    std::vector<Feature> features;
+    for (const char* surface : {"water", "green", "land"}) {
+        Feature f = makePolygon(6.0, 29.0, 0.01);
+        f.properties["surface"] = surface;
+        features.push_back(std::move(f));
+    }
+    const int buffersBefore = device_.createdBufferCount;
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), features);
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+        std::move(mesh));
+    EXPECT_EQ(buffersBefore + 2, device_.createdBufferCount)
+        << "多个 ordinal 仍只上传一份 fill VBO/IBO";
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(3u, commands.size());
+    sortMvpRenderCommands(commands);
+    EXPECT_EQ(20, commands[0].vectorPaintOrder);
+    EXPECT_EQ(30, commands[1].vectorPaintOrder);
+    EXPECT_EQ(50, commands[2].vectorPaintOrder);
+    EXPECT_EQ(commands[0].vertexBuffer, commands[1].vertexBuffer);
+    EXPECT_EQ(commands[1].vertexBuffer, commands[2].vertexBuffer);
+    EXPECT_EQ(commands[0].indexBuffer, commands[1].indexBuffer);
+    EXPECT_LT(commands[0].indexOffset, commands[1].indexOffset);
+    EXPECT_LT(commands[1].indexOffset, commands[2].indexOffset);
+}
+
+TEST_F(FeatureRenderLayerTest, GlobalPaintOrderSeparatesFillAndLineAcrossTiles) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::match(
+        "family", {{"surface", StyleExpression::literal(30.0)},
+                    {"road", StyleExpression::literal(80.0)}},
+        StyleExpression::literal(0.0));
+    layer_->setStyle(style);
+
+    for (int x : {101, 100}) {
+        Feature polygon = makePolygon(6.0 + x * 0.001, 29.0, 0.01);
+        polygon.properties["family"] = "surface";
+        Feature line = makeLine(6.0 + x * 0.001, 29.0, 0.01);
+        line.properties["family"] = "road";
+        auto mesh = FeatureRenderLayer::tessellateTileMesh(
+            layer_->workerTessellationContext(), {line, polygon});
+        layer_->commitTileMesh(
+            TileKey{SchemeId("XYZ-WebMercator"), 10, x, 200},
+            std::move(mesh));
+    }
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(4u, commands.size());
+    EXPECT_TRUE(mvpRenderCommandsNeedSort(commands))
+        << "tile A 的 line 位于 tile B fill 前时 fast-path 必须识别";
+    sortMvpRenderCommands(commands);
+    EXPECT_EQ(RenderCommandKind::VectorFill, commands[0].kind);
+    EXPECT_EQ(RenderCommandKind::VectorFill, commands[1].kind);
+    EXPECT_EQ(RenderCommandKind::VectorLine, commands[2].kind);
+    EXPECT_EQ(RenderCommandKind::VectorLine, commands[3].kind);
+    EXPECT_FALSE(validateMvpRenderCommands(commands, frame_.frameId).has_value());
 }
 
 TEST_F(FeatureRenderLayerTest, MaxZoomGatesCoarseLodLayer) {
@@ -288,6 +376,7 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     ASSERT_EQ(1u, commands.size());
     const RenderCommand& cmd = commands[0];
     EXPECT_EQ(RenderCommandKind::VectorPoint, cmd.kind);
+    EXPECT_EQ(layer_->style().paintOrder, cmd.vectorPaintOrder);
     EXPECT_EQ(36, cmd.vertexStride);  // P6b:+color;P6c:+uv/shape
     EXPECT_EQ(6, cmd.indexCount);
     EXPECT_EQ("color", cmd.pass);
@@ -341,6 +430,96 @@ TEST_F(FeatureRenderLayerTest, MultiplePointsShareOneCommand) {
     EXPECT_EQ(18, commands[0].indexCount);  // 3 quad × 6
 }
 
+TEST_F(FeatureRenderLayerTest, PointPaintOrderExprSplitsCommands) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::match(
+        "priority",
+        {{"low", StyleExpression::literal(20.0)},
+         {"high", StyleExpression::literal(100.0)}},
+        StyleExpression::literal(0.0));
+    layer_->setStyle(style);
+
+    Feature low;
+    low.type = GeometryType::Point;
+    low.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    low.properties["priority"] = "low";
+    Feature high;
+    high.type = GeometryType::Point;
+    high.rings = {{Cartographic(6.01 * kDeg, 29.0 * kDeg)}};
+    high.properties["priority"] = "high";
+    layer_->store().addFeature(std::move(high));
+    layer_->store().addFeature(std::move(low));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    sortMvpRenderCommands(commands);
+    EXPECT_EQ(RenderCommandKind::VectorPoint, commands[0].kind);
+    EXPECT_EQ(RenderCommandKind::VectorPoint, commands[1].kind);
+    EXPECT_EQ(20, commands[0].vectorPaintOrder);
+    EXPECT_EQ(100, commands[1].vectorPaintOrder);
+    EXPECT_EQ(6, commands[0].indexCount);
+    EXPECT_EQ(6, commands[1].indexCount);
+    EXPECT_EQ(commands[0].vertexBuffer, commands[1].vertexBuffer);
+    EXPECT_EQ(commands[0].indexBuffer, commands[1].indexBuffer);
+    EXPECT_EQ(0, commands[0].indexOffset);
+    EXPECT_EQ(6, commands[1].indexOffset);
+}
+
+namespace {
+std::vector<uint8_t> loadHostFont();
+}
+
+TEST_F(FeatureRenderLayerTest, LabelPaintOrderExprSplitsCommands) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::match(
+        "priority",
+        {{"low", StyleExpression::literal(20.0)},
+         {"high", StyleExpression::literal(100.0)}},
+        StyleExpression::literal(0.0));
+    layer_->setStyle(style);
+
+    Feature low;
+    low.type = GeometryType::Point;
+    low.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    low.properties["priority"] = "low";
+    low.properties["name"] = "A";
+    Feature high;
+    high.type = GeometryType::Point;
+    high.rings = {{Cartographic(6.01 * kDeg, 29.0 * kDeg)}};
+    high.properties["priority"] = "high";
+    high.properties["name"] = "B";
+    layer_->store().addFeature(std::move(high));
+    layer_->store().addFeature(std::move(low));
+
+    RenderCommandList commands = build();
+    std::vector<const RenderCommand*> labels;
+    for (const auto& command : commands) {
+        if (command.kind == RenderCommandKind::VectorLabel) {
+            labels.push_back(&command);
+        }
+    }
+    ASSERT_EQ(2u, labels.size());
+    sortMvpRenderCommands(commands);
+    labels.clear();
+    for (const auto& command : commands) {
+        if (command.kind == RenderCommandKind::VectorLabel) {
+            labels.push_back(&command);
+        }
+    }
+    ASSERT_EQ(2u, labels.size());
+    EXPECT_EQ(20, labels[0]->vectorPaintOrder);
+    EXPECT_EQ(100, labels[1]->vectorPaintOrder);
+    EXPECT_EQ(6, labels[0]->indexCount);
+    EXPECT_EQ(6, labels[1]->indexCount);
+    EXPECT_EQ(0, labels[0]->indexOffset);
+    EXPECT_EQ(6, labels[1]->indexOffset);
+}
+
 // 符号刀A:瓦片实例表在准入(commitTileMesh)定型成 billboard quad,
 // 走与 store 路径同一条 VectorPoint 命令层。纯符号瓦片(无 fill/line)
 // 也必须出命令 —— empty() 若不认 symbols,这里整瓦被 drop。
@@ -370,6 +549,38 @@ TEST_F(FeatureRenderLayerTest, TileSymbolsRenderAfterCommit) {
     EXPECT_FLOAT_EQ(0.0f, floats[0]);
     EXPECT_FLOAT_EQ(0.0f, floats[1]);
     EXPECT_FLOAT_EQ(0.0f, floats[2]);
+}
+
+TEST_F(FeatureRenderLayerTest, TileSymbolPaintOrderSplitsPointCommands) {
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    mesh.hasOrigin = true;
+    TileSymbolCpu high;
+    high.paintOrder = 100;
+    high.hasPaintOrder = true;
+    high.lonRad = 6.01 * kDeg;
+    high.latRad = 29.0 * kDeg;
+    high.colorPacked = 1.0f;
+    TileSymbolCpu low;
+    low.paintOrder = 20;
+    low.hasPaintOrder = true;
+    low.lonRad = 6.0 * kDeg;
+    low.latRad = 29.0 * kDeg;
+    low.colorPacked = 1.0f;
+    mesh.symbols = {high, low};
+
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    sortMvpRenderCommands(commands);
+    EXPECT_EQ(20, commands[0].vectorPaintOrder);
+    EXPECT_EQ(100, commands[1].vectorPaintOrder);
+    EXPECT_EQ(0, commands[0].indexOffset);
+    EXPECT_EQ(6, commands[1].indexOffset);
+    EXPECT_EQ(commands[0].vertexBuffer, commands[1].vertexBuffer);
+    EXPECT_EQ(commands[0].indexBuffer, commands[1].indexBuffer);
 }
 
 // rank 升序截断:超过单瓦上限时留 rank 最小(最重要)的那批。这是
@@ -649,7 +860,6 @@ TEST_F(FeatureRenderLayerTest, SameBucketFeaturesShareOneCommandPair) {
 // P5b 文字标注(SDF 字形图集 + VectorLabel)
 // ============================================================
 
-#include "earth_engine/renderer/GlyphAtlas.h"
 #include <fstream>
 
 namespace {
@@ -745,6 +955,53 @@ TEST_F(FeatureRenderLayerTest, TileSymbolLabelsRenderWhenFontReady) {
     ASSERT_NE(nullptr, label) << "瓦片符号标签未出命令";
     EXPECT_EQ(32, label->vertexStride);
     EXPECT_EQ(12, label->indexCount);  // "AB" 2 字形 × 6
+}
+
+TEST_F(FeatureRenderLayerTest, TileSymbolPaintOrderSplitsLabelCommands) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    mesh.hasOrigin = true;
+    TileSymbolCpu high;
+    high.paintOrder = 100;
+    high.hasPaintOrder = true;
+    high.lonRad = 6.01 * kDeg;
+    high.latRad = 29.0 * kDeg;
+    high.colorPacked = 1.0f;
+    high.name = "B";
+    TileSymbolCpu low;
+    low.paintOrder = 20;
+    low.hasPaintOrder = true;
+    low.lonRad = 6.0 * kDeg;
+    low.latRad = 29.0 * kDeg;
+    low.colorPacked = 1.0f;
+    low.name = "A";
+    mesh.symbols = {high, low};
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    RenderCommandList commands = build();
+    sortMvpRenderCommands(commands);
+    std::vector<const RenderCommand*> labels;
+    for (const auto& command : commands) {
+        if (command.kind == RenderCommandKind::VectorLabel) {
+            labels.push_back(&command);
+        }
+    }
+    ASSERT_EQ(2u, labels.size());
+    EXPECT_EQ(20, labels[0]->vectorPaintOrder);
+    EXPECT_EQ(100, labels[1]->vectorPaintOrder);
+    EXPECT_EQ(0, labels[0]->indexOffset);
+    EXPECT_EQ(6, labels[1]->indexOffset);
+    EXPECT_EQ(labels[0]->vertexBuffer, labels[1]->vertexBuffer);
+    EXPECT_EQ(labels[0]->indexBuffer, labels[1]->indexBuffer);
 }
 
 // 字体注入晚于瓦片 commit:标签先缺,字体就绪翻转后由烘焙源补烘 ——
@@ -1280,7 +1537,7 @@ TEST_F(FeatureRenderLayerTest, StencilVolumePairForClampedPolygon) {
     }
     EXPECT_NEAR(240.0, std::sqrt(shell), 1.0);
 
-    // 状态校验通过(两 phase 各自规则 + order 29 在其它矢量之前)。
+    // 状态校验通过(两 phase 各自规则 + 与普通矢量共享 order)。
     const auto validation = validateMvpRenderCommands(commands, frame_.frameId);
     EXPECT_FALSE(validation.has_value())
         << (validation ? validation->message : "");
@@ -1411,6 +1668,53 @@ TEST_F(FeatureRenderLayerTest, FillVolumeCoversInteriorPeakBetweenGridSamples) {
     // 采到峰 → 跨度 ≈ 400+240;漏峰 → 仅 240。
     const double span = volumeShellSpanMeters(*vol);
     EXPECT_GT(span, 400.0) << "体高未罩住面内尖峰,峰顶会断面;span=" << span;
+}
+
+TEST_F(FeatureRenderLayerTest, StencilVolumePairsKeepFeaturePaintOrder) {
+    // 贴地分类体也必须携带逐要素 ordinal；否则同桶内重叠水面/绿地
+    // 会再次退化为输入顺序。每个 ordinal 仍是一对相邻的 volume/color
+    // 命令，并在全局排序后按低→高稳定发出。
+    FeatureRenderStyle style = layer_->style();
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.paintOrderExpr = StyleExpression::match(
+        "surface",
+        {{"green", StyleExpression::literal(20.0)},
+         {"water", StyleExpression::literal(50.0)}},
+        StyleExpression::literal(0.0));
+    layer_->setStyle(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+
+    Feature water = makePolygon(0.0, 0.0, 0.01);
+    water.properties["surface"] = "water";
+    Feature green = makePolygon(0.002, 0.002, 0.01);
+    green.properties["surface"] = "green";
+    // 反转输入顺序，模拟 PBF/瓦片提交顺序变化。
+    layer_->store().addFeature(std::move(water));
+    layer_->store().addFeature(std::move(green));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(4u, commands.size());
+    // CPU map 已按 ordinal 产出有序命令；即便未来桶遍历改变，调用全局
+    // sorter 后的契约仍相同。
+    sortMvpRenderCommands(commands);
+
+    ASSERT_EQ(RenderCommandKind::VectorStencil, commands[0].kind);
+    ASSERT_EQ(RenderCommandKind::VectorStencil, commands[1].kind);
+    ASSERT_EQ(RenderCommandKind::VectorStencil, commands[2].kind);
+    ASSERT_EQ(RenderCommandKind::VectorStencil, commands[3].kind);
+    EXPECT_EQ(StencilPhase::ClassifyVolume, commands[0].stencilPhase);
+    EXPECT_EQ(StencilPhase::ClassifyColor, commands[1].stencilPhase);
+    EXPECT_EQ(StencilPhase::ClassifyVolume, commands[2].stencilPhase);
+    EXPECT_EQ(StencilPhase::ClassifyColor, commands[3].stencilPhase);
+    EXPECT_EQ(20, commands[0].vectorPaintOrder);
+    EXPECT_EQ(20, commands[1].vectorPaintOrder);
+    EXPECT_EQ(50, commands[2].vectorPaintOrder);
+    EXPECT_EQ(50, commands[3].vectorPaintOrder);
+    EXPECT_EQ(commands[0].vertexBuffer, commands[1].vertexBuffer);
+    EXPECT_EQ(commands[0].indexBuffer, commands[1].indexBuffer);
+    EXPECT_EQ(commands[2].vertexBuffer, commands[3].vertexBuffer);
+    EXPECT_EQ(commands[2].indexBuffer, commands[3].indexBuffer);
+    EXPECT_FALSE(validateMvpRenderCommands(commands, frame_.frameId).has_value());
 }
 
 TEST_F(FeatureRenderLayerTest, StencilFallsBackToSamplingWithoutSupport) {

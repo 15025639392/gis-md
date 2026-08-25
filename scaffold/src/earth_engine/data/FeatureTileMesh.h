@@ -10,21 +10,38 @@
 
 namespace earth_engine {
 
-/// stencil 分类体的 CPU 侧按色分组(key = RGBA8 打包)。
+/// stencil 分类体的 CPU 侧按 paint ordinal + 色分组。
 ///
 /// 放在 data/ 与 FeatureTileMesh 同层,是因为 worker 现在也产出它(贴地
 /// 瓦片走 stencil 双 pass):生产方在 data/,消费方 FeatureRenderLayer 在
 /// layers/,载荷类型必须在下层,否则 data → layers 反向依赖。
 ///
-/// **按色而不是按要素分组**:同色要素的顶点/索引取并集进同一组,一组一对
-/// draw(体 pass + 色 pass)。所以 draw call 随**颜色种类数**增长,不随
-/// 要素数增长 —— 底图万级要素能走这条路的前提就在这里。
+/// **按 ordinal + 色而不是按要素分组**:同层级同色要素的顶点/索引取
+/// 并集进同一组,一组一对 draw(体 pass + 色 pass)。所以 draw call 随
+/// **层级/颜色种类数**增长,不随要素数增长；贴地几何也不会跨层级合并。
 struct VolumeCpuGroup {
+    int paintOrder = 0;
     std::array<float, 4> color{0, 0, 0, 1};
     std::vector<float> verts;
     std::vector<uint32_t> indices;
 };
-using VolumeCpuGroups = std::map<uint32_t, VolumeCpuGroup>;
+using VolumeCpuGroups =
+    std::map<std::pair<int, uint32_t>, VolumeCpuGroup>;
+
+/// 一类矢量几何在固定 paint ordinal 下的 CPU 分段。
+/// 顶点/索引在 commit 时按 ordinal flatten 到单个 VBO/IBO；这里保留
+/// 分段是为了不依赖 PBF feature 顺序，并让跨瓦片命令可以复用同一排序键。
+struct PaintGeometryCpu {
+    std::vector<float> verts;
+    std::vector<uint32_t> indices;
+    /// 线 ribbon 的同源钳高数据(每顶点 lon/lat/color 三 float)。
+    std::vector<float> clampSource;
+};
+struct PaintRange {
+    int paintOrder = 0;
+    uint32_t indexOffset = 0;
+    uint32_t indexCount = 0;
+};
 
 /// 瓦片点符号实例(worker 产出的中间表)。
 ///
@@ -32,6 +49,10 @@ using VolumeCpuGroups = std::map<uint32_t, VolumeCpuGroup>;
 /// worker 把纯计算部分全部做完(锚点投影、表达式求值出颜色/图形名、属性
 /// 抽取),渲染线程准入时只做「图集解析 + 展开 4 顶点」——一瓦一次,非逐帧。
 struct TileSymbolCpu {
+    /// 要素级绘制层级；渲染线程定型 point/label quad 时继续按该值分段。
+    /// 旧调用方未显式提供时由 hasPaintOrder=false 回落图层 paintOrder。
+    int paintOrder = 0;
+    bool hasPaintOrder = false;
     /// 锚点大地坐标(radian/meter,**原始几何高**,未含样式 offset)。
     /// 存经纬度而非 ECEF:贴地模式的地形采样是渲染线程状态,准入定型时
     /// 才能把锚点落到地面 —— worker 侧给 ECEF 就把高度焊死在椭球面了
@@ -61,8 +82,10 @@ struct FeatureTileMesh {
     bool hasOrigin = false;
     std::vector<float> fillVerts;
     std::vector<uint32_t> fillIndices;
+    std::vector<PaintRange> fillRanges;
     std::vector<float> lineVerts;
     std::vector<uint32_t> lineIndices;
+    std::vector<PaintRange> lineRanges;
     /// E 方案 P2:线 ribbon 的钳高源(每 ribbon 顶点 3 float:lon/lat 弧度 +
     /// colorPacked)。worker 无地形采样时只产椭球面高度;渲染线程 commit/
     /// 重钳时按 (lon,lat) 同源采样钳高(第 i 个顶点对应第 i/2 个折线点)。
@@ -77,6 +100,7 @@ struct FeatureTileMesh {
     /// 在这里携带,commitTileMesh 上传到 BucketGpu::extrude*。
     std::vector<float> extrudeVerts;
     std::vector<uint32_t> extrudeIndices;
+    std::vector<PaintRange> extrudeRanges;
     /// 点符号实例表(quad 定型留在渲染线程,见 TileSymbolCpu)。
     std::vector<TileSymbolCpu> symbols;
 

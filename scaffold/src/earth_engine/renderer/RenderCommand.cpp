@@ -85,6 +85,10 @@ bool mvpCommandLess(const RenderCommand& a, const RenderCommand& b) {
         return orderA < orderB;
     }
 
+    if (a.vectorPaintOrder != b.vectorPaintOrder) {
+        return a.vectorPaintOrder < b.vectorPaintOrder;
+    }
+
     const bool translucentA = isTranslucentGltfPrimitiveCommand(a);
     const bool translucentB = isTranslucentGltfPrimitiveCommand(b);
     if (translucentA != translucentB) {
@@ -115,10 +119,11 @@ int mvpRenderOrder(RenderCommandKind kind) {
         case RenderCommandKind::AtmosphereBackground:
             return 20;
         case RenderCommandKind::VectorStencil:
-            return 29;  // 分类 fill 压在其它矢量之下(色 pass 关深度测)
+            return 30;  // 与普通矢量共享 paint ordinal；色 pass 关深度测
         case RenderCommandKind::VectorOverlay:
         case RenderCommandKind::VectorFill:
         case RenderCommandKind::VectorLine:
+        case RenderCommandKind::VectorExtrusion:
         case RenderCommandKind::VectorPoint:
             return 30;
         case RenderCommandKind::VectorLabel:
@@ -129,11 +134,23 @@ int mvpRenderOrder(RenderCommandKind kind) {
     }
 }
 
+bool mvpRenderCommandLess(const RenderCommand& a, const RenderCommand& b) {
+    return mvpCommandLess(a, b);
+}
+
+bool mvpRenderCommandsNeedSort(const RenderCommandList& commands) {
+    for (size_t i = 1; i < commands.size(); ++i) {
+        if (mvpCommandLess(commands[i], commands[i - 1])) return true;
+    }
+    return false;
+}
+
 std::optional<RenderCommandValidationError>
 validateMvpRenderCommands(const RenderCommandList& commands,
                           uint64_t expectedFrameId) {
     std::optional<RenderCommandValidationError> error;
     int lastOrder = -1;
+    int lastVectorPaintOrder = std::numeric_limits<int>::min();
     bool sawTranslucentGltf = false;
     double lastTranslucentGltfDepth = std::numeric_limits<double>::infinity();
 
@@ -144,7 +161,18 @@ validateMvpRenderCommands(const RenderCommandList& commands,
             fail(i, cmd, "RenderCommand order violates MVP pass order", error);
             return error;
         }
+        if (order == lastOrder &&
+            cmd.vectorPaintOrder < lastVectorPaintOrder) {
+            fail(i, cmd,
+                 "RenderCommand vector paint order is not monotonic",
+                 error);
+            return error;
+        }
+        if (order != lastOrder) {
+            lastVectorPaintOrder = std::numeric_limits<int>::min();
+        }
         lastOrder = order;
+        lastVectorPaintOrder = cmd.vectorPaintOrder;
 
         switch (cmd.kind) {
             case RenderCommandKind::GltfPrimitive:

@@ -3,6 +3,9 @@
 #include "earth_engine/layers/FeatureRenderLayer.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 
+#include <algorithm>
+#include <cstring>
+
 using namespace earth_engine;
 
 namespace {
@@ -88,6 +91,80 @@ TEST(FeatureTileMeshTest, TessellationIsDeterministic) {
     EXPECT_EQ(a.lineIndices, b.lineIndices);
 }
 
+TEST(FeatureTileMeshTest, PaintRangesIgnoreFeatureInputOrderAndKeepWaterLast) {
+    FeatureRenderStyle style;
+    style.buildingExtrusion = false;
+    style.fillOutlineEnabled = false;
+    style.paintOrderExpr = StyleExpression::match(
+        "amap_class",
+        {{"30001",
+          StyleExpression::match(
+              "amap_kind",
+              {{"61", StyleExpression::literal(20.0)},
+               {"63", StyleExpression::literal(50.0)}},
+              StyleExpression::literal(20.0))},
+         {"30002", StyleExpression::literal(30.0)}},
+        StyleExpression::literal(0.0));
+    style.fillColorExpr = StyleExpression::match(
+        "amap_class",
+        {{"30001",
+          StyleExpression::match(
+              "amap_kind",
+              {{"61", StyleExpression::literal({0.0f, 1.0f, 0.0f, 1.0f})},
+               {"63", StyleExpression::literal({0.0f, 0.5f, 1.0f, 1.0f})}},
+              StyleExpression::literal({0.0f, 0.0f, 0.0f, 0.0f}))},
+         {"30002", StyleExpression::literal({0.8f, 0.8f, 0.8f, 1.0f})}},
+        StyleExpression::literal({0.0f, 0.0f, 0.0f, 0.0f}));
+
+    std::vector<Feature> features;
+    size_t featureIndex = 0;
+    for (const auto& surface :
+         std::vector<std::pair<const char*, const char*>>{
+             {"30001", "63"}, {"30002", "20"}, {"30002", "20"},
+             {"30001", "61"}}) {
+        Feature f = makePolygon(106.5 + 0.02 * featureIndex, 29.6);
+        f.properties["amap_class"] = surface.first;
+        f.properties["amap_kind"] = surface.second;
+        features.push_back(std::move(f));
+        ++featureIndex;
+    }
+    auto reversed = features;
+    std::reverse(reversed.begin(), reversed.end());
+    const auto ctx = makeContext(style, nullptr, nullptr);
+    const auto a = FeatureRenderLayer::tessellateTileMesh(ctx, features);
+    const auto b = FeatureRenderLayer::tessellateTileMesh(ctx, reversed);
+
+    ASSERT_EQ(3u, a.fillRanges.size());
+    ASSERT_EQ(3u, b.fillRanges.size());
+    for (size_t i = 0; i < a.fillRanges.size(); ++i) {
+        EXPECT_EQ(a.fillRanges[i].paintOrder, b.fillRanges[i].paintOrder);
+        EXPECT_EQ(a.fillRanges[i].indexOffset, b.fillRanges[i].indexOffset);
+        EXPECT_EQ(a.fillRanges[i].indexCount, b.fillRanges[i].indexCount);
+    }
+    EXPECT_EQ(20, a.fillRanges[0].paintOrder);
+    EXPECT_EQ(30, a.fillRanges[1].paintOrder);
+    EXPECT_EQ(50, a.fillRanges[2].paintOrder);
+    EXPECT_GT(a.fillRanges[1].indexCount, a.fillRanges[0].indexCount)
+        << "同一 ordinal 的多个 feature 必须合入同一 range";
+
+    uint32_t expectedOffset = 0;
+    for (const PaintRange& range : a.fillRanges) {
+        EXPECT_EQ(expectedOffset, range.indexOffset);
+        expectedOffset += range.indexCount;
+    }
+    EXPECT_EQ(a.fillIndices.size(), expectedOffset);
+    const uint32_t vertexCount = static_cast<uint32_t>(a.fillVerts.size() / 4);
+    for (uint32_t index : a.fillIndices) EXPECT_LT(index, vertexCount);
+
+    const PaintRange& winner = a.fillRanges.back();
+    ASSERT_GT(winner.indexCount, 0u);
+    const uint32_t vertex = a.fillIndices[winner.indexOffset];
+    uint32_t packed = 0;
+    std::memcpy(&packed, &a.fillVerts[vertex * 4 + 3], sizeof(packed));
+    EXPECT_EQ(0u, packed & 0xffu);
+    EXPECT_NE(0u, (packed >> 16) & 0xffu) << "最后一段必须是蓝色水面";
+}
+
 // 符号刀A:Point 要素在 worker 产 TileSymbolCpu 实例表,**不产任何顶点**
 // (quad 定型要图集,留渲染线程准入)。锚点存大地坐标而非 ECEF:贴地的
 // 地形采样也是渲染线程状态。全程零图集解引用 —— 图集传 nullptr 即验证。
@@ -128,6 +205,31 @@ TEST(FeatureTileMeshTest, SymbolInstanceDefaultsWithoutProperties) {
     ASSERT_EQ(1u, mesh.symbols.size());
     EXPECT_EQ(6, mesh.symbols[0].rank);
     EXPECT_TRUE(mesh.symbols[0].name.empty());
+}
+
+TEST(FeatureTileMeshTest, SymbolInstancesCarryResolvedPaintOrder) {
+    FeatureRenderStyle style;
+    style.paintOrderExpr = StyleExpression::match(
+        "priority",
+        {{"low", StyleExpression::literal(20.0)},
+         {"high", StyleExpression::literal(100.0)}},
+        StyleExpression::literal(0.0));
+    Feature high;
+    high.type = GeometryType::Point;
+    high.rings = {{Cartographic(106.51 * kDeg, 29.6 * kDeg)}};
+    high.properties["priority"] = "high";
+    Feature low;
+    low.type = GeometryType::Point;
+    low.rings = {{Cartographic(106.5 * kDeg, 29.6 * kDeg)}};
+    low.properties["priority"] = "low";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        makeContext(style, nullptr, nullptr), {high, low});
+    ASSERT_EQ(2u, mesh.symbols.size());
+    EXPECT_TRUE(mesh.symbols[0].hasPaintOrder);
+    EXPECT_TRUE(mesh.symbols[1].hasPaintOrder);
+    EXPECT_EQ(100, mesh.symbols[0].paintOrder);
+    EXPECT_EQ(20, mesh.symbols[1].paintOrder);
 }
 
 // 空输入不该产出原点,commitTileMesh 会据此走 drop 分支。

@@ -62,6 +62,10 @@ enum class FeatureAltitudeMode {
 /// FeatureRenderLayer 的图层级样式(矢量 P1:字面量样式子集,
 /// data-driven 表达式属 P6)。
 struct FeatureRenderStyle {
+    /// 固定样式绘制层级。数值越大越晚绘制；同一图层可用
+    /// paintOrderExpr 按要素属性细分(例如 30001 kind61/kind63)。
+    int paintOrder = kDefaultVectorPaintOrder;
+    StyleExpression::Ptr paintOrderExpr;
     std::array<float, 4> fillColor{0.25f, 0.55f, 0.95f, 0.35f};
     std::array<float, 4> lineColor{1.00f, 0.80f, 0.10f, 0.90f};
     float lineWidthPx = 4.0f;
@@ -356,21 +360,36 @@ private:
         float appliedOpacity = 0.0f;   ///< 已写入顶点流的值(判重传)
     };
 
+    struct LabelGeometryCpu {
+        std::vector<float> verts;
+        std::vector<uint32_t> indices;
+        std::vector<LabelEntry> entries;
+    };
+
     /// 单桶常驻 GPU 几何。fill/line/point 任一可空(indexCount=0)。
     struct BucketGpu {
+        struct PaintRangeGpu {
+            int paintOrder = 0;
+            int indexOffset = 0;
+            int indexCount = 0;
+        };
         Vec3 origin = Vec3::zero();        ///< ECEF double 原点
         std::unique_ptr<Buffer> fillVertexBuffer;
         std::unique_ptr<Buffer> fillIndexBuffer;
         int fillIndexCount = 0;
+        std::vector<PaintRangeGpu> fillRanges;
         std::unique_ptr<Buffer> lineVertexBuffer;
         std::unique_ptr<Buffer> lineIndexBuffer;
         int lineIndexCount = 0;
+        std::vector<PaintRangeGpu> lineRanges;
         std::unique_ptr<Buffer> pointVertexBuffer;
         std::unique_ptr<Buffer> pointIndexBuffer;
         int pointIndexCount = 0;
+        std::vector<PaintRangeGpu> pointRanges;
         std::unique_ptr<Buffer> labelVertexBuffer;
         std::unique_ptr<Buffer> labelIndexBuffer;
         int labelIndexCount = 0;
+        std::vector<PaintRangeGpu> labelRanges;
         /// 标签 CPU 侧:顶点流副本(opacity 分量可改写重传)+ 登记表。
         std::vector<float> labelVertsCpu;
         std::vector<LabelEntry> labelEntries;
@@ -378,6 +397,7 @@ private:
         /// bakeTileBucketLabels 在字体就绪时烘 —— 字体注入晚于瓦片 commit
         /// 时,store 桶走 rebuildBucket 补标注,瓦片桶没有重镶路径,靠它。
         struct TileLabelSource {
+            int paintOrder = 0;
             std::array<float, 3> rel{0.0f, 0.0f, 0.0f};
             Vec3 anchorEcef = Vec3::zero();
             uint64_t featureId = 0;
@@ -405,6 +425,7 @@ private:
         /// Volume/Color 命令(组内并集计数,不同色互不污染)。非空 →
         /// 该桶 clamp 面走 stencil 双 pass,不再产出方案 A 的 fill 网格。
         struct VolumeGroupGpu {
+            int paintOrder = 0;
             std::array<float, 4> color{0, 0, 0, 1};
             std::unique_ptr<Buffer> vertexBuffer;
             std::unique_ptr<Buffer> indexBuffer;
@@ -421,6 +442,7 @@ private:
         std::unique_ptr<Buffer> extrudeVertexBuffer;
         std::unique_ptr<Buffer> extrudeIndexBuffer;
         int extrudeIndexCount = 0;
+        std::vector<PaintRangeGpu> extrudeRanges;
     };
 
     // VolumeCpuGroup / VolumeCpuGroups 已下沉到 data/FeatureTileMesh.h ——
@@ -590,6 +612,7 @@ public:
     /// FeatureInto:不碰成员由编译器保证。
     static void appendTileSymbol(const TessellationContext& ctx,
                                  const Feature& feature,
+                                 int paintOrder,
                                  TileMeshCpu& mesh);
 
     /// **渲染线程**:单条文字 → glyph quads(32B 布局)+ LabelEntry 登记。
@@ -641,6 +664,7 @@ public:
                             const Vec3& origin, int tileZ,
                             std::vector<float>& pointVerts,
                             std::vector<uint32_t>& pointIndices,
+                            std::vector<PaintRange>& pointRanges,
                             std::vector<BucketGpu::TileLabelSource>& labelSrc);
 
     /// **渲染线程**:地形代次变化后按新地形重采锚点高度并重建点/标签
@@ -700,25 +724,35 @@ private:
     /// 根据。
     static void tessellateFeatureInto(const TessellationContext& ctx,
                                const Feature& feature,
+                               int paintOrder,
                                const AreaSampleFn& sample,
                                Vec3& origin,
                                bool& hasOrigin,
-                               std::vector<float>& fillVerts,
-                               std::vector<uint32_t>& fillIndices,
-                               std::vector<float>& lineVerts,
-                               std::vector<uint32_t>& lineIndices,
-                               std::vector<float>& pointVerts,
-                               std::vector<uint32_t>& pointIndices,
-                               std::vector<float>& labelVerts,
-                               std::vector<uint32_t>& labelIndices,
-                               std::vector<LabelEntry>& labelEntries,
+                               PaintGeometryCpu& fillRange,
+                               PaintGeometryCpu& lineRange,
+                               PaintGeometryCpu& pointRange,
+                               LabelGeometryCpu& labelRange,
                                VolumeCpuGroups& volumeGroups,
                                VolumeCpuGroups& lineVolumeGroups,
-                               std::vector<float>* lineClampSourceOut =
-                                   nullptr,
-                               std::vector<float>* extrudeVertsOut = nullptr,
-                               std::vector<uint32_t>* extrudeIndicesOut =
-                                   nullptr);
+                               PaintGeometryCpu& extrudeRange);
+
+    static int resolvePaintOrder(const FeatureRenderStyle& style,
+                                 const Feature& feature);
+
+    static void flattenPaintRanges(const std::map<int, PaintGeometryCpu>& ranges,
+                                   size_t floatsPerVertex,
+                                   std::vector<float>& verts,
+                                   std::vector<uint32_t>& indices,
+                                   std::vector<PaintRange>* outRanges =
+                                       nullptr,
+                                   std::vector<float>* clampSource = nullptr);
+
+    static void flattenLabelRanges(
+        const std::map<int, LabelGeometryCpu>& ranges,
+        std::vector<float>& verts,
+        std::vector<uint32_t>& indices,
+        std::vector<LabelEntry>& entries,
+        std::vector<PaintRange>* outRanges);
 
     /// V6 建筑挤出:footprint(贴地钳高后)+ amap_height → 墙带 + CDT 顶面。
     static void appendExtrusionVolume(
@@ -735,6 +769,7 @@ private:
     /// 网格采样 min/max ± margin;无采样器回落 ±kVolumeMarginMeters。
     static void appendFillVolume(const TessellationContext& ctx,
                           const Feature& feature,
+                          int paintOrder,
                           const AreaSampleFn& sample,
                           const std::array<float, 4>& fillColor,
                           Vec3& origin,
@@ -747,6 +782,7 @@ private:
     /// closed = 闭合环(polygon outline,首尾 wrap 无端 cap)。
     static void appendLineVolume(const TessellationContext& ctx,
                           const std::vector<Cartographic>& points,
+                          int paintOrder,
                           bool closed,
                           const std::array<float, 4>& lineColor,
                           Vec3& origin,
@@ -757,17 +793,22 @@ private:
     bool uploadBucketGpu(const Vec3& origin,
                          const std::vector<float>& fillVerts,
                          const std::vector<uint32_t>& fillIndices,
+                         const std::vector<PaintRange>& fillRanges,
                          const std::vector<float>& lineVerts,
                          const std::vector<uint32_t>& lineIndices,
+                         const std::vector<PaintRange>& lineRanges,
                          const std::vector<float>& pointVerts,
                          const std::vector<uint32_t>& pointIndices,
+                         const std::vector<PaintRange>& pointRanges,
                          std::vector<float>&& labelVerts,
                          const std::vector<uint32_t>& labelIndices,
+                         const std::vector<PaintRange>& labelRanges,
                          std::vector<LabelEntry>&& labelEntries,
                          const VolumeCpuGroups& volumeGroups,
                          const VolumeCpuGroups& lineVolumeGroups,
                          const std::vector<float>& extrudeVerts,
                          const std::vector<uint32_t>& extrudeIndices,
+                         const std::vector<PaintRange>& extrudeRanges,
                          BucketGpu& out) const;
 
     /// P5c:每帧跑 placement(collect 全桶 LabelEntry → place/commit),

@@ -1185,15 +1185,17 @@ static bool createEngine() {
             //   30001 → kind(61 绿地 #ace798 / 63 水系 #80dfff / 15 海洋);
             //   30002 → regionBlocks 逐 subKey 用地类型色(colors.regionBlocks,
             //            缺省 subKey=1 → 兜底 $block #eeeeee);
-            //   其余 → land 底色 #eff3f6。
-            const auto kLand = StyleExpression::literal(
-                {0.937f, 0.953f, 0.965f, 1.00f});
+            //   90001 → 建筑 roof 基色；未在官方 surface 表里的面透明。
             const auto kBlock = StyleExpression::literal(
                 {0.933f, 0.933f, 0.933f, 1.00f});  // #eeeeee
             const auto kGreen = StyleExpression::literal(
                 {0.675f, 0.906f, 0.596f, 1.00f});  // #ace798,fill-opacity=1(golden)
             const auto kWater = StyleExpression::literal(
                 {0.502f, 0.875f, 1.00f, 1.00f});   // #80dfff,fill-opacity=1(golden)
+            const auto kBuilding = StyleExpression::literal(
+                {0.847f, 0.890f, 0.925f, 1.00f});  // #d8e3ec,官方默认 roof
+            const auto kTransparent = StyleExpression::literal(
+                {0.0f, 0.0f, 0.0f, 0.0f});
             auto color = [](const char* hex, float a = 1.0f) {
                 auto hv = [](char c) -> int {
                     if (c >= '0' && c <= '9') return c - '0';
@@ -1231,6 +1233,35 @@ static bool createEngine() {
                  {"50", color("80c2ff")}, {"53", color("e4ecf6")},
                  {"54", color("ffd76c", 0.298f)}},
                 kBlock);
+            // 高德 surface/road 样式的固定压盖顺序。ordinal 在 worker
+            // 镶嵌时分组、在 Scene 命令层跨瓦片排序，不依赖 PBF feature
+            // 顺序、图层注册顺序或 unordered_map 遍历顺序。
+            as.paintOrder = 80;
+            as.paintOrderExpr = StyleExpression::match(
+                "amap_class",
+                {{"30002", StyleExpression::literal(30.0)},
+                 {"90001", StyleExpression::literal(60.0)},
+                 // 道路按 minor→major；当前单线样式只有 fill pass，
+                 // casing 独立 pass 后续可直接占用 70 段而无需改架构。
+                 {"20030", StyleExpression::literal(70.0)},
+                 {"20023", StyleExpression::literal(71.0)},
+                 {"20018", StyleExpression::literal(72.0)},
+                 {"20013", StyleExpression::literal(73.0)},
+                 {"20012", StyleExpression::literal(74.0)},
+                 {"20011", StyleExpression::literal(75.0)},
+                 {"20009", StyleExpression::literal(76.0)},
+                 {"20008", StyleExpression::literal(77.0)},
+                 {"20007", StyleExpression::literal(78.0)},
+                 {"20004", StyleExpression::literal(79.0)},
+                 {"20003", StyleExpression::literal(80.0)},
+                 {"20002", StyleExpression::literal(81.0)},
+                 {"20001", StyleExpression::literal(82.0)},
+                 {"90003", StyleExpression::literal(90.0)},
+                 // type4 content.#3 的 30003/kind64 不在官方 surface
+                 // 列表中；透明且垫底，不能以未知陆地色压住水面。
+                 {"30003", StyleExpression::literal(0.0)}},
+                // 未单列的边界等线类仍在 surface/building 之后。
+                StyleExpression::literal(70.0));
             as.fillColorExpr = StyleExpression::match(
                 "amap_class",
                 {{"30001",
@@ -1239,9 +1270,11 @@ static bool createEngine() {
                   // ~300-900m),叠加 z12 水层会产生平行双带 = 「瓦片横条
                   // 状错位」。水/绿地统一由常显 z12 水层(amap-water12)
                   // 提供;本层只保留 30002 地块与路网/建筑/POI。
-                  StyleExpression::literal({0.0f, 0.0f, 0.0f, 0.0f})},
-                 {"30002", kRegionBlocks}},
-                kLand);
+                  kTransparent},
+                 {"30002", kRegionBlocks},
+                 {"90001", kBuilding},
+                 {"30003", kTransparent}},
+                kTransparent);
             if (minimal_globe_demo::kHideAmapBuildingsForCompare) {
                 // [1:1 对照临时] 建筑透明 + 关挤出:深色挤出体是 fill 对照
                 // 的最大噪声源(纯黑建筑问题另行修)。90001 匹配不到时走
@@ -1260,9 +1293,31 @@ static bool createEngine() {
             // 粗源 z10 type2 → VectorFill(V30 地球网格)。无地形时 drape
             // 不出画,这条才是水/绿地的上屏路。先挂垫底。
             FeatureRenderStyle rs;
+            rs.paintOrder = 10;
+            rs.paintOrderExpr = StyleExpression::match(
+                "amap_class",
+                {{"30001",
+                  StyleExpression::match(
+                      "amap_kind",
+                      {{"61", StyleExpression::literal(10.0)},
+                       {"63", StyleExpression::literal(20.0)},
+                       {"15", StyleExpression::literal(20.0)}},
+                      StyleExpression::literal(10.0))},
+                 {"30002", StyleExpression::literal(30.0)}},
+                StyleExpression::literal(10.0));
             rs.altitudeMode = FeatureAltitudeMode::Absolute;
             rs.heightOffset = 2.5;
-            rs.fillColorExpr = as.fillColorExpr;
+            // 粗源必须有自己的 surface 配色。主源 as 会把错位的
+            // 30001 设透明，不能复用，否则 z10 的连续水/绿底实际不出画。
+            rs.fillColorExpr = StyleExpression::match(
+                "amap_class",
+                {{"30001",
+                  StyleExpression::match(
+                      "amap_kind",
+                      {{"61", kGreen}, {"63", kWater}, {"15", kWater}},
+                      kTransparent)},
+                 {"30002", kRegionBlocks}},
+                kTransparent);
             rs.lineColor = {0.0f, 0.0f, 0.0f, 0.0f};
             rs.lineWidthPx = 0.0f;
             rs.buildingExtrusion = false;
@@ -1327,10 +1382,15 @@ static bool createEngine() {
             auto water12Layer = std::make_unique<FeatureRenderLayer>(
                 "amap-water12", gRenderDevice.get(), Ellipsoid::WGS84());
             FeatureRenderStyle w12s;
+            w12s.paintOrder = 20;
+            w12s.paintOrderExpr = StyleExpression::match(
+                "amap_kind",
+                {{"61", StyleExpression::literal(20.0)},
+                 {"63", StyleExpression::literal(50.0)},
+                 {"15", StyleExpression::literal(50.0)}},
+                StyleExpression::literal(20.0));
             w12s.altitudeMode = FeatureAltitudeMode::Absolute;
             w12s.heightOffset = 2.5;
-            const auto kTransparent = StyleExpression::literal(
-                {0.0f, 0.0f, 0.0f, 0.0f});
             w12s.fillColorExpr = StyleExpression::match(
                 "amap_class",
                 {{"30001",
@@ -1436,6 +1496,7 @@ static bool createEngine() {
 
             // POI 源:type 0 通用 POI 点标签(z14)。点符号 + 名称文字。
             FeatureRenderStyle ps;
+            ps.paintOrder = 100;
             ps.altitudeMode = FeatureAltitudeMode::Absolute;
             ps.heightOffset = 2.5;
             ps.pointSizePx = 5.0f;
