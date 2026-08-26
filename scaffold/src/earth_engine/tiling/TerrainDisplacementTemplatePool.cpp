@@ -50,27 +50,48 @@ uint64_t TerrainDisplacementTemplatePool::cacheKey(const TileKey& key,
     return h;
 }
 
-const TerrainDisplacementTemplatePool::TemplateBuffers*
+TerrainDisplacementTemplatePool::TemplatePool*
+TerrainDisplacementTemplatePool::ensureTemplatePool(int gridSize) {
+    auto it = templatePools_.find(gridSize);
+    if (it != templatePools_.end()) {
+        return &it->second;
+    }
+    TemplatePool& p = templatePools_[gridSize];
+    const int layers = templateLayersFor(gridSize);
+    p.pool.configure(layers, 1);  // blockLayers=1:槽位号 == 块索引 == slots 下标
+    p.slots.resize(static_cast<size_t>(layers));  // 默认构造(含 unique_ptr,不可 copy)
+    return &p;
+}
+
+const TerrainDisplacementTemplatePool::TemplatePool*
+TerrainDisplacementTemplatePool::findTemplatePool(int gridSize) const {
+    auto it = templatePools_.find(gridSize);
+    return it == templatePools_.end() ? nullptr : &it->second;
+}
+
+TerrainDisplacementTemplatePool::TemplateHandle
 TerrainDisplacementTemplatePool::acquire(const TileKey& key,
                                          const Rectangle& bounds,
-                                         int gridSize) {
+                                         int gridSize, uint64_t frameId) {
     if (!device_ || gridSize < 1) {
-        return nullptr;
+        return TemplateHandle{};
     }
+    TemplatePool* tp = ensureTemplatePool(gridSize);
 
     const double wantLat = std::abs(bounds.north() - bounds.south());
     const double wantLon = boundsLongitudeSpan(bounds);
     const uint64_t k = cacheKey(key, gridSize, wantLat, wantLon);
-    auto it = cache_.find(k);
-    if (it != cache_.end()) {
+
+    // 已驻留:touch + 返回句柄(generation 不变)。
+    const int residentSlot = tp->pool.layerBaseFor(k);
+    if (residentSlot >= 0) {
+        tp->pool.touchSlot(residentSlot, frameId);
+        TemplateSlot& s = tp->slots[static_cast<size_t>(residentSlot)];
         // 直接量症状:共享的前提是「同 {z,row} 跨度相同」。模板由第一个来要的
-        // 瓦片决定并永久缓存,前提一旦被破坏,整行都用错尺寸几何且不自愈 ——
-        // 屏幕上就是「瓦片画大/画小,四周露背景」。不猜成因,当场比。
-        const Entry& e = it->second;
+        // 瓦片决定,前提一旦被破坏,整行都用错尺寸几何。不猜成因,当场比。
         // T-P5 元凶定位:同一缓存键被**不同 scheme** 复用 = 要么两套方案被
         // intern 成同一 handle,要么调用点用 A 的 key 配了 B 的 bounds。
-        // 命中即打印双方 schemeId 字符串 + 键分量,一次真机复现即可定位。
-        if (e.builtSchemeId != key.schemeId) {
+        if (s.builtSchemeId != key.schemeId) {
             static std::atomic<int> schemeMismatchLogged{0};
             if (schemeMismatchLogged.fetch_add(1) < 16) {
                 platformLog(
@@ -79,7 +100,7 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
                     "TEMPLATE_SCHEME_MISMATCH req=%s built=%s z=%d y=%d grid=%d "
                     "latSpan=%.9f lonSpan=%.9f key=%llu",
                     key.schemeId.str().c_str(),
-                    e.builtSchemeId.str().c_str(),
+                    s.builtSchemeId.str().c_str(),
                     key.z,
                     key.y,
                     gridSize,
@@ -89,9 +110,9 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
             }
         }
         const double latRatio =
-            e.builtLatSpan > 0.0 ? wantLat / e.builtLatSpan : 1.0;
+            s.builtLatSpan > 0.0 ? wantLat / s.builtLatSpan : 1.0;
         const double lonRatio =
-            e.builtLonSpan > 0.0 ? wantLon / e.builtLonSpan : 1.0;
+            s.builtLonSpan > 0.0 ? wantLon / s.builtLonSpan : 1.0;
         if (std::abs(latRatio - 1.0) > 1e-6 ||
             std::abs(lonRatio - 1.0) > 1e-6) {
             ++heightFrameStats_.templateSpanMismatch;
@@ -103,10 +124,26 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
                 heightFrameStats_.mismatchLonRatio = lonRatio;
             }
         }
-        return &it->second.view;
+        return TemplateHandle{&s.view, residentSlot, tp->pool.generationFor(k)};
     }
 
-    // 首次见到该 {LOD,row}：生成共享模板（列无关，用本瓦片 bounds 代表）。
+    // 首次见到该 {LOD,row}(或槽位被淘汰重分配):认领槽位(LRU;当帧被 touch 的
+    // 槽位不淘汰,全满 → slot=-1 = 本帧回落,draw 侧降级重试)。
+    uint64_t evicted = 0;
+    const auto h = tp->pool.acquire(k, frameId, &evicted);
+    if (h.slot < 0) {
+        return TemplateHandle{};  // 槽位池满 → 本帧放弃
+    }
+    // 淘汰重分配:释放旧租户的 VBO(这是修无界增长的核心 —— cache_ 时代这份
+    // buffer 永驻,现在随 LRU 淘汰释放),减回字节账。
+    if (evicted != 0) {
+        TemplateSlot& old = tp->slots[static_cast<size_t>(h.slot)];
+        totalVertexBytes_ -= old.vertexBytes;
+        old.vertexBuffer.reset();
+        old.vertexBytes = 0;
+    }
+
+    // 生成共享模板（列无关，用本瓦片 bounds 代表）。
     // 索引按档共享,已建过就不再生成(dense 档每次 393k 次 push_back 的纯浪费)。
     SharedIndexBuffer& shared = sharedIndexBuffers_[gridSize];
     const bool needIndices = !shared.buffer;
@@ -114,7 +151,8 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
         buildTerrainDisplacementTemplate(bounds, gridSize, needIndices);
     if (tmpl.vertices.empty() || (needIndices && tmpl.indices.empty())) {
         if (needIndices) sharedIndexBuffers_.erase(gridSize);
-        return nullptr;
+        tp->pool.release(k);
+        return TemplateHandle{};
     }
 
     // 打包成 32B TerrainGpuVertex（与现有地形顶点布局/shader 逐字节一致）：
@@ -159,12 +197,13 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
         shared.indexCount = static_cast<int>(tmpl.indices.size());
         if (!shared.buffer) {
             sharedIndexBuffers_.erase(gridSize);
-            return nullptr;
+            tp->pool.release(k);
+            return TemplateHandle{};
         }
     }
 
-    Entry entry;
-    entry.builtSchemeId = key.schemeId;
+    TemplateSlot& slot = tp->slots[static_cast<size_t>(h.slot)];
+    slot.builtSchemeId = key.schemeId;
     static std::atomic<int> templateBuildLogged{0};
     if (templateBuildLogged.fetch_add(1) < 32) {
         platformLog(
@@ -180,20 +219,43 @@ TerrainDisplacementTemplatePool::acquire(const TileKey& key,
             wantLon,
             static_cast<unsigned long long>(k));
     }
-    entry.vertexBuffer = device_->createBuffer(vboDesc);
-    if (!entry.vertexBuffer) {
-        return nullptr;
+    slot.vertexBuffer = device_->createBuffer(vboDesc);
+    if (!slot.vertexBuffer) {
+        tp->pool.release(k);
+        return TemplateHandle{};
     }
-    entry.view.vertexBuffer = entry.vertexBuffer.get();
-    entry.view.indexBuffer = shared.buffer.get();
-    entry.view.indexCount = shared.indexCount;
-    entry.view.vertexCount = static_cast<int>(packed.size());
+    slot.view.vertexBuffer = slot.vertexBuffer.get();
+    slot.view.indexBuffer = shared.buffer.get();
+    slot.view.indexCount = shared.indexCount;
+    slot.view.vertexCount = static_cast<int>(packed.size());
+    slot.vertexBytes = vboDesc.size;
     totalVertexBytes_ += vboDesc.size;
-    entry.builtLatSpan = std::abs(bounds.north() - bounds.south());
-    entry.builtLonSpan = boundsLongitudeSpan(bounds);
+    slot.builtLatSpan = std::abs(bounds.north() - bounds.south());
+    slot.builtLonSpan = boundsLongitudeSpan(bounds);
 
-    auto inserted = cache_.emplace(k, std::move(entry));
-    return &inserted.first->second.view;
+    return TemplateHandle{&slot.view, h.slot, h.generation};
+}
+
+void TerrainDisplacementTemplatePool::touchTemplate(int gridSize, int slot,
+                                                    uint64_t frameId) {
+    auto it = templatePools_.find(gridSize);
+    if (it == templatePools_.end()) return;
+    it->second.pool.touchSlot(slot, frameId);
+}
+
+bool TerrainDisplacementTemplatePool::templateCurrent(int gridSize, int slot,
+                                                      uint32_t generation) const {
+    const TemplatePool* tp = findTemplatePool(gridSize);
+    if (!tp) return false;
+    return tp->pool.current(TerrainPageLayerPool::Handle{slot, generation});
+}
+
+size_t TerrainDisplacementTemplatePool::residentTemplateCount() const {
+    size_t n = 0;
+    for (const auto& entry : templatePools_) {
+        n += static_cast<size_t>(entry.second.pool.residentCount());
+    }
+    return n;
 }
 
 uint64_t TerrainDisplacementTemplatePool::heightCacheKey(const TileKey& key) {

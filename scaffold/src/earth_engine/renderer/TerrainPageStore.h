@@ -80,6 +80,10 @@ public:
     /// **不分配、不淘汰**——key 不驻留则 no-op(区别于 acquire)。
     void touch(uint64_t key, uint64_t frameId);
 
+    /// 按 slot 直接 touch(免调用方重算 key)。供「句柄跨帧持有、本帧保活」场景
+    /// (模板 VBO 池);slot 不驻留/越界则 no-op。
+    void touchSlot(int slot, uint64_t frameId);
+
     /// 显式移除 key(析构/失效)。key 不在则 no-op。
     void release(uint64_t key);
 

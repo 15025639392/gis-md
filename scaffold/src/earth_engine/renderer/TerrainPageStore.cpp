@@ -224,6 +224,19 @@ void TerrainPageLayerPool::touch(uint64_t key, uint64_t frameId) {
     slots_[static_cast<size_t>(it->second)].lastFrame = frameId;
 }
 
+void TerrainPageLayerPool::touchSlot(int slot, uint64_t frameId) {
+    if (slot < 0) {
+        return;
+    }
+    const int blockIndex = slot / blockLayers_;
+    if (blockIndex < 0 || static_cast<size_t>(blockIndex) >= slots_.size()) {
+        return;
+    }
+    if (slots_[static_cast<size_t>(blockIndex)].used) {
+        slots_[static_cast<size_t>(blockIndex)].lastFrame = frameId;
+    }
+}
+
 void TerrainPageLayerPool::release(uint64_t key) {
     const auto it = keyToSlot_.find(key);
     if (it == keyToSlot_.end()) {

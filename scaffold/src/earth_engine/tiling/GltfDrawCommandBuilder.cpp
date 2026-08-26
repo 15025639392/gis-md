@@ -404,15 +404,16 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
                     ht = pool->acquireHeightTexture(tile.key, *hm, tile.bounds,
                                                     gridSize, frameNumber);
                 }
-                const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
+                const TerrainDisplacementTemplatePool::TemplateHandle th =
                     (ht && ht->texture)
-                        ? pool->acquire(tile.key, tile.bounds, gridSize)
-                        : nullptr;
-                if (tb && ht && ht->texture) {
-                    cmd.vertexBuffer = tb->vertexBuffer;
-                    cmd.indexBuffer = tb->indexBuffer;
-                    cmd.indexCount = tb->indexCount;
-                    cmd.vertexCount = tb->vertexCount;
+                        ? pool->acquire(tile.key, tile.bounds, gridSize,
+                                        frameNumber)
+                        : TerrainDisplacementTemplatePool::TemplateHandle{};
+                if (th.valid() && ht && ht->texture) {
+                    cmd.vertexBuffer = th.buffers->vertexBuffer;
+                    cmd.indexBuffer = th.buffers->indexBuffer;
+                    cmd.indexCount = th.buffers->indexCount;
+                    cmd.vertexCount = th.buffers->vertexCount;
                     cmd.indexType = RenderCommand::IndexType::UInt32;
                     cmd.vertexStride = 32;  // TerrainCompact32
                     cmd.hasTerrainDisplacementFrame = true;
@@ -450,6 +451,10 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
                     // 档位记在命令上:staleness 校验要按档查对应 array,且
                     // 保活 touch 也必须落到同一档的 LRU(见 heightLayerCurrent)。
                     cmd.terrainHeightGridSize = gridSize;
+                    // 模板槽位 + 分配代记在命令上:槽位被淘汰重分配后 generation
+                    // 失配 → 校验循环 invalidate 重建(见 templateCurrent)。
+                    cmd.terrainTemplateSlot = th.slot;
+                    cmd.terrainTemplateGeneration = th.generation;
                 }
             }
         }
@@ -679,16 +684,17 @@ void applyPerFrameCommandState(
                 // 后代模板恒用 coarse 档:显示内容是祖先纹理的子矩形,顶点
                 // 密度超过 64 不会带来任何新信息。
                 const TilesetTile& desc = *context.surfaceClipDescendant;
-                const TerrainDisplacementTemplatePool::TemplateBuffers* tb =
+                const TerrainDisplacementTemplatePool::TemplateHandle th =
                     (ht && ht->texture)
                         ? pool->acquire(desc.key, desc.bounds,
-                                        kTerrainDisplacementGridSize)
-                        : nullptr;
-                if (tb && ht && ht->texture) {
-                    cmd.vertexBuffer = tb->vertexBuffer;
-                    cmd.indexBuffer = tb->indexBuffer;
-                    cmd.indexCount = tb->indexCount;
-                    cmd.vertexCount = tb->vertexCount;
+                                        kTerrainDisplacementGridSize,
+                                        context.frameNumber)
+                        : TerrainDisplacementTemplatePool::TemplateHandle{};
+                if (th.valid() && ht && ht->texture) {
+                    cmd.vertexBuffer = th.buffers->vertexBuffer;
+                    cmd.indexBuffer = th.buffers->indexBuffer;
+                    cmd.indexCount = th.buffers->indexCount;
+                    cmd.vertexCount = th.buffers->vertexCount;
                     cmd.indexType = RenderCommand::IndexType::UInt32;
                     cmd.vertexStride = 32;
                     cmd.shader = renderer.terrainShader();
@@ -719,6 +725,8 @@ void applyPerFrameCommandState(
                     cmd.terrainHeightLayer = ht->layer;
                     cmd.terrainHeightLayerEpoch = ht->epoch;
                     cmd.terrainHeightGridSize = texGrid;
+                    cmd.terrainTemplateSlot = th.slot;
+                    cmd.terrainTemplateGeneration = th.generation;
                     cmd.surfaceClipUv = *context.surfaceClipUv;
                     cmd.surfaceClipEnabled = 2.0f;
                     u.clipUv = *context.surfaceClipUv;
@@ -916,10 +924,24 @@ void GltfDrawCommandBuilder::build(
                     renderContent.invalidateCachedDrawCommands();
                     break;
                 }
+                // 模板槽位 staleness 校验(与高度层 epoch 同构):槽位被淘汰
+                // 重分配后 generation 失配 → invalidate 重建。这是模板 VBO
+                // 有界淘汰的引用安全锚点 —— 离屏瓦片的模板被淘汰释放后,其
+                // 旧命令的裸指针不再被解引用;重新入视野时先走到这里失配重建。
+                if (!pool->templateCurrent(
+                        cached.terrainHeightGridSize,
+                        cached.terrainTemplateSlot,
+                        cached.terrainTemplateGeneration)) {
+                    renderContent.invalidateCachedDrawCommands();
+                    break;
+                }
                 if (!touched) {
                     pool->touchHeightTexture(tile.key,
                                              cached.terrainHeightGridSize,
                                              context.frameNumber);
+                    pool->touchTemplate(cached.terrainHeightGridSize,
+                                        cached.terrainTemplateSlot,
+                                        context.frameNumber);
                     touched = true;
                 }
             }

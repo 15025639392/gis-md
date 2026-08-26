@@ -133,14 +133,34 @@ public:
         int vertexCount = 0;
     };
 
+    // 模板句柄:跨帧引用某次模板分配的稳定标识。buffers 仅供**同一帧**绑定
+    // (裸指针,淘汰即失效);跨帧的存活判定走 slot+generation 经
+    // templateCurrent() 校验(与高度纹理 layerEpoch 同构)。
+    struct TemplateHandle {
+        const TemplateBuffers* buffers = nullptr;  // 本帧绑定用;失败时 null
+        int slot = -1;                             // 槽位号(档内,blockLayers=1)
+        uint32_t generation = 0;                   // 该槽位那次分配的代
+        bool valid() const { return buffers != nullptr; }
+    };
+
     void initialize(RenderDevice* device) { device_ = device; }
     bool ready() const { return device_ != nullptr; }
 
     // 取（必要时建+上传）key 瓦片所在 {LOD,row} 的共享模板。用 bounds 生成
-    // （列无关，任一代表列即可），按 {schemeId,z,y,gridSize} 缓存复用。
-    // device 未初始化或 gridSize<1 返回 nullptr。
-    const TemplateBuffers* acquire(const TileKey& key, const Rectangle& bounds,
-                                   int gridSize);
+    // （列无关，任一代表列即可），按 {schemeId,z,y,gridSize} 分档槽位池缓存。
+    // device 未初始化或 gridSize<1 返回 TemplateHandle{buffers=nullptr}。
+    // 槽位池满(全部本帧可见)返回 invalid 句柄 → 调用方本帧回落(不丢瓦片,
+    // 下一帧重试)。frameId 用于 LRU 保活/淘汰语义。
+    TemplateHandle acquire(const TileKey& key, const Rectangle& bounds,
+                           int gridSize, uint64_t frameId);
+
+    // 可见瓦片每帧保活:把 slot 对应槽位 touch 到 frameId(当帧免淘汰)。
+    // slot 不驻留/越界则 no-op。gridSize 必须与该瓦片本帧 acquire 档一致。
+    void touchTemplate(int gridSize, int slot, uint64_t frameId);
+
+    // 常驻命令缓存的 staleness 校验:该 (gridSize, slot, generation) 是否仍指向
+    // 当初的模板。槽位被淘汰重分配后 generation 失配 → invalidate 重建自愈。
+    bool templateCurrent(int gridSize, int slot, uint32_t generation) const;
 
     // Stage B:per-tile 高度数据(gridN+1 方 RGBA8,RG 打包 16bit 归一化高度,
     // NEAREST)。shader 顶点级 texelFetch 取回、按 (minHeight,heightRange) 反量化
@@ -240,7 +260,7 @@ public:
                a->layerEpochs[static_cast<size_t>(layer)] == epoch;
     }
 
-    size_t residentTemplateCount() const { return cache_.size(); }
+    size_t residentTemplateCount() const;
     // 已上传模板 VBO 总字节（§5 有界性观测：应随可见 {LOD,row} 数封顶）。
     size_t totalVertexBytes() const { return totalVertexBytes_; }
 
@@ -259,19 +279,39 @@ public:
     void flushEdgeLutUploads();
 
 private:
-    struct Entry {
+    // 模板槽位:一个 {z,row,gridSize} 的共享模板 VBO(资源本体 + 诊断)。
+    // vertexBuffer 是**淘汰即释放**的资源本体;view.indexBuffer 指向
+    // sharedIndexBuffers_ 的共享份(不淘汰,生命周期与池同长)。
+    struct TemplateSlot {
         std::unique_ptr<Buffer> vertexBuffer;
-        TemplateBuffers view;  // indexBuffer 指向 sharedIndexBuffers_ 里的共享份
+        TemplateBuffers view;
         // 建这份模板时用的地理跨度。共享的前提是「同 {z,row} 的瓦片跨度相同」,
-        // 而模板由**第一个来要的瓦片**的 bounds 决定并永久缓存 —— 若该前提被
-        // 破坏,整行从此都用错尺寸的几何,且不会自愈。存下来就能当场比对。
+        // 而模板由**第一个来要的瓦片**的 bounds 决定 —— 若该前提被破坏,整行
+        // 从此都用错尺寸的几何。存下来就能当场比对。
         double builtLatSpan = 0.0;
         double builtLonSpan = 0.0;
         // 建模方的 schemeId(interned handle,O(1) 指针比较)。T-P5:若某调用点
         // 用 A 的 key 配 B 的 bounds,或两套切片方案被 intern 成同一 handle,
         // 命中比对立刻暴露「谁和谁撞了同一个模板键」—— 打印双方字符串。
         SchemeId builtSchemeId;
+        size_t vertexBytes = 0;  // 淘汰时从 totalVertexBytes_ 减回
     };
+
+    // 每个密度档一套独立的模板槽位池:槽位 LRU + generation 失效。档数固定为
+    // 2(coarse/dense),用 map 让 gridSize 保持唯一键(与 heightArrays_ 同约定)。
+    struct TemplatePool {
+        std::vector<TemplateSlot> slots;  // 按槽位索引(资源本体,blockLayers=1)
+        TerrainPageLayerPool pool;        // key → 槽位 LRU
+    };
+    // 模板池容量:coarse 132KB/个、dense 2.02MB/个。容量取「峰值可见 {z,row}
+    // 数 + 余量」,coarse 远大于峰值(几乎不 thrash)、dense 保守(单片大)。
+    // 淘汰只落在离屏久驻模板,重新入视野时 generation 失配自愈重建(见 acquire)。
+    static constexpr int kTemplatePoolLayers = 128;      // 132KB×128 ≈ 16.9MB
+    static constexpr int kDenseTemplatePoolLayers = 16;  // 2.02MB×16 ≈ 32.3MB
+    static constexpr int templateLayersFor(int gridSize) {
+        return gridSize >= kTerrainDenseGridSize ? kDenseTemplatePoolLayers
+                                                 : kTemplatePoolLayers;
+    }
 
     // 按 gridSize 共享的索引缓冲(内容纯拓扑,与瓦片位置无关)。生命周期与池
     // 同长,故 Entry 里存裸指针视图是安全的(模板 entry 不可能活得比池久)。
@@ -387,8 +427,13 @@ private:
     HeightArray* ensureHeightArray(int gridSize);
     const HeightArray* findHeightArray(int gridSize) const;
 
+    // 惰性建某档的模板槽位池(configure 其 LRU 到 templateLayersFor)。
+    TemplatePool* ensureTemplatePool(int gridSize);
+    const TemplatePool* findTemplatePool(int gridSize) const;
+
     RenderDevice* device_ = nullptr;
-    std::unordered_map<uint64_t, Entry> cache_;
+    // 模板 VBO 分档槽位池(修 cache_ 无界增长):gridSize → {slots, LRU}。
+    std::map<int, TemplatePool> templatePools_;
     size_t totalVertexBytes_ = 0;
 
     // ---- 高度纹理共享 array 存储(合批 Step 1;按密度档分组)----
