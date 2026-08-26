@@ -5,24 +5,24 @@
   "dependencies": [
     {
       "name": "glm",
-      "version>=": "0.9.9.8"
+      "version>=": "1.0.3"
     },
     {
       "name": "nlohmann-json",
-      "version>=": "3.11.0"
+      "version>=": "3.12.0#2"
     },
     {
       "name": "gtest",
-      "version>=": "1.14.0"
+      "version>=": "1.17.0#3"
     },
     {
       "name": "curl",
-      "version>=": "8.0.0"
+      "version>=": "8.21.0#1"
     },
     {
       "name": "stb",
-      "version>=": "2023-01-29"
+      "version>=": "2024-07-29#1"
     }
   ],
-  "builtin-baseline": "2024.01.12"
+  "builtin-baseline": "9e593bb18ea69cc5095e012465dcd675a822ed0d"
 }

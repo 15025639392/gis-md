@@ -28,9 +28,23 @@ export ANDROID_NDK_HOME="${ANDROID_NDK_HOME:-$ANDROID_HOME/ndk/$ANDROID_NDK_VERS
 export ANDROID_CMAKE_VERSION="${ANDROID_CMAKE_VERSION:-3.22.1}"
 export ANDROID_CMAKE_HOME="${ANDROID_CMAKE_HOME:-$ANDROID_HOME/cmake/$ANDROID_CMAKE_VERSION}"
 
-_gis_md_default_java="$HOME/development/jdks/zulu17.64.17-ca-jdk17.0.18-macosx_aarch64/zulu-17.jdk/Contents/Home"
-if [ -z "${JAVA_HOME:-}" ] && [ -d "$_gis_md_default_java" ]; then
-    export JAVA_HOME="$_gis_md_default_java"
+if [ -z "${JAVA_HOME:-}" ]; then
+    for _gis_md_java_candidate in \
+        "$HOME/development/jdks/zulu17.64.17-ca-jdk17.0.18-macosx_aarch64/zulu-17.jdk/Contents/Home" \
+        "$HOME/sdk/jdk-17"; do
+        if [ -d "$_gis_md_java_candidate" ]; then
+            export JAVA_HOME="$_gis_md_java_candidate"
+            break
+        fi
+    done
+fi
+
+if [ -z "${JAVA_HOME:-}" ] && [ "$(uname -s 2>/dev/null || true)" = "Darwin" ] && \
+   [ -x /usr/libexec/java_home ]; then
+    _gis_md_java_home_from_system="$(/usr/libexec/java_home -v 17 2>/dev/null || true)"
+    if [ -n "$_gis_md_java_home_from_system" ] && [ -d "$_gis_md_java_home_from_system" ]; then
+        export JAVA_HOME="$_gis_md_java_home_from_system"
+    fi
 fi
 
 _gis_md_prepend_path() {
@@ -47,6 +61,11 @@ _gis_md_prepend_path "$ANDROID_HOME/platform-tools"
 _gis_md_prepend_path "$ANDROID_HOME/cmdline-tools/latest/bin"
 if [ -n "${JAVA_HOME:-}" ]; then
     _gis_md_prepend_path "$JAVA_HOME/bin"
+fi
+
+if [ -z "${PKG_CONFIG:-}" ] && \
+   [ -x "$GIS_MD_SCAFFOLD_DIR/third_party/pkgconf/bin/pkg-config" ]; then
+    export PKG_CONFIG="$GIS_MD_SCAFFOLD_DIR/third_party/pkgconf/bin/pkg-config"
 fi
 
 if [ -z "${VCPKG_ROOT:-}" ]; then
@@ -79,7 +98,8 @@ if [ -z "${NLOHMANN_JSON_INCLUDE_DIR:-}" ] && \
     export NLOHMANN_JSON_INCLUDE_DIR="$GIS_MD_SCAFFOLD_DIR/third_party_py/nlohmann_json/include"
 fi
 
-unset _gis_md_default_java
+unset _gis_md_java_candidate
+unset _gis_md_java_home_from_system
 unset _gis_md_env_script
 unset _gis_md_glm_include
 unset _gis_md_vcpkg_root

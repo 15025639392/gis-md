@@ -160,8 +160,8 @@ public:
     WorkTicketSlot() = default;
     WorkTicketSlot(const WorkTicketSlot&) = delete;
     WorkTicketSlot& operator=(const WorkTicketSlot&) = delete;
-    WorkTicketSlot(WorkTicketSlot&&) noexcept = default;
-    WorkTicketSlot& operator=(WorkTicketSlot&&) noexcept = default;
+    WorkTicketSlot(WorkTicketSlot&&) = delete;
+    WorkTicketSlot& operator=(WorkTicketSlot&&) = delete;
 
     /// active=true 确保持有一张 (kind,label) 令牌;false 确保已释放。幂等。
     /// [2026-08-21 冻屏根修] 加锁:worker 完成/派发路径与渲染帧 reconcile 并发。
