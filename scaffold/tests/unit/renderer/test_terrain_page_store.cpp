@@ -291,10 +291,10 @@ TEST(ResamplePageSource, EmptyImageYieldsZeroedOutput) {
 TEST(TerrainPageLayerPool, AcquireGivesContiguousDistinctBlocks) {
     TerrainPageLayerPool pool = makePool(3, 16);
     uint64_t ev = 123;
-    EXPECT_EQ(pool.acquire(/*key=*/10, /*frame=*/1, &ev), 0);
+    EXPECT_EQ(pool.acquire(/*key=*/10, /*frame=*/1, &ev).slot, 0);
     EXPECT_EQ(ev, 0u);
-    EXPECT_EQ(pool.acquire(11, 1, &ev), 16);
-    EXPECT_EQ(pool.acquire(12, 1, &ev), 32);
+    EXPECT_EQ(pool.acquire(11, 1, &ev).slot, 16);
+    EXPECT_EQ(pool.acquire(12, 1, &ev).slot, 32);
     EXPECT_EQ(pool.residentCount(), 3);
     // 各块 layerBase 连续、块尺寸 16。
     EXPECT_EQ(pool.blockLayers(), 16);
@@ -304,9 +304,9 @@ TEST(TerrainPageLayerPool, AcquireGivesContiguousDistinctBlocks) {
 TEST(TerrainPageLayerPool, ReacquireResidentReturnsSameBaseNoEvict) {
     TerrainPageLayerPool pool = makePool(3, 16);
     uint64_t ev = 0;
-    const int base = pool.acquire(10, 1, &ev);
+    const int base = pool.acquire(10, 1, &ev).slot;
     // 已驻留:同 key 再取返回同 base、不淘汰。
-    EXPECT_EQ(pool.acquire(10, 2, &ev), base);
+    EXPECT_EQ(pool.acquire(10, 2, &ev).slot, base);
     EXPECT_EQ(ev, 0u);
     EXPECT_EQ(pool.residentCount(), 1);
     EXPECT_EQ(pool.layerBaseFor(10), base);
@@ -320,7 +320,7 @@ TEST(TerrainPageLayerPool, EvictsLeastRecentlyUsedWhenFull) {
     pool.acquire(11, /*frame=*/2, &ev);  // slot1
     pool.acquire(12, /*frame=*/3, &ev);  // slot2
     // 第 4 个(frame=4):池满 → 淘汰 lastFrame 最小者(key 10,frame 1)。
-    const int base = pool.acquire(13, 4, &ev);
+    const int base = pool.acquire(13, 4, &ev).slot;
     EXPECT_EQ(ev, 10u);
     EXPECT_EQ(base, 0);  // 复用 slot0 的 base
     EXPECT_EQ(pool.layerBaseFor(10), -1);  // 被淘汰
@@ -370,7 +370,7 @@ TEST(TerrainPageLayerPool, RefusesEvictionWhenAllTouchedThisFrame) {
     pool.acquire(10, /*frame=*/7, &ev);  // 本帧
     pool.acquire(11, /*frame=*/7, &ev);  // 本帧
     // 第三个瓦片同帧:两块都是本帧可见 → 不淘汰,返回 -1(调用方回落 mappedRaster)。
-    const int base = pool.acquire(12, 7, &ev);
+    const int base = pool.acquire(12, 7, &ev).slot;
     EXPECT_EQ(base, -1);
     EXPECT_EQ(ev, 0u);
     EXPECT_EQ(pool.residentCount(), 2);
@@ -379,13 +379,13 @@ TEST(TerrainPageLayerPool, RefusesEvictionWhenAllTouchedThisFrame) {
 TEST(TerrainPageLayerPool, ReleaseFreesBlockForReuse) {
     TerrainPageLayerPool pool = makePool(2, 16);
     uint64_t ev = 0;
-    const int b0 = pool.acquire(10, 1, &ev);
+    const int b0 = pool.acquire(10, 1, &ev).slot;
     pool.acquire(11, 1, &ev);
     pool.release(10);
     EXPECT_EQ(pool.layerBaseFor(10), -1);
     EXPECT_EQ(pool.residentCount(), 1);
     // 释放后空块可再分配(同帧也行,因不需淘汰)。
-    const int reused = pool.acquire(12, 1, &ev);
+    const int reused = pool.acquire(12, 1, &ev).slot;
     EXPECT_EQ(reused, b0);
     EXPECT_EQ(ev, 0u);
     pool.release(999);  // 不存在 → no-op
@@ -398,16 +398,16 @@ TEST(TerrainPageLayerPool, PageGranularBlockLayersOne) {
     EXPECT_EQ(pool.blockLayers(), 1);
     uint64_t ev = 0;
     // 每页认领一层,layer == slot index(连续 0,1,2,3)。
-    EXPECT_EQ(pool.acquire(/*key=*/100, /*frame=*/1, &ev), 0);
-    EXPECT_EQ(pool.acquire(101, 1, &ev), 1);
-    EXPECT_EQ(pool.acquire(102, 1, &ev), 2);
-    EXPECT_EQ(pool.acquire(103, 1, &ev), 3);
+    EXPECT_EQ(pool.acquire(/*key=*/100, /*frame=*/1, &ev).slot, 0);
+    EXPECT_EQ(pool.acquire(101, 1, &ev).slot, 1);
+    EXPECT_EQ(pool.acquire(102, 1, &ev).slot, 2);
+    EXPECT_EQ(pool.acquire(103, 1, &ev).slot, 3);
     EXPECT_EQ(pool.residentCount(), 4);
     // 已驻留页复取返回同层、不淘汰。
-    EXPECT_EQ(pool.acquire(101, 2, &ev), 1);
+    EXPECT_EQ(pool.acquire(101, 2, &ev).slot, 1);
     EXPECT_EQ(ev, 0u);
     // 池满 + 新页(frame 3):淘汰 lastFrame 最小者(key 100,frame 1),复用其层 0。
-    const int reused = pool.acquire(200, 3, &ev);
+    const int reused = pool.acquire(200, 3, &ev).slot;
     EXPECT_EQ(ev, 100u);
     EXPECT_EQ(reused, 0);
     EXPECT_EQ(pool.layerBaseFor(100), -1);  // 页被淘汰
@@ -423,6 +423,71 @@ TEST(TerrainPageLayerPool, ConfigureResetsResidency) {
     EXPECT_EQ(pool.blockCount(), 2);
     EXPECT_EQ(pool.blockLayers(), 4);
     EXPECT_EQ(pool.layerBaseFor(10), -1);
+}
+
+// generation 失效:句柄跨帧校验。槽位重分配(淘汰/release 后重占用)时 generation
+// 自增且全局单调,旧句柄经 current() 失配 → 调用方自愈重建(模板 VBO / 高度纹理
+// 收敛到本池后的失效基础)。
+TEST(TerrainPageLayerPool, GenerationInvalidatesOnRealloc) {
+    TerrainPageLayerPool pool;
+    pool.configure(/*blockCount=*/2, /*blockLayers=*/1);
+    uint64_t ev = 0;
+    // 首次占用:generation = 1(全局单调,从 1 起)。
+    const auto h10 = pool.acquire(10, 1, &ev);
+    EXPECT_TRUE(h10.valid());
+    EXPECT_EQ(h10.slot, 0);
+    EXPECT_EQ(h10.generation, 1u);
+    EXPECT_TRUE(pool.current(h10));
+
+    // 已驻留复用:generation 不变。
+    const auto h10b = pool.acquire(10, 2, &ev);
+    EXPECT_EQ(h10b.generation, h10.generation);
+    EXPECT_TRUE(pool.current(h10));
+
+    // 第二块占用:不同槽位,generation 继续递增(全局单调,非按槽位独立)。
+    const auto h11 = pool.acquire(11, 2, &ev);
+    EXPECT_EQ(h11.slot, 1);
+    EXPECT_EQ(h11.generation, 2u);
+
+    // 池满(frame 3):新 key 12 淘汰最久块(key 10)。generation 自增,旧句柄失效。
+    const auto h12 = pool.acquire(12, 3, &ev);
+    EXPECT_EQ(ev, 10u);
+    EXPECT_EQ(h12.slot, 0);  // 复用 key 10 的槽位
+    EXPECT_EQ(h12.generation, 3u);
+    EXPECT_FALSE(pool.current(h10));  // 旧句柄失配
+    EXPECT_TRUE(pool.current(h12));   // 新句柄有效
+    EXPECT_EQ(pool.generationFor(12), 3u);
+    EXPECT_EQ(pool.generationFor(10), 0u);  // 已淘汰
+}
+
+// release 后重占用不复用旧代:generation 是全局单调序号,不是槽位内计数器,
+// 否则「release A(gen=N)→ 占用 B(gen 重置再自增可能回到 N)」会让 B 的句柄与
+// 仍被引用的 A 句柄 generation 相同 → current() 误判有效。
+TEST(TerrainPageLayerPool, GenerationMonotonicAcrossRelease) {
+    TerrainPageLayerPool pool;
+    pool.configure(/*blockCount=*/2, /*blockLayers=*/1);
+    uint64_t ev = 0;
+    const auto h10 = pool.acquire(10, 1, &ev);
+    EXPECT_EQ(h10.generation, 1u);
+    pool.release(10);
+    // 重占用同一槽位:generation 继续递增(不复用 1)。
+    const auto h12 = pool.acquire(12, 1, &ev);
+    EXPECT_EQ(h12.slot, 0);
+    EXPECT_EQ(h12.generation, 2u);
+    EXPECT_FALSE(pool.current(h10));  // 旧句柄(gen=1)失配
+    EXPECT_TRUE(pool.current(h12));
+}
+
+// configure 重配清空:旧句柄因槽位清空而失效,generation 重置。
+TEST(TerrainPageLayerPool, GenerationResetOnConfigure) {
+    TerrainPageLayerPool pool = makePool(2, 1);
+    uint64_t ev = 0;
+    const auto h10 = pool.acquire(10, 1, &ev);
+    EXPECT_TRUE(pool.current(h10));
+    pool.configure(2, 1);  // 重配清空
+    EXPECT_FALSE(pool.current(h10));  // 槽位已释放
+    const auto h11 = pool.acquire(11, 1, &ev);
+    EXPECT_EQ(h11.generation, 1u);  // 重置后从 1 起
 }
 
 // ---------------- TerrainPageStore(创建/门控)----------------

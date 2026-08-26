@@ -136,6 +136,7 @@ void TerrainPageLayerPool::configure(int blockCount, int blockLayers) {
     blockLayers_ = std::max(1, blockLayers);
     slots_.assign(static_cast<size_t>(std::max(0, blockCount)), Slot{});
     keyToSlot_.clear();
+    nextGeneration_ = 1;  // 重配重置分配代(旧句柄随之失效)
 }
 
 int TerrainPageLayerPool::layerBaseFor(uint64_t key) const {
@@ -146,15 +147,17 @@ int TerrainPageLayerPool::layerBaseFor(uint64_t key) const {
     return it->second * blockLayers_;
 }
 
-int TerrainPageLayerPool::acquire(uint64_t key, uint64_t frameId,
-                                  uint64_t* outEvicted) {
+TerrainPageLayerPool::Handle TerrainPageLayerPool::acquire(uint64_t key,
+                                                           uint64_t frameId,
+                                                           uint64_t* outEvicted) {
     if (outEvicted) {
         *outEvicted = 0;
     }
-    // 已驻留:touch + 返回。
+    // 已驻留:touch + 返回(generation 不变)。
     if (const auto it = keyToSlot_.find(key); it != keyToSlot_.end()) {
         slots_[static_cast<size_t>(it->second)].lastFrame = frameId;
-        return it->second * blockLayers_;
+        return Handle{it->second * blockLayers_,
+                      slots_[static_cast<size_t>(it->second)].generation};
     }
     // 找空块。
     int slot = -1;
@@ -174,16 +177,43 @@ int TerrainPageLayerPool::acquire(uint64_t key, uint64_t frameId,
             }
         }
         if (slot < 0) {
-            return -1;  // 全部本帧可见 → 回落 mappedRaster
+            return Handle{};  // 全部本帧可见 → 回落 mappedRaster
         }
         if (outEvicted) {
             *outEvicted = slots_[static_cast<size_t>(slot)].key;
         }
         keyToSlot_.erase(slots_[static_cast<size_t>(slot)].key);
     }
-    slots_[static_cast<size_t>(slot)] = Slot{true, key, frameId};
+    // 占用/重分配:分配代自增(全局单调,release 后重占用也不会复用旧代)。
+    slots_[static_cast<size_t>(slot)] =
+        Slot{true, key, frameId, nextGeneration_++};
     keyToSlot_[key] = slot;
-    return slot * blockLayers_;
+    return Handle{slot * blockLayers_,
+                  slots_[static_cast<size_t>(slot)].generation};
+}
+
+bool TerrainPageLayerPool::current(Handle h) const {
+    // Handle.slot 是 layerBase = 块索引 × blockLayers;generation 按块维护,故
+    // 除回块索引再查(blockLayers 恒 ≥1,除法精确)。blockLayers=1 时退化为
+    // h.slot 直接索引,零额外开销。
+    if (h.slot < 0) {
+        return false;
+    }
+    const int blockIndex = h.slot / blockLayers_;
+    if (blockIndex < 0 ||
+        static_cast<size_t>(blockIndex) >= slots_.size()) {
+        return false;
+    }
+    const Slot& s = slots_[static_cast<size_t>(blockIndex)];
+    return s.used && s.generation == h.generation;
+}
+
+uint32_t TerrainPageLayerPool::generationFor(uint64_t key) const {
+    const auto it = keyToSlot_.find(key);
+    if (it == keyToSlot_.end()) {
+        return 0;
+    }
+    return slots_[static_cast<size_t>(it->second)].generation;
 }
 
 void TerrainPageLayerPool::touch(uint64_t key, uint64_t frameId) {
@@ -913,8 +943,9 @@ void TerrainPageStore::updateVisiblePages(
             anchorKey.y = p.tile->key.y >> up;
             const uint64_t anchorPageKey = packKey(anchorKey);
             uint64_t anchorEvicted = 0;
-            const int anchorLayer =
+            const auto anchorH =
                 pool_.acquire(anchorPageKey, frameId_, &anchorEvicted);
+            const int anchorLayer = anchorH.slot;
             if (anchorEvicted != 0) {
                 erasePageEntry(anchorEvicted);
             }
@@ -954,7 +985,8 @@ void TerrainPageStore::updateVisiblePages(
             zMax = std::max(zMax, kc.fetchKey.z);
             // 请求目标页(za,d)并占槽/touch(建页副作用:emplace + kick fetch)。
             uint64_t evicted = 0;
-            const int layer = pool_.acquire(kc.pageKey, frameId_, &evicted);
+            const auto layerH = pool_.acquire(kc.pageKey, frameId_, &evicted);
+            const int layer = layerH.slot;
             if (evicted != 0) {
                 erasePageEntry(evicted);  // 淘汰页:cancel fetch + 移除账本
             }
@@ -1018,7 +1050,9 @@ void TerrainPageStore::updateVisiblePages(
         if (ind.layer < 0 ||
             indirPool_.layerBaseFor(p.tileKeyPacked) != ind.layer) {
             uint64_t evicted = 0;
-            ind.layer = indirPool_.acquire(p.tileKeyPacked, frameId_, &evicted);
+            const auto indH =
+                indirPool_.acquire(p.tileKeyPacked, frameId_, &evicted);
+            ind.layer = indH.slot;
             // 策略生效率:间接纹理层的**无换租获取率**。稳态应接近 1;持续偏低 =
             // 层池容量不足以承载当前可见集,每帧互相踢(thrash),表现为闪烁/重传。
             policy::observe(policy::Id::IndirLayerAllocNoEvict,
@@ -1075,8 +1109,9 @@ void TerrainPageStore::updateVisiblePages(
                     auto fit = fieldPages_.find(fPacked);
                     if (fit == fieldPages_.end()) {
                         uint64_t evicted = 0;
-                        const int fl =
+                        const auto flH =
                             fieldPool_.acquire(fPacked, frameId_, &evicted);
+                        const int fl = flH.slot;
                         if (evicted != 0) {
                             eraseFieldEntry(evicted);
                         }
@@ -1178,8 +1213,9 @@ void TerrainPageStore::updateVisiblePages(
                             continue;
                         }
                         uint64_t evicted = 0;
-                        const int al =
+                        const auto alH =
                             fieldPool_.acquire(aPacked, frameId_, &evicted);
+                        const int al = alH.slot;
                         if (evicted != 0) {
                             eraseFieldEntry(evicted);
                         }

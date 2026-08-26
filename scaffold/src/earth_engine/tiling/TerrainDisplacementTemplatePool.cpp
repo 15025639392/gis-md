@@ -414,7 +414,8 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     // draw 侧回落 P5b 兜底重试)。被淘汰瓦片的旧视图删除 + 层 epoch 自增,
     // 使仍引用旧层的常驻命令在 heightLayerCurrent() 校验时失效自愈。
     uint64_t evicted = 0;
-    const int layer = arr->layerPool.acquire(k, frameId, &evicted);
+    const auto layerH = arr->layerPool.acquire(k, frameId, &evicted);
+    const int layer = layerH.slot;
     if (layer < 0) {
         ++heightFrameStats_.layerFull;
         return nullptr;

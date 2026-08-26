@@ -44,18 +44,37 @@ struct TilesetTile;
 /// 纯 CPU、可 host 单测(与 RenderDevice/TilesetTile 解耦)。
 class TerrainPageLayerPool {
 public:
+    /// 槽位句柄:跨帧引用某次分配的稳定标识。
+    /// slot = layerBase(块索引 × blockLayers,与 acquire 原 int 返回值逐字节一致;
+    /// -1 = 满/回落);generation = 该块那次分配的代。
+    /// 块被重新分配给新 key 时 generation 自增(全局单调,永不复用),
+    /// 持有旧句柄的调用方经 current() 校验失配 → 自愈重建(与高度纹理
+    /// layerEpochs 同构,收敛后由本池统一提供)。
+    struct Handle {
+        int slot = -1;
+        uint32_t generation = 0;
+        bool valid() const { return slot >= 0; }
+    };
+
     /// blockCount 个块,每块 blockLayers 层。重配清空所有驻留。
     void configure(int blockCount, int blockLayers);
 
     /// key 已驻留 → 返回其 layerBase(否则 -1)。不改动 recency。
     int layerBaseFor(uint64_t key) const;
 
-    /// 认领 key 的块并返回 layerBase:
-    ///  - 已驻留:touch 到 frameId,返回其 base(*outEvicted=0)。
-    ///  - 有空块:占用,返回 base(*outEvicted=0)。
-    ///  - 无空块:淘汰 lastFrame < frameId 的最久块(*outEvicted=被淘汰 key),返回其 base。
-    ///  - 所有块本帧都被 touch(lastFrame==frameId)→ 返回 -1(调用方回落 mappedRaster)。
-    int acquire(uint64_t key, uint64_t frameId, uint64_t* outEvicted);
+    /// 认领 key 的块并返回句柄:
+    ///  - 已驻留:touch 到 frameId,返回其 slot(generation 不变,*outEvicted=0)。
+    ///  - 有空块:占用,返回 slot(generation 自增,*outEvicted=0)。
+    ///  - 无空块:淘汰 lastFrame < frameId 的最久块(*outEvicted=被淘汰 key),返回其 slot(generation 自增)。
+    ///  - 所有块本帧都被 touch(lastFrame==frameId)→ 返回 Handle{slot=-1}(调用方回落 mappedRaster)。
+    Handle acquire(uint64_t key, uint64_t frameId, uint64_t* outEvicted);
+
+    /// 句柄是否仍指向其分配时的块(generation 匹配且未被 release)。release 后
+    /// 即使 generation 巧合匹配也返回 false(资源已释放)。
+    bool current(Handle h) const;
+
+    /// key 当前驻留块的分配代(诊断)。key 不驻留返回 0。
+    uint32_t generationFor(uint64_t key) const;
 
     /// 若 key 驻留则 touch 到 frameId(祖先回退保活:被当帧显示的祖先页不该被淘汰)。
     /// **不分配、不淘汰**——key 不驻留则 no-op(区别于 acquire)。
@@ -73,10 +92,12 @@ private:
         bool used = false;
         uint64_t key = 0;
         uint64_t lastFrame = 0;
+        uint32_t generation = 0;  // 该槽位当前分配的代(全局单调序号)
     };
     std::vector<Slot> slots_;
     int blockLayers_ = 1;
     std::unordered_map<uint64_t, int> keyToSlot_;  // key → slot index
+    uint32_t nextGeneration_ = 1;  // 全局单调分配代(configure 重置)
 };
 
 /// 单页的多源合成状态机(C-1,纯 CPU、可 host 单测,与 RenderDevice/provider 解耦)。
