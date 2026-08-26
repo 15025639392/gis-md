@@ -350,6 +350,9 @@ private:
     /// opacity 回写区间)。碰撞盒 px 相对锚点投影位置(y 向上,含 halo)。
     struct LabelEntry {
         FeatureId featureId = kInvalidFeatureId;
+        int rank = 6;
+        int minZoom = 0;  ///< 要素显示窗口 [minZoom, maxZoom)
+        int maxZoom = 30;
         Vec3 anchorEcef;               ///< 绝对 ECEF(double,不减桶原点)
         float boxMinXPx = 0.0f;
         float boxMinYPx = 0.0f;
@@ -372,6 +375,8 @@ private:
             int paintOrder = 0;
             int indexOffset = 0;
             int indexCount = 0;
+            int minZoom = 0;  ///< 要素显示窗口 [minZoom, maxZoom)
+            int maxZoom = 30;
         };
         Vec3 origin = Vec3::zero();        ///< ECEF double 原点
         std::unique_ptr<Buffer> fillVertexBuffer;
@@ -398,6 +403,9 @@ private:
         /// 时,store 桶走 rebuildBucket 补标注,瓦片桶没有重镶路径,靠它。
         struct TileLabelSource {
             int paintOrder = 0;
+            int rank = 6;
+            int minZoom = 0;
+            int maxZoom = 30;
             std::array<float, 3> rel{0.0f, 0.0f, 0.0f};
             Vec3 anchorEcef = Vec3::zero();
             uint64_t featureId = 0;
@@ -625,7 +633,10 @@ public:
                                      const std::string& text,
                                      std::vector<float>& labelVerts,
                                      std::vector<uint32_t>& labelIndices,
-                                     std::vector<LabelEntry>& labelEntries);
+                                     std::vector<LabelEntry>& labelEntries,
+                                     int rank = 6,
+                                     int minZoom = 0,
+                                     int maxZoom = 30);
 
     /// **渲染线程**:上传并整瓦原子替换。mesh 为空 → 等价 dropTileMesh。
     /// 上传失败 → 丢弃该瓦(下次 provide 重试),不留半张。
@@ -903,6 +914,9 @@ private:
     /// ≤0 时下一帧跑全量 placement;初值 0 = 首帧即跑(标签不等节流窗)。
     double placementCooldownSeconds_ = 0.0;
     FeatureId lastPlacementPriority_ = kInvalidFeatureId;
+    /// POI min/max 都是整数 zoom 门槛；跨整数档立即重跑 placement，
+    /// 避免一次性缩放结束后因 300ms 节流而停在旧可见集。
+    int lastPlacementZoomBucket_ = -1;
     /// V27:桶换代(bake 出新标注/重镶)→ 下一帧全量 placement 绕过 300ms
     /// 节流(与 priorityChanged 即时重跑同款),runFull 后清位。不即时跑的
     /// 话,新 entries 的 target 永远没人置,停帧窗口内 = 标注隐形。

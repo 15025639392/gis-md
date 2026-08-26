@@ -152,7 +152,7 @@ bool LabelPlacement::update(const FrameInput& in,
         boxes.push_back(box);
     }
 
-    // ---- 排序:提权 > 距离近 > featureId(确定性,帧间稳定) ----
+    // ---- 排序:提权 > 数据重要度 > 距离近 > featureId ----
     std::sort(boxes.begin(), boxes.end(),
               [&](const PlacedBox& a, const PlacedBox& b) {
                   const FeatureId fa = candidates[a.candidateIndex].featureId;
@@ -160,6 +160,9 @@ bool LabelPlacement::update(const FrameInput& in,
                   const bool pa = fa == priorityFeature_;
                   const bool pb = fb == priorityFeature_;
                   if (pa != pb) return pa;
+                  const int ra = candidates[a.candidateIndex].rank;
+                  const int rb = candidates[b.candidateIndex].rank;
+                  if (ra != rb) return ra < rb;
                   if (a.distanceSq != b.distanceSq)
                       return a.distanceSq < b.distanceSq;
                   return fa < fb;

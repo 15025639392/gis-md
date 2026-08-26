@@ -436,6 +436,123 @@ TEST(MvtTileFetchCache, EvictedTileRefetchesFromRawTierNotNetwork) {
     EXPECT_GT(st.rawBytes, 0u);
 }
 
+TEST(MvtRawTileFetchCache, SharesInflightAndResidentBytesAcrossConsumers) {
+    int networkCalls = 0;
+    MvtRawTileFetchCache::FetchCallback pending;
+    MvtRawTileFetchCache raw(
+        [&](const TileKey&, MvtRawTileFetchCache::FetchCallback cb) {
+            ++networkCalls;
+            pending = std::move(cb);
+        },
+        /*capacity=*/8);
+    const TileKey key{SchemeId{}, 4, 7, 1};
+    int callbacks = 0;
+    raw.request(key, [&](int status, std::vector<uint8_t> body) {
+        EXPECT_EQ(status, 200);
+        EXPECT_EQ(body, std::vector<uint8_t>({1, 2, 3}));
+        ++callbacks;
+    });
+    raw.request(key, [&](int status, std::vector<uint8_t> body) {
+        EXPECT_EQ(status, 200);
+        EXPECT_EQ(body, std::vector<uint8_t>({1, 2, 3}));
+        ++callbacks;
+    });
+    ASSERT_EQ(networkCalls, 1);
+    ASSERT_TRUE(pending);
+    pending(200, {1, 2, 3});
+    EXPECT_EQ(callbacks, 2);
+
+    raw.request(key, [&](int status, std::vector<uint8_t> body) {
+        EXPECT_EQ(status, 200);
+        EXPECT_EQ(body.size(), 3u);
+        ++callbacks;
+    });
+    EXPECT_EQ(networkCalls, 1) << "resident raw bytes must avoid refetch";
+    EXPECT_EQ(callbacks, 3);
+    const auto stats = raw.stats();
+    EXPECT_EQ(stats.fetches, 1u);
+    EXPECT_EQ(stats.coalesced, 1u);
+    EXPECT_EQ(stats.hits, 1u);
+    EXPECT_EQ(stats.residentTiles, 1u);
+    EXPECT_EQ(stats.residentBytes, 3u);
+}
+
+TEST(MvtRawTileFetchCache, TypedConsumersShareRawButKeepDecodedL1Isolated) {
+    int networkCalls = 0;
+    MvtRawTileFetchCache::FetchCallback pending;
+    auto raw = std::make_shared<MvtRawTileFetchCache>(
+        [&](const TileKey&, MvtRawTileFetchCache::FetchCallback cb) {
+            ++networkCalls;
+            pending = std::move(cb);
+        },
+        /*capacity=*/8);
+    MvtTileFetchCache first({}, /*capacity=*/8, /*rawCapacity=*/0,
+                            /*decodePool=*/nullptr, raw);
+    MvtTileFetchCache second({}, /*capacity=*/8, /*rawCapacity=*/0,
+                             /*decodePool=*/nullptr, raw);
+    const TileKey key{SchemeId{}, 4, 7, 1};
+    std::shared_ptr<const MvtTile> firstTile;
+    std::shared_ptr<const MvtTile> secondTile;
+
+    first.request(key, [&](std::shared_ptr<const MvtTile> tile) {
+        firstTile = std::move(tile);
+    });
+    second.request(key, [&](std::shared_ptr<const MvtTile> tile) {
+        secondTile = std::move(tile);
+    });
+    ASSERT_EQ(networkCalls, 1);
+    ASSERT_TRUE(pending);
+    pending(200, makePointTile("pois"));
+
+    ASSERT_NE(firstTile, nullptr);
+    ASSERT_NE(secondTile, nullptr);
+    EXPECT_NE(firstTile.get(), secondTile.get())
+        << "decoder-profile L1 payloads must remain isolated";
+    EXPECT_EQ(first.stats().residentTiles, 1u);
+    EXPECT_EQ(second.stats().residentTiles, 1u);
+    EXPECT_EQ(raw->stats().fetches, 1u);
+    EXPECT_EQ(raw->stats().coalesced, 1u);
+}
+
+TEST(MvtRawTileFetchCache, ZeroCapacityStillCoalescesInflightWithoutRetention) {
+    int networkCalls = 0;
+    MvtRawTileFetchCache::FetchCallback pending;
+    MvtRawTileFetchCache raw(
+        [&](const TileKey&, MvtRawTileFetchCache::FetchCallback cb) {
+            ++networkCalls;
+            pending = std::move(cb);
+        },
+        /*capacity=*/0);
+    const TileKey key{SchemeId{}, 4, 7, 1};
+    int callbacks = 0;
+    raw.request(key, [&](int status, std::vector<uint8_t> body) {
+        EXPECT_EQ(status, 200);
+        EXPECT_EQ(body.size(), 3u);
+        ++callbacks;
+    });
+    raw.request(key, [&](int status, std::vector<uint8_t> body) {
+        EXPECT_EQ(status, 200);
+        EXPECT_EQ(body.size(), 3u);
+        ++callbacks;
+    });
+    ASSERT_EQ(networkCalls, 1);
+    ASSERT_TRUE(pending);
+    pending(200, {1, 2, 3});
+    EXPECT_EQ(callbacks, 2);
+    EXPECT_EQ(raw.stats().residentTiles, 0u);
+    EXPECT_EQ(raw.stats().residentBytes, 0u);
+
+    raw.request(key, [&](int status, std::vector<uint8_t>) {
+        EXPECT_EQ(status, 200);
+        ++callbacks;
+    });
+    EXPECT_EQ(networkCalls, 2)
+        << "zero-capacity raw cache must not retain resident bytes";
+    ASSERT_TRUE(pending);
+    pending(200, {1, 2, 3});
+    EXPECT_EQ(callbacks, 3);
+}
+
 // 失败有界重试(2026-08-20 用户契约):同一瓦片失败后最多重试 2 次
 // (1 次初始 + 2 次重试 = 至多 3 次网络请求),间隔按 TileRetryBackoffPolicy
 // 指数退避;用尽后不再发网络。此前"失败不入缓存"让死源每帧重打服务器。

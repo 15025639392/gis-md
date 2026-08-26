@@ -146,9 +146,9 @@ constexpr size_t kMvtTileCacheRaw = 256;
 constexpr bool kEnableTerrainForDemo = false;
 constexpr bool kUseGaodeSatelliteForDemo = false;
 constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;
-/// [1:1 对照临时] 隐藏建筑(90001 透明 + 关挤出),只留 fill(地块/绿地/水系)
-/// 与 amap.com 参考对照。对照完翻回 false。
-constexpr bool kHideAmapBuildingsForCompare = true;
+/// 仅用于诊断 fill 层级的临时 A/B 开关。生产默认显示建筑；隐藏仍保留
+/// 下载/解码成本，因此不能作为性能策略。
+constexpr bool kHideAmapBuildingsForCompare = false;
 /// 高德矢量:type2 面走 VectorFill(z10 粗源,V30 地球网格);drape overlay
 /// 仍注册但无地形页则不出。type1/3 路网+建筑走主源 FeatureRenderLayer。
 constexpr bool kEnableAmapVectorDemo = true;

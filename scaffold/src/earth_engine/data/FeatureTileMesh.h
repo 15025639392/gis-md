@@ -41,6 +41,9 @@ struct PaintRange {
     int paintOrder = 0;
     uint32_t indexOffset = 0;
     uint32_t indexCount = 0;
+    /// 仅点符号范围消费；其它几何保持默认全档可见。
+    int minZoom = 0;
+    int maxZoom = 30;
 };
 
 /// 瓦片点符号实例(worker 产出的中间表)。
@@ -62,6 +65,11 @@ struct TileSymbolCpu {
     double heightM = 0.0;
     float colorPacked = 0.0f;  ///< RGBA8 打包(worker 已求值样式表达式)
     int rank = 6;              ///< 数据侧重要度(小=重要),准入截断依据
+    /// 数据侧显示窗口 [minZoom,maxZoom)。Amap POI 的 min/max 是要素级
+    /// zoom 语义，不能
+    /// 用 source tile z 代替；普通本地点默认全档可见。
+    int minZoom = 0;
+    int maxZoom = 30;
     std::string icon;          ///< 已求值图形名(内置形状名或图集帧名,可空)
     std::string name;          ///< 标签文字(文字刀期用,先携带免二次解码)
 };

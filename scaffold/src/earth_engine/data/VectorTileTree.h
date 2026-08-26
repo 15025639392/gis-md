@@ -13,6 +13,7 @@
 #include <functional>
 #include <memory>
 #include <limits>
+#include <queue>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -80,6 +81,10 @@ public:
         /// 单次 update 的 desired 瓦片数上限;超出自动降 zoom 重枚举
         /// (掠视地平线视口在高 zoom 会枚举出海量瓦片,必须有闸)。
         int maxTilesPerView = 64;
+        /// 已发出但尚未 provide/markFailed 的请求上限。与视野工作集分开:
+        /// 大视野可以选择较多瓦片分批加载，但快速平移时旧视野最多占住
+        /// 一个小批次，不会把网络队列灌满后长期饿死新视野。
+        int maxPendingRequests = 64;
         /// 目标 zoom 偏置(正 = 更细)。
         double zoomBias = 0.0;
         /// 可选的数据档位白名单。非空时，目标 zoom 会向下吸附到
@@ -226,8 +231,86 @@ public:
         std::vector<PendingRequest> requests;
         std::vector<TileKey> emitted;
         std::unordered_set<TileKey> desiredKeys;
-        desiredKeys.reserve(static_cast<size_t>(std::max<long long>(
-            0, desiredCount)));
+        if (options_.maxTilesPerView > 0) {
+            desiredKeys.reserve(
+                static_cast<size_t>(options_.maxTilesPerView));
+        }
+
+        // maxTilesPerView is a hard work-set bound, not only a hint to lower
+        // zoom.  A fixed data level (minZoom == maxZoom, as with Amap POI)
+        // cannot underzoom; an anomalously wide view used to enumerate and
+        // dispatch every z14 tile, creating an unbounded HTTP queue.  At the
+        // coarsest supported level retain the center-nearest representative
+        // set.  Geometry outside that set is deliberately deferred until the
+        // view moves; this is preferable to poisoning the whole app with tens
+        // of thousands of invisible requests.
+        std::vector<TileKey> idealTiles;
+        const bool hasIdealLimit = options_.maxTilesPerView > 0;
+        const size_t idealLimit = hasIdealLimit
+                                      ? static_cast<size_t>(
+                                            options_.maxTilesPerView)
+                                      : 0;
+        if (!hasIdealLimit ||
+            desiredCount <= static_cast<long long>(idealLimit)) {
+            idealTiles.reserve(static_cast<size_t>(desiredCount));
+            for (const Range& r : rangesByLevel[0]) {
+                for (int y = r.minY; y <= r.maxY; ++y) {
+                    for (int x = r.minX; x <= r.maxX; ++x) {
+                        idealTiles.push_back(
+                            TileKey{schemeId_, zoom, x, y});
+                    }
+                }
+            }
+        } else {
+            struct FartherFirst {
+                bool operator()(const PendingRequest& a,
+                                const PendingRequest& b) const {
+                    if (a.distanceSq != b.distanceSq) {
+                        return a.distanceSq < b.distanceSq;
+                    }
+                    if (a.key.y != b.key.y) return a.key.y < b.key.y;
+                    return a.key.x < b.key.x;
+                }
+            };
+            auto isCloser = [](const PendingRequest& a,
+                               const PendingRequest& b) {
+                if (a.distanceSq != b.distanceSq) {
+                    return a.distanceSq < b.distanceSq;
+                }
+                if (a.key.y != b.key.y) return a.key.y < b.key.y;
+                return a.key.x < b.key.x;
+            };
+            std::priority_queue<PendingRequest,
+                                std::vector<PendingRequest>, FartherFirst>
+                nearest;
+            for (const Range& r : rangesByLevel[0]) {
+                for (int y = r.minY; y <= r.maxY; ++y) {
+                    for (int x = r.minX; x <= r.maxX; ++x) {
+                        const long long dx = x - centerKey.x;
+                        const long long dy = y - centerKey.y;
+                        PendingRequest candidate{
+                            TileKey{schemeId_, zoom, x, y},
+                            dx * dx + dy * dy};
+                        if (nearest.size() < idealLimit) {
+                            nearest.push(candidate);
+                        } else if (isCloser(candidate, nearest.top())) {
+                            nearest.pop();
+                            nearest.push(candidate);
+                        }
+                    }
+                }
+            }
+            idealTiles.reserve(nearest.size());
+            while (!nearest.empty()) {
+                idealTiles.push_back(nearest.top().key);
+                nearest.pop();
+            }
+            std::sort(idealTiles.begin(), idealTiles.end(),
+                      [](const TileKey& a, const TileKey& b) {
+                          if (a.y != b.y) return a.y < b.y;
+                          return a.x < b.x;
+                      });
+        }
 
         // 后代顶替:t 的视口内区域能否被**已加载的后代完整覆盖**。
         // 沿途 touch:等着凑齐的细瓦也是 retain 的一部分,不 touch 会被
@@ -256,33 +339,28 @@ public:
             return false;
         };
 
-        for (const Range& r : rangesByLevel[0]) {
-            for (int y = r.minY; y <= r.maxY; ++y) {
-                for (int x = r.minX; x <= r.maxX; ++x) {
-                    const TileKey ideal{schemeId_, zoom, x, y};
-                    desiredKeys.insert(ideal);
-                    if (!coverByDescendants(ideal)) {
-                        // 祖先回退:向上找最近的已加载粗瓦顶住(可能与别的
-                        // 理想瓦已 emit 的细瓦重叠 —— 对符号是可忍受的轻
-                        // 伪影)
-                        TileKey ancestor = ideal;
-                        while (ancestor.z > options_.minZoom) {
-                            ancestor = ancestor.parent();
-                            if (loaded_.count(ancestor)) {
-                                touch(ancestor);
-                                emitted.push_back(ancestor);
-                                break;
-                            }
-                        }
-                    }
-                    if (!loaded_.count(ideal) && !pending_.count(ideal) &&
-                        !isFailed(ideal)) {
-                        // 理想瓦无论回退成不成都要请求:顶替只是过渡态
-                        const long long dx = x - centerKey.x;
-                        const long long dy = y - centerKey.y;
-                        requests.push_back({ideal, dx * dx + dy * dy});
+        for (const TileKey& ideal : idealTiles) {
+            desiredKeys.insert(ideal);
+            if (!coverByDescendants(ideal)) {
+                // 祖先回退:向上找最近的已加载粗瓦顶住(可能与别的
+                // 理想瓦已 emit 的细瓦重叠 —— 对符号是可忍受的轻
+                // 伪影)
+                TileKey ancestor = ideal;
+                while (ancestor.z > options_.minZoom) {
+                    ancestor = ancestor.parent();
+                    if (loaded_.count(ancestor)) {
+                        touch(ancestor);
+                        emitted.push_back(ancestor);
+                        break;
                     }
                 }
+            }
+            if (!loaded_.count(ideal) && !pending_.count(ideal) &&
+                !isFailed(ideal)) {
+                // 理想瓦无论回退成不成都要请求:顶替只是过渡态
+                const long long dx = ideal.x - centerKey.x;
+                const long long dy = ideal.y - centerKey.y;
+                requests.push_back({ideal, dx * dx + dy * dy});
             }
         }
         // 临时失败只对当前 desired 集有意义。离开视口后及时丢弃树侧
@@ -314,7 +392,15 @@ public:
                       return a.key.x < b.key.x;
                   });
         result.requestTiles.reserve(requests.size());
-        for (const PendingRequest& r : requests) {
+        const size_t requestBudget = options_.maxPendingRequests > 0
+            ? (pending_.size() >=
+                       static_cast<size_t>(options_.maxPendingRequests)
+                   ? 0
+                   : static_cast<size_t>(options_.maxPendingRequests) -
+                         pending_.size())
+            : requests.size();
+        for (size_t i = 0; i < requests.size() && i < requestBudget; ++i) {
+            const PendingRequest& r = requests[i];
             pending_.insert(r.key);
             result.requestTiles.push_back(r.key);
         }

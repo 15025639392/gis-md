@@ -25,6 +25,7 @@
 #include <cmath>
 #include <cstring>
 #include <limits>
+#include <tuple>
 #include <vector>
 
 namespace earth_engine {
@@ -165,6 +166,37 @@ int resolveInteger(const StyleExpression::Ptr& expr,
         std::min(static_cast<double>(std::numeric_limits<int>::max()),
                  v->number()));
     return static_cast<int>(std::lround(bounded));
+}
+
+int integerProperty(
+    const std::unordered_map<std::string, std::string>& properties,
+    const char* key, int fallback) {
+    const auto it = properties.find(key);
+    if (it == properties.end() || it->second.empty()) return fallback;
+    char* end = nullptr;
+    const long value = std::strtol(it->second.c_str(), &end, 10);
+    if (end == it->second.c_str() || *end != '\0') return fallback;
+    return static_cast<int>(std::clamp<long>(
+        value, std::numeric_limits<int>::min(),
+        std::numeric_limits<int>::max()));
+}
+
+std::pair<int, int> featureZoomRange(
+    const std::unordered_map<std::string, std::string>& properties) {
+    if (properties.find("amap_minzoom") == properties.end() &&
+        properties.find("amap_maxzoom") == properties.end()) {
+        return {0, 30};
+    }
+    int minZoom = std::clamp(integerProperty(properties, "amap_minzoom", 0),
+                             0, 30);
+    int maxZoom = std::clamp(integerProperty(properties, "amap_maxzoom", 30),
+                             0, 30);
+    // 畸形窗口宁可保留显示，不让一条坏元数据吞掉 POI。
+    if (maxZoom <= minZoom) {
+        minZoom = 0;
+        maxZoom = 30;
+    }
+    return {minZoom, maxZoom};
 }
 
 /// 单个符号 quad 的几何/采样解析(P6c)。尺寸单位 = pointSizePx 的倍数:
@@ -778,9 +810,12 @@ void FeatureRenderLayer::tessellateFeatureInto(
         const float ay = static_cast<float>(rel.y());
         const float az = static_cast<float>(rel.z());
 
+        const int labelRank = integerProperty(feature.properties, "rank", 6);
+        const auto [minZoom, maxZoom] = featureZoomRange(feature.properties);
         appendLabelTextQuads(*ctx.glyphAtlas, ctx.style, feature.id, anchor,
                              {ax, ay, az}, propIt->second, labelVerts,
-                             labelIndices, labelEntries);
+                             labelIndices, labelEntries, labelRank, minZoom,
+                             maxZoom);
     }
 }
 
@@ -793,7 +828,10 @@ void FeatureRenderLayer::appendLabelTextQuads(
     const std::string& text,
     std::vector<float>& labelVerts,
     std::vector<uint32_t>& labelIndices,
-    std::vector<LabelEntry>& labelEntries) {
+    std::vector<LabelEntry>& labelEntries,
+    int rank,
+    int minZoom,
+    int maxZoom) {
     // 布局:单行 LTR advance,水平居中,基线抬 labelOffsetPx。
     const float s = style.labelSizePx /
                     static_cast<float>(GlyphAtlas::kGlyphPixelHeight);
@@ -842,6 +880,9 @@ void FeatureRenderLayer::appendLabelTextQuads(
     if (labelVerts.size() > entryVertexStart) {
         LabelEntry entry;
         entry.featureId = featureId;
+        entry.rank = rank;
+        entry.minZoom = minZoom;
+        entry.maxZoom = maxZoom;
         entry.anchorEcef = anchorEcef;
         entry.boxMinXPx = -totalAdvance * 0.5f - style.labelHaloPx;
         entry.boxMaxXPx = totalAdvance * 0.5f + style.labelHaloPx;
@@ -1354,7 +1395,8 @@ bool FeatureRenderLayer::uploadBucketGpu(
             for (const PaintRange& range : labelRanges) {
                 out.labelRanges.push_back(BucketGpu::PaintRangeGpu{
                     range.paintOrder, static_cast<int>(range.indexOffset),
-                    static_cast<int>(range.indexCount)});
+                    static_cast<int>(range.indexCount), range.minZoom,
+                    range.maxZoom});
             }
             // CPU 副本随桶常驻:placement 改 opacity 分量后整桶重传。
             out.labelVertsCpu = std::move(labelVerts);
@@ -1373,7 +1415,8 @@ bool FeatureRenderLayer::uploadBucketGpu(
             for (const PaintRange& range : pointRanges) {
                 out.pointRanges.push_back(BucketGpu::PaintRangeGpu{
                     range.paintOrder, static_cast<int>(range.indexOffset),
-                    static_cast<int>(range.indexCount)});
+                    static_cast<int>(range.indexCount), range.minZoom,
+                    range.maxZoom});
             }
         }
     }
@@ -1389,7 +1432,8 @@ bool FeatureRenderLayer::uploadBucketGpu(
             for (const PaintRange& range : fillRanges) {
                 out.fillRanges.push_back(BucketGpu::PaintRangeGpu{
                     range.paintOrder, static_cast<int>(range.indexOffset),
-                    static_cast<int>(range.indexCount)});
+                    static_cast<int>(range.indexCount), range.minZoom,
+                    range.maxZoom});
             }
         }
     }
@@ -1405,7 +1449,8 @@ bool FeatureRenderLayer::uploadBucketGpu(
             for (const PaintRange& range : lineRanges) {
                 out.lineRanges.push_back(BucketGpu::PaintRangeGpu{
                     range.paintOrder, static_cast<int>(range.indexOffset),
-                    static_cast<int>(range.indexCount)});
+                    static_cast<int>(range.indexCount), range.minZoom,
+                    range.maxZoom});
             }
         }
     }
@@ -1423,7 +1468,8 @@ bool FeatureRenderLayer::uploadBucketGpu(
             for (const PaintRange& range : extrudeRanges) {
                 out.extrudeRanges.push_back(BucketGpu::PaintRangeGpu{
                     range.paintOrder, static_cast<int>(range.indexOffset),
-                    static_cast<int>(range.indexCount)});
+                    static_cast<int>(range.indexCount), range.minZoom,
+                    range.maxZoom});
             }
         }
     }
@@ -1592,15 +1638,35 @@ void FeatureRenderLayer::flattenLabelRanges(
         for (uint32_t index : group.indices) {
             indices.push_back(baseVertex + index);
         }
+        uint32_t localIndexOffset = 0;
         for (const LabelEntry& source : group.entries) {
             LabelEntry entry = source;
             entry.vertexFloatStart += floatOffset;
             entries.push_back(std::move(entry));
-        }
-        if (outRanges) {
-            outRanges->push_back(PaintRange{
-                paintOrder, indexOffset,
-                static_cast<uint32_t>(group.indices.size())});
+            const uint32_t entryIndexCount = static_cast<uint32_t>(
+                source.vertexFloatCount / kLabelVertexFloats / 4 * 6);
+            const uint32_t entryOffset = indexOffset + localIndexOffset;
+            if (outRanges) {
+                if (entryIndexCount > 0) {
+                    bool merged = false;
+                    if (!outRanges->empty()) {
+                        PaintRange& last = outRanges->back();
+                        if (last.paintOrder == paintOrder &&
+                            last.minZoom == source.minZoom &&
+                            last.maxZoom == source.maxZoom &&
+                            last.indexOffset + last.indexCount == entryOffset) {
+                            last.indexCount += entryIndexCount;
+                            merged = true;
+                        }
+                    }
+                    if (!merged) {
+                        outRanges->push_back(PaintRange{
+                            paintOrder, entryOffset, entryIndexCount,
+                            source.minZoom, source.maxZoom});
+                    }
+                }
+            }
+            localIndexOffset += entryIndexCount;
         }
     }
 }
@@ -1671,11 +1737,10 @@ void FeatureRenderLayer::appendTileSymbol(const TessellationContext& ctx,
                      ctx.style.pointColor));
     sym.icon = resolveString(ctx.style.pointImageExpr, feature.properties,
                              ctx.style.pointImage);
-    const auto rankIt = feature.properties.find("rank");
-    if (rankIt != feature.properties.end()) {
-        // 非数字/空串按 atoi 语义得 0 = 最高重要度;数据管线保证是数字。
-        sym.rank = std::atoi(rankIt->second.c_str());
-    }
+    sym.rank = integerProperty(feature.properties, "rank", 6);
+    const auto [minZoom, maxZoom] = featureZoomRange(feature.properties);
+    sym.minZoom = minZoom;
+    sym.maxZoom = maxZoom;
     const auto nameIt = feature.properties.find("name");
     if (nameIt != feature.properties.end()) sym.name = nameIt->second;
     mesh.symbols.push_back(std::move(sym));
@@ -1785,15 +1850,17 @@ void FeatureRenderLayer::buildTileSymbolGpu(
     // 与 T2 判定都读它)。故地形代次变化必须重钳 —— 见
     // reclampTileBucketSymbols,别再指望"瓦片换代重 commit 时自愈"
     // (瓦片换代只有缩放才触发,静止加载期不会发生)。
-    std::map<int, std::vector<const TileSymbolCpu*>> groups;
+    using SymbolGroupKey = std::tuple<int, int, int>;
+    std::map<SymbolGroupKey, std::vector<const TileSymbolCpu*>> groups;
     for (const TileSymbolCpu& s : symbols) {
         const int paintOrder = s.hasPaintOrder ? s.paintOrder
                                                : style_.paintOrder;
-        groups[paintOrder].push_back(&s);
+        groups[{paintOrder, s.minZoom, s.maxZoom}].push_back(&s);
     }
     std::vector<std::vector<Cartographic>> anchorRing(1);
     anchorRing[0].reserve(symbols.size());
-    for (const auto& [paintOrder, group] : groups) {
+    for (const auto& entry : groups) {
+        const auto& group = entry.second;
         for (const TileSymbolCpu* s : group) {
             anchorRing[0].emplace_back(s->lonRad, s->latRad, 0.0);
         }
@@ -1801,7 +1868,8 @@ void FeatureRenderLayer::buildTileSymbolGpu(
     const AreaSampleFn groundSample = makeClampSampler(anchorRing);
     // [V29 刀2] 本瓦 commit = 一次匹配 pass 的认领集(语义见 crossTileIdFor)。
     std::unordered_set<uint64_t> claimedIds;
-    for (const auto& [paintOrder, group] : groups) {
+    for (const auto& [groupKey, group] : groups) {
+        const auto [paintOrder, minZoom, maxZoom] = groupKey;
         const uint32_t indexOffset = static_cast<uint32_t>(pointIndices.size());
         for (const TileSymbolCpu* sp : group) {
             const TileSymbolCpu& s = *sp;
@@ -1828,14 +1896,16 @@ void FeatureRenderLayer::buildTileSymbolGpu(
                 const uint64_t id = crossTileIdFor(
                     s.name, s.lonRad, s.latRad, tileZ, &claimedIds);
                 labelSrc.push_back(BucketGpu::TileLabelSource{
-                    paintOrder, relF, anchor, id, s.name});
+                    paintOrder, s.rank, s.minZoom, s.maxZoom, relF, anchor, id,
+                    s.name});
             }
         }
         const uint32_t indexCount =
             static_cast<uint32_t>(pointIndices.size()) - indexOffset;
         if (indexCount > 0) {
             pointRanges.push_back(
-                PaintRange{paintOrder, indexOffset, indexCount});
+                PaintRange{paintOrder, indexOffset, indexCount, minZoom,
+                           maxZoom});
         }
     }
 }
@@ -1872,7 +1942,8 @@ void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
         for (const PaintRange& range : pointRanges) {
             gpu.pointRanges.push_back(BucketGpu::PaintRangeGpu{
                 range.paintOrder, static_cast<int>(range.indexOffset),
-                static_cast<int>(range.indexCount)});
+                static_cast<int>(range.indexCount), range.minZoom,
+                range.maxZoom});
         }
     }
     // 标签:锚点变了,glyph quad 要按新 rel 重烘(bakeTileBucketLabels 以
@@ -2168,7 +2239,8 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
         LabelGeometryCpu& group = labelGroups[src.paintOrder];
         appendLabelTextQuads(*glyphAtlas_, style_, src.featureId,
                              src.anchorEcef, src.rel, src.name, group.verts,
-                             group.indices, group.entries);
+                             group.indices, group.entries, src.rank,
+                             src.minZoom, src.maxZoom);
     }
     std::vector<float> labelVerts;
     std::vector<uint32_t> labelIndices;
@@ -2216,7 +2288,8 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
     for (const PaintRange& range : labelRanges) {
         gpu.labelRanges.push_back(BucketGpu::PaintRangeGpu{
             range.paintOrder, static_cast<int>(range.indexOffset),
-            static_cast<int>(range.indexCount)});
+            static_cast<int>(range.indexCount), range.minZoom,
+            range.maxZoom});
     }
     gpu.labelVertsCpu = std::move(labelVerts);
     gpu.labelEntries = std::move(labelEntries);
@@ -2532,10 +2605,19 @@ void FeatureRenderLayer::updateLabelPlacement(
     placementCooldownSeconds_ -= frameState.deltaSeconds;
     const bool priorityChanged =
         labelPlacement_.priorityFeature() != lastPlacementPriority_;
+    const Camera& cam = *frameState.camera;
+    const double camHeight = ellipsoid_.cartesianToCartographic(
+                                 cam.position())
+                                 .height();
+    const double viewZoom = std::min(
+        24.0,
+        std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
+    const int zoomBucket = static_cast<int>(std::floor(viewZoom));
+    const bool zoomBucketChanged = zoomBucket != lastPlacementZoomBucket_;
     // V27:桶换代(bake 出新标注/重镶)即时全量 —— 新 entries 的 target 若等
     // 300ms 节流窗,停帧(settle 仅 ~3 帧)会让它们永远停在 opacity=0。
     const bool runFull = placementCooldownSeconds_ <= 0.0 || priorityChanged ||
-                         labelsAwaitingPlacement_;
+                         zoomBucketChanged || labelsAwaitingPlacement_;
     if (!runFull) {
         if (labelPlacement_.advanceFades(frameState.deltaSeconds)) {
             applyLabelOpacity(visibleKeys);
@@ -2545,6 +2627,7 @@ void FeatureRenderLayer::updateLabelPlacement(
     constexpr double kPlacementIntervalSeconds = 0.3;
     placementCooldownSeconds_ = kPlacementIntervalSeconds;
     lastPlacementPriority_ = labelPlacement_.priorityFeature();
+    lastPlacementZoomBucket_ = zoomBucket;
     const double placeStartMs = perf::nowMs();
 
     // collect:可见桶 + 预览的 LabelEntry → 候选。视野外桶不进候选:
@@ -2562,8 +2645,13 @@ void FeatureRenderLayer::updateLabelPlacement(
     std::unordered_map<FeatureId, std::pair<size_t, int>> dedup;  // id→(下标,代)
     auto collect = [&](const BucketGpu& gpu, int generation) {
         for (const LabelEntry& e : gpu.labelEntries) {
+            if (viewZoom < static_cast<double>(e.minZoom) ||
+                viewZoom >= static_cast<double>(e.maxZoom)) {
+                continue;
+            }
             LabelCandidate c;
             c.featureId = e.featureId;
+            c.rank = e.rank;
             c.anchorEcef = e.anchorEcef;
             c.boxMinXPx = e.boxMinXPx;
             c.boxMinYPx = e.boxMinYPx;
@@ -2591,7 +2679,6 @@ void FeatureRenderLayer::updateLabelPlacement(
     for (auto& entry : tileBuckets_) collect(entry.second, entry.first.z);
     if (previewGpuValid_) collect(previewGpu_, std::numeric_limits<int>::max());
 
-    const Camera& cam = *frameState.camera;
     LabelPlacement::FrameInput in;
     in.viewProj = cam.viewProjectionMatrix(
         static_cast<double>(frameState.viewportWidthPixels),
@@ -2857,6 +2944,9 @@ void FeatureRenderLayer::appendBucketCommands(
     // uniform;求值失败/非数值回落字面量。
     const double camHeight =
         ellipsoid_.cartesianToCartographic(cam.position()).height();
+    const double zoomLevel = std::min(
+        24.0,
+        std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
     // 高空符号深度顶近平面(语义见 FeatureRenderStyle 字段注释)。0.9999
     // 而非 1.0:留一线近平面余量,避免恰在 near 上被裁。
     constexpr float kSymbolDepthPushNdc = 0.9999f;
@@ -2868,9 +2958,6 @@ void FeatureRenderLayer::appendBucketCommands(
     float lineWidthPx = style_.lineWidthPx;
     float pointSizePx = style_.pointSizePx;
     if (style_.lineWidthExpr || style_.pointSizeExpr) {
-        const double zoomLevel = std::min(
-            24.0,
-            std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
         auto evalNumber = [&](const StyleExpression::Ptr& expr,
                               float fallback) -> float {
             if (!expr) return fallback;
@@ -3152,10 +3239,34 @@ void FeatureRenderLayer::appendBucketCommands(
             commands.push_back(std::move(cmd));
         };
         if (!gpu.pointRanges.empty()) {
+            // Amap POI 常见多个 minZoom 档，但同 paintOrder 且当前可见的
+            // 区间在 IBO 中连续；合并成尽量少的 draw，避免按档位放大
+            // 每瓦命令数。只有 maxZoom 造成真实空洞时才拆命令。
+            int mergedOrder = 0;
+            int mergedOffset = 0;
+            int mergedCount = 0;
+            auto flushPointRange = [&]() {
+                if (mergedCount <= 0) return;
+                appendPoint(mergedOrder, mergedOffset, mergedCount);
+                mergedCount = 0;
+            };
             for (const auto& range : gpu.pointRanges) {
-                appendPoint(range.paintOrder, range.indexOffset,
-                            range.indexCount);
+                if (zoomLevel < static_cast<double>(range.minZoom) ||
+                    zoomLevel >= static_cast<double>(range.maxZoom)) {
+                    flushPointRange();
+                    continue;
+                }
+                if (mergedCount > 0 && mergedOrder == range.paintOrder &&
+                    mergedOffset + mergedCount == range.indexOffset) {
+                    mergedCount += range.indexCount;
+                } else {
+                    flushPointRange();
+                    mergedOrder = range.paintOrder;
+                    mergedOffset = range.indexOffset;
+                    mergedCount = range.indexCount;
+                }
             }
+            flushPointRange();
         } else {
             appendPoint(style_.paintOrder, 0, gpu.pointIndexCount);
         }
@@ -3209,10 +3320,31 @@ void FeatureRenderLayer::appendBucketCommands(
             commands.push_back(std::move(cmd));
         };
         if (!gpu.labelRanges.empty()) {
+            int mergedOrder = 0;
+            int mergedOffset = 0;
+            int mergedCount = 0;
+            auto flushLabelRange = [&]() {
+                if (mergedCount <= 0) return;
+                appendLabel(mergedOrder, mergedOffset, mergedCount);
+                mergedCount = 0;
+            };
             for (const auto& range : gpu.labelRanges) {
-                appendLabel(range.paintOrder, range.indexOffset,
-                            range.indexCount);
+                if (zoomLevel < static_cast<double>(range.minZoom) ||
+                    zoomLevel >= static_cast<double>(range.maxZoom)) {
+                    flushLabelRange();
+                    continue;
+                }
+                if (mergedCount > 0 && mergedOrder == range.paintOrder &&
+                    mergedOffset + mergedCount == range.indexOffset) {
+                    mergedCount += range.indexCount;
+                } else {
+                    flushLabelRange();
+                    mergedOrder = range.paintOrder;
+                    mergedOffset = range.indexOffset;
+                    mergedCount = range.indexCount;
+                }
             }
+            flushLabelRange();
         } else {
             appendLabel(style_.paintOrder, 0, gpu.labelIndexCount);
         }

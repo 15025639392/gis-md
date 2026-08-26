@@ -28,9 +28,11 @@ protected:
 
     static LabelCandidate makeCandidate(FeatureId id, const Vec3& anchor,
                                         float halfW = 40.0f,
-                                        float halfH = 15.0f) {
+                                        float halfH = 15.0f,
+                                        int rank = 6) {
         LabelCandidate c;
         c.featureId = id;
+        c.rank = rank;
         c.anchorEcef = anchor;
         c.boxMinXPx = -halfW;
         c.boxMaxXPx = halfW;
@@ -111,6 +113,22 @@ TEST_F(LabelPlacementTest, OverlapLowerIdWinsOnDistanceTie) {
     EXPECT_EQ(1, placement.stats().collided);
     EXPECT_FLOAT_EQ(1.0f, placement.opacity(1));
     EXPECT_FLOAT_EQ(0.0f, placement.opacity(2));
+}
+
+TEST_F(LabelPlacementTest, HigherImportanceRankWinsCollisionBeforeDistance) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    // Amap rank is normalized at the adapter boundary so that a smaller
+    // generic rank is more important.  Keep ids and distance deliberately
+    // unfavorable to prove rank is an independent collision tiebreaker.
+    const std::vector<LabelCandidate> cands = {
+        makeCandidate(99, spherePoint(20.0), 400.0f, 300.0f, -7),
+        makeCandidate(1, spherePoint(0.0), 400.0f, 300.0f, 5)};
+
+    placement.update(in, cands);
+    EXPECT_EQ(1, placement.stats().placed);
+    EXPECT_EQ(1, placement.stats().collided);
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(99));
+    EXPECT_FLOAT_EQ(0.0f, placement.opacity(1));
 }
 
 TEST_F(LabelPlacementTest, CloserLabelWinsCollision) {

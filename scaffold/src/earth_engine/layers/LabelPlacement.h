@@ -14,6 +14,7 @@ namespace earth_engine {
 /// offsetPx 同一坐标约定),由镶嵌时的文字布局算出。
 struct LabelCandidate {
     FeatureId featureId = kInvalidFeatureId;
+    int rank = 6;       ///< 数据侧重要度；更小者优先进入碰撞网格
     Vec3 anchorEcef;   ///< 绝对 ECEF(double,不减桶原点)
     float boxMinXPx = 0.0f;
     float boxMinYPx = 0.0f;
@@ -41,8 +42,8 @@ struct LabelPlacementStats {
 ///   同款公式),球背面标签剔除;近地平线按遮挡比 fade band 渐隐。
 /// - 尺寸按 3D 距离:每候选独立投影自身锚点,碰撞盒即真实屏幕盒
 ///   (maplibre 的"按瓦片中心统一缩放"问题在此结构下天然不存在)。
-/// - 排序:选中要素提权(编辑联动)> 3D 距离近者 > featureId——全部
-///   确定性,保证帧间稳定不闪。
+/// - 排序:选中要素提权(编辑联动)> 数据 rank > 3D 距离近者 >
+///   featureId——全部确定性,保证帧间稳定不闪。
 ///
 /// 逐帧调用(设计定"逐帧避让");demo 万级以下规模逐帧全量投影成本
 /// 微不足道,更大规模再谈增量。纯 CPU、无 GL 依赖,host 可单测。

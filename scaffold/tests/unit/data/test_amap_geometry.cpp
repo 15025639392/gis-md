@@ -63,6 +63,8 @@ TEST(AmapGeometryTest, PoiZ14AnchorUsesFullLabelGrid) {
     f.classCode = 12024;
     f.name = "center";
     f.rank = 7;
+    f.minZoom = 15;
+    f.maxZoom = 21;
     // Native POI extent is 2048×1024.  The center must remain the tile
     // center after scale 4 + bottom-up Y flip; the old line scale 2 moved it
     // to (2048,3072), i.e. one quarter tile west and one quarter south.
@@ -73,6 +75,9 @@ TEST(AmapGeometryTest, PoiZ14AnchorUsesFullLabelGrid) {
     ASSERT_EQ(1u, features.size());
     ASSERT_EQ(GeometryType::Point, features[0].type);
     EXPECT_EQ("-7", features[0].properties.at("rank"));
+    EXPECT_EQ("15", features[0].properties.at("amap_minzoom"));
+    EXPECT_EQ("21", features[0].properties.at("amap_maxzoom"));
+    EXPECT_EQ("0", features[0].properties.at("amap_type"));
     const double expectedLon =
         (part.x + 0.5) / std::exp2(part.z) * 360.0 - 180.0;
     const double expectedLat =
@@ -142,6 +147,40 @@ TEST(AmapGeometryTest, DecodedLineConvertsBottomUpBlobYToNorthDownLat) {
     const double lastLat = features[0].rings[0][1].latitude() * kRadToDeg;
     EXPECT_NEAR(-90.0, firstLat, 1e-9);
     EXPECT_NEAR(90.0, lastLat, 1e-9);
+}
+
+TEST(AmapGeometryTest, GeometryTypeDisambiguatesSharedClassCode) {
+    AmapDecodedLayerPart buildingPart;
+    buildingPart.z = 14;
+    buildingPart.x = 13038;
+    buildingPart.y = 5505;
+    buildingPart.type = 3;
+    AmapDecodedFeature building;
+    building.classCode = 20009;  // Real samples also use this for roads.
+    building.rings = {{{0, 0}, {64, 0}, {64, 64}, {0, 64}}};
+    buildingPart.features.push_back(building);
+
+    const auto buildingFeatures =
+        amapDecodedPartToFeatures(buildingPart, /*toWgs84=*/false);
+    ASSERT_EQ(1u, buildingFeatures.size());
+    EXPECT_EQ(GeometryType::Polygon, buildingFeatures[0].type);
+    EXPECT_EQ("20009", buildingFeatures[0].properties.at("amap_class"));
+    EXPECT_EQ("3", buildingFeatures[0].properties.at("amap_type"));
+
+    AmapDecodedLayerPart roadPart = buildingPart;
+    roadPart.type = 1;
+    AmapDecodedFeature road = building;
+    road.polygonGeometry = false;
+    road.rings = {{{0, 0}, {64, 64}}};
+    roadPart.features.clear();
+    roadPart.features.push_back(std::move(road));
+
+    const auto roadFeatures =
+        amapDecodedPartToFeatures(roadPart, /*toWgs84=*/false);
+    ASSERT_EQ(1u, roadFeatures.size());
+    EXPECT_EQ(GeometryType::LineString, roadFeatures[0].type);
+    EXPECT_EQ("20009", roadFeatures[0].properties.at("amap_class"));
+    EXPECT_EQ("1", roadFeatures[0].properties.at("amap_type"));
 }
 
 TEST(AmapGeometryTest, AdjacentRowsShareLatitudeAfterRawYFlip) {

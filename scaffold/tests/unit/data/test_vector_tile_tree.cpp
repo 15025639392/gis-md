@@ -236,6 +236,50 @@ TEST(VectorTileTree, OversizedViewLowersZoomInsteadOfTruncating) {
     }
 }
 
+TEST(VectorTileTree, FixedZoomOversizedViewKeepsCenterBounded) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 14;
+    opt.maxZoom = 14;
+    opt.maxTilesPerView = 8;
+    opt.maxPendingRequests = 4;
+    VectorTileTree tree(opt);
+    const Rectangle view = rectDeg(100, 20, 112, 36);
+    const TileKey center = tree.scheme().positionToTile(
+        deg(106.0), deg(28.0), 14);
+
+    auto result = tree.update(view, heightForZoom(14));
+    ASSERT_EQ(4u, result.requestTiles.size());
+    EXPECT_EQ(4u, tree.pendingCount());
+    for (const TileKey& key : result.requestTiles) {
+        EXPECT_EQ(14, key.z);
+    }
+    const TileKey first = result.requestTiles.front();
+    const long long firstDx = first.x - center.x;
+    const long long firstDy = first.y - center.y;
+    EXPECT_LE(firstDx * firstDx + firstDy * firstDy, 1);
+
+    // Repeated updates must not leak the rest of the huge fixed-z view into
+    // pending/network work while the selected center set is in flight.
+    auto again = tree.update(view, heightForZoom(14));
+    EXPECT_TRUE(again.requestTiles.empty());
+    EXPECT_EQ(4u, tree.pendingCount());
+
+    // A fast pan must not append another full view while the first request
+    // set is still in flight; maxTilesPerView is also the pending-work cap.
+    auto shifted = tree.update(rectDeg(110, 20, 122, 36),
+                               heightForZoom(14));
+    EXPECT_TRUE(shifted.requestTiles.empty());
+    EXPECT_EQ(4u, tree.pendingCount());
+
+    // One completion frees exactly one slot; the current view receives it on
+    // the next update instead of another unbounded batch.
+    tree.provide(result.requestTiles.front(), emptyTile());
+    auto oneSlot = tree.update(rectDeg(110, 20, 122, 36),
+                               heightForZoom(14));
+    EXPECT_EQ(1u, oneSlot.requestTiles.size());
+    EXPECT_EQ(4u, tree.pendingCount());
+}
+
 TEST(VectorTileTree, AntimeridianViewSplitsAndCoversBothSides) {
     VectorTileTree::Options opt;
     opt.maxTilesPerView = 64;

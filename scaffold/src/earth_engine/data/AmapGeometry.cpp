@@ -409,6 +409,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 if (toWgs84) c = Gcj02CoordinateTransform::toWgs84(c);
                 feat.rings = {{{c}}};
                 feat.properties["amap_class"] = std::to_string(f.classCode);
+                feat.properties["amap_type"] = std::to_string(part.type);
                 feat.properties["amap_subkey"] = std::to_string(f.subKey);
                 feat.properties["amap_rank"] = std::to_string(f.rank);
                 feat.properties["amap_minzoom"] = std::to_string(f.minZoom);
@@ -440,6 +441,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 }
                 feat.rings.push_back(std::move(pts));
                 feat.properties["amap_class"] = std::to_string(f.classCode);
+                feat.properties["amap_type"] = std::to_string(part.type);
                 if (f.kind > 0) {
                     feat.properties["amap_kind"] = std::to_string(f.kind);
                 }
@@ -470,6 +472,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 }
                 feat.rings.push_back(std::move(pts));
                 feat.properties["amap_class"] = std::to_string(f.classCode);
+                feat.properties["amap_type"] = std::to_string(part.type);
                 if (f.kind > 0) {
                     feat.properties["amap_kind"] = std::to_string(f.kind);
                 }
@@ -555,6 +558,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 if (!feat.rings.empty()) {
                     feat.properties["amap_class"] =
                         std::to_string(f.classCode);
+                    feat.properties["amap_type"] = std::to_string(part.type);
                     feat.properties["amap_kind"] = std::to_string(f.kind);
                     feat.properties["amap_subkey"] =
                         std::to_string(f.subKey);
@@ -595,6 +599,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
             };
             auto setProperties = [&](Feature& feat) {
                 feat.properties["amap_class"] = std::to_string(f.classCode);
+                feat.properties["amap_type"] = std::to_string(part.type);
                 if (f.kind > 0) {
                     feat.properties["amap_kind"] = std::to_string(f.kind);
                 }
@@ -723,6 +728,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
             for (auto& ring : pending) feat.rings.push_back(std::move(ring));
             pending.clear();
             feat.properties["amap_class"] = std::to_string(f.classCode);
+            feat.properties["amap_type"] = std::to_string(part.type);
             if (f.kind > 0) {
                 feat.properties["amap_kind"] = std::to_string(f.kind);
             }

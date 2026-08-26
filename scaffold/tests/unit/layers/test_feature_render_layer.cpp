@@ -583,6 +583,128 @@ TEST_F(FeatureRenderLayerTest, TileSymbolPaintOrderSplitsPointCommands) {
     EXPECT_EQ(commands[0].indexBuffer, commands[1].indexBuffer);
 }
 
+TEST_F(FeatureRenderLayerTest, TileSymbolCarriesAmapZoomWindow) {
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties["name"] = "POI";
+    poi.properties["rank"] = "-42";
+    poi.properties["amap_minzoom"] = "15";
+    poi.properties["amap_maxzoom"] = "21";
+
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(-42, mesh.symbols[0].rank);
+    EXPECT_EQ(15, mesh.symbols[0].minZoom);
+    EXPECT_EQ(21, mesh.symbols[0].maxZoom);
+}
+
+TEST_F(FeatureRenderLayerTest, MissingOrMalformedZoomWindowStaysVisible) {
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(0, mesh.symbols[0].minZoom);
+    EXPECT_EQ(30, mesh.symbols[0].maxZoom);
+
+    poi.properties["amap_minzoom"] = "bogus";
+    poi.properties["amap_maxzoom"] = "-2";
+    mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(0, mesh.symbols[0].minZoom);
+    EXPECT_EQ(30, mesh.symbols[0].maxZoom);
+}
+
+TEST_F(FeatureRenderLayerTest, TileSymbolZoomWindowGatesPointAndLabel) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();  // 缓存图集指针
+
+    constexpr double lon = 6.0 * kDeg;
+    constexpr double lat = 29.0 * kDeg;
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(lon, lat));
+    const Vec3 radial = surface.normalized();
+    auto setHeight = [&](double heightMeters) {
+        camera_.lookAt(surface + radial * heightMeters, surface,
+                       Vec3(0.0, 0.0, 1.0));
+    };
+
+    FeatureTileMesh mesh;
+    mesh.origin = surface;
+    mesh.hasOrigin = true;
+    TileSymbolCpu far;
+    far.lonRad = lon;
+    far.latRad = lat;
+    far.colorPacked = 1.0f;
+    far.name = "FAR";
+    far.minZoom = 0;
+    far.maxZoom = 14;
+    TileSymbolCpu near = far;
+    near.lonRad += 0.001 * kDeg;
+    near.name = "NEAR";
+    near.minZoom = 15;
+    near.maxZoom = 30;
+
+    const uint64_t farId = layer_->crossTileIdFor(
+        far.name, far.lonRad, far.latRad, 14);
+    const uint64_t nearId = layer_->crossTileIdFor(
+        near.name, near.lonRad, near.latRad, 14);
+    mesh.symbols = {far, near};
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
+                           std::move(mesh));
+
+    // 3000m:zoom≈13.7 → 整数档 13，只显示远景符号/标签。
+    setHeight(3000.0);
+    frame_.deltaSeconds = 0.35;
+    RenderCommandList commands = build();
+    int pointCommands = 0;
+    int labelCommands = 0;
+    int labelIndexCount = 0;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorPoint) ++pointCommands;
+        if (cmd.kind == RenderCommandKind::VectorLabel) {
+            ++labelCommands;
+            labelIndexCount += cmd.indexCount;
+        }
+    }
+    EXPECT_EQ(1, pointCommands);
+    EXPECT_EQ(1, labelCommands);
+    EXPECT_EQ(18, labelIndexCount);  // "FAR" only, 3 glyph quads
+    EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(farId));
+    EXPECT_FLOAT_EQ(0.0f, layer_->labelOpacityForFeature(nearId));
+
+    // 1000m:zoom≈15.3 → 整数档 15。跨档必须绕过 300ms placement 节流，
+    // 同一帧切换到近景符号/标签，远景项立即退出候选集。
+    setHeight(1000.0);
+    frame_.deltaSeconds = 0.35;
+    commands = build();
+    pointCommands = 0;
+    labelCommands = 0;
+    labelIndexCount = 0;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorPoint) ++pointCommands;
+        if (cmd.kind == RenderCommandKind::VectorLabel) {
+            ++labelCommands;
+            labelIndexCount += cmd.indexCount;
+        }
+    }
+    EXPECT_EQ(1, pointCommands);
+    EXPECT_EQ(1, labelCommands);
+    EXPECT_EQ(24, labelIndexCount);  // "NEAR" only, 4 glyph quads
+    EXPECT_FLOAT_EQ(0.0f, layer_->labelOpacityForFeature(farId));
+    EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(nearId));
+    EXPECT_EQ(1, layer_->labelPlacementStats().candidates);
+}
+
 // rank 升序截断:超过单瓦上限时留 rank 最小(最重要)的那批。这是
 // placement 预算刀之前的容量闸 —— 上限本身是实现细节,契约是「重要的
 // 活下来 + 总量被钉住」。

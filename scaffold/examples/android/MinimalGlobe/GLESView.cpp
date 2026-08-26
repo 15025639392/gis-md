@@ -217,6 +217,8 @@ static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
 // ---- C2/E3:高德矢量。type2 面:无地形时走 VectorFill(V30 地球网格);
 // drape overlay 仍注册,无页则不出。路网/建筑/POI 仍主源 FeatureRenderLayer。 ----
 static std::shared_ptr<AmapDrapeImageryProvider::RegionCache> gAmapRegionCache;
+static std::shared_ptr<MvtRawTileFetchCache> gAmapType1RawCache;
+static std::shared_ptr<MvtRawTileFetchCache> gAmapType2RawCache;
 static std::unique_ptr<AmapRegionsVectorSource> gAmapRegionsSource;
 static std::unique_ptr<AmapRegionsVectorSource> gAmapWater12Source;
 static std::unique_ptr<AmapMainVectorSource> gAmapMainSource;
@@ -552,6 +554,8 @@ static void clearDemoEngineObjects() {
     // 且在飞的 HttpRequest 句柄析构即取消。
     gMvtSource.reset();
     gAmapRegionCache.reset();
+    gAmapType1RawCache.reset();
+    gAmapType2RawCache.reset();
     gAmapRegionsSource.reset();
     gAmapWater12Source.reset();
     gAmapMainSource.reset();
@@ -831,6 +835,22 @@ static bool createEngine() {
             if (!gMvtWorkerPool) {
                 gMvtWorkerPool = std::make_shared<ThreadPool>(2);
             }
+            if (!gAmapType1RawCache) {
+                gAmapType1RawCache = std::make_shared<MvtRawTileFetchCache>(
+                    [](const TileKey& k,
+                       MvtRawTileFetchCache::FetchCallback cb) {
+                        amapFetchTile(k, 1, std::move(cb));
+                    },
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+            }
+            if (!gAmapType2RawCache) {
+                gAmapType2RawCache = std::make_shared<MvtRawTileFetchCache>(
+                    [](const TileKey& k,
+                       MvtRawTileFetchCache::FetchCallback cb) {
+                        amapFetchTile(k, 2, std::move(cb));
+                    },
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+            }
             if (!gAmapRegionCache) {
                 gAmapRegionCache =
                     std::make_shared<AmapDrapeImageryProvider::RegionCache>(
@@ -841,7 +861,7 @@ static bool createEngine() {
                         },
                         minimal_globe_demo::kMvtTileCacheDecoded,
                         minimal_globe_demo::kMvtTileCacheRaw,
-                        gMvtWorkerPool);
+                        gMvtWorkerPool, gAmapType1RawCache);
             }
             AmapDrapeImageryProvider::Options aopts;
             aopts.id = "amap-drape";
@@ -1262,6 +1282,12 @@ static bool createEngine() {
                  {"30003", StyleExpression::literal(0.0)}},
                 // 未单列的边界等线类仍在 surface/building 之后。
                 StyleExpression::literal(70.0));
+            // Nebula classCode is not globally unique: 20009 can be a road
+            // or a type-3 building. Geometry type is the authoritative first
+            // discriminator; class remains the subtype/order key for lines.
+            as.paintOrderExpr = StyleExpression::match(
+                "amap_type", {{"3", StyleExpression::literal(60.0)}},
+                as.paintOrderExpr);
             as.fillColorExpr = StyleExpression::match(
                 "amap_class",
                 {{"30001",
@@ -1275,14 +1301,16 @@ static bool createEngine() {
                  {"90001", kBuilding},
                  {"30003", kTransparent}},
                 kTransparent);
+            as.fillColorExpr = StyleExpression::match(
+                "amap_type", {{"3", kBuilding}}, as.fillColorExpr);
             if (minimal_globe_demo::kHideAmapBuildingsForCompare) {
                 // [1:1 对照临时] 建筑透明 + 关挤出:深色挤出体是 fill 对照
                 // 的最大噪声源(纯黑建筑问题另行修)。90001 匹配不到时走
                 // 原 fillColorExpr。
                 as.buildingExtrusion = false;
                 as.fillColorExpr = StyleExpression::match(
-                    "amap_class",
-                    {{"90001",
+                    "amap_type",
+                    {{"3",
                       StyleExpression::literal(
                           {0.0f, 0.0f, 0.0f, 0.0f})}},
                     as.fillColorExpr);
@@ -1415,7 +1443,8 @@ static bool createEngine() {
                         amapFetchTile(k, 1, std::move(cb));
                     },
                     minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool,
+                    gAmapType1RawCache);
             AmapRegionsVectorSource::Options w12Opts;
             w12Opts.tree.minZoom = 12;
             w12Opts.tree.maxZoom = 12;
@@ -1460,7 +1489,8 @@ static bool createEngine() {
                         amapFetchTile(k, 1, std::move(cb));
                     },
                     minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool,
+                    gAmapType1RawCache);
             AmapMainVectorSource::Options mOpts;
             mOpts.tree.minZoom = 12;
             mOpts.tree.maxZoom = 14;
@@ -1523,7 +1553,8 @@ static bool createEngine() {
                         amapFetchTile(k, 2, std::move(cb));
                     },
                     minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool,
+                    gAmapType2RawCache);
             AmapPoiVectorSource::Options pOpts;
             pOpts.tree.minZoom = 14;
             pOpts.tree.maxZoom = 14;
@@ -2226,6 +2257,29 @@ static void renderFrame() {
         }
         if (amapPending) {
             gEngine->requestRender("amapPending");
+        }
+        // 问题3验收口径：fetch 是真实网络请求数，coalesced 是跨 source
+        // 合并掉的在途请求，hit 是压缩字节驻留命中。type1/type2 分开统计，
+        // 防止不同 Nebula 请求命名空间被误合并。
+        static uint64_t amapRawLogCounter = 0;
+        if (++amapRawLogCounter % 120 == 1) {
+            const auto type1 = gAmapType1RawCache
+                                   ? gAmapType1RawCache->stats()
+                                   : MvtRawTileFetchCache::Stats{};
+            const auto type2 = gAmapType2RawCache
+                                   ? gAmapType2RawCache->stats()
+                                   : MvtRawTileFetchCache::Stats{};
+            LOGI("AmapRaw type1 fetch=%llu coalesced=%llu hit=%llu "
+                 "resident=%zu/%zuKB | type2 fetch=%llu coalesced=%llu "
+                 "hit=%llu resident=%zu/%zuKB",
+                 static_cast<unsigned long long>(type1.fetches),
+                 static_cast<unsigned long long>(type1.coalesced),
+                 static_cast<unsigned long long>(type1.hits),
+                 type1.residentTiles, type1.residentBytes / 1024,
+                 static_cast<unsigned long long>(type2.fetches),
+                 static_cast<unsigned long long>(type2.coalesced),
+                 static_cast<unsigned long long>(type2.hits),
+                 type2.residentTiles, type2.residentBytes / 1024);
         }
     }
     // 阶段 4:假载体在**引擎 update 之前**推进,这样本帧 tether 读到的就是新

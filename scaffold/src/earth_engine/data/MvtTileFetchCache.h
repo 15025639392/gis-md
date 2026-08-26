@@ -62,7 +62,8 @@ public:
     ///                        —— host 测试用;真机必须传,否则 5-17ms 落在
     ///                        调用线程(渲染线程)上。
     MvtTileFetchCacheT(FetchFn fetch, size_t capacity, size_t rawCapacity = 0,
-                       std::shared_ptr<ThreadPool> decodePool = nullptr);
+                       std::shared_ptr<ThreadPool> decodePool = nullptr,
+                       std::shared_ptr<class MvtRawTileFetchCache> sharedRaw = nullptr);
 
     /// 取一张数据瓦(z/x/y 语义,schemeId 透传给 FetchFn)。
     void request(const TileKey& key, TileCallback callback);
@@ -70,10 +71,13 @@ public:
     struct Stats {
         uint64_t hits = 0;
         uint64_t fetches = 0;
-        /// 重复拉取:同一 key 被 fetch 过一次以上(= 曾被淘汰又要回来)。
+        /// 重复进入 profile 获取路径:同一 key 被 fetch 过一次以上(= 曾被
+        /// profile L1 淘汰又要回来)。共享 raw 模式下它不一定等于网络重拉,
+        /// 因为 raw backend 可能命中或与其他 profile 合并在途。
         /// 容量是否够用的**直接判据**,比命中率好读:稳态该恒 0。
         uint64_t refetches = 0;
-        /// L2 命中(免了一次网络往返,付一次重解码)
+        /// L2 命中(免了一次网络往返,付一次重解码)。共享 raw 模式下该
+        /// profile 的 raw backend 命中也计入此项。
         uint64_t rawHits = 0;
         size_t residentTiles = 0;
         size_t rawTiles = 0;
@@ -189,6 +193,7 @@ private:
     FetchFn fetch_;
     /// L2 命中的重解码去处;为空则就地解码(见构造注释)。
     std::shared_ptr<ThreadPool> decodePool_;
+    std::shared_ptr<class MvtRawTileFetchCache> sharedRaw_;
     std::shared_ptr<State> state_;
 };
 
@@ -202,12 +207,147 @@ inline uint64_t packDataKey(int z, int x, int y) {
 
 } // namespace detail
 
+/// Shared compressed-byte cache for consumers that deliberately keep separate
+/// decoded payloads. One instance represents one provider/request namespace;
+/// callers must not mix Amap request type 1 and type 2 in the same instance.
+///
+/// Successful bytes enter this LRU immediately, so a later decoder profile can
+/// reuse them even while the first profile still keeps its decoded L1 entry.
+class MvtRawTileFetchCache {
+public:
+    using FetchCallback = std::function<void(int, std::vector<uint8_t>)>;
+    using FetchFn = std::function<void(const TileKey&, FetchCallback)>;
+
+    struct Stats {
+        uint64_t hits = 0;
+        uint64_t fetches = 0;
+        uint64_t coalesced = 0;  ///< 与同 key 在途请求合并，未新增网络请求
+        size_t residentTiles = 0;
+        size_t residentBytes = 0;
+    };
+
+    MvtRawTileFetchCache(FetchFn fetch, size_t capacity,
+                         std::shared_ptr<ThreadPool> callbackPool = nullptr)
+        : fetch_(std::move(fetch)), state_(std::make_shared<State>()) {
+        // capacity=0 deliberately disables resident bytes while retaining
+        // in-flight coalescing.  This matches MvtTileFetchCacheT's rawCapacity
+        // contract and is useful for callers that only want request de-dupe.
+        state_->capacity = capacity;
+        state_->callbackPool = std::move(callbackPool);
+    }
+
+    void request(const TileKey& key, FetchCallback callback) {
+        if (!callback) return;
+        if (!fetch_) {
+            callback(0, {});
+            return;
+        }
+        const uint64_t dk = detail::packDataKey(key.z, key.x, key.y);
+        std::shared_ptr<const std::vector<uint8_t>> hit;
+        bool needFetch = false;
+        {
+            std::lock_guard<std::mutex> lock(state_->mutex);
+            auto it = state_->map.find(dk);
+            if (it != state_->map.end()) {
+                state_->order.splice(state_->order.begin(), state_->order,
+                                     it->second);
+                hit = it->second->body;
+                ++state_->hits;
+            } else {
+                auto in = state_->inflight.find(dk);
+                if (in != state_->inflight.end()) {
+                    in->second.push_back(std::move(callback));
+                    ++state_->coalesced;
+                } else {
+                    state_->inflight[dk].push_back(std::move(callback));
+                    ++state_->fetches;
+                    needFetch = true;
+                }
+            }
+        }
+        if (hit) {
+            auto deliver = [callback = std::move(callback), hit]() mutable {
+                callback(200, std::vector<uint8_t>(*hit));
+            };
+            if (state_->callbackPool) {
+                state_->callbackPool->enqueue(std::move(deliver));
+            } else {
+                deliver();
+            }
+            return;
+        }
+        if (!needFetch) return;
+
+        std::shared_ptr<State> state = state_;
+        fetch_(key, [state, dk](int statusCode, std::vector<uint8_t> body) {
+            std::shared_ptr<const std::vector<uint8_t>> shared;
+            if (statusCode == 200 && !body.empty()) {
+                shared = std::make_shared<const std::vector<uint8_t>>(
+                    std::move(body));
+            }
+            std::vector<FetchCallback> waiters;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                auto in = state->inflight.find(dk);
+                if (in != state->inflight.end()) {
+                    waiters = std::move(in->second);
+                    state->inflight.erase(in);
+                }
+                if (shared && state->capacity > 0) {
+                    state->residentBytes += shared->size();
+                    state->order.push_front(RawEntry{dk, shared});
+                    state->map[dk] = state->order.begin();
+                    while (state->map.size() > state->capacity) {
+                        state->residentBytes -=
+                            state->order.back().body->size();
+                        state->map.erase(state->order.back().key);
+                        state->order.pop_back();
+                    }
+                }
+            }
+            for (FetchCallback& cb : waiters) {
+                if (shared) cb(200, std::vector<uint8_t>(*shared));
+                else cb(statusCode, {});
+            }
+        });
+    }
+
+    Stats stats() const {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        return Stats{state_->hits, state_->fetches, state_->coalesced,
+                     state_->map.size(), state_->residentBytes};
+    }
+
+private:
+    struct RawEntry {
+        uint64_t key;
+        std::shared_ptr<const std::vector<uint8_t>> body;
+    };
+    struct State {
+        std::mutex mutex;
+        std::list<RawEntry> order;
+        std::unordered_map<uint64_t, std::list<RawEntry>::iterator> map;
+        std::unordered_map<uint64_t, std::vector<FetchCallback>> inflight;
+        std::shared_ptr<ThreadPool> callbackPool;
+        size_t capacity = 256;
+        size_t residentBytes = 0;
+        uint64_t hits = 0;
+        uint64_t fetches = 0;
+        uint64_t coalesced = 0;
+    };
+
+    FetchFn fetch_;
+    std::shared_ptr<State> state_;
+};
+
 template <typename Payload, typename DecodeTraits>
 MvtTileFetchCacheT<Payload, DecodeTraits>::MvtTileFetchCacheT(
     FetchFn fetch, size_t capacity, size_t rawCapacity,
-    std::shared_ptr<ThreadPool> decodePool)
+    std::shared_ptr<ThreadPool> decodePool,
+    std::shared_ptr<MvtRawTileFetchCache> sharedRaw)
     : fetch_(std::move(fetch)),
       decodePool_(std::move(decodePool)),
+      sharedRaw_(std::move(sharedRaw)),
       state_(std::make_shared<State>()) {
     state_->capacity = std::max<size_t>(1, capacity);
     state_->rawCapacity = rawCapacity;
@@ -217,7 +357,7 @@ template <typename Payload, typename DecodeTraits>
 void MvtTileFetchCacheT<Payload, DecodeTraits>::request(
     const TileKey& key, TileCallback callback) {
     if (!callback) return;
-    if (!fetch_) {
+    if (!fetch_ && !sharedRaw_) {
         callback(nullptr);
         return;
     }
@@ -310,6 +450,85 @@ void MvtTileFetchCacheT<Payload, DecodeTraits>::request(
         return;
     }
     if (!needFetch) return;
+
+    if (sharedRaw_) {
+        std::shared_ptr<State> state = state_;
+        std::shared_ptr<ThreadPool> decodePool = decodePool_;
+        sharedRaw_->request(
+            key, [state, dk, decodePool](int statusCode,
+                                         std::vector<uint8_t> body) {
+                // Keep the shared transport callback lightweight.  A raw-cache
+                // miss normally completes on the HTTP worker, and decoding a
+                // dense Nebula tile there would serialize that worker behind a
+                // 2–17 ms parse.  This mirrors the private L2 path below and
+                // keeps all decoder profiles off the render and transport
+                // callback threads when a pool is supplied by the host.
+                auto bodyPtr =
+                    std::make_shared<const std::vector<uint8_t>>(
+                        std::move(body));
+                auto work = [state, dk, statusCode,
+                             bodyPtr]() mutable {
+                std::shared_ptr<const Payload> tile;
+                if (statusCode == 200 && !bodyPtr->empty()) {
+                    auto decoded = std::make_shared<Payload>();
+                    if (DecodeTraits::decode(bodyPtr->data(), bodyPtr->size(),
+                                             *decoded, nullptr)) {
+                        tile = std::move(decoded);
+                    }
+                }
+                std::vector<TileCallback> waiters;
+                {
+                    std::lock_guard<std::mutex> lock(state->mutex);
+                    auto it = state->inflight.find(dk);
+                    if (it != state->inflight.end()) {
+                        waiters = std::move(it->second);
+                        state->inflight.erase(it);
+                    }
+                    // sharedRaw_ owns compressed bytes; keeping another copy in
+                    // each decoder profile would defeat cross-source savings.
+                    if (tile) {
+                        state->insertDecoded(dk, tile, nullptr);
+                        state->failures.erase(dk);
+                    } else {
+                        // Decoder failure is profile-local. The shared raw
+                        // bytes remain available to other decoder profiles.
+                        auto& f = state->failures[dk];
+                        f.failureCount = std::min(
+                            f.failureCount + 1,
+                            TileRetryBackoffPolicy::kMaxSourceRetries + 1);
+                        if (f.failureCount >
+                            TileRetryBackoffPolicy::kMaxSourceRetries) {
+                            f.retryNotBeforeMs =
+                                std::numeric_limits<double>::max();
+                        } else {
+                            f.retryNotBeforeMs =
+                                perf::nowMs() +
+                                TileRetryBackoffPolicy::backoffMs(
+                                    f.failureCount);
+                        }
+                        f.seq = ++state->failureSeq;
+                        if (state->failures.size() > state->maxFailures) {
+                            auto oldest = state->failures.begin();
+                            for (auto fit = state->failures.begin();
+                                 fit != state->failures.end(); ++fit) {
+                                if (fit->second.seq < oldest->second.seq) {
+                                    oldest = fit;
+                                }
+                            }
+                            state->failures.erase(oldest);
+                        }
+                    }
+                }
+                for (TileCallback& cb : waiters) cb(tile);
+                };
+                if (decodePool) {
+                    decodePool->enqueue(std::move(work));
+                } else {
+                    work();
+                }
+            });
+        return;
+    }
 
     std::shared_ptr<State> state = state_;
     fetch_(key, [state, dk](int statusCode, std::vector<uint8_t> body) {
