@@ -1,9 +1,15 @@
 #include "earth_engine/data/MvtVectorSource.h"
+#include "earth_engine/core/async/AsyncSystem.h"
+#include "earth_engine/core/async/WorkLedger.h"
 
 #include <gtest/gtest.h>
 
 #include <chrono>
+#include <atomic>
+#include <condition_variable>
 #include <cmath>
+#include <future>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -108,6 +114,7 @@ MvtVectorSource::Options optionsForTest() {
 struct FakeSinks {
     int tessellateCalls = 0;
     size_t lastFeatureCount = 0;
+    bool failCommits = false;
     std::vector<TileKey> committed;
     std::vector<TileKey> dropped;
 
@@ -122,8 +129,12 @@ struct FakeSinks {
             mesh.fillIndices = {0, 0, 0};
             return mesh;
         };
-        s.commit = [this](const TileKey& k, FeatureTileMesh&&) {
+        s.commit = [this](const TileKey& k, FeatureTileMesh&) {
+            if (failCommits) {
+                return TileMeshCommitResult::RetryableFailure;
+            }
             committed.push_back(k);
+            return TileMeshCommitResult::Committed;
         };
         s.drop = [this](const TileKey& k) { dropped.push_back(k); };
         return s;
@@ -149,6 +160,193 @@ TEST(MvtVectorSource, FetchDecodeTessellateCommitPipeline) {
     EXPECT_FALSE(sinks.committed.empty());
     EXPECT_GT(source.activeTileCount(), 0u);
     EXPECT_EQ(sinks.committed.size(), source.activeTileCount());
+}
+
+TEST(MvtVectorSource, LandingTicketsReleaseAfterResultsEnterInbox) {
+    WorkLedger::shared().resetForTesting();
+    std::atomic<int> wakeCount{0};
+    WorkLedger::shared().setWakeCallback(
+        [&wakeCount]() { wakeCount.fetch_add(1); });
+    MvtTileFetchCache::FetchCallback pendingFetch;
+    const std::vector<uint8_t> body = makePointTile("pois");
+    auto cache = std::make_shared<MvtTileFetchCache>(
+        [&pendingFetch](const TileKey&,
+                        MvtTileFetchCache::FetchCallback callback) {
+            pendingFetch = std::move(callback);
+        },
+        48);
+    FakeSinks sinks;
+    {
+        MvtVectorSource::Options options = optionsForTest();
+        options.tree.minZoom = 4;
+        options.tree.maxZoom = 4;
+        MvtVectorSource source(options, sinks.fn(), std::move(cache));
+        const Rectangle view = rectDeg(1, 1, 2, 2);
+
+        source.update(view, heightForZoom(4));
+        ASSERT_TRUE(pendingFetch);
+        EXPECT_EQ(WorkLedger::shared().outstandingForLabel(
+                      "mvtVectorFetch"),
+                  1);
+        EXPECT_EQ(wakeCount.load(), 0);
+
+        pendingFetch(200, body);
+        EXPECT_EQ(WorkLedger::shared().outstandingForLabel(
+                      "mvtVectorFetch"),
+                  0);
+        EXPECT_EQ(wakeCount.load(), 1)
+            << "fetch result must wake only after it enters the inbox";
+        EXPECT_TRUE(WorkLedger::shared().consumeLanded(nullptr));
+
+        // Ingest fetch result and run synchronous tessellation.  Its own
+        // Landing ticket must produce a second completion wake.
+        source.update(view, heightForZoom(4));
+        EXPECT_EQ(WorkLedger::shared().outstandingForLabel(
+                      "mvtVectorTessellate"),
+                  0);
+        EXPECT_EQ(wakeCount.load(), 2);
+        EXPECT_TRUE(WorkLedger::shared().consumeLanded(nullptr));
+
+        source.update(view, heightForZoom(4));
+        EXPECT_EQ(WorkLedger::shared().outstanding(
+                      WorkLedger::Kind::Landing),
+                  0);
+    }
+    // The source is already quiescent before destruction; this catches both
+    // success and synchronous callback paths without resetting live tickets.
+    EXPECT_EQ(WorkLedger::shared().outstanding(
+                  WorkLedger::Kind::Landing),
+              0);
+    WorkLedger::shared().setWakeCallback(nullptr);
+    WorkLedger::shared().resetForTesting();
+}
+
+TEST(MvtVectorSource, RetryableCommitFailureDoesNotActivateAndRetriesMesh) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    sinks.failCommits = true;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
+    const Rectangle view = rectDeg(1, 1, 2, 2);
+
+    source.update(view, heightForZoom(4));
+    source.update(view, heightForZoom(4));
+    source.update(view, heightForZoom(4));
+    EXPECT_EQ(source.activeTileCount(), 0u)
+        << "GPU 上传失败不得伪装成 active";
+    EXPECT_GT(source.pendingCommitCount(), 0u)
+        << "可重试失败必须保留 CPU mesh";
+
+    sinks.failCommits = false;
+    source.update(view, heightForZoom(4));
+    EXPECT_GT(source.activeTileCount(), 0u);
+    EXPECT_EQ(source.pendingCommitCount(), 0u);
+}
+
+TEST(MvtVectorSource, ObsoleteWorkerMeshIsNotCommittedAfterFastPan) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    MvtVectorSource::Options opt = optionsForTest();
+    opt.tree.minZoom = 4;
+    opt.tree.maxZoom = 4;
+    auto pool = std::make_shared<ThreadPool>(1);
+
+    std::promise<void> started;
+    std::shared_future<void> release =
+        std::async(std::launch::deferred, [] {}).share();
+    std::promise<void> releasePromise;
+    release = releasePromise.get_future().share();
+    std::atomic<bool> first{true};
+    std::mutex committedMutex;
+    std::vector<TileKey> committed;
+    MvtVectorSource::Sinks sinks;
+    sinks.tessellate = [&](const TileKey&, std::vector<Feature>&&) {
+        if (first.exchange(false)) {
+            started.set_value();
+            release.wait();
+        }
+        FeatureTileMesh mesh;
+        mesh.hasOrigin = true;
+        mesh.fillVerts = {0.f, 0.f, 0.f};
+        mesh.fillIndices = {0, 0, 0};
+        return mesh;
+    };
+    sinks.commit = [&](const TileKey& key, FeatureTileMesh&) {
+        std::lock_guard<std::mutex> lock(committedMutex);
+        committed.push_back(key);
+        return TileMeshCommitResult::Committed;
+    };
+    sinks.drop = [](const TileKey&) {};
+    MvtVectorSource source(opt, std::move(sinks), fetch.cache(), pool);
+
+    const Rectangle oldView = rectDeg(1, 1, 2, 2);
+    const Rectangle newView = rectDeg(100, 30, 101, 31);
+    source.update(oldView, heightForZoom(4));
+    const std::vector<TileKey> oldKeys = fetch.requested;
+    ASSERT_FALSE(oldKeys.empty());
+    source.update(oldView, heightForZoom(4));
+    ASSERT_EQ(std::future_status::ready,
+              started.get_future().wait_for(std::chrono::seconds(2)));
+
+    source.update(newView, heightForZoom(4));
+    releasePromise.set_value();
+    for (int i = 0; i < 50 && source.hasTessellationInFlight(); ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        source.update(newView, heightForZoom(4));
+    }
+    source.update(newView, heightForZoom(4));
+
+    std::lock_guard<std::mutex> lock(committedMutex);
+    for (const TileKey& key : committed) {
+        EXPECT_EQ(std::find(oldKeys.begin(), oldKeys.end(), key), oldKeys.end())
+            << "旧视野 worker 结果不得迟到 commit";
+    }
+}
+
+TEST(MvtVectorSource, WorkerExceptionClearsInflightAndRetries) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    int calls = 0;
+    std::vector<TileKey> committed;
+    MvtVectorSource::Sinks sinks;
+    sinks.tessellate = [&](const TileKey&, std::vector<Feature>&&) {
+        if (++calls == 1) throw std::runtime_error("synthetic tessellation failure");
+        FeatureTileMesh mesh;
+        mesh.hasOrigin = true;
+        mesh.fillVerts = {0.f, 0.f, 0.f};
+        mesh.fillIndices = {0, 0, 0};
+        return mesh;
+    };
+    sinks.commit = [&](const TileKey& key, FeatureTileMesh&) {
+        committed.push_back(key);
+        return TileMeshCommitResult::Committed;
+    };
+    sinks.drop = [](const TileKey&) {};
+    MvtVectorSource source(optionsForTest(), std::move(sinks), fetch.cache());
+    const Rectangle view = rectDeg(1, 1, 2, 2);
+
+    for (int i = 0; i < 5; ++i) source.update(view, heightForZoom(4));
+    EXPECT_GE(calls, 2) << "worker 异常后必须重新派单";
+    EXPECT_FALSE(committed.empty());
+    EXPECT_GT(source.activeTileCount(), 0u);
+}
+
+TEST(MvtVectorSource, SuspendDrainsWorkerInboxWithoutCommitting) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
+    const Rectangle view = rectDeg(1, 1, 2, 2);
+
+    source.update(view, heightForZoom(4));
+    source.update(view, heightForZoom(4));
+    ASSERT_TRUE(source.hasTessellationInFlight());
+    source.suspend();
+
+    EXPECT_FALSE(source.hasTessellationInFlight());
+    EXPECT_EQ(source.pendingCommitCount(), 0u);
+    EXPECT_EQ(source.activeTileCount(), 0u);
+    EXPECT_TRUE(sinks.committed.empty());
 }
 
 // E1 必须守住的性质:瓦片离开视口后网格被 drop,但解码结果留在树的 LRU,
@@ -606,4 +804,10 @@ TEST(MvtTileFetchCache, FailedTileRetriesAtMostTwiceThenGivesUp) {
     EXPECT_EQ(networkCalls, callsBefore)
         << "重试用尽后不应再请求失败源";
     EXPECT_GE(cache.stats().failureSkips, 6u);
+
+    cache.clearFailure(key);
+    EXPECT_FALSE(cache.failureInfo(key).known);
+    get();
+    EXPECT_EQ(networkCalls, callsBefore + 1)
+        << "离开视野/显式恢复后应重新建立一轮有界重试";
 }

@@ -241,7 +241,8 @@ TEST_F(FeatureEditQueriesTest, PreviewDetachesAndRestores) {
     const FeatureId id = layer_->store().addFeature(squarePolygon());
     RenderCommandList before = build();
     ASSERT_EQ(2u, before.size());
-    const auto mvpBefore = before[0].uniforms.at("u_modelViewProjection");
+    ASSERT_TRUE(before[0].hasVectorUniforms);
+    const auto mvpBefore = before[0].vectorUniforms.modelViewProjection;
 
     // begin:常驻桶摘除该要素,预览瞬态路径顶上 → 命令数不变
     ASSERT_TRUE(layer_->beginEditPreview(id));
@@ -261,7 +262,8 @@ TEST_F(FeatureEditQueriesTest, PreviewDetachesAndRestores) {
     layer_->updateEditPreview(rings);
     RenderCommandList moved = build();
     ASSERT_EQ(2u, moved.size());
-    EXPECT_NE(mvpBefore, moved[0].uniforms.at("u_modelViewProjection"));
+    ASSERT_TRUE(moved[0].hasVectorUniforms);
+    EXPECT_NE(mvpBefore, moved[0].vectorUniforms.modelViewProjection);
 
     // store 未被预览污染
     EXPECT_NEAR(-0.05 * kDeg,
@@ -273,7 +275,8 @@ TEST_F(FeatureEditQueriesTest, PreviewDetachesAndRestores) {
     EXPECT_EQ(kInvalidFeatureId, layer_->previewFeatureId());
     RenderCommandList after = build();
     ASSERT_EQ(2u, after.size());
-    EXPECT_EQ(mvpBefore, after[0].uniforms.at("u_modelViewProjection"));
+    ASSERT_TRUE(after[0].hasVectorUniforms);
+    EXPECT_EQ(mvpBefore, after[0].vectorUniforms.modelViewProjection);
     EXPECT_EQ(1u, layer_->gpuBucketCount());
 }
 

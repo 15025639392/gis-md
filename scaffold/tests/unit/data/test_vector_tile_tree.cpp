@@ -217,6 +217,82 @@ TEST(VectorTileTree, AncestorFallbackWhileChildrenLoad) {
               static_cast<long>(mixed.renderTiles.size()));
 }
 
+TEST(VectorTileTree, GeometryReplaceKeepsParentUntilAllFineTilesLoad) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 12;
+    opt.maxZoom = 14;
+    opt.maxTilesPerView = 256;
+    opt.supportedZooms = {12, 14};
+    opt.refinement =
+        VectorTileTree::RefinementPolicy::GeometryReplace;
+    VectorTileTree tree(opt);
+    const Rectangle view = rectDeg(106.45, 29.45, 106.55, 29.55);
+
+    auto coarse = tree.update(view, heightForZoom(12));
+    ASSERT_FALSE(coarse.requestTiles.empty());
+    for (const TileKey& key : coarse.requestTiles) {
+        tree.provide(key, emptyTile());
+    }
+    coarse = tree.update(view, heightForZoom(12));
+    ASSERT_FALSE(coarse.renderTiles.empty());
+    for (const TileKey& key : coarse.renderTiles) EXPECT_EQ(key.z, 12);
+
+    auto fine = tree.update(view, heightForZoom(14));
+    ASSERT_GE(fine.requestTiles.size(), 2u);
+    const TileKey firstFine = fine.requestTiles.front();
+    tree.provide(firstFine, emptyTile());
+
+    auto partial = tree.update(view, heightForZoom(14));
+    ASSERT_FALSE(partial.renderTiles.empty());
+    EXPECT_EQ(std::find(partial.renderTiles.begin(), partial.renderTiles.end(),
+                        firstFine),
+              partial.renderTiles.end())
+        << "GeometryReplace 不得让部分细瓦与父瓦提前同框";
+    for (const TileKey& key : partial.renderTiles) EXPECT_EQ(key.z, 12);
+
+    for (size_t i = 1; i < fine.requestTiles.size(); ++i) {
+        tree.provide(fine.requestTiles[i], emptyTile());
+    }
+    auto settled = tree.update(view, heightForZoom(14));
+    ASSERT_FALSE(settled.renderTiles.empty());
+    for (const TileKey& key : settled.renderTiles) EXPECT_EQ(key.z, 14);
+}
+
+TEST(VectorTileTree, GeometryReplaceRenderSetHasNoAncestorPairs) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 10;
+    opt.maxZoom = 14;
+    opt.maxTilesPerView = 256;
+    opt.refinement =
+        VectorTileTree::RefinementPolicy::GeometryReplace;
+    VectorTileTree tree(opt);
+    const Rectangle view = rectDeg(106.45, 29.45, 106.55, 29.55);
+
+    auto coarse = tree.update(view, heightForZoom(10));
+    for (const TileKey& key : coarse.requestTiles) {
+        tree.provide(key, emptyTile());
+    }
+    tree.update(view, heightForZoom(10));
+
+    auto fine = tree.update(view, heightForZoom(14));
+    ASSERT_GE(fine.requestTiles.size(), 3u);
+    for (size_t i = 0; i < fine.requestTiles.size() / 2; ++i) {
+        tree.provide(fine.requestTiles[i], emptyTile());
+    }
+    const auto partial = tree.update(view, heightForZoom(14));
+    auto isAncestorOf = [](const TileKey& a, const TileKey& b) {
+        if (a.schemeId != b.schemeId || a.z >= b.z) return false;
+        const int d = b.z - a.z;
+        return (b.x >> d) == a.x && (b.y >> d) == a.y;
+    };
+    for (const TileKey& a : partial.renderTiles) {
+        for (const TileKey& b : partial.renderTiles) {
+            EXPECT_FALSE(isAncestorOf(a, b))
+                << a << " 与 " << b << " 违反 GeometryReplace 父子互斥";
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // desired 闸与反经线
 // ---------------------------------------------------------------------------
@@ -249,6 +325,10 @@ TEST(VectorTileTree, FixedZoomOversizedViewKeepsCenterBounded) {
 
     auto result = tree.update(view, heightForZoom(14));
     ASSERT_EQ(4u, result.requestTiles.size());
+    EXPECT_GT(result.desiredTileCount, 400000)
+        << "测试视野应足够大，才能守住固定档位有界扫描";
+    EXPECT_LT(result.scannedTileCount, 64u)
+        << "最近 8 瓦不得再全量扫描百万级矩形";
     EXPECT_EQ(4u, tree.pendingCount());
     for (const TileKey& key : result.requestTiles) {
         EXPECT_EQ(14, key.z);
@@ -264,19 +344,18 @@ TEST(VectorTileTree, FixedZoomOversizedViewKeepsCenterBounded) {
     EXPECT_TRUE(again.requestTiles.empty());
     EXPECT_EQ(4u, tree.pendingCount());
 
-    // A fast pan must not append another full view while the first request
-    // set is still in flight; maxTilesPerView is also the pending-work cap.
+    // 快速平移时旧视野 pending 必须从树侧取消，新视野立即获得请求预算；
+    // 否则一个慢请求批次会长期饿死当前视野。迟到响应仍可进 LRU。
     auto shifted = tree.update(rectDeg(110, 20, 122, 36),
                                heightForZoom(14));
-    EXPECT_TRUE(shifted.requestTiles.empty());
+    EXPECT_EQ(4u, shifted.requestTiles.size());
     EXPECT_EQ(4u, tree.pendingCount());
 
-    // One completion frees exactly one slot; the current view receives it on
-    // the next update instead of another unbounded batch.
+    // 旧视野迟到响应不会挤掉或重复当前视野工作。
     tree.provide(result.requestTiles.front(), emptyTile());
-    auto oneSlot = tree.update(rectDeg(110, 20, 122, 36),
+    auto current = tree.update(rectDeg(110, 20, 122, 36),
                                heightForZoom(14));
-    EXPECT_EQ(1u, oneSlot.requestTiles.size());
+    EXPECT_TRUE(current.requestTiles.empty());
     EXPECT_EQ(4u, tree.pendingCount());
 }
 

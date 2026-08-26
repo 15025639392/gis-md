@@ -242,9 +242,12 @@ EarthSceneConfig makeDefaultDemoSceneConfig(
         }
         // sources.json 覆盖只换 URL,tileSize/zoom 等源参数仍随编译期分支
         // (外置源必须与所选分支同构;不同构走编译期分支切换,不硬掰)。
-        if (overrides && !overrides->terrainUrlTemplate.empty()) {
-            config.terrain.urlTemplate = overrides->terrainUrlTemplate;
-        }
+    }
+    // 覆盖契约只替换 URL，不隐式启用/禁用 terrain。即使编译期关闭 demo
+    // terrain，也保留外置配置值，供诊断/后续显式启用读取；kind 仍为 None，
+    // 因此不会改变当前运行行为。
+    if (overrides && !overrides->terrainUrlTemplate.empty()) {
+        config.terrain.urlTemplate = overrides->terrainUrlTemplate;
     }
     config.tileset = {
         4.0,

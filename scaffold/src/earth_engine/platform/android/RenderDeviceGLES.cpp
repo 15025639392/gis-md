@@ -244,6 +244,22 @@ int GLShaderProgram::uniformLocation(const std::string& name) {
     return loc;
 }
 
+bool GLShaderProgram::genericUniformNeedsUpload(int location,
+                                                const float* values,
+                                                size_t count) {
+    if (location < 0 || !values || count == 0 || count > 16) return true;
+    auto [it, inserted] = genericUniformCache_.try_emplace(location);
+    GenericUniformCacheEntry& cached = it->second;
+    if (!inserted && cached.count == count &&
+        std::memcmp(cached.values.data(), values,
+                    count * sizeof(float)) == 0) {
+        return false;
+    }
+    cached.count = count;
+    std::memcpy(cached.values.data(), values, count * sizeof(float));
+    return true;
+}
+
 const std::vector<int>& GLShaderProgram::gltfBlockLocations() {
     if (!gltfBlockLocationsResolved_) {
         const auto& table = gltfUniformTable();
@@ -254,6 +270,19 @@ const std::vector<int>& GLShaderProgram::gltfBlockLocations() {
         gltfBlockLocationsResolved_ = true;
     }
     return gltfBlockLocations_;
+}
+
+const std::vector<int>& GLShaderProgram::vectorBlockLocations() {
+    if (!vectorBlockLocationsResolved_) {
+        const auto& table = vectorUniformTable();
+        vectorBlockLocations_.resize(table.size());
+        for (size_t i = 0; i < table.size(); ++i) {
+            vectorBlockLocations_[i] =
+                glGetUniformLocation(id_, table[i].name);
+        }
+        vectorBlockLocationsResolved_ = true;
+    }
+    return vectorBlockLocations_;
 }
 
 // ============================================================
@@ -1284,10 +1313,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     int instancedCommands = 0;  // [I3DMDIAG] GltfPrimitiveInstanced 命令数
     int totalInstances = 0;     // [I3DMDIAG] 所有实例化命令的实例总数
     int vectorCommands = 0;
-    // 逐 owner(图层 id)统计矢量命令。诊断「MVT 底图与演示层共存时近场路网
-    // 消失」:命令总数反而涨了(244→256),但看不出是底图少发了还是底图发了
-    // 却没出像素 —— 不按 owner 拆开,这两种情形的读数完全一样。
-    std::vector<std::pair<std::string, int>> vectorByOwner;
     int environmentCommands = 0;
 
     // 先消化自上次 submit 以来析构的 GLBuffer：删除引用其 id 的 VAO，
@@ -1325,6 +1350,12 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     double uniformMs = 0.0;
     double drawMs = 0.0;
     uint64_t uniformCalls = 0;
+    uint64_t vectorUniformVisits = 0;
+    uint64_t vectorUniformCalls = 0;
+    uint64_t genericUniformVisits = 0;
+    uint64_t genericUniformCalls = 0;
+    int blendFuncCalls = 0;
+    bool blendFunctionApplied = false;
 
     // GPU 区间计时:按命令桶把这一 submit 的时间线切段。桶 = 环境 / 地形 /
     // 其它 glTF / 矢量(逐 owner)。**桶键变化才开新段**,同名段在回读时合并。
@@ -1391,17 +1422,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             case RenderCommandKind::VectorLabel:
             case RenderCommandKind::VectorStencil:
                 ++vectorCommands;
-                {
-                    bool counted = false;
-                    for (auto& entry : vectorByOwner) {
-                        if (entry.first == cmd.owner) {
-                            ++entry.second;
-                            counted = true;
-                            break;
-                        }
-                    }
-                    if (!counted) vectorByOwner.emplace_back(cmd.owner, 1);
-                }
                 break;
             case RenderCommandKind::SkyBackground:
             case RenderCommandKind::AtmosphereBackground:
@@ -1626,6 +1646,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
         const double uniformStartMs = perf::nowMs();
         bindMs += uniformStartMs - iterStartMs;
         if (cmd.hasGltfUniforms) {
+            // 若同一 program 曾走过通用 uniform 路径，下面的块上传会改变
+            // program 状态；先丢弃通用值账本，避免未来误跳。正常 glTF/terrain
+            // 命令的 generic map 为空，因此该操作通常作用于空表。
+            program->clearGenericUniformCache();
+            program->invalidateVectorBlockCache();
             // glTF/terrain 定长块直传：location 表在 program 首次使用时一次
             // 性解析（shader 未声明的名字为 -1 跳过），此后每 draw 零字符串
             // 哈希、零堆分配。
@@ -1673,9 +1698,73 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             }
             program->markGltfBlockCacheValid();
         }
+        if (cmd.hasVectorUniforms) {
+            // FeatureRenderLayer 与旧 VectorLayer 可能共用 color program；块
+            // 上传会覆盖通用 map 的同名 location，必须丢弃通用账本。反向
+            // 切回 map 时下方也会使本块缓存失效。
+            program->clearGenericUniformCache();
+            program->invalidateGltfBlockCache();
+            const auto& table = vectorUniformTable();
+            const std::vector<int>& locations =
+                program->vectorBlockLocations();
+            const float* block =
+                reinterpret_cast<const float*>(&cmd.vectorUniforms);
+            constexpr size_t kVectorBlockFloats =
+                sizeof(VectorUniformBlock) / sizeof(float);
+            float* cache = program->vectorBlockCache(kVectorBlockFloats);
+            const bool cacheValid = program->vectorBlockCacheValid();
+            for (size_t entryIndex = 0; entryIndex < table.size();
+                 ++entryIndex) {
+                const int loc = locations[entryIndex];
+                if (loc < 0) continue;
+                ++vectorUniformVisits;
+                const uint16_t offset = table[entryIndex].floatOffset;
+                const uint16_t count = table[entryIndex].count;
+                const float* values = block + offset;
+                float* cachedSlot = cache + offset;
+                if (cacheValid &&
+                    std::memcmp(cachedSlot, values,
+                                count * sizeof(float)) == 0) {
+                    continue;
+                }
+                std::memcpy(cachedSlot, values, count * sizeof(float));
+                ++vectorUniformCalls;
+                switch (count) {
+                    case 1:
+                        glUniform1f(loc, values[0]);
+                        break;
+                    case 2:
+                        glUniform2fv(loc, 1, values);
+                        break;
+                    case 3:
+                        glUniform3fv(loc, 1, values);
+                        break;
+                    case 4:
+                        glUniform4fv(loc, 1, values);
+                        break;
+                    case 16:
+                        glUniformMatrix4fv(loc, 1, GL_FALSE, values);
+                        break;
+                }
+            }
+            program->markVectorBlockCacheValid();
+        }
+        if (!cmd.uniforms.empty()) {
+            // 通用写入可能覆盖定长块中的同名 location；让块缓存失效，保证
+            // 同一 program 混用两条路径时下一条块命令会真实恢复状态。
+            program->invalidateGltfBlockCache();
+            program->invalidateVectorBlockCache();
+        }
         for (const auto& [name, values] : cmd.uniforms) {
             int loc = program->uniformLocation(name);
             if (loc < 0) continue;
+
+            ++genericUniformVisits;
+            if (!program->genericUniformNeedsUpload(
+                    loc, values.data(), values.size())) {
+                continue;
+            }
+            ++genericUniformCalls;
 
             switch (values.size()) {
                 case 1:
@@ -1757,8 +1846,12 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             }
             blendEnabled = cmd.blend;
         }
-        if (cmd.blend) {
+        if (cmd.blend && !blendFunctionApplied) {
+            // 当前 RenderCommand 后端契约固定使用标准 source-over；函数值在
+            // program/draw 之间持久，不需要为每条矢量命令重复 700–960 次。
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            blendFunctionApplied = true;
+            ++blendFuncCalls;
         }
         if (polygonOffsetEnabled != cmd.blend) {
             if (cmd.blend) {
@@ -1879,15 +1972,47 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     // 单命令附加 pass),用偶数步长(旧值 120)会恒定采到同一奇偶位 → 只看得见
     // 单命令那次,主场景永远采不到。121 与 2 互质,轮流覆盖两次 submit。
     if (submitCount <= 1 || submitCount % 121 == 0 || submitMs >= 12.0) {
+        // owner 统计只服务采样日志。移到 submit 计时之后，正常帧不再为每条
+        // vector 命令做字符串比较；慢帧的 submitMs 也不被诊断工作污染。
+        std::vector<std::pair<std::string, int>> vectorByOwner;
+        for (const auto& cmd : commands) {
+            switch (cmd.kind) {
+                case RenderCommandKind::VectorOverlay:
+                case RenderCommandKind::VectorFill:
+                case RenderCommandKind::VectorLine:
+                case RenderCommandKind::VectorExtrusion:
+                case RenderCommandKind::VectorPoint:
+                case RenderCommandKind::VectorLabel:
+                case RenderCommandKind::VectorStencil: {
+                    bool counted = false;
+                    for (auto& entry : vectorByOwner) {
+                        if (entry.first == cmd.owner) {
+                            ++entry.second;
+                            counted = true;
+                            break;
+                        }
+                    }
+                    if (!counted) vectorByOwner.emplace_back(cmd.owner, 1);
+                    break;
+                }
+                default:
+                    break;
+            }
+        }
         GLenum err = glGetError();
         __android_log_print(ANDROID_LOG_INFO, "GLES",
-            "submit #%d: %zu commands, ms=%.3f bind=%.3f uniform=%.3f(%llu calls) draw=%.3f gltf=%d inst=%d(%d) vector=%d env=%d glError=%d",
+            "submit #%d: %zu commands, ms=%.3f bind=%.3f uniform=%.3f(gltf=%llu vector=%llu/%llu generic=%llu/%llu blendFunc=%d) draw=%.3f gltf=%d inst=%d(%d) vector=%d env=%d glError=%d",
             submitCount,
             commands.size(),
             submitMs,
             bindMs,
             uniformMs,
             static_cast<unsigned long long>(uniformCalls),
+            static_cast<unsigned long long>(vectorUniformCalls),
+            static_cast<unsigned long long>(vectorUniformVisits),
+            static_cast<unsigned long long>(genericUniformCalls),
+            static_cast<unsigned long long>(genericUniformVisits),
+            blendFuncCalls,
             drawMs,
             gltfCommands,
             instancedCommands,

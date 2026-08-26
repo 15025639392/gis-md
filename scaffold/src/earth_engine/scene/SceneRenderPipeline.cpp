@@ -347,9 +347,14 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
 void SceneRenderPipeline::reserveCommands(Context& context) const {
     size_t expectedCommands = 4 + context.vectorLayers.size() * 4;
-    // FeatureRenderLayer:每 GPU 桶至多 fill+line 两命令
+    // store 桶通常只有 fill+line；MVT tile 桶还会按 paint range 发建筑、
+    // 点、标签与 stencil 两阶段。旧估算完全没计 tileBuckets_，加载期命令
+    // vector 会多次扩容并搬运含大 inline uniform 块的 RenderCommand。
     for (const auto& fLayer : context.featureRenderLayers) {
         expectedCommands += fLayer->gpuBucketCount() * 2;
+        constexpr size_t kEstimatedCommandsPerTileMesh = 10;
+        expectedCommands +=
+            fLayer->tileMeshCount() * kEstimatedCommandsPerTileMesh;
     }
     auto addExpectedTilesetCommands = [&](const Tileset* tileset) {
         if (!tileset) return;

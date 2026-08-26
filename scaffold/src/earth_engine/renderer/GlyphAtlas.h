@@ -13,8 +13,8 @@ class Texture;
 /// SDF 字形图集(矢量 P5b 文字标注)。
 ///
 /// 字体字节由应用层注入(setFontData,引擎不读文件系统——分层原则);
-/// stb_truetype 按需栅格化 SDF 字形,shelf 打包进 RGBA8 图集纹理
-/// (SDF 复制四通道,updateTextureRegion 契约为 RGBA),codepoint →
+/// stb_truetype 按需栅格化 SDF 字形,shelf 打包进 R8 texture array
+/// (SDF 原生单通道；数组 region 使用后端的异步上传路径),codepoint →
 /// {uv,布局 metrics} 缓存。渲染线程调用(纹理上传需 GL 上下文)。
 ///
 /// 限度:单页 2048² 图集无淘汰,32px 栅格约容纳 ~4096 字形。容量按底图
@@ -56,6 +56,33 @@ public:
     /// 取字形(缺则栅格化+上传)。失败(无字体/无字形/图集满)返回 nullptr。
     const Glyph* ensureGlyph(uint32_t codepoint);
 
+    /// 渲染帧共享的动态字形预算。GlyphAtlas 是 Renderer 级单例，故预算
+    /// 在这里按 frameId 只重置一次；多个 FeatureRenderLayer 不能各自获得
+    /// 一份 4ms。预算耗尽后仍允许本帧的第一个缺字形启动，避免单字形成本
+    /// 本身超过预算时永久饥饿；一旦启动过，后续缺字形延迟到下一帧。
+    void beginFrameGlyphBudget(uint64_t frameId, double budgetMs);
+    enum class BudgetedGlyphResult {
+        Ready,
+        MissingTerminal,
+        Deferred,
+        Saturated
+    };
+    BudgetedGlyphResult ensureGlyphBudgeted(uint32_t codepoint);
+    /// 结束当前调用方的字形派发批次。Android 会封口一张有界 batch
+    /// Landing：整批 worker 结果全部入箱后只唤醒一次；其他平台 no-op。
+    void finishGlyphRasterDispatch();
+    size_t frameGlyphRasterAttempts() const;
+    double frameGlyphRasterMs() const;
+
+    /// 未烘标签是否还需要一帧来重试派发字形。Android 本帧只要已成功派发
+    /// 或已有任务在途，后续进展都由 worker 自行完成，应等待 Landing 唤醒；
+    /// 仅“零在途且本帧一次也没派成”（try_lock 竞争等）时保持 Pumped，
+    /// 防止无人再触发重试。非 Android 同步路径始终返回 true。
+    bool needsFrameForGlyphRasterDispatch() const;
+
+    /// Android 后台正在栅格化/等待回收的字形数（诊断与门控）；其他平台 0。
+    size_t pendingGlyphRasterCount() const;
+
     /// 已驻留字形数(诊断:新字形栅格化是渲染线程上的同步 SDF 计算,
     /// 平移进新区域时成批发生 —— P6 慢帧的真因,量它才能定预算)。
     size_t residentGlyphCount() const;
@@ -77,6 +104,10 @@ public:
 
     /// 图集纹理(未初始化返回 nullptr)。
     Texture* texture() const;
+
+    /// 成功注入字体的代次。字体 ready→ready 替换会清空并重排图集，
+    /// 消费方据此失效已经烘焙的 UV/标签派生数据；失败注入不递增。
+    uint64_t revision() const;
 
     /// UTF-8 → codepoints(静态工具;非法序列按字节回退,不丢文本)。
     static std::vector<uint32_t> decodeUtf8(const std::string& text);

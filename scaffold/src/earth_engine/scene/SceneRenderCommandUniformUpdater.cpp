@@ -129,6 +129,13 @@ void SceneRenderCommandUniformUpdater::apply(
             continue;
         }
 
+        // FeatureRenderLayer 已按桶 origin 在双精度下合成 RTE MVP，并放入
+        // 定长块。这里不能再向通用 map 插入绝对 viewProj：既是无效分配，
+        // 也会让后端出现两套同名 uniform 的覆盖顺序歧义。
+        if (cmd.hasVectorUniforms) {
+            continue;
+        }
+
         auto& mvpU = cmd.uniforms["u_modelViewProjection"];
         if (mvpU.empty()) {
             mvpU.resize(16);

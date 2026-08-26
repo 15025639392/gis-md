@@ -44,6 +44,15 @@ constexpr int kMaxDescendantStandinLevels = 3;
 
 } // namespace detail
 
+enum class VectorTileRefinementPolicy {
+    /// 符号优先可用性：已加载细瓦可与祖先暂时并存，避免一个缺失兄弟
+    /// 让整组 POI 回滚到很粗的祖先。
+    SymbolAdditive,
+    /// 连续几何置换：只要某祖先仍承担任一理想格的回退覆盖，就压住其
+    /// 全部后代；所需细瓦齐备后才整组切换，禁止父子重叠。
+    GeometryReplace,
+};
+
 /// 只读矢量底图的瓦片树(P4b,设计 §5)。
 ///
 /// 与地形 Tileset 刻意分离(独立实例、独立 zoom 范围/缓存,LOD 语义
@@ -72,6 +81,8 @@ constexpr int kMaxDescendantStandinLevels = 3;
 template <typename Payload>
 class VectorTileTreeT {
 public:
+    using RefinementPolicy = VectorTileRefinementPolicy;
+
     struct Options {
         int minZoom = 0;
         int maxZoom = 14;
@@ -100,9 +111,18 @@ public:
         /// 单调时钟注入点，仅供失败退避判定与确定性测试。空时使用
         /// steady_clock；不参与正常瓦片选择成本。
         std::function<double()> nowMs;
+        /// POI 允许加载期父子并存；面/线等连续几何必须使用 Replace，
+        /// 否则同一要素会以不同 LOD 重复绘制并产生拼缝、双线和面覆盖。
+        RefinementPolicy refinement = RefinementPolicy::SymbolAdditive;
     };
 
     struct UpdateResult {
+        int selectedZoom = 0;
+        int64_t desiredTileCount = 0;
+        size_t scannedTileCount = 0;
+        /// 本帧选择出的理想瓦工作集。与加载进度无关，供 Source 识别视野
+        /// 代次并丢弃旧视野 worker 产物。
+        std::vector<TileKey> desiredTiles;
         /// 应渲染的已加载瓦片(含祖先回退,已去重;先粗后细)。
         std::vector<TileKey> renderTiles;
         /// 需发起请求的瓦片(视口中心优先排序;已登记 pending,
@@ -169,6 +189,8 @@ public:
             zoom = nextZoom;
         }
         zoom = std::max(zoom, options_.minZoom);
+        result.selectedZoom = zoom;
+        result.desiredTileCount = desiredCount;
 
         // 视口中心(瓦片单位,用第一段的中心;跨反经线时求心不重要,
         // 只影响请求排序)
@@ -256,6 +278,7 @@ public:
             for (const Range& r : rangesByLevel[0]) {
                 for (int y = r.minY; y <= r.maxY; ++y) {
                     for (int x = r.minX; x <= r.maxX; ++x) {
+                        ++result.scannedTileCount;
                         idealTiles.push_back(
                             TileKey{schemeId_, zoom, x, y});
                     }
@@ -283,20 +306,54 @@ public:
             std::priority_queue<PendingRequest,
                                 std::vector<PendingRequest>, FartherFirst>
                 nearest;
-            for (const Range& r : rangesByLevel[0]) {
-                for (int y = r.minY; y <= r.maxY; ++y) {
-                    for (int x = r.minX; x <= r.maxX; ++x) {
-                        const long long dx = x - centerKey.x;
-                        const long long dy = y - centerKey.y;
-                        PendingRequest candidate{
-                            TileKey{schemeId_, zoom, x, y},
-                            dx * dx + dy * dy};
-                        if (nearest.size() < idealLimit) {
-                            nearest.push(candidate);
-                        } else if (isCloser(candidate, nearest.top())) {
-                            nearest.pop();
-                            nearest.push(candidate);
-                        }
+            auto inIdealRanges = [&](int x, int y) {
+                for (const Range& r : rangesByLevel[0]) {
+                    if (x >= r.minX && x <= r.maxX &&
+                        y >= r.minY && y <= r.maxY) {
+                        return true;
+                    }
+                }
+                return false;
+            };
+            auto consider = [&](int x, int y) {
+                ++result.scannedTileCount;
+                if (!inIdealRanges(x, y)) return;
+                const long long dx = x - centerKey.x;
+                const long long dy = y - centerKey.y;
+                PendingRequest candidate{
+                    TileKey{schemeId_, zoom, x, y}, dx * dx + dy * dy};
+                if (nearest.size() < idealLimit) {
+                    nearest.push(candidate);
+                } else if (isCloser(candidate, nearest.top())) {
+                    nearest.pop();
+                    nearest.push(candidate);
+                }
+            };
+            // 固定数据档位无法降 zoom 时，不再扫描整个巨大矩形后截 256。
+            // 从中心按 Chebyshev 环扩张；当下一环的最小欧氏距离已大于
+            // 当前第 N 近候选，就已得到与全扫描相同的精确最近集合。
+            for (long long radius = 0;; ++radius) {
+                if (radius == 0) {
+                    consider(centerKey.x, centerKey.y);
+                } else {
+                    const int minX = centerKey.x - static_cast<int>(radius);
+                    const int maxX = centerKey.x + static_cast<int>(radius);
+                    const int minY = centerKey.y - static_cast<int>(radius);
+                    const int maxY = centerKey.y + static_cast<int>(radius);
+                    for (int x = minX; x <= maxX; ++x) {
+                        consider(x, minY);
+                        consider(x, maxY);
+                    }
+                    for (int y = minY + 1; y < maxY; ++y) {
+                        consider(minX, y);
+                        consider(maxX, y);
+                    }
+                }
+                if (nearest.size() == idealLimit) {
+                    const long long nextRadius = radius + 1;
+                    if (nextRadius * nextRadius >
+                        nearest.top().distanceSq) {
+                        break;
                     }
                 }
             }
@@ -363,12 +420,18 @@ public:
                 requests.push_back({ideal, dx * dx + dy * dy});
             }
         }
+        result.desiredTiles = idealTiles;
         // 临时失败只对当前 desired 集有意义。离开视口后及时丢弃树侧
         // deadline，避免按需渲染被不可见瓦片的 retry Pumped 令牌按住；
         // 获取缓存仍保留有界失败账本，返回该视口时会继续遵守原退避。
         for (auto it = retryNotBefore_.begin(); it != retryNotBefore_.end();) {
             it = desiredKeys.count(it->first) ? std::next(it)
                                                : retryNotBefore_.erase(it);
+        }
+        // 终止失败也只约束当前连续视野。离开工作集后释放树侧账本，
+        // 重新进入时允许获取缓存/版本探测重新建立请求，而不是本进程永久空洞。
+        for (auto it = failed_.begin(); it != failed_.end();) {
+            it = desiredKeys.count(*it) ? std::next(it) : failed_.erase(it);
         }
         // 祖先可能被多个理想瓦共同选中 → 去重
         std::sort(emitted.begin(), emitted.end(),
@@ -379,6 +442,28 @@ public:
                   });
         emitted.erase(std::unique(emitted.begin(), emitted.end()),
                       emitted.end());
+
+        if (options_.refinement == RefinementPolicy::GeometryReplace) {
+            // `emitted` 是逐理想瓦回退的并集：部分细瓦到达时可能同时含有
+            // 父瓦和后代。连续几何没有逐瓦 stencil，二者同框会真实重叠。
+            // 集合已按 zoom 从粗到细排序；只要任一已发射祖先存在，就让它
+            // 独占该子树，直到所有理想格都有细瓦、树不再发射祖先为止。
+            const std::unordered_set<TileKey> emittedSet(emitted.begin(),
+                                                         emitted.end());
+            emitted.erase(
+                std::remove_if(emitted.begin(), emitted.end(),
+                               [&](const TileKey& key) {
+                                   TileKey ancestor = key;
+                                   while (ancestor.z > options_.minZoom) {
+                                       ancestor = ancestor.parent();
+                                       if (emittedSet.count(ancestor)) {
+                                           return true;
+                                       }
+                                   }
+                                   return false;
+                               }),
+                emitted.end());
+        }
 
         // 中心优先请求
         std::sort(requests.begin(), requests.end(),
@@ -392,6 +477,9 @@ public:
                       return a.key.x < b.key.x;
                   });
         result.requestTiles.reserve(requests.size());
+        for (auto it = pending_.begin(); it != pending_.end();) {
+            it = desiredKeys.count(*it) ? std::next(it) : pending_.erase(it);
+        }
         const size_t requestBudget = options_.maxPendingRequests > 0
             ? (pending_.size() >=
                        static_cast<size_t>(options_.maxPendingRequests)

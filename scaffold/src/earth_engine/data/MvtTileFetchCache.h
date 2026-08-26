@@ -101,6 +101,9 @@ public:
         int failureCount = 0;
     };
     FailureInfo failureInfo(const TileKey& key) const;
+    /// 用户离开失败瓦片所在视野后释放终止账本；再次进入时允许重新建立
+    /// 有界重试。成功缓存不受影响。
+    void clearFailure(const TileKey& key);
 
 private:
     struct State {
@@ -613,6 +616,14 @@ MvtTileFetchCacheT<Payload, DecodeTraits>::failureInfo(const TileKey& key) const
         f.failureCount <= TileRetryBackoffPolicy::kMaxSourceRetries,
         f.retryNotBeforeMs,
         f.failureCount};
+}
+
+template <typename Payload, typename DecodeTraits>
+void MvtTileFetchCacheT<Payload, DecodeTraits>::clearFailure(
+    const TileKey& key) {
+    const uint64_t dk = detail::packDataKey(key.z, key.x, key.y);
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    state_->failures.erase(dk);
 }
 
 /// MVT 解码特质:MvtTile 载荷 + decodeMvtTile 字节解码 + 近似字节统计。

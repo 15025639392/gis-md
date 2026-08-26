@@ -2,6 +2,7 @@
 
 #include "../../renderer/RenderDevice.h"
 #include "GpuRegionTimerGles.h"
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -388,9 +389,21 @@ public:
     /// 获取 uniform location（缓存）
     int uniformLocation(const std::string& name);
 
+    /// 通用 uniform 的精确值缓存。OpenGL uniform 是 program 持久状态；同一
+    /// location 的分量数和 float 位模式均未变化时，可跳过驱动调用。返回 true
+    /// 表示调用方需要实际 glUniform，且缓存已更新为本次值。
+    bool genericUniformNeedsUpload(int location,
+                                   const float* values,
+                                   size_t count);
+    void clearGenericUniformCache() { genericUniformCache_.clear(); }
+
     /// GltfUniformBlock 描述表对应的 location 数组（与 gltfUniformTable()
     /// 逐条对齐；shader 未声明的名字为 -1）。首次调用时解析一次。
     const std::vector<int>& gltfBlockLocations();
+
+    /// VectorUniformBlock 描述表对应的 location 数组。FeatureRenderLayer
+    /// 的热路径首次使用该 program 时解析一次，之后逐 draw 零字符串查询。
+    const std::vector<int>& vectorBlockLocations();
 
     /// sampler uniform 是 program 持久状态，只需在首个 draw 设置一次。
     bool samplersConfigured() const { return samplersConfigured_; }
@@ -411,15 +424,37 @@ public:
     }
     bool gltfBlockCacheValid() const { return gltfBlockCacheValid_; }
     void markGltfBlockCacheValid() { gltfBlockCacheValid_ = true; }
+    void invalidateGltfBlockCache() { gltfBlockCacheValid_ = false; }
+
+    float* vectorBlockCache(size_t floatCount) {
+        if (vectorBlockCache_.size() != floatCount) {
+            vectorBlockCache_.assign(floatCount, 0.0f);
+            vectorBlockCacheValid_ = false;
+        }
+        return vectorBlockCache_.data();
+    }
+    bool vectorBlockCacheValid() const { return vectorBlockCacheValid_; }
+    void markVectorBlockCacheValid() { vectorBlockCacheValid_ = true; }
+    void invalidateVectorBlockCache() { vectorBlockCacheValid_ = false; }
 
 private:
+    struct GenericUniformCacheEntry {
+        size_t count = 0;
+        std::array<float, 16> values{};
+    };
+
     unsigned int id_;
     std::unordered_map<std::string, int> uniformCache_;
+    std::unordered_map<int, GenericUniformCacheEntry> genericUniformCache_;
     std::vector<int> gltfBlockLocations_;
     bool gltfBlockLocationsResolved_ = false;
+    std::vector<int> vectorBlockLocations_;
+    bool vectorBlockLocationsResolved_ = false;
     bool samplersConfigured_ = false;
     std::vector<float> gltfBlockCache_;
     bool gltfBlockCacheValid_ = false;
+    std::vector<float> vectorBlockCache_;
+    bool vectorBlockCacheValid_ = false;
 };
 
 } // namespace earth_engine

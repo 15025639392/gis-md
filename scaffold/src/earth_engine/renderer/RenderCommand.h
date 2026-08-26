@@ -10,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include "GltfUniformBlock.h"
+#include "VectorUniformBlock.h"
 #include "RenderDevice.h"  // for Texture/Buffer/ShaderProgram/Framebuffer forward decls
 
 namespace earth_engine {
@@ -216,9 +217,14 @@ struct RenderCommand {
 
     // Uniform 数据（name → float 数组）。
     // 仅供冷路径命令使用（SkyBackground / AtmosphereBackground /
-    // VectorOverlay 等，每帧个位数条目）。glTF/terrain 热路径命令必须走
-    // 下方 gltfUniforms 定长块并保持本 map 为空——空 map 拷贝零分配。
+    // VectorOverlay 等，每帧个位数条目）。glTF/terrain 和 FeatureRenderLayer
+    // 热路径命令必须走下方定长块并保持本 map 为空——空 map 拷贝零分配。
     std::unordered_map<std::string, std::vector<float>> uniforms;
+
+    // FeatureRenderLayer 面/线/建筑/点/标注命令的定长载荷。每条命令的
+    // shader 只声明自己需要的字段；后端按声明消费，其余默认字段无成本。
+    bool hasVectorUniforms = false;
+    VectorUniformBlock vectorUniforms;
 
     // glTF / terrain 命令的定长 uniform 块（热路径，见 GltfUniformBlock.h）。
     // hasGltfUniforms=true 时后端整块消费：Metal 一次 setBytes 绑

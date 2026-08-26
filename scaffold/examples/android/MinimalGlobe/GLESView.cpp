@@ -72,6 +72,16 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+/// Android 测量台布尔属性。未设置时保持编译期默认；显式 0/1 覆盖，其他值
+/// 视为未设置。所有开关只在进程启动建场时读取，A/B 前 force-stop 重启即可。
+static bool startupBoolProperty(const char* name, bool fallback) {
+    char prop[PROP_VALUE_MAX] = {0};
+    __system_property_get(name, prop);
+    if (prop[0] == '0' && prop[1] == '\0') return false;
+    if (prop[0] == '1' && prop[1] == '\0') return true;
+    return fallback;
+}
+
 // ============================================================
 // 阶段 3/4/5 真机验证钩子(数字键 7/8/9)
 // ============================================================
@@ -460,14 +470,11 @@ static void amapFetchTile(const TileKey& key, int requestType,
     std::string resolvedVersion;
     {
         std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
-        if (gAmapFetch.versionResolved) {
-            if (gAmapFetch.version.empty()) {
-                cb(0, {});
-                return;
-            }
+        if (gAmapFetch.versionResolved && !gAmapFetch.version.empty()) {
             resolved = true;
             resolvedVersion = gAmapFetch.version;
         } else {
+            gAmapFetch.versionResolved = false;
             gAmapFetch.versionWaiters.push_back(
                 [cb, fetchManifest](bool ok) {
                     if (!ok) {
@@ -487,7 +494,7 @@ static void amapFetchTile(const TileKey& key, int requestType,
             }
         }
     }
-    if (resolved) {
+    if (resolved && !resolvedVersion.empty()) {
         fetchManifest(resolvedVersion);  // 锁外调用,避免自死锁
         return;
     }
@@ -514,7 +521,9 @@ static void amapFetchTile(const TileKey& key, int requestType,
             {
                 std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
                 gAmapFetch.version = version;
-                gAmapFetch.versionResolved = true;
+                // 探测失败不是版本“解析为空”的终态。保持 unresolved，
+                // 后续请求可重新探测，避免一次瞬时网络错误毒死整个进程。
+                gAmapFetch.versionResolved = !version.empty();
                 gAmapFetch.versionProbing = false;
                 waiters.swap(gAmapFetch.versionWaiters);
             }
@@ -711,6 +720,9 @@ static bool createEngine() {
 
     gEngineReady = gEngine->isReady();
     if (gEngineReady) {
+        const bool amapVectorEnabled =
+            minimal_globe_demo::kEnableAmapVectorDemo &&
+            startupBoolProperty("debug.ee.amapvector", true);
         LOGI("Engine initialized successfully, camera pos: %.1f,%.1f,%.1f",
              gEngine->camera().position().x(),
              gEngine->camera().position().y(),
@@ -831,7 +843,7 @@ static bool createEngine() {
         }
 
         // ---- 高德 type2 面 V1 drape:必须在 installScene 之前注册 overlay。
-        if (minimal_globe_demo::kEnableAmapVectorDemo) {
+        if (amapVectorEnabled) {
             if (!gMvtWorkerPool) {
                 gMvtWorkerPool = std::make_shared<ThreadPool>(2);
             }
@@ -893,8 +905,17 @@ static bool createEngine() {
                  minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);
         }
 
-        gSdkFacade->installScene(
-            minimal_globe_demo::makeDefaultDemoSceneConfig(&sourceOverrides));
+        EarthSceneConfig sceneConfig =
+            minimal_globe_demo::makeDefaultDemoSceneConfig(&sourceOverrides);
+        sceneConfig.aerialFog = startupBoolProperty(
+            "debug.ee.aerialfog", sceneConfig.aerialFog);
+        sceneConfig.gpuPassTiming = startupBoolProperty(
+            "debug.ee.gputiming", sceneConfig.gpuPassTiming);
+        LOGI("RuntimeAB amapVector=%d aerialFog=%d gpuTiming=%d",
+             amapVectorEnabled ? 1 : 0,
+             sceneConfig.aerialFog ? 1 : 0,
+             sceneConfig.gpuPassTiming ? 1 : 0);
+        gSdkFacade->installScene(sceneConfig);
 
         // ---- P4 MVT 只读底图:先于编辑演示层挂(先挂先画,垫底)。----
         if (minimal_globe_demo::kEnableMvtBasemap) {
@@ -1084,6 +1105,10 @@ static bool createEngine() {
             }
             mvtOpts.tree.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
             mvtOpts.tree.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
+            if (minimal_globe_demo::kEnableEPlanRoadRibbon) {
+                mvtOpts.tree.refinement =
+                    VectorTileTree::RefinementPolicy::GeometryReplace;
+            }
             // 获取层单一化(刀A.5):与 drape/场共享同一 MvtTileFetchCache
             // —— 同一块数据瓦三消费方网络恰一次、解码恰一次、内存恰一份。
             if (!gMvtTileCache) {
@@ -1115,8 +1140,8 @@ static bool createEngine() {
                     features);
             };
             sinks.commit = [layerPtr](const TileKey& key,
-                                      FeatureTileMesh&& mesh) {
-                layerPtr->commitTileMesh(key, std::move(mesh));
+                                      FeatureTileMesh& mesh) {
+                return layerPtr->commitTileMesh(key, mesh);
             };
             sinks.drop = [layerPtr](const TileKey& key) {
                 layerPtr->dropTileMesh(key);
@@ -1135,7 +1160,7 @@ static bool createEngine() {
         }
 
         // ---- 高德矢量:type2 面 VectorFill(z10)垫底,再上路网/建筑/POI。----
-        if (minimal_globe_demo::kEnableAmapVectorDemo) {
+        if (amapVectorEnabled) {
             FeatureRenderStyle as;
             // amap.com 复刻:平面渲染(无地形耦合)。Absolute + 抬升,
             // 不贴地采样、不细分(用瓦片原始密度)、无地形代次重钳——
@@ -1379,6 +1404,8 @@ static bool createEngine() {
             rOpts.tree.maxZoom = 10;
             rOpts.tree.scheme = TileScheme::createAmapGeographic();
             rOpts.tree.maxTilesPerView = 256;
+            rOpts.tree.refinement =
+                VectorTileTree::RefinementPolicy::GeometryReplace;
             AmapRegionsVectorSource::Sinks rSinks;
             FeatureRenderLayer* rLayer = gAmapRegionsLayer;
             rSinks.tessellate =
@@ -1390,8 +1417,8 @@ static bool createEngine() {
                         features);
                 };
             rSinks.commit = [rLayer](const TileKey& key,
-                                     FeatureTileMesh&& mesh) {
-                rLayer->commitTileMesh(key, std::move(mesh));
+                                     FeatureTileMesh& mesh) {
+                return rLayer->commitTileMesh(key, mesh);
             };
             rSinks.drop = [rLayer](const TileKey& key) {
                 rLayer->dropTileMesh(key);
@@ -1450,6 +1477,8 @@ static bool createEngine() {
             w12Opts.tree.maxZoom = 12;
             w12Opts.tree.scheme = TileScheme::createAmapGeographic();
             w12Opts.tree.maxTilesPerView = 256;
+            w12Opts.tree.refinement =
+                VectorTileTree::RefinementPolicy::GeometryReplace;
             AmapRegionsVectorSource::Sinks w12Sinks;
             FeatureRenderLayer* w12Layer = gAmapWater12Layer;
             w12Sinks.tessellate =
@@ -1461,8 +1490,8 @@ static bool createEngine() {
                         features);
                 };
             w12Sinks.commit = [w12Layer](const TileKey& key,
-                                         FeatureTileMesh&& mesh) {
-                w12Layer->commitTileMesh(key, std::move(mesh));
+                                         FeatureTileMesh& mesh) {
+                return w12Layer->commitTileMesh(key, mesh);
             };
             w12Sinks.drop = [w12Layer](const TileKey& key) {
                 w12Layer->dropTileMesh(key);
@@ -1503,6 +1532,8 @@ static bool createEngine() {
             // —— 而 z13 组是空瓦(81B),主源将永远无内容。抬高闸让 z14
             // 进入;瓦数上界仍由相机视口矩形天然限制(见 horizonViewRect)。
             mOpts.tree.maxTilesPerView = 256;
+            mOpts.tree.refinement =
+                VectorTileTree::RefinementPolicy::GeometryReplace;
             AmapMainVectorSource::Sinks mSinks;
             FeatureRenderLayer* mLayer = gAmapMainLayer;
             mSinks.tessellate =
@@ -1514,8 +1545,8 @@ static bool createEngine() {
                         features);
                 };
             mSinks.commit = [mLayer](const TileKey& key,
-                                     FeatureTileMesh&& mesh) {
-                mLayer->commitTileMesh(key, std::move(mesh));
+                                     FeatureTileMesh& mesh) {
+                return mLayer->commitTileMesh(key, mesh);
             };
             mSinks.drop = [mLayer](const TileKey& key) {
                 mLayer->dropTileMesh(key);
@@ -1571,8 +1602,8 @@ static bool createEngine() {
                         features);
                 };
             pSinks.commit = [pLayer](const TileKey& key,
-                                     FeatureTileMesh&& mesh) {
-                pLayer->commitTileMesh(key, std::move(mesh));
+                                     FeatureTileMesh& mesh) {
+                return pLayer->commitTileMesh(key, mesh);
             };
             pSinks.drop = [pLayer](const TileKey& key) {
                 pLayer->dropTileMesh(key);
@@ -2173,13 +2204,10 @@ static void renderFrame() {
                  gFrameMvtMs, us.ingestMs, us.treeMs, us.dispatchMs,
                  us.commitMs, us.commits, us.drops, us.tessellateDispatched);
         }
-        // MVT 源归应用层所有,引擎的收敛判据看不见它 —— 它自己在途时必须
-        // 主动置脏位,否则瓦片正在解码/镶嵌途中被停帧,产物落地后没人消费,
-        // 底图永久停在半成品。tessellating 的那批也算(worker 还没回来)。
-        if (gMvtSource->tree().pendingCount() > 0 ||
-            gMvtSource->hasTessellationInFlight()) {
-            gEngine->requestRender("mvtPending");
-        }
+        // fetch/decode 与 worker 镶嵌各自持有 WorkLedger Landing 票，完成
+        // 入箱后释放并唤醒渲染循环；ready commit/retry 则持 Pumped 票。
+        // 这里不能再按 pending 每帧 requestRender，否则等待网络也会持续
+        // 满帧率渲染，直接抹掉 Landing/Pumped 分治的省帧与交互收益。
         // V27 标注收敛的续帧申报在引擎层(FeatureRenderLayer 的 labelConverge
         // Pumped 票 + Scene::hasConvergingWork ④),app 侧无需置脏。
         static uint64_t mvtLogCounter = 0;
@@ -2219,7 +2247,6 @@ static void renderFrame() {
         const Rectangle viewRect =
             MvtVectorSource::horizonViewRectangle(camCarto, minRadius);
         const double camHeight = std::max(1.0, camCarto.height());
-        bool amapPending = false;
         if (gAmapRegionsSource) {
             // z10 粗源 LOD 近景让位(与 regions 层 maxZoom=11.5 同口径):
             // zoom > 11.5 时不更新粗源树,不再拉取/镶嵌 z10 面,避免与
@@ -2229,9 +2256,8 @@ static void renderFrame() {
                                std::log2(4.0e7 / camHeight)));
             if (regionsZoom <= 11.5) {
                 gAmapRegionsSource->update(viewRect, camHeight);
-                amapPending = amapPending ||
-                              gAmapRegionsSource->tree().pendingCount() > 0 ||
-                              gAmapRegionsSource->hasTessellationInFlight();
+            } else {
+                gAmapRegionsSource->suspend();
             }
         }
         // 常显 z12 粗水层:与 regions 层不同,近景也拉取(它垫在细块下
@@ -2239,24 +2265,12 @@ static void renderFrame() {
         // 相机 zoom 门控。
         if (gAmapWater12Source) {
             gAmapWater12Source->update(viewRect, camHeight);
-            amapPending = amapPending ||
-                          gAmapWater12Source->tree().pendingCount() > 0 ||
-                          gAmapWater12Source->hasTessellationInFlight();
         }
         if (gAmapMainSource) {
             gAmapMainSource->update(viewRect, camHeight);
-            amapPending = amapPending ||
-                          gAmapMainSource->tree().pendingCount() > 0 ||
-                          gAmapMainSource->hasTessellationInFlight();
         }
         if (gAmapPoiSource) {
             gAmapPoiSource->update(viewRect, camHeight);
-            amapPending = amapPending ||
-                          gAmapPoiSource->tree().pendingCount() > 0 ||
-                          gAmapPoiSource->hasTessellationInFlight();
-        }
-        if (amapPending) {
-            gEngine->requestRender("amapPending");
         }
         // 问题3验收口径：fetch 是真实网络请求数，coalesced 是跨 source
         // 合并掉的在途请求，hit 是压缩字节驻留命中。type1/type2 分开统计，
@@ -2280,6 +2294,24 @@ static void renderFrame() {
                  static_cast<unsigned long long>(type2.coalesced),
                  static_cast<unsigned long long>(type2.hits),
                  type2.residentTiles, type2.residentBytes / 1024);
+            auto logSource = [](const char* name, const auto* source) {
+                if (!source) return;
+                const auto& s = source->lastUpdateStats();
+                LOGI("AmapSource %s z=%d desired=%lld scanned=%zu render=%zu "
+                     "request=%zu pending=%zu tess=%zu ready=%zu active=%zu "
+                     "pairs=%zu tree=%.2f commit=%.2f",
+                     name, s.selectedZoom,
+                     static_cast<long long>(s.desiredTileCount),
+                     s.scannedTileCount, s.renderTileCount,
+                     s.requestTileCount, s.pendingTileCount,
+                     s.tessellatingTileCount, s.readyTileCount,
+                     s.activeTileCount, s.activeAncestorPairs, s.treeMs,
+                     s.commitMs);
+            };
+            logSource("regions", gAmapRegionsSource.get());
+            logSource("water12", gAmapWater12Source.get());
+            logSource("main", gAmapMainSource.get());
+            logSource("poi", gAmapPoiSource.get());
         }
     }
     // 阶段 4:假载体在**引擎 update 之前**推进,这样本帧 tether 读到的就是新
@@ -2374,7 +2406,8 @@ static void renderFrame() {
                     ? std::string()
                     : lastLabelDumpProp;
             for (FeatureRenderLayer* layer :
-                 {gMvtBasemapLayer, gDemoFeatureLayer}) {
+                 {gMvtBasemapLayer, gAmapRegionsLayer, gAmapWater12Layer,
+                  gAmapMainLayer, gAmapPoiLayer, gDemoFeatureLayer}) {
                 if (!layer) continue;
                 // 逐行打(logcat 单条 ~4KB 截断,整段一条会被吞尾)。
                 std::istringstream ss(layer->dumpLabelLifecycle(filter));
@@ -2840,13 +2873,9 @@ private:
         }
         drainTasks();   // 输入先于渲染，保证事件同帧生效
         renderFrame();
-        // 帧级按需渲染:引擎说不用再画就不排下一次 vsync 回调,线程回到
-        // ALooper_pollOnce(-1) 真正睡下去。再次醒来只可能由 post()(输入/
-        // 任务,内含 ALooper_wake)或 setPaused(false) 触发 —— 所以任何异步
-        // 产物落地都必须走 post() 或先置引擎脏位,否则就是永久冻屏。
-        if (!gEngine || gEngine->needsFrame()) {
-            postFrameIfNeeded();
-        }
+        // needsFrame() 不是纯查询：会 exchange 事件脏位、消费 landed pulse
+        // 并推进 settle 计数。统一留给 ALooper 返回后的 threadMain 调一次，
+        // 否则每个逻辑帧会重复消费状态并重复执行 WorkLedger 审计。
     }
 
     void drainTasks() {
@@ -2898,9 +2927,10 @@ private:
             drainTasks();
             // gating 开启后线程会停在上面那句 pollOnce 上,帧回调不再自续。
             // 任务(输入事件等)只把脏位置上,真正把循环重新拉起来的是这里 ——
-            // 漏了它,输入进得来但画面不动。
-            if (gEngine && gEngine->frameGatingEnabled() &&
-                gEngine->needsFrame()) {
+            // 漏了它,输入进得来但画面不动。这也是每轮 Looper 唯一一次
+            // needsFrame() 判定，确保事件型状态恰消费一次。
+            if ((!gEngine || !gEngine->frameGatingEnabled() ||
+                 gEngine->needsFrame())) {
                 postFrameIfNeeded();
             }
         }

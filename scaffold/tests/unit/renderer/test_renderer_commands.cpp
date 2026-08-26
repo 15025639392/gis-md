@@ -116,6 +116,24 @@ TEST(RendererCommandTest, GltfPrimitiveCommandHasCorrectDefaults) {
     EXPECT_FLOAT_EQ(0.0f, u.clipEnabled);
 }
 
+TEST(RendererCommandTest, MvpValidatorRejectsDualFixedUniformBlocks) {
+    RenderCommand cmd;
+    cmd.kind = RenderCommandKind::GltfPrimitive;
+    cmd.owner = "malformed_dual_uniform_command";
+    cmd.pass = "color";
+    cmd.depthTest = true;
+    cmd.depthWrite = true;
+    cmd.cullFace = true;
+    cmd.generation = 1;
+    cmd.hasGltfUniforms = true;
+    cmd.hasVectorUniforms = true;
+
+    const auto error = validateMvpRenderCommands({cmd});
+    ASSERT_TRUE(error.has_value());
+    EXPECT_EQ(cmd.owner, error->owner);
+    EXPECT_NE(std::string::npos, error->message.find("simultaneously"));
+}
+
 TEST(RendererCommandTest, GltfGlesVertexShadersSetExplicitPointSize) {
     const std::string vertex = renderer_testing::gltfVertexGLSL();
     const std::string instancedVertex =
@@ -839,6 +857,74 @@ TEST(RendererCommandTest, MvpSortUsesVectorPaintOrderAcrossSameMvpPass) {
     EXPECT_EQ("land", commands[1].owner);
     EXPECT_EQ("water", commands[2].owner);
     EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
+}
+
+TEST(RendererCommandTest, MvpSortKeepsStableTiesAndHeavyPayloads) {
+    auto makeFill = [](const char* owner) {
+        RenderCommand cmd;
+        cmd.kind = RenderCommandKind::VectorFill;
+        cmd.owner = owner;
+        cmd.pass = "color";
+        cmd.vectorPaintOrder = 30;
+        cmd.depthTest = true;
+        cmd.depthWrite = false;
+        cmd.blend = true;
+        cmd.cullFace = false;
+        cmd.textures.push_back(nullptr);
+        cmd.uniforms["u_modelViewProjection"] =
+            std::vector<float>(16, owner[0] == 'a' ? 1.0f : 2.0f);
+        return cmd;
+    };
+    RenderCommand late;
+    late.kind = RenderCommandKind::VectorLabel;
+    late.owner = "label";
+    late.pass = "color";
+    late.depthTest = false;
+    late.depthWrite = false;
+    late.blend = true;
+    late.cullFace = false;
+
+    RenderCommandList commands{late, makeFill("alpha"), makeFill("beta")};
+    sortMvpRenderCommands(commands);
+
+    ASSERT_EQ(3u, commands.size());
+    EXPECT_EQ("alpha", commands[0].owner);
+    EXPECT_EQ("beta", commands[1].owner);
+    EXPECT_EQ("label", commands[2].owner);
+    ASSERT_EQ(16u, commands[0].uniforms.at("u_modelViewProjection").size());
+    EXPECT_EQ(1.0f,
+              commands[0].uniforms.at("u_modelViewProjection").front());
+    EXPECT_EQ(2.0f,
+              commands[1].uniforms.at("u_modelViewProjection").front());
+    EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
+}
+
+TEST(RendererCommandTest, MvpSortKeepsNanDepthTiesStable) {
+    auto makeBlend = [](const char* owner, double depth) {
+        RenderCommand cmd;
+        cmd.kind = RenderCommandKind::GltfPrimitive;
+        cmd.owner = owner;
+        cmd.pass = "color";
+        cmd.depthTest = true;
+        cmd.depthWrite = false;
+        cmd.cullFace = true;
+        cmd.blend = true;
+        cmd.generation = 1;
+        cmd.hasGltfUniforms = true;
+        cmd.gltfUniforms.alphaMode = 2.0f;
+        cmd.hasTranslucentSortDepth = true;
+        cmd.translucentSortDepth = depth;
+        return cmd;
+    };
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    RenderCommandList commands{makeBlend("nan-first", nan),
+                               makeBlend("finite", 10.0),
+                               makeBlend("nan-last", nan)};
+    sortMvpRenderCommands(commands);
+    ASSERT_EQ(3u, commands.size());
+    EXPECT_EQ("nan-first", commands[0].owner);
+    EXPECT_EQ("finite", commands[1].owner);
+    EXPECT_EQ("nan-last", commands[2].owner);
 }
 
 TEST(RendererCommandTest, MvpSortInterleavesStencilWithVectorPaintOrder) {

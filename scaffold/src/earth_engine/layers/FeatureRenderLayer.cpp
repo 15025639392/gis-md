@@ -39,6 +39,15 @@ constexpr int kLineVertexFloats = 12;
 /// 点/图标符号顶点的 GPU 打包(36B,对齐 GLES VectorPoint36 布局:
 /// anchor(3f)+offsetUnit(2f)+uv(2f)+color(RGBA8 占 1f)+shape(1f))。
 constexpr int kPointVertexFloats = 9;
+constexpr size_t kMaxSymbolsPerTile = 128;
+
+double labelViewZoom(const Ellipsoid& ellipsoid, const Camera& camera) {
+    const double camHeight =
+        ellipsoid.cartesianToCartographic(camera.position()).height();
+    return std::min(
+        24.0,
+        std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
+}
 
 /// RGBA [0,1] → RGBA8 打包(小端布局 R 在低字节)。
 uint32_t packColorU32(const std::array<float, 4>& c) {
@@ -311,6 +320,15 @@ FeatureRenderLayer::FeatureRenderLayer(std::string layerId,
 
 FeatureRenderLayer::~FeatureRenderLayer() = default;
 
+void FeatureRenderLayer::setVisible(bool v) {
+    if (visible_ == v) return;
+    visible_ = v;
+    if (!visible_) {
+        labelWorkActiveForCurrentView_ = false;
+        labelWorkTicket_.release();
+    }
+}
+
 void FeatureRenderLayer::setStyle(const FeatureRenderStyle& s) {
     style_ = s;
     // P6b 表达式语义校验:颜色 = 数据驱动(镶嵌期无 zoom 上下文,引用
@@ -342,6 +360,10 @@ void FeatureRenderLayer::setStyle(const FeatureRenderStyle& s) {
     keys.reserve(buckets_.size());
     for (const auto& entry : buckets_) keys.push_back(entry.first);
     for (BucketKey key : keys) rebuildBucket(key);
+    for (auto& entry : tileBuckets_) {
+        entry.second.symbolViewZoomBucket = -1;
+    }
+    symbolBucketsAwaitingRebuild_ = !tileBuckets_.empty();
     previewDirty_ = true;
 }
 
@@ -1746,10 +1768,11 @@ void FeatureRenderLayer::appendTileSymbol(const TessellationContext& ctx,
     mesh.symbols.push_back(std::move(sym));
 }
 
-void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) {
+TileMeshCommitResult FeatureRenderLayer::commitTileMesh(
+    const TileKey& key, TileMeshCpu& mesh) {
     if (mesh.empty() || !mesh.hasOrigin) {
         dropTileMesh(key);
-        return;
+        return TileMeshCommitResult::EmptyTerminal;
     }
     // P6 分段:commit 实测 ~20ms/瓦(渲染线程),4 块闸 → 80ms 尖峰。
     // 切成 符号构建 / GPU 上传 / 标签烘焙 三段定位。
@@ -1758,26 +1781,13 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
     const size_t glyphsBefore =
         glyphAtlas_ ? glyphAtlas_->residentGlyphCount() : 0;
     // 准入定型:实例表 → 符号 quad(图集解析必须渲染线程;一瓦一次非逐帧)。
-    // rank 升序截断是 placement 预算刀之前的容量闸:瓦片密度再高,上屏
-    // 片元也被钉在「可见瓦数 × 上限」内。截断丢的是数据侧最不重要的尾部。
+    // 点/标签必须按当前 view zoom 再做 rank 容量闸；commit 不知道相机
+    // zoom，任何此处的破坏性截断都会永久删掉其它档位的数据。这里只登记
+    // 完整 CPU source，buildRenderCommands 在本帧按当前窗口物化 top-N。
     std::vector<float> pointVerts;
     std::vector<uint32_t> pointIndices;
     std::vector<PaintRange> pointRanges;
     std::vector<BucketGpu::TileLabelSource> labelSources;
-    if (!mesh.symbols.empty()) {
-        constexpr size_t kMaxSymbolsPerTile = 128;
-        if (mesh.symbols.size() > kMaxSymbolsPerTile) {
-            std::nth_element(mesh.symbols.begin(),
-                             mesh.symbols.begin() + kMaxSymbolsPerTile,
-                             mesh.symbols.end(),
-                             [](const TileSymbolCpu& a, const TileSymbolCpu& b) {
-                                 return a.rank < b.rank;
-                             });
-            mesh.symbols.resize(kMaxSymbolsPerTile);
-        }
-        buildTileSymbolGpu(mesh.symbols, mesh.origin, key.z, pointVerts,
-                           pointIndices, pointRanges, labelSources);
-    }
 
     // 符号刀A/B 诊断:worker→commit 链路的落点计数(排查「数据有点但屏上
     // 无符号」时,第一眼看这行有没有出现、syms/labelSrc 是否为 0)。
@@ -1799,24 +1809,28 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
     // lineClampSource;store 路径在镶嵌期已钳真高,无源可空转)。
     clampTileLineHeights(mesh);
     static const std::vector<uint32_t> kNoIndices;
-    if (!uploadBucketGpu(mesh.origin, mesh.fillVerts, mesh.fillIndices,
-                         mesh.fillRanges, mesh.lineVerts, mesh.lineIndices,
-                         mesh.lineRanges, pointVerts,
-                         pointIndices, pointRanges,
-                         std::vector<float>(), kNoIndices,
-                         std::vector<PaintRange>(),
-                         std::vector<LabelEntry>(), mesh.fillVolumeGroups,
-                         mesh.lineVolumeGroups, mesh.extrudeVerts,
-                         mesh.extrudeIndices, mesh.extrudeRanges, gpu)) {
-        return;
+    const bool gpuUploaded = uploadBucketGpu(
+        mesh.origin, mesh.fillVerts, mesh.fillIndices, mesh.fillRanges,
+        mesh.lineVerts, mesh.lineIndices, mesh.lineRanges, pointVerts,
+        pointIndices, pointRanges, std::vector<float>(), kNoIndices,
+        std::vector<PaintRange>(), std::vector<LabelEntry>(),
+        mesh.fillVolumeGroups, mesh.lineVolumeGroups, mesh.extrudeVerts,
+        mesh.extrudeIndices, mesh.extrudeRanges, gpu);
+    const bool hasNonSymbolGeometry =
+        !mesh.fillIndices.empty() || !mesh.lineIndices.empty() ||
+        !mesh.fillVolumeGroups.empty() || !mesh.lineVolumeGroups.empty() ||
+        !mesh.extrudeIndices.empty();
+    if (!gpuUploaded && (mesh.symbols.empty() || hasNonSymbolGeometry)) {
+        return TileMeshCommitResult::RetryableFailure;
     }
-    const auto tBake = PClock::now();
+    const auto tStore = PClock::now();
     gpu.lineClampSource = std::move(mesh.lineClampSource);
     gpu.tileLabelSources = std::move(labelSources);
-    gpu.tileSymbolSources = std::move(mesh.symbols);  // 重钳用(见字段注释)
+    gpu.tileSymbolSources = std::move(mesh.symbols);
+    gpu.sourceTileZoom = key.z;
+    gpu.symbolViewZoomBucket = -1;
     BucketGpu& stored = tileBuckets_[key];
     stored = std::move(gpu);
-    bakeTileBucketLabels(stored);
     const auto tEnd = PClock::now();
     auto pms = [](PClock::time_point a, PClock::time_point b) {
         return std::chrono::duration<double, std::milli>(b - a).count();
@@ -1825,16 +1839,17 @@ void FeatureRenderLayer::commitTileMesh(const TileKey& key, TileMeshCpu&& mesh) 
     if (totalMs >= 5.0) {
         platformLog(LogLevel::Info, "TileCommitSlow",
                     "z=%d x=%d y=%d %.1fms = sym %.2f + upload %.2f "
-                    "+ bake %.2f | verts f=%zu l=%zu p=%zu labels=%d "
+                    "+ store %.2f | verts f=%zu l=%zu p=%zu labels=%d "
                     "newGlyphs=%zu",
                     key.z, key.x, key.y, totalMs, pms(tSym, tUpload),
-                    pms(tUpload, tBake), pms(tBake, tEnd),
+                    pms(tUpload, tStore), pms(tStore, tEnd),
                     stored.fillIndexCount ? mesh.fillVerts.size() : 0u,
                     mesh.lineVerts.size(), pointVerts.size(),
                     stored.labelIndexCount,
                     (glyphAtlas_ ? glyphAtlas_->residentGlyphCount() : 0) -
                         glyphsBefore);
     }
+    return TileMeshCommitResult::Committed;
 }
 
 void FeatureRenderLayer::buildTileSymbolGpu(
@@ -1910,53 +1925,124 @@ void FeatureRenderLayer::buildTileSymbolGpu(
     }
 }
 
-void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
-    if (gpu.tileSymbolSources.empty() || !renderDevice_) return;
+bool FeatureRenderLayer::rebuildTileBucketSymbolsForZoom(
+    BucketGpu& gpu, int viewZoomBucket, bool force) {
+    if (!renderDevice_) return false;
+
+    std::vector<size_t> selected;
+    selected.reserve(gpu.tileSymbolSources.size());
+    using SymbolWindow = std::pair<int, int>;
+    std::map<SymbolWindow, std::vector<size_t>> windows;
+    for (size_t i = 0; i < gpu.tileSymbolSources.size(); ++i) {
+        const TileSymbolCpu& symbol = gpu.tileSymbolSources[i];
+        if (viewZoomBucket >= symbol.minZoom &&
+            viewZoomBucket < symbol.maxZoom) {
+            windows[{symbol.minZoom, symbol.maxZoom}].push_back(i);
+        }
+    }
+    for (auto& [window, candidates] : windows) {
+        (void)window;
+        if (candidates.size() > kMaxSymbolsPerTile) {
+            auto lessImportantLast = [&](size_t a, size_t b) {
+                const int rankA = gpu.tileSymbolSources[a].rank;
+                const int rankB = gpu.tileSymbolSources[b].rank;
+                return rankA != rankB ? rankA < rankB : a < b;
+            };
+            std::nth_element(candidates.begin(),
+                             candidates.begin() + kMaxSymbolsPerTile,
+                             candidates.end(), lessImportantLast);
+            candidates.resize(kMaxSymbolsPerTile);
+        }
+        selected.insert(selected.end(), candidates.begin(), candidates.end());
+    }
+    std::sort(selected.begin(), selected.end());
+
+    uint64_t signature = 1469598103934665603ull;
+    for (size_t index : selected) {
+        signature ^= static_cast<uint64_t>(index + 1);
+        signature *= 1099511628211ull;
+    }
+    signature ^= static_cast<uint64_t>(selected.size());
+    if (!force && signature == gpu.symbolSelectionSignature) {
+        gpu.symbolViewZoomBucket = viewZoomBucket;
+        return true;
+    }
+
+    std::vector<TileSymbolCpu> active;
+    active.reserve(selected.size());
+    for (size_t index : selected) {
+        active.push_back(gpu.tileSymbolSources[index]);
+    }
     std::vector<float> pointVerts;
     std::vector<uint32_t> pointIndices;
     std::vector<PaintRange> pointRanges;
     std::vector<BucketGpu::TileLabelSource> labelSrc;
-    // tileZ 只喂 crossTileIdFor 的量化格;重钳时锚点未动,id 必然命中既有
-    // 条目(同名同位),传 0 会让它按最粗格匹配 —— 用标签源里的既有 id
-    // 更直接,故这里重建后逐条沿用旧 id(顺序与 commit 时一致)。
-    buildTileSymbolGpu(gpu.tileSymbolSources, gpu.origin, 0, pointVerts,
+    buildTileSymbolGpu(active, gpu.origin, gpu.sourceTileZoom, pointVerts,
                        pointIndices, pointRanges, labelSrc);
-    if (labelSrc.size() == gpu.tileLabelSources.size()) {
+    if (force && labelSrc.size() == gpu.tileLabelSources.size()) {
         for (size_t i = 0; i < labelSrc.size(); ++i) {
-            labelSrc[i].featureId = gpu.tileLabelSources[i].featureId;
+            if (labelSrc[i].name == gpu.tileLabelSources[i].name) {
+                labelSrc[i].featureId = gpu.tileLabelSources[i].featureId;
+            }
         }
     }
-    // 点几何:整块换新 buffer(失败保留旧的,决不留半张)
+
+    std::unique_ptr<Buffer> vb;
+    std::unique_ptr<Buffer> ib;
     if (!pointIndices.empty()) {
-        auto vb = makeBuffer(renderDevice_, pointVerts.data(),
-                             pointVerts.size() * sizeof(float),
-                             BufferDesc::Type::Vertex);
-        auto ib = makeBuffer(renderDevice_, pointIndices.data(),
-                             pointIndices.size() * sizeof(uint32_t),
-                             BufferDesc::Type::Index);
-        if (!vb || !ib) return;
-        gpu.pointVertexBuffer = std::move(vb);
-        gpu.pointIndexBuffer = std::move(ib);
-        gpu.pointIndexCount = static_cast<int>(pointIndices.size());
-        gpu.pointRanges.clear();
-        for (const PaintRange& range : pointRanges) {
-            gpu.pointRanges.push_back(BucketGpu::PaintRangeGpu{
-                range.paintOrder, static_cast<int>(range.indexOffset),
-                static_cast<int>(range.indexCount), range.minZoom,
-                range.maxZoom});
-        }
+        vb = makeBuffer(renderDevice_, pointVerts.data(),
+                        pointVerts.size() * sizeof(float),
+                        BufferDesc::Type::Vertex);
+        ib = makeBuffer(renderDevice_, pointIndices.data(),
+                        pointIndices.size() * sizeof(uint32_t),
+                        BufferDesc::Type::Index);
+        if (!vb || !ib) return false;
     }
-    // 标签:锚点变了,glyph quad 要按新 rel 重烘(bakeTileBucketLabels 以
-    // labelIndexCount>0 早退,故先清零)
+
+    const bool labelSetChanged =
+        signature != gpu.symbolSelectionSignature || force;
+    gpu.pointVertexBuffer = std::move(vb);
+    gpu.pointIndexBuffer = std::move(ib);
+    gpu.pointIndexCount = static_cast<int>(pointIndices.size());
+    gpu.pointRanges.clear();
+    for (const PaintRange& range : pointRanges) {
+        gpu.pointRanges.push_back(BucketGpu::PaintRangeGpu{
+            range.paintOrder, static_cast<int>(range.indexOffset),
+            static_cast<int>(range.indexCount), range.minZoom,
+            range.maxZoom});
+    }
     gpu.tileLabelSources = std::move(labelSrc);
+    if (labelSetChanged) {
+        invalidateTileBucketLabels(gpu);
+        labelsAwaitingPlacement_ = true;
+    }
+    gpu.symbolSelectionSignature = signature;
+    gpu.symbolViewZoomBucket = viewZoomBucket;
+    return true;
+}
+
+void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
+    if (gpu.tileSymbolSources.empty() || !renderDevice_ ||
+        gpu.symbolViewZoomBucket < 0) {
+        return;
+    }
+    // 只重建当前 active top-N；完整 source 保留，zoom 换档再按新窗口物化。
+    // force=true 即使选择集合不变也会重采地形高度并失效标签锚点。
+    (void)rebuildTileBucketSymbolsForZoom(
+        gpu, gpu.symbolViewZoomBucket, true);
+}
+
+void FeatureRenderLayer::invalidateTileBucketLabels(BucketGpu& gpu) {
     gpu.labelIndexCount = 0;
-    gpu.labelBakeSettled = false;  // V27:重钳重烘,清稳态标志
+    gpu.labelBakeSettled = false;
     gpu.labelVertexBuffer.reset();
     gpu.labelIndexBuffer.reset();
     gpu.labelRanges.clear();
     gpu.labelVertsCpu.clear();
     gpu.labelEntries.clear();
-    bakeTileBucketLabels(gpu);
+    gpu.labelRequiredGlyphs.clear();
+    gpu.labelRequiredGlyphsReady = false;
+    gpu.labelUploadFailures = 0;
 }
 
 // ============================================================
@@ -2200,42 +2286,75 @@ uint64_t FeatureRenderLayer::crossTileIdFor(
     return entries.back().id;
 }
 
-void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
+FeatureRenderLayer::TileLabelBakeResult
+FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu, double viewZoom) {
     if (gpu.labelBakeSettled || gpu.labelIndexCount > 0 ||
         gpu.tileLabelSources.empty()) {
-        return;
+        return TileLabelBakeResult::Settled;
     }
-    if (!glyphAtlas_ || !glyphAtlas_->ready() || !renderDevice_) return;
+    if (!glyphAtlas_ || !glyphAtlas_->ready() || !renderDevice_) {
+        return TileLabelBakeResult::Deferred;
+    }
     // P6:先按预算补齐本桶所需的新字形。补不齐 → 整桶推迟(本函数幂等,
     // 每帧的重试 drain 会再来)。**决不半烘**:半桶标签在屏上是缺字。
     {
-        std::vector<uint32_t> missing;
-        for (const BucketGpu::TileLabelSource& src : gpu.tileLabelSources) {
-            for (uint32_t cp : GlyphAtlas::decodeUtf8(src.name)) {
-                if (glyphAtlas_->hasGlyph(cp)) continue;
-                if (std::find(missing.begin(), missing.end(), cp) ==
-                    missing.end()) {
-                    missing.push_back(cp);
+        if (!gpu.labelRequiredGlyphsReady) {
+            std::unordered_set<uint32_t> seen;
+            seen.reserve(gpu.tileLabelSources.size() * 4);
+            gpu.labelRequiredGlyphs.clear();
+            for (const BucketGpu::TileLabelSource& src :
+                 gpu.tileLabelSources) {
+                if (viewZoom < static_cast<double>(src.minZoom) ||
+                    viewZoom >= static_cast<double>(src.maxZoom)) {
+                    continue;
+                }
+                for (uint32_t cp : GlyphAtlas::decodeUtf8(src.name)) {
+                    if (seen.insert(cp).second) {
+                        gpu.labelRequiredGlyphs.push_back(cp);
+                    }
                 }
             }
+            gpu.labelRequiredGlyphsReady = true;
         }
-        if (!missing.empty()) {
-            size_t did = 0;
-            for (uint32_t cp : missing) {
-                // 至少放行一个:否则复杂字形(成本 > 整帧预算)永远排不上。
-                if (did > 0 && glyphRasterBudgetMs_ <= 0.0) break;
-                const auto g0 = std::chrono::steady_clock::now();
-                glyphAtlas_->ensureGlyph(cp);  // 同步 SDF,实测 3-7ms
-                glyphRasterBudgetMs_ -=
-                    std::chrono::duration<double, std::milli>(
-                        std::chrono::steady_clock::now() - g0).count();
-                ++did;
+        bool deferred = false;
+        for (size_t i = 0; i < gpu.labelRequiredGlyphs.size();) {
+            const uint32_t cp = gpu.labelRequiredGlyphs[i];
+            const bool resident = glyphAtlas_->hasGlyph(cp);
+            if (resident) {
+                gpu.labelRequiredGlyphs[i] = gpu.labelRequiredGlyphs.back();
+                gpu.labelRequiredGlyphs.pop_back();
+                continue;
             }
-            if (did < missing.size()) return;  // 下帧接着补(本函数幂等)
+            const auto result = glyphAtlas_->ensureGlyphBudgeted(cp);
+            if (result == GlyphAtlas::BudgetedGlyphResult::Ready ||
+                result == GlyphAtlas::BudgetedGlyphResult::MissingTerminal) {
+                gpu.labelRequiredGlyphs[i] = gpu.labelRequiredGlyphs.back();
+                gpu.labelRequiredGlyphs.pop_back();
+                continue;
+            }
+            if (result == GlyphAtlas::BudgetedGlyphResult::Saturated) {
+                // 全局队列/预算已满，本桶剩余项本帧不可能启动；立即停，
+                // 并把状态传给外层，避免再调用其余 76 个桶。
+                return TileLabelBakeResult::AtlasSaturated;
+            }
+            if (result == GlyphAtlas::BudgetedGlyphResult::Deferred) {
+                // 继续扫本桶剩余 codepoint，让全局有界队列能并行启动不重复
+                // 的字符；循环结束后整桶仍保持未发布（不画半字标签）。
+                deferred = true;
+            }
+            ++i;
+        }
+        if (deferred || !gpu.labelRequiredGlyphs.empty()) {
+            return TileLabelBakeResult::Deferred;
         }
     }
+    const double geometryStartMs = perf::nowMs();
     std::map<int, LabelGeometryCpu> labelGroups;
     for (const BucketGpu::TileLabelSource& src : gpu.tileLabelSources) {
+        if (viewZoom < static_cast<double>(src.minZoom) ||
+            viewZoom >= static_cast<double>(src.maxZoom)) {
+            continue;
+        }
         LabelGeometryCpu& group = labelGroups[src.paintOrder];
         appendLabelTextQuads(*glyphAtlas_, style_, src.featureId,
                              src.anchorEcef, src.rel, src.name, group.verts,
@@ -2248,10 +2367,11 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
     std::vector<PaintRange> labelRanges;
     flattenLabelRanges(labelGroups, labelVerts, labelIndices, labelEntries,
                        &labelRanges);
+    const double geometryMs = perf::nowMs() - geometryStartMs;
     if (labelIndices.empty()) {
         // 无可显示字形 = 稳态(非在途),谓词不再计入(见 labelBakeSettled)。
         gpu.labelBakeSettled = true;
-        return;
+        return TileLabelBakeResult::Settled;
     }
     // [V24 文字硬闪根修] 新桶顶点 opacity 初始 0,而回写只在 300ms 节流的
     // placement 或"有 fade 在推进"时发生 —— 稳态手势期换桶(瓦片 LOD 微跨
@@ -2269,6 +2389,7 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
         }
         e.appliedOpacity = op;
     }
+    const double uploadStartMs = perf::nowMs();
     auto vb = makeBuffer(renderDevice_, labelVerts.data(),
                          labelVerts.size() * sizeof(float),
                          BufferDesc::Type::Vertex);
@@ -2276,11 +2397,20 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
                          labelIndices.size() * sizeof(uint32_t),
                          BufferDesc::Type::Index);
     if (!vb || !ib) {
-        // 上传失败:原语义即"下次翻转/重 commit 再试"(非每帧),置稳态
-        // 与之一致,顺带不让谓词恒真白烧。翻转/重钳清位。
+        // 瞬时 GPU/驱动失败不能在稳定视野永久丢标。前三次跨帧重试；若
+        // 持续失败则视为资源枯竭，停止白烧并保留 source，之后 zoom/font/
+        // reclamp 失效会重新给它机会。
+        ++gpu.labelUploadFailures;
+        platformLog(LogLevel::Warning, "FeatureRenderLayer",
+                    "label buffer create failed attempt=%d sources=%zu",
+                    gpu.labelUploadFailures, gpu.tileLabelSources.size());
+        if (gpu.labelUploadFailures < 3) {
+            return TileLabelBakeResult::RetryableFailure;
+        }
         gpu.labelBakeSettled = true;
-        return;
+        return TileLabelBakeResult::Settled;
     }
+    gpu.labelUploadFailures = 0;
     gpu.labelVertexBuffer = std::move(vb);
     gpu.labelIndexBuffer = std::move(ib);
     gpu.labelIndexCount = static_cast<int>(labelIndices.size());
@@ -2294,11 +2424,21 @@ void FeatureRenderLayer::bakeTileBucketLabels(BucketGpu& gpu) {
     gpu.labelVertsCpu = std::move(labelVerts);
     gpu.labelEntries = std::move(labelEntries);
     gpu.labelBakeSettled = true;
+    const double uploadMs = perf::nowMs() - uploadStartMs;
+    if (geometryMs > 1.0 || uploadMs > 1.0) {
+        platformLog(LogLevel::Info, "TileSymbolPerf",
+                    "layer=%s labelBake geometry=%.2fms upload=%.2fms "
+                    "sources=%zu entries=%zu indices=%d",
+                    layerId_.c_str(), geometryMs, uploadMs,
+                    gpu.tileLabelSources.size(), gpu.labelEntries.size(),
+                    gpu.labelIndexCount);
+    }
     // V27:本桶烘出一批新标注 —— 其中 fades_ 查不到的新 id 上面烘的是
     // opacity=0,必须下一帧全量 placement 置 target(绕过 300ms 节流)。
     // 冷启动首批 bake 时 fades_ 整个是空的,不置位 = 整屏标注隐形到
     // 用户缩放为止(V27 报告的主复现态)。
     labelsAwaitingPlacement_ = true;
+    return TileLabelBakeResult::Settled;
 }
 
 void FeatureRenderLayer::dropTileMesh(const TileKey& key) {
@@ -2318,22 +2458,77 @@ void FeatureRenderLayer::dropTileMesh(const TileKey& key) {
 void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                                              Renderer& renderer,
                                              RenderCommandList& commands) {
-    // V27:票据 reconcile 必须在任何早退之前(不然不可见层的票永不释放)。
-    syncLabelWorkTicket();
-    if (!visible_ || !renderDevice_) return;
-    if (!frameState.camera) return;
+    const double buildStartMs = perf::nowMs();
+    const size_t commandsBefore = commands.size();
+    double atlasDrainMs = 0.0;
+    double labelScanMs = 0.0;
+    double reclampMs = 0.0;
+    double terrainRevisionMs = 0.0;
+    double dirtySyncMs = 0.0;
+    double visibleMs = 0.0;
+    double placementMs = 0.0;
+    double appendMs = 0.0;
+    size_t labelBucketsScanned = 0;
+    size_t labelBucketsCompleted = 0;
+    size_t reclampBuckets = 0;
+    // 票据真值必须先纳入“本层在当前视野实际可推进”这个前提。不可见层
+    // 由 setVisible(false) 同步释放；无 device/camera 时也不能继续扣住帧循环。
+    if (!visible_ || !renderDevice_ || !frameState.camera) {
+        labelWorkActiveForCurrentView_ = false;
+        syncLabelWorkTicket();
+        return;
+    }
+
+    const Camera& commandCamera = *frameState.camera;
+    CommandFrameParams commandFrame;
+    commandFrame.viewportWidth =
+        static_cast<double>(frameState.viewportWidthPixels);
+    commandFrame.viewportHeight =
+        static_cast<double>(frameState.viewportHeightPixels);
+    commandFrame.viewProjection = commandCamera.viewProjectionMatrix(
+        commandFrame.viewportWidth, commandFrame.viewportHeight);
+    commandFrame.view = commandCamera.viewMatrix();
+    commandFrame.cameraHeight = ellipsoid_.cartesianToCartographic(
+                                    commandCamera.position())
+                                    .height();
+    commandFrame.zoomLevel = std::min(
+        24.0, std::max(0.0, std::log2(
+            4.0e7 / std::max(1.0, commandFrame.cameraHeight))));
+    commandFrame.lineWidthPx = style_.lineWidthPx;
+    commandFrame.pointSizePx = style_.pointSizePx;
+    auto evalFrameNumber = [&](const StyleExpression::Ptr& expr,
+                               float fallback) -> float {
+        if (!expr) return fallback;
+        const auto value = expr->evaluate(nullptr, commandFrame.zoomLevel);
+        if (!value || value->kind() != StyleValue::Kind::Number) {
+            return fallback;
+        }
+        return static_cast<float>(value->number());
+    };
+    commandFrame.lineWidthPx = evalFrameNumber(
+        style_.lineWidthExpr, commandFrame.lineWidthPx);
+    commandFrame.pointSizePx = evalFrameNumber(
+        style_.pointSizeExpr, commandFrame.pointSizePx);
+    constexpr float kSymbolDepthPushNdc = 0.9999f;
+    commandFrame.symbolDepthPush =
+        (style_.symbolDepthPushCameraHeightMeters > 0.0f &&
+         commandFrame.cameraHeight >
+             style_.symbolDepthPushCameraHeightMeters)
+            ? kSymbolDepthPushNdc
+            : 0.0f;
+    commandFrame.halfWidthPerEyeZ = static_cast<float>(
+        static_cast<double>(commandFrame.lineWidthPx) *
+        std::tan(commandCamera.verticalFovRadians() * 0.5) /
+        std::max(1.0, commandFrame.viewportHeight));
 
     // LOD 粗源 zoom 门控:近景由主源细面承接时,粗源整层不发命令。
     // zoom 口径与 widthExpr 一致(log2(赤道周长/视高))。
-    if (style_.minZoom > 0.0 || style_.maxZoom < 24.0) {
-        const double camHeight = ellipsoid_.cartesianToCartographic(
-                                     frameState.camera->position())
-                                     .height();
-        const double zoomLevel = std::min(
-            24.0, std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
-        if (zoomLevel < style_.minZoom || zoomLevel > style_.maxZoom) {
-            return;
-        }
+    labelWorkActiveForCurrentView_ =
+        commandFrame.zoomLevel >= style_.minZoom &&
+        commandFrame.zoomLevel <= style_.maxZoom;
+    syncLabelWorkTicket();
+    if (!labelWorkActiveForCurrentView_) {
+        return;
     }
 
     // 文字标注(P5b):缓存图集指针(重镶/预览路径无 Renderer 引用);字体
@@ -2343,9 +2538,26 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     iconAtlas_ = renderer.iconAtlas();
     const uint64_t iconRevision = iconAtlas_ ? iconAtlas_->revision() : 0;
     glyphAtlas_ = renderer.glyphAtlas();
+    const double currentLabelViewZoom =
+        labelViewZoom(ellipsoid_, *frameState.camera);
+    const int currentLabelZoomBucket =
+        static_cast<int>(std::floor(currentLabelViewZoom));
     const bool atlasReady = glyphAtlas_ && glyphAtlas_->ready();
-    if (atlasReady != lastAtlasReady_ || iconRevision != lastIconRevision_) {
+    const uint64_t glyphRevision = glyphAtlas_ ? glyphAtlas_->revision() : 0;
+    const bool glyphAtlasChanged =
+        atlasReady != lastAtlasReady_ || glyphRevision != lastGlyphRevision_;
+    const bool iconAtlasChanged = iconRevision != lastIconRevision_;
+    const bool labelZoomChanged =
+        currentLabelZoomBucket != lastLabelBakeZoomBucket_;
+    if (atlasReady) {
+        const double startMs = perf::nowMs();
+        glyphAtlas_->beginFrameGlyphBudget(frameState.frameId,
+                                           kGlyphRasterBudgetMs);
+        atlasDrainMs = perf::nowMs() - startMs;
+    }
+    if (glyphAtlasChanged || iconAtlasChanged) {
         lastAtlasReady_ = atlasReady;
+        lastGlyphRevision_ = glyphRevision;
         lastIconRevision_ = iconRevision;
         std::vector<BucketKey> keys;
         keys.reserve(buckets_.size());
@@ -2354,30 +2566,67 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         // 瓦片桶(符号刀B):无重镶路径,标签由烘焙源补烘(幂等,已烘过
         // 的桶直接早退)。图标晚注入的 uv 补烘不在此列——瓦片符号现用
         // 内置形状,位图图标接入时须同构处理(明记的债)。
-        if (atlasReady) {
+        if (glyphAtlasChanged && atlasReady) {
             for (auto& entry : tileBuckets_) {
-                // 字体翻转:烘不出字/上传失败的稳态可能因新字体解除,清位重试。
-                entry.second.labelBakeSettled = false;
-                bakeTileBucketLabels(entry.second);
+                // 字体翻转或图集换代:旧 UV 已失效，必须同时清掉 indexCount，
+                // 否则 bakeTileBucketLabels 会被旧 buffer 的早退条件挡住。
+                invalidateTileBucketLabels(entry.second);
             }
         }
         previewDirty_ = true;
     }
+    if (labelZoomChanged) {
+        lastLabelBakeZoomBucket_ = currentLabelZoomBucket;
+    }
+    // commit 保留全部 zoom 档 source；这里按当前整数 zoom 选 active top-N
+    // 并物化点/标签派生数据。新 commit 的桶即便 camera 未换档也会因 -1
+    // 进入；GPU 瞬时失败保留旧数据并由 Pumped 票下一帧重试。
+    symbolBucketsAwaitingRebuild_ = false;
+    for (auto& entry : tileBuckets_) {
+        BucketGpu& gpu = entry.second;
+        if (iconAtlasChanged ||
+            gpu.symbolViewZoomBucket != currentLabelZoomBucket) {
+            (void)rebuildTileBucketSymbolsForZoom(
+                gpu, currentLabelZoomBucket,
+                iconAtlasChanged || gpu.symbolViewZoomBucket < 0);
+        }
+        if (gpu.symbolViewZoomBucket != currentLabelZoomBucket) {
+            symbolBucketsAwaitingRebuild_ = true;
+        }
+    }
 
-    // P6:每帧重置字形栅格化预算,并给"因缺字形推迟"的瓦片桶一次重试。
-    // 桶数量级 ~视口瓦数(几十),空转开销可忽略。
-    glyphRasterBudgetMs_ = kGlyphRasterBudgetMs;
+    // P6:GlyphAtlas 已按 frameId 重置 Renderer 级共享预算；这里给
+    // "因缺字形推迟"的瓦片桶一次有界 drain。桶数量级 ~视口瓦数
+    // (几十)，预算耗尽后 ensureGlyphBudgeted 立即 Deferred。
     if (atlasReady) {
+        const double startMs = perf::nowMs();
         for (auto& entry : tileBuckets_) {
-            if (!entry.second.labelBakeSettled &&
+            if (entry.second.symbolViewZoomBucket == currentLabelZoomBucket &&
+                !entry.second.labelBakeSettled &&
                 entry.second.labelIndexCount == 0 &&
                 !entry.second.tileLabelSources.empty()) {
-                bakeTileBucketLabels(entry.second);
+                ++labelBucketsScanned;
+                const bool wasSettled = entry.second.labelBakeSettled;
+                const TileLabelBakeResult result =
+                    bakeTileBucketLabels(entry.second,
+                                         currentLabelViewZoom);
+                if (!wasSettled && entry.second.labelBakeSettled) {
+                    ++labelBucketsCompleted;
+                }
+                if (result == TileLabelBakeResult::AtlasSaturated ||
+                    result == TileLabelBakeResult::RetryableFailure) {
+                    break;
+                }
             }
         }
+        // Android 将本层这一轮新字形封成一张有界 Landing 批次；整批后台
+        // 结果入箱后再唤醒一次。host 同步路径为 no-op。
+        glyphAtlas_->finishGlyphRasterDispatch();
+        labelScanMs = perf::nowMs() - startMs;
     }
     // P6:重钳排队消化(每帧至多 kReclampBucketsPerFrame 个桶)
     if (!pendingReclamp_.empty()) {
+        const double startMs = perf::nowMs();
         int done = 0;
         while (!pendingReclamp_.empty() && done < kReclampBucketsPerFrame) {
             auto it = tileBuckets_.find(pendingReclamp_.back());
@@ -2389,6 +2638,8 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                 ++done;
             }
         }
+        reclampBuckets = static_cast<size_t>(done);
+        reclampMs = perf::nowMs() - startMs;
     }
 
     // 贴地重钳(P3 方案 A 过渡态):地形代次变化 → 节流重镶全部桶
@@ -2402,6 +2653,7 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     // 此处只管节流不管唤醒。
     if (style_.altitudeMode == FeatureAltitudeMode::ClampToGround &&
         terrainSampling_.revision) {
+        const double startMs = perf::nowMs();
         reclampCooldownSeconds_ -= frameState.deltaSeconds;
         const uint64_t rev = terrainSampling_.revision();
         if (rev != lastClampRevision_ && reclampCooldownSeconds_ <= 0.0) {
@@ -2423,9 +2675,12 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
             }
             previewDirty_ = true;
         }
+        terrainRevisionMs = perf::nowMs() - startMs;
     }
 
+    const double dirtyStartMs = perf::nowMs();
     syncDirtyBuckets();
+    dirtySyncMs = perf::nowMs() - dirtyStartMs;
 
     // 编辑预览:rings 变了才重镶(拖拽帧间未动 = 零成本),瞬态 buffer
     // 每次重建(几何一直在变,orphan 语义交给 VAO purge)。
@@ -2496,33 +2751,57 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
     // 视口桶裁剪:命令生成与标签避让只覆盖地平线圆内的桶(见
     // visibleBucketKeys)。视野外桶保留 GPU 资源、跳过每帧成本——帧成本
     // 从"总桶数"收敛到"可见桶数"。
+    const double visibleStartMs = perf::nowMs();
     const std::vector<BucketKey> visibleKeys = visibleBucketKeys(frameState);
+    visibleMs = perf::nowMs() - visibleStartMs;
 
     // P5c:逐帧标签避让 placement + fade 回写(在命令生成前,顶点流为准)。
+    const double placementStartMs = perf::nowMs();
     updateLabelPlacement(frameState, visibleKeys);
+    placementMs = perf::nowMs() - placementStartMs;
 
     if (buckets_.empty() && tileBuckets_.empty() && !previewGpuValid_) return;
 
     // E1:MVT 瓦片桶先发(垫底,与 store 路径同一命令层)。可见性由上游
     // (VectorTileTree 的视口选择)负责 —— 驻留的瓦片桶本就是「本帧该画的」,
     // 这里再套一遍空间桶可见性判定是重复且会误杀(瓦片矩形与桶网格不对齐)。
+    const double appendStartMs = perf::nowMs();
     for (const auto& entry : tileBuckets_) {
-        appendBucketCommands(entry.second, frameState, renderer, commands);
+        appendBucketCommands(entry.second, frameState, commandFrame,
+                             renderer, commands);
     }
 
     for (BucketKey key : visibleKeys) {
         auto it = buckets_.find(key);
         if (it == buckets_.end()) continue;
-        appendBucketCommands(it->second, frameState, renderer, commands);
+        appendBucketCommands(it->second, frameState, commandFrame,
+                             renderer, commands);
     }
     if (previewFeatureId_ != kInvalidFeatureId && previewGpuValid_) {
-        appendBucketCommands(previewGpu_, frameState, renderer, commands);
+        appendBucketCommands(previewGpu_, frameState, commandFrame,
+                             renderer, commands);
     }
+    appendMs = perf::nowMs() - appendStartMs;
 
     // V27:帧尾再 reconcile 一次 —— 帧头那次覆盖不到本帧中段置位的换代
     // (flip 重镶 / bake / drop),若那恰是最后一帧,谓词真而票没领 = 停帧
     // 冻住新标注(原 bug 的缩小残留窗口)。幂等,µs 级。
     syncLabelWorkTicket();
+    const double buildMs = perf::nowMs() - buildStartMs;
+    if (buildMs > 8.0) {
+        platformLog(
+            LogLevel::Info, "FeatureLayerPerf",
+            "frame=%llu layer=%s total=%.2fms atlas=%.2f labelScan=%.2f"
+            "(scan=%zu done=%zu) reclamp=%.2f(n=%zu pending=%zu) "
+            "terrainRev=%.2f dirty=%.2f visible=%.2f placement=%.2f "
+            "append=%.2f buckets=%zu cmds=%zu",
+            static_cast<unsigned long long>(frameState.frameId),
+            layerId_.c_str(), buildMs, atlasDrainMs, labelScanMs,
+            labelBucketsScanned, labelBucketsCompleted, reclampMs,
+            reclampBuckets, pendingReclamp_.size(), terrainRevisionMs,
+            dirtySyncMs, visibleMs, placementMs, appendMs,
+            tileBuckets_.size(), commands.size() - commandsBefore);
+    }
 }
 
 std::vector<BucketKey> FeatureRenderLayer::visibleBucketKeys(
@@ -2606,12 +2885,7 @@ void FeatureRenderLayer::updateLabelPlacement(
     const bool priorityChanged =
         labelPlacement_.priorityFeature() != lastPlacementPriority_;
     const Camera& cam = *frameState.camera;
-    const double camHeight = ellipsoid_.cartesianToCartographic(
-                                 cam.position())
-                                 .height();
-    const double viewZoom = std::min(
-        24.0,
-        std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
+    const double viewZoom = labelViewZoom(ellipsoid_, cam);
     const int zoomBucket = static_cast<int>(std::floor(viewZoom));
     const bool zoomBucketChanged = zoomBucket != lastPlacementZoomBucket_;
     // V27:桶换代(bake 出新标注/重镶)即时全量 —— 新 entries 的 target 若等
@@ -2679,6 +2953,7 @@ void FeatureRenderLayer::updateLabelPlacement(
     for (auto& entry : tileBuckets_) collect(entry.second, entry.first.z);
     if (previewGpuValid_) collect(previewGpu_, std::numeric_limits<int>::max());
 
+    const double collectMs = perf::nowMs() - placeStartMs;
     LabelPlacement::FrameInput in;
     in.viewProj = cam.viewProjectionMatrix(
         static_cast<double>(frameState.viewportWidthPixels),
@@ -2689,7 +2964,9 @@ void FeatureRenderLayer::updateLabelPlacement(
     in.viewportHeightPx = frameState.viewportHeightPixels;
     in.deltaSeconds = frameState.deltaSeconds;
     // 候选为空也要跑:fade 状态机清扫已消失要素。
+    const double updateStartMs = perf::nowMs();
     labelPlacement_.update(in, candidates);
+    const double updateMs = perf::nowMs() - updateStartMs;
     labelsAwaitingPlacement_ = false;  // V27:换代 entries 已进本次全量
 
     // 容量哨兵:单次全量 placement 超 4ms = 候选规模逼近"单帧一口气跑"
@@ -2700,8 +2977,9 @@ void FeatureRenderLayer::updateLabelPlacement(
     lastPlacementCandidates_ = candidates.size();
     if (placeMs > 4.0) {
         platformLog(LogLevel::Warning, "TileSymbol",
-                    "placement 全量 %.2fms cand=%zu(超 4ms,考虑时间片增量)",
-                    placeMs, candidates.size());
+                    "placement 全量 %.2fms collect=%.2f update=%.2f "
+                    "cand=%zu(超 4ms,考虑时间片增量)",
+                    placeMs, collectMs, updateMs, candidates.size());
     }
 
     applyLabelOpacity(visibleKeys);
@@ -2715,8 +2993,16 @@ void FeatureRenderLayer::applyLabelOpacity(
     // 流 opacity 重置 0,而 fade 状态可能早已收敛"无变化",若以变化位做
     // 早退,重镶后的桶永远不再回写(真机曾表现为标签 10s 后集体隐形)。
     // 稳态下逐 entry 比较即免写,成本 O(标签数) 浮点比较。
+    const double uploadStartMs = perf::nowMs();
+    size_t updateCalls = 0;
+    size_t updateBytes = 0;
+    size_t dirtyEntries = 0;
     auto apply = [&](BucketGpu& gpu) {
-        bool dirty = false;
+        struct DirtyRange {
+            size_t beginFloat = 0;
+            size_t endFloat = 0;
+        };
+        std::vector<DirtyRange> dirtyRanges;
         for (LabelEntry& e : gpu.labelEntries) {
             const float op = labelPlacement_.opacity(e.featureId);
             if (op == e.appliedOpacity) continue;
@@ -2726,18 +3012,32 @@ void FeatureRenderLayer::applyLabelOpacity(
                 gpu.labelVertsCpu[i] = op;
             }
             e.appliedOpacity = op;
-            dirty = true;
+            ++dirtyEntries;
+            const size_t begin = e.vertexFloatStart;
+            const size_t end = begin + e.vertexFloatCount;
+            if (!dirtyRanges.empty() && dirtyRanges.back().endFloat == begin) {
+                dirtyRanges.back().endFloat = end;
+            } else {
+                dirtyRanges.push_back(DirtyRange{begin, end});
+            }
         }
-        if (dirty && gpu.labelVertexBuffer) {
+        if (!gpu.labelVertexBuffer) return;
+        for (const DirtyRange& range : dirtyRanges) {
+            const size_t offset = range.beginFloat * sizeof(float);
+            const size_t size =
+                (range.endFloat - range.beginFloat) * sizeof(float);
             const bool ok = renderDevice_->updateBuffer(
-                gpu.labelVertexBuffer.get(), 0, gpu.labelVertsCpu.data(),
-                gpu.labelVertsCpu.size() * sizeof(float));
+                gpu.labelVertexBuffer.get(), offset,
+                gpu.labelVertsCpu.data() + range.beginFloat, size);
             if (!ok) {
                 // 上传断链 = 标签隐形(顶点 opacity 停 0),必须可见。
                 platformLog(LogLevel::Warning, "FeatureRenderLayer",
-                            "label opacity updateBuffer FAILED size=%zu",
-                            gpu.labelVertsCpu.size() * sizeof(float));
+                            "label opacity updateBuffer FAILED off=%zu size=%zu",
+                            offset, size);
+                continue;
             }
+            ++updateCalls;
+            updateBytes += size;
         }
     };
     for (BucketKey key : visibleKeys) {
@@ -2746,11 +3046,18 @@ void FeatureRenderLayer::applyLabelOpacity(
     }
     for (auto& entry : tileBuckets_) apply(entry.second);
     if (previewGpuValid_) apply(previewGpu_);
+    const double uploadMs = perf::nowMs() - uploadStartMs;
+    if (uploadMs > 4.0) {
+        platformLog(LogLevel::Warning, "TileSymbol",
+                    "opacity upload %.2fms calls=%zu bytes=%zu dirty=%zu",
+                    uploadMs, updateCalls, updateBytes, dirtyEntries);
+    }
 }
 
 bool FeatureRenderLayer::hasPendingLabelWork() const {
     // 无 device 无法推进任何标注工作,计入只会白烧帧(谓词必须有终止态)。
-    if (!renderDevice_) return false;
+    if (!renderDevice_ || !labelWorkActiveForCurrentView_) return false;
+    if (symbolBucketsAwaitingRebuild_) return true;
     // ② 换代待全量 placement / ③ fade 未收敛(便宜的先查)。
     if (labelsAwaitingPlacement_) return true;
     // ④⑤ [V27 家族第四缺口] 贴地重钳在途:队列未消化 / 地形代次落后(重钳
@@ -2774,7 +3081,11 @@ bool FeatureRenderLayer::hasPendingLabelWork() const {
             // 转重试)—— 只有预算推迟的才算在途,否则谓词恒真白烧帧。
             if (!gpu.labelBakeSettled && gpu.labelIndexCount == 0 &&
                 !gpu.tileLabelSources.empty()) {
-                return true;
+                // Android 字形 SDF 在专用 worker 上自行推进。本帧只要已派发
+                // 或已有任务在途，继续出帧就只是重复扫描并把约 900 条矢量
+                // 命令全部重画；此时由 glyphRaster Landing 完成后唤醒。只有
+                // 零在途且一次也没派成才保留 Pumped 重试，不降低标签或细节。
+                return glyphAtlas_->needsFrameForGlyphRasterDispatch();
             }
         }
     }
@@ -2790,20 +3101,30 @@ std::string FeatureRenderLayer::dumpLabelLifecycle(
     const uint64_t clampRevCur =
         terrainSampling_.revision ? terrainSampling_.revision() : 0;
     const LabelPlacementStats& st = labelPlacement_.stats();
+    size_t unsettledBuckets = 0;
+    for (const auto& entry : tileBuckets_) {
+        const BucketGpu& gpu = entry.second;
+        if (!gpu.labelBakeSettled && gpu.labelIndexCount == 0 &&
+            !gpu.tileLabelSources.empty()) {
+            ++unsettledBuckets;
+        }
+    }
     std::snprintf(
         buf, sizeof(buf),
         "LabelDump layer=%s vis=%d pending=%d await=%d fades=%d reclampQ=%zu "
-        "clampRev=%llu/%llu cdPlace=%.2f cdReclamp=%.2f atlas=%d xt=%zu "
-        "cand=%d placed=%d col=%d horiz=%d proj=%d\n",
+        "clampRev=%llu/%llu cdPlace=%.2f cdReclamp=%.2f atlas=%d "
+        "glyphJobs=%zu unsettled=%zu xt=%zu cand=%d placed=%d col=%d "
+        "horiz=%d proj=%d\n",
         layerId_.c_str(), visible_ ? 1 : 0, hasPendingLabelWork() ? 1 : 0,
         labelsAwaitingPlacement_ ? 1 : 0,
         labelPlacement_.hasPendingFades() ? 1 : 0, pendingReclamp_.size(),
         static_cast<unsigned long long>(clampRevCur),
         static_cast<unsigned long long>(lastClampRevision_),
         placementCooldownSeconds_, reclampCooldownSeconds_,
-        (glyphAtlas_ && glyphAtlas_->ready()) ? 1 : 0, crossTileEntryCount_,
-        st.candidates, st.placed, st.collided, st.culledHorizon,
-        st.culledProjection);
+        (glyphAtlas_ && glyphAtlas_->ready()) ? 1 : 0,
+        glyphAtlas_ ? glyphAtlas_->pendingGlyphRasterCount() : 0,
+        unsettledBuckets, crossTileEntryCount_, st.candidates, st.placed,
+        st.collided, st.culledHorizon, st.culledProjection);
     out += buf;
 
     // 每标注一行:fade 的 current→target 读 placement 账本(按 id 键,
@@ -2896,7 +3217,8 @@ void FeatureRenderLayer::syncLabelWorkTicket() {
     // 让整机永不 idle)。层析构时票 RAII 自释放。口径 = visible &&
     // hasPendingLabelWork,与 Scene::hasConvergingWork ④ 逐字一致(audit
     // 每帧对拍两判据,口径漂移会刷分歧日志)。
-    const bool busy = visible_ && hasPendingLabelWork();
+    const bool busy = visible_ && labelWorkActiveForCurrentView_ &&
+                      hasPendingLabelWork();
     if (busy && !labelWorkTicket_.valid()) {
         labelWorkTicket_ = WorkLedger::shared().acquire(
             WorkLedger::Kind::Pumped, "labelConverge");
@@ -2915,26 +3237,27 @@ void FeatureRenderLayer::appendTerrainOcclusion(const Renderer& renderer,
     const Renderer::TerrainOcclusionParams& occ = renderer.terrainOcclusion();
     const bool enabled = occ.depthTexture != nullptr;
     cmd.textures.push_back(occ.depthTexture);
-    cmd.uniforms["u_terrainOcclusion"] = {
+    cmd.hasVectorUniforms = true;
+    cmd.vectorUniforms.terrainOcclusion = {
         enabled ? 1.0f : 0.0f,
         occ.nearPlaneMeters,
         occ.farPlaneMeters,
         occ.toleranceRatio};
     // y 只被点 shader 消费(文字侧不留底);两个 shader 都声明同一个 uniform,
     // 故这里统一挂,不按 kind 分叉。
-    cmd.uniforms["u_symbolOcclusion"] = {
+    cmd.vectorUniforms.symbolOcclusion = {
         occ.minToleranceMeters, style_.symbolOccludedMinOpacity, 0.0f, 0.0f};
 }
 
 void FeatureRenderLayer::appendBucketCommands(
     const BucketGpu& gpu,
     const FrameState& frameState,
+    const CommandFrameParams& frameParams,
     Renderer& renderer,
     RenderCommandList& commands) const {
-    const Camera& cam = *frameState.camera;
-    const double vpW = static_cast<double>(frameState.viewportWidthPixels);
-    const double vpH = static_cast<double>(frameState.viewportHeightPixels);
-    const glm::dmat4 viewProj(cam.viewProjectionMatrix(vpW, vpH).raw());
+    const double vpW = frameParams.viewportWidth;
+    const double vpH = frameParams.viewportHeight;
+    const glm::dmat4 viewProj(frameParams.viewProjection.raw());
 
     ShaderProgram* fillShader = renderer.colorShader();
     ShaderProgram* lineShader = renderer.vectorLineShader();
@@ -2942,32 +3265,10 @@ void FeatureRenderLayer::appendBucketCommands(
     // P6b zoom 驱动宽度/尺寸:每帧按相机大地高求 zoom(web 墨卡托惯例
     // zoom ≈ log2(赤道周长 4e7m / 视高),z0 ≈ 全球一屏),表达式求值进
     // uniform;求值失败/非数值回落字面量。
-    const double camHeight =
-        ellipsoid_.cartesianToCartographic(cam.position()).height();
-    const double zoomLevel = std::min(
-        24.0,
-        std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
-    // 高空符号深度顶近平面(语义见 FeatureRenderStyle 字段注释)。0.9999
-    // 而非 1.0:留一线近平面余量,避免恰在 near 上被裁。
-    constexpr float kSymbolDepthPushNdc = 0.9999f;
-    const float symbolDepthPush =
-        (style_.symbolDepthPushCameraHeightMeters > 0.0f &&
-         camHeight > style_.symbolDepthPushCameraHeightMeters)
-            ? kSymbolDepthPushNdc
-            : 0.0f;
-    float lineWidthPx = style_.lineWidthPx;
-    float pointSizePx = style_.pointSizePx;
-    if (style_.lineWidthExpr || style_.pointSizeExpr) {
-        auto evalNumber = [&](const StyleExpression::Ptr& expr,
-                              float fallback) -> float {
-            if (!expr) return fallback;
-            const auto v = expr->evaluate(nullptr, zoomLevel);
-            if (!v || v->kind() != StyleValue::Kind::Number) return fallback;
-            return static_cast<float>(v->number());
-        };
-        lineWidthPx = evalNumber(style_.lineWidthExpr, lineWidthPx);
-        pointSizePx = evalNumber(style_.pointSizeExpr, pointSizePx);
-    }
+    const double zoomLevel = frameParams.zoomLevel;
+    const float lineWidthPx = frameParams.lineWidthPx;
+    const float pointSizePx = frameParams.pointSizePx;
+    const float symbolDepthPush = frameParams.symbolDepthPush;
 
     {
         // 双精度 compose 后降 float(RTE):顶点已相对 origin,mvp 吸收平移。
@@ -2975,9 +3276,35 @@ void FeatureRenderLayer::appendBucketCommands(
             glm::dmat4(1.0),
             glm::dvec3(gpu.origin.x(), gpu.origin.y(), gpu.origin.z()));
         const glm::mat4 mvp = glm::mat4(viewProj * model);
-        std::vector<float> mvpUniform(16);
-        std::memcpy(mvpUniform.data(), glm::value_ptr(mvp),
+        VectorUniformBlock bucketUniforms;
+        std::memcpy(bucketUniforms.modelViewProjection.data(),
+                    glm::value_ptr(mvp),
                     16 * sizeof(float));
+        bucketUniforms.viewport = {static_cast<float>(vpW),
+                                   static_cast<float>(vpH)};
+        bucketUniforms.lightDir = {frameState.lightDir.x,
+                                   frameState.lightDir.y,
+                                   frameState.lightDir.z};
+        bucketUniforms.ambient = 0.25f;
+        bucketUniforms.lineWidthPx = lineWidthPx;
+        bucketUniforms.halfWidthPerEyeZ = frameParams.halfWidthPerEyeZ;
+        bucketUniforms.dashPeriodMeters = style_.lineDashPeriodMeters;
+        bucketUniforms.dashOnFraction = style_.lineDashOnFraction;
+        bucketUniforms.pointSizePx = pointSizePx;
+        bucketUniforms.depthPushNdc = symbolDepthPush;
+        bucketUniforms.sdfEdge =
+            static_cast<float>(GlyphAtlas::kSdfOnEdge) / 255.0f;
+        const float glyphScale =
+            style_.labelSizePx /
+            static_cast<float>(GlyphAtlas::kGlyphPixelHeight);
+        bucketUniforms.sdfHaloDelta =
+            style_.labelHaloPx / std::max(0.01f, glyphScale) *
+            GlyphAtlas::kSdfDistScale / 255.0f;
+
+        auto attachVectorUniforms = [&](RenderCommand& cmd) {
+            cmd.hasVectorUniforms = true;
+            cmd.vectorUniforms = bucketUniforms;
+        };
 
         // P6 stencil 贴地(方案 B):体积按解析色分组(P6b),每组一对相邻
         // 命令。两 phase 共享普通矢量的 MVP order，由 vectorPaintOrder
@@ -3008,8 +3335,8 @@ void FeatureRenderLayer::appendBucketCommands(
             vol.depthWrite = false;
             vol.blend = false;      // 后端关颜色写,blend 无意义
             vol.cullFace = false;   // 两侧 stencil op 需要双面
-            vol.uniforms["u_modelViewProjection"] = mvpUniform;
-            vol.uniforms["u_color"] = {0.0f, 0.0f, 0.0f, 0.0f};
+            attachVectorUniforms(vol);
+            vol.vectorUniforms.color = {0.0f, 0.0f, 0.0f, 0.0f};
 
             RenderCommand col = vol;
             col.stencilPhase = StencilPhase::ClassifyColor;
@@ -3020,8 +3347,8 @@ void FeatureRenderLayer::appendBucketCommands(
             col.cullFace = true;
             col.cullMode = RenderCommand::CullMode::Front;
             col.blend = true;
-            col.uniforms["u_color"] = {group.color[0], group.color[1],
-                                       group.color[2], group.color[3]};
+            col.vectorUniforms.color = {group.color[0], group.color[1],
+                                        group.color[2], group.color[3]};
             commands.push_back(std::move(vol));
             commands.push_back(std::move(col));
         }
@@ -3033,15 +3360,11 @@ void FeatureRenderLayer::appendBucketCommands(
         // 对应的半宽米数),像素语义与方案 A ribbon 一致。
         if (!gpu.lineVolumeGroups.empty() &&
             renderer.vectorLineStencilShader()) {
-            const glm::dmat4 view(cam.viewMatrix().raw());
+            const glm::dmat4 view(frameParams.view.raw());
             const glm::mat4 modelView = glm::mat4(view * model);
-            std::vector<float> modelViewUniform(16);
+            std::array<float, 16> modelViewUniform{};
             std::memcpy(modelViewUniform.data(), glm::value_ptr(modelView),
-                        16 * sizeof(float));
-            const float halfWidthPerEyeZ = static_cast<float>(
-                static_cast<double>(lineWidthPx) *
-                std::tan(cam.verticalFovRadians() * 0.5) /
-                std::max(1.0, vpH));
+                        modelViewUniform.size() * sizeof(float));
             for (const auto& group : gpu.lineVolumeGroups) {
                 if (group.indexCount <= 0) continue;
                 RenderCommand vol;
@@ -3062,11 +3385,10 @@ void FeatureRenderLayer::appendBucketCommands(
                 vol.depthWrite = false;
                 vol.blend = false;
                 vol.cullFace = false;   // 两侧 stencil op 需要双面
-                vol.uniforms["u_modelViewProjection"] = mvpUniform;
-                vol.uniforms["u_modelView"] = modelViewUniform;
-                vol.uniforms["u_halfWidthPerEyeZ"] = {halfWidthPerEyeZ};
+                attachVectorUniforms(vol);
+                vol.vectorUniforms.modelView = modelViewUniform;
                 // dash 已在镶嵌期切成独立划体(几何边界),FS 无需判里程。
-                vol.uniforms["u_color"] = {0.0f, 0.0f, 0.0f, 0.0f};
+                vol.vectorUniforms.color = {0.0f, 0.0f, 0.0f, 0.0f};
 
                 RenderCommand col = vol;
                 col.stencilPhase = StencilPhase::ClassifyColor;
@@ -3076,8 +3398,8 @@ void FeatureRenderLayer::appendBucketCommands(
                 col.cullFace = true;
                 col.cullMode = RenderCommand::CullMode::Front;
                 col.blend = true;
-                col.uniforms["u_color"] = {group.color[0], group.color[1],
-                                           group.color[2], group.color[3]};
+                col.vectorUniforms.color = {group.color[0], group.color[1],
+                                            group.color[2], group.color[3]};
                 commands.push_back(std::move(vol));
                 commands.push_back(std::move(col));
             }
@@ -3104,7 +3426,7 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.depthWrite = false;
             cmd.blend = true;
             cmd.cullFace = false;
-            cmd.uniforms["u_modelViewProjection"] = mvpUniform;
+            attachVectorUniforms(cmd);
             commands.push_back(std::move(cmd));
         };
         if (!gpu.fillRanges.empty()) {
@@ -3137,11 +3459,7 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.depthWrite = true;
             cmd.blend = false;
             cmd.cullFace = false;
-            cmd.uniforms["u_modelViewProjection"] = mvpUniform;
-            cmd.uniforms["u_lightDir"] = {
-                frameState.lightDir.x, frameState.lightDir.y,
-                frameState.lightDir.z};
-            cmd.uniforms["u_ambient"] = {0.25f};
+            attachVectorUniforms(cmd);
             commands.push_back(std::move(cmd));
         };
         if (!gpu.extrudeRanges.empty()) {
@@ -3175,14 +3493,7 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.depthWrite = false;
             cmd.blend = true;
             cmd.cullFace = false;
-            cmd.uniforms["u_modelViewProjection"] = mvpUniform;
-            cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
-                                          static_cast<float>(vpH)};
-            cmd.uniforms["u_lineWidthPx"] = {lineWidthPx};
-            // dash(与 stencil 路径同语义,回落观感一致)。
-            cmd.uniforms["u_dashPeriodMeters"] = {
-                style_.lineDashPeriodMeters};
-            cmd.uniforms["u_dashOnFraction"] = {style_.lineDashOnFraction};
+            attachVectorUniforms(cmd);
             commands.push_back(std::move(cmd));
         };
         if (!gpu.lineRanges.empty()) {
@@ -3222,11 +3533,7 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.depthWrite = false;
             cmd.blend = true;
             cmd.cullFace = false;
-            cmd.uniforms["u_modelViewProjection"] = mvpUniform;
-            cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
-                                          static_cast<float>(vpH)};
-            cmd.uniforms["u_pointSizePx"] = {pointSizePx};
-            cmd.uniforms["u_depthPushNdc"] = {symbolDepthPush};
+            attachVectorUniforms(cmd);
             // P6c:图集通道的顶点(shape<0)要采位图。纹理常挂(有图标才
             // 存在),无图集时桶里也不会有图集顶点,shader 分支不触达。
             // ⚠️ 无图集时也必须占位 nullptr:T2 的地形深度纹理恒取
@@ -3295,28 +3602,16 @@ void FeatureRenderLayer::appendBucketCommands(
             cmd.blend = true;
             cmd.cullFace = false;
             cmd.textures.push_back(glyphAtlas_->texture());
+            attachVectorUniforms(cmd);
             appendTerrainOcclusion(renderer, cmd);
-            cmd.uniforms["u_modelViewProjection"] = mvpUniform;
-            cmd.uniforms["u_color"] = {style_.labelColor[0],
-                                       style_.labelColor[1],
-                                       style_.labelColor[2],
-                                       style_.labelColor[3]};
-            cmd.uniforms["u_haloColor"] = {style_.labelHaloColor[0],
-                                           style_.labelHaloColor[1],
-                                           style_.labelHaloColor[2],
-                                           style_.labelHaloColor[3]};
-            cmd.uniforms["u_viewport"] = {static_cast<float>(vpW),
-                                          static_cast<float>(vpH)};
-            cmd.uniforms["u_sdfEdge"] = {
-                static_cast<float>(GlyphAtlas::kSdfOnEdge) / 255.0f};
-            cmd.uniforms["u_depthPushNdc"] = {symbolDepthPush};
-            // halo 宽(px,标注字号尺度)→ 字形栅格 px → SDF 值差。
-            const float glyphScale =
-                style_.labelSizePx /
-                static_cast<float>(GlyphAtlas::kGlyphPixelHeight);
-            cmd.uniforms["u_sdfHaloDelta"] = {
-                style_.labelHaloPx / std::max(0.01f, glyphScale) *
-                GlyphAtlas::kSdfDistScale / 255.0f};
+            cmd.vectorUniforms.color = {style_.labelColor[0],
+                                        style_.labelColor[1],
+                                        style_.labelColor[2],
+                                        style_.labelColor[3]};
+            cmd.vectorUniforms.haloColor = {style_.labelHaloColor[0],
+                                            style_.labelHaloColor[1],
+                                            style_.labelHaloColor[2],
+                                            style_.labelHaloColor[3]};
             commands.push_back(std::move(cmd));
         };
         if (!gpu.labelRanges.empty()) {

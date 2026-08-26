@@ -156,6 +156,17 @@ validateMvpRenderCommands(const RenderCommandList& commands,
 
     for (size_t i = 0; i < commands.size(); ++i) {
         const RenderCommand& cmd = commands[i];
+        // The fixed blocks are alternative command ABIs.  GLES used to apply
+        // both in sequence while Metal preferred glTF via else-if, so a
+        // malformed dual-flag command rendered differently by backend.  Keep
+        // the producer contract explicit and fail before submission.
+        if (cmd.hasGltfUniforms && cmd.hasVectorUniforms) {
+            fail(i, cmd,
+                 "RenderCommand cannot use glTF and vector uniform blocks "
+                 "simultaneously",
+                 error);
+            return error;
+        }
         const int order = mvpRenderOrder(cmd.kind);
         if (order < lastOrder) {
             fail(i, cmd, "RenderCommand order violates MVP pass order", error);
@@ -322,10 +333,58 @@ validateMvpRenderCommands(const RenderCommandList& commands,
 }
 
 void sortMvpRenderCommands(RenderCommandList& commands) {
-    std::stable_sort(commands.begin(), commands.end(),
-        [](const RenderCommand& a, const RenderCommand& b) {
-            return mvpCommandLess(a, b);
-        });
+    if (commands.size() < 2) return;
+
+    // RenderCommand 是重对象(uniform map、纹理列表、owner/pass 字符串)。
+    // 直接 stable_sort 会在 O(n log n) 中反复搬动整个命令。这里先装饰出
+    // 紧凑键，std::sort 只随机访问 POD；原始下标作为最终 tie-break，等价
+    // 于旧 stable_sort。深度用双向 > 比较，NaN/相等都回落下标，与旧比较器
+    // 两向均 false 后保持输入顺序的语义一致。
+    struct SortKey {
+        size_t index = 0;
+        int renderOrder = 0;
+        int paintOrder = 0;
+        bool translucentGltf = false;
+        bool hasDepth = false;
+        double depth = 0.0;
+    };
+    std::vector<SortKey> order;
+    order.reserve(commands.size());
+    for (size_t i = 0; i < commands.size(); ++i) {
+        const RenderCommand& cmd = commands[i];
+        order.push_back(SortKey{i, mvpRenderOrder(cmd.kind),
+                                cmd.vectorPaintOrder,
+                                isTranslucentGltfPrimitiveCommand(cmd),
+                                cmd.hasTranslucentSortDepth,
+                                cmd.translucentSortDepth});
+    }
+    std::sort(order.begin(), order.end(),
+              [](const SortKey& a, const SortKey& b) {
+                  if (a.renderOrder != b.renderOrder) {
+                      return a.renderOrder < b.renderOrder;
+                  }
+                  if (a.paintOrder != b.paintOrder) {
+                      return a.paintOrder < b.paintOrder;
+                  }
+                  if (a.translucentGltf != b.translucentGltf) {
+                      return !a.translucentGltf && b.translucentGltf;
+                  }
+                  if (a.translucentGltf) {
+                      if (a.hasDepth != b.hasDepth) return a.hasDepth;
+                      if (a.hasDepth) {
+                          if (a.depth > b.depth) return true;
+                          if (b.depth > a.depth) return false;
+                      }
+                  }
+                  return a.index < b.index;
+              });
+
+    RenderCommandList sorted;
+    sorted.reserve(commands.size());
+    for (const SortKey& key : order) {
+        sorted.push_back(std::move(commands[key.index]));
+    }
+    commands = std::move(sorted);
 }
 
 } // namespace earth_engine

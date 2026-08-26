@@ -2503,7 +2503,7 @@ static const char* kVectorLabelFragmentGLSL = R"glsl(
 #version 300 es
 precision mediump float;
 
-uniform sampler2D u_glyphAtlas;
+uniform highp sampler2DArray u_glyphAtlas;
 uniform vec4 u_color;
 uniform vec4 u_haloColor;
 uniform float u_sdfEdge;       // 轮廓阈值(kSdfOnEdge/255)
@@ -2514,7 +2514,7 @@ in float v_opacity;
 out vec4 fragColor;
 
 void main() {
-    float d = texture(u_glyphAtlas, v_uv).r;
+    float d = texture(u_glyphAtlas, vec3(v_uv, 0.0)).r;
     float w = fwidth(d);
     float fill = smoothstep(u_sdfEdge - w, u_sdfEdge + w, d);
     float halo = smoothstep(u_sdfEdge - u_sdfHaloDelta - w,
@@ -2577,13 +2577,13 @@ struct VectorLabelFragmentIn {
 
 fragment float4 vectorLabelFragment(
         VectorLabelFragmentIn in [[stage_in]],
-        texture2d<float> u_glyphAtlas [[texture(0)]],
+        texture2d_array<float> u_glyphAtlas [[texture(0)]],
         sampler u_sampler [[sampler(0)]],
         constant float4& u_color [[buffer(0)]],
         constant float4& u_haloColor [[buffer(1)]],
         constant float& u_sdfEdge [[buffer(2)]],
         constant float& u_sdfHaloDelta [[buffer(3)]]) {
-    float d = u_glyphAtlas.sample(u_sampler, in.uv).r;
+    float d = u_glyphAtlas.sample(u_sampler, in.uv, 0).r;
     float w = fwidth(d);
     float fill = smoothstep(u_sdfEdge - w, u_sdfEdge + w, d);
     float halo = smoothstep(u_sdfEdge - u_sdfHaloDelta - w,

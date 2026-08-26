@@ -326,34 +326,46 @@ void Scene::auditWorkLedger() const {
                     ticketed, truth);
     }
 
-    // ② 判据分歧:令牌账说忙 vs 旧判据说忙。相机自演进不发令牌(它不是
-    //    "在途"而是持续生产者),故双方都为真时不比、旧判据只因相机而忙时跳过。
+    // ② 迁移漏接审计。相机自演进不发令牌(它不是"在途"而是持续生产者),
+    //    故旧判据只因相机而忙时跳过。两个方向不再做对称比较：
+    //      old busy / ledger idle = 旧源尚未迁移，ledger gating 可能冻屏；
+    //      ledger busy / old idle = 合法，既可能是 Landing 等待，也可能是
+    //        Scene 外的 app-owned vector source；ledger 自身已经能正确调度它。
     const char* oldReason = nullptr;
     const bool oldBusy = hasConvergingWork(&oldReason);
     if (oldBusy && oldReason && std::strcmp(oldReason, "cameraAnimating") == 0) {
         return;
     }
-    const char* ledgerLabel = nullptr;
-    const bool ledgerBusy = ledger.anyOutstanding(&ledgerLabel);
-    if (ledgerBusy == oldBusy) {
+    if (!oldBusy) {
         return;
     }
-    // 两个方向的含义完全不同,必须分开报:
-    //   ledger 忙 / 旧判据闲 = **旧判据漏了这个源**(gating 会在此时停帧 → 冻屏)
-    //   ledger 闲 / 旧判据忙 = 令牌漏接,或旧判据有它自己的多余来源
+    bool sourceTicketed = false;
+    if (oldReason && std::strcmp(oldReason, "labelConverge") == 0) {
+        sourceTicketed =
+            ledger.outstandingForLabel("labelConverge") > 0;
+    } else if (oldReason &&
+               std::strcmp(oldReason, "pageStoreInFlight") == 0) {
+        sourceTicketed =
+            ledger.outstandingForLabel("terrainPageUpload") > 0;
+    } else {
+        // terrainPending / pendingPrimary / contentPending can be backed by a
+        // terrain content request, raster request, raster upload, or tile GPU
+        // upload.  App-owned vector tickets deliberately do not satisfy this
+        // Scene-source audit.
+        sourceTicketed =
+            ledger.outstandingForLabel("tileContentLoad") > 0 ||
+            ledger.outstandingForLabel("rasterOverlayLoad") > 0 ||
+            ledger.outstandingForLabel("rasterOverlayUpload") > 0 ||
+            ledger.outstandingForLabel("tileGpuUpload") > 0;
+    }
+    if (sourceTicketed) return;
     platformLog(LogLevel::Error, "WorkLedger",
-                "verdict DIVERGE ledger=%s(landing=%d pumped=%d) old=%s(%s)"
-                " —— %s",
-                ledgerBusy ? "busy" : "idle",
-                ledger.outstanding(WorkLedger::Kind::Landing),
-                ledger.outstanding(WorkLedger::Kind::Pumped),
+                "audit MISSING source ticket old=%s(%s) "
+                "ledgerTotals(landing=%d pumped=%d)",
                 oldBusy ? "busy" : "idle",
                 oldReason ? oldReason : "?",
-                ledgerBusy ? "旧判据漏源(此刻停帧=冻屏)" : "令牌漏接或旧判据多源");
-    for (const auto& [label, count] : ledger.outstandingByLabel()) {
-        platformLog(LogLevel::Error, "WorkLedger", "  holding %s x%d",
-                    label.c_str(), count);
-    }
+                ledger.outstanding(WorkLedger::Kind::Landing),
+                ledger.outstanding(WorkLedger::Kind::Pumped));
 }
 
 void Scene::logCpuResidentAccount() {

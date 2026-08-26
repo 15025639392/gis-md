@@ -66,8 +66,9 @@ struct FakeSinks {
             }
             return mesh;
         };
-        s.commit = [this](const TileKey& k, FeatureTileMesh&&) {
+        s.commit = [this](const TileKey& k, FeatureTileMesh&) {
             committed.push_back(k);
+            return TileMeshCommitResult::Committed;
         };
         s.drop = [this](const TileKey& k) { dropped.push_back(k); };
         return s;

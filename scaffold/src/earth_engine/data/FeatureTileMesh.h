@@ -10,6 +10,15 @@
 
 namespace earth_engine {
 
+/// 渲染线程接纳一块 CPU 瓦片网格的显式结果。
+/// Source 只有拿到成功或“确定为空”才能推进 active 状态；GPU 资源创建失败
+/// 必须保留 CPU 网格并在后续帧重试，不能把失败误记成已经上屏。
+enum class TileMeshCommitResult {
+    Committed,
+    EmptyTerminal,
+    RetryableFailure,
+};
+
 /// stencil 分类体的 CPU 侧按 paint ordinal + 色分组。
 ///
 /// 放在 data/ 与 FeatureTileMesh 同层,是因为 worker 现在也产出它(贴地

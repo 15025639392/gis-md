@@ -97,7 +97,8 @@ public:
     using TessellateFn =
         std::function<FeatureTileMesh(const TileKey&, std::vector<Feature>&&)>;
     /// 渲染线程侧网格落地钩子(典型:FeatureRenderLayer::commitTileMesh)。
-    using CommitFn = std::function<void(const TileKey&, FeatureTileMesh&&)>;
+    using CommitFn = std::function<TileMeshCommitResult(
+        const TileKey&, FeatureTileMesh&)>;
     /// 渲染线程侧移除钩子(典型:FeatureRenderLayer::dropTileMesh)。
     using DropFn = std::function<void(const TileKey&)>;
 
@@ -130,6 +131,10 @@ public:
     /// 按渲染集差分 commit/drop 瓦片网格。
     void update(const Rectangle& viewRect, double cameraHeightMeters);
 
+    /// 暂停不可见 Source，但继续排空异步收件箱和释放工作票据。
+    /// 用于有样式 zoom 门控的粗层；直接跳过 update 会冻结 worker 结果。
+    void suspend();
+
     /// P6 分段:上一次 update 的耗时构成。慢帧归因用 —— "时间不在引擎"
     /// 之后还要能再往下切一刀,否则只能停在猜测。
     struct UpdateStats {
@@ -140,6 +145,16 @@ public:
         int commits = 0;
         int drops = 0;
         int tessellateDispatched = 0;
+        int selectedZoom = 0;
+        int64_t desiredTileCount = 0;
+        size_t scannedTileCount = 0;
+        size_t renderTileCount = 0;
+        size_t requestTileCount = 0;
+        size_t pendingTileCount = 0;
+        size_t tessellatingTileCount = 0;
+        size_t readyTileCount = 0;
+        size_t activeTileCount = 0;
+        size_t activeAncestorPairs = 0;
     };
     const UpdateStats& lastUpdateStats() const { return lastStats_; }
 
@@ -173,9 +188,21 @@ private:
         std::vector<std::pair<TileKey, std::shared_ptr<const Payload>>>
             decoded;
         /// worker 镶嵌产物(样式相关的派生物,进 readyMeshes_ 等 commit)。
-        /// 带规则代次:setLayerRules 之后在途的任务用的是旧规则,回来时按
-        /// 代次丢弃 —— 否则旧规则的网格会盖掉新规则刚镶好的。
-        std::vector<std::tuple<TileKey, FeatureTileMesh, uint64_t>> meshes;
+        struct MeshResult {
+            TileKey key;
+            FeatureTileMesh mesh;
+            uint64_t rulesEpoch = 0;
+            uint64_t viewEpoch = 0;
+            uint64_t taskId = 0;
+        };
+        std::vector<MeshResult> meshes;
+        struct MeshFailure {
+            TileKey key;
+            uint64_t rulesEpoch = 0;
+            uint64_t viewEpoch = 0;
+            uint64_t taskId = 0;
+        };
+        std::vector<MeshFailure> meshFailures;
         struct FailedTile {
             TileKey key;
             double retryNotBeforeMs = 0.0;
@@ -184,11 +211,12 @@ private:
         std::vector<FailedTile> failed;
     };
 
-    void ingestInbox();
+    void ingestTileInbox();
+    void ingestMeshInbox(const std::unordered_set<TileKey>& renderSet);
 
-    /// 把矢量链的在途状态对账进 WorkLedger(每帧 update 末尾调,喂 gating 审计)。
-    /// Landing = fetch/decode 在途(tree_.pendingCount)或 worker 镶嵌在途;
-    /// Pumped  = 已镶好、等渲染线程 commit 的网格(readyMeshes_)。
+    /// 把必须由渲染帧推进的矢量状态对账进 WorkLedger(update 末尾调)。
+    /// fetch/decode 与 worker 镶嵌各自持有每任务 Landing 票；这里只同步
+    /// 已镶好待 commit 与退避计时这两类 Pumped 工作。
     void syncWorkTickets();
 
     Options options_;
@@ -205,14 +233,17 @@ private:
     /// 键在 renderTiles 里就留着等下一帧,不在就直接丢。
     std::unordered_map<TileKey, FeatureTileMesh> readyMeshes_;
     /// 已派出去、尚未回来的镶嵌任务(去重,防同一瓦片被反复派单)。
-    std::unordered_set<TileKey> tessellating_;
+    std::unordered_map<TileKey, uint64_t> tessellating_;
     /// 样式层规则代次(setLayerRules 自增),用于丢弃在途的旧规则产物。
     uint64_t rulesEpoch_ = 0;
+    uint64_t viewEpoch_ = 0;
+    uint64_t nextTaskId_ = 1;
+    std::unordered_set<TileKey> lastDesiredSet_;
 
     std::shared_ptr<Inbox> inbox_;
 
-    /// gating 账本对账槽(见 syncWorkTickets)。仅喂审计,当前零行为影响。
-    WorkTicketSlot loadSlot_;    ///< Landing: fetch/decode + worker 镶嵌在途
+    /// 渲染线程必须持续推进的工作。fetch/decode 与 worker
+    /// 镶嵌改为每任务 Landing 票，产物入 inbox 后在完成线程释放并唤醒。
     WorkTicketSlot commitSlot_;  ///< Pumped: 已镶好待 commit
     WorkTicketSlot retrySlot_;   ///< Pumped: 等待获取缓存退避截止时间
 };
@@ -320,14 +351,37 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
     };
     lastStats_ = UpdateStats{};
     const auto tIngest = Clock::now();
-    ingestInbox();
+    ingestTileInbox();
 
     const auto tTree = Clock::now();
-    lastStats_.ingestMs = ms(tIngest, tTree);
     typename VectorTileTreeT<Payload>::UpdateResult result =
         tree_.update(viewRect, cameraHeightMeters);
+    const auto tTreeDone = Clock::now();
+    std::unordered_set<TileKey> renderSet(result.renderTiles.begin(),
+                                          result.renderTiles.end());
+    std::unordered_set<TileKey> desiredSet(result.desiredTiles.begin(),
+                                           result.desiredTiles.end());
+    if (desiredSet != lastDesiredSet_) {
+        if (tileCache_) {
+            for (const TileKey& oldKey : lastDesiredSet_) {
+                if (!desiredSet.count(oldKey)) {
+                    tileCache_->clearFailure(oldKey);
+                }
+            }
+        }
+        ++viewEpoch_;
+        lastDesiredSet_ = std::move(desiredSet);
+    }
+    ingestMeshInbox(renderSet);
     const auto tDispatch = Clock::now();
-    lastStats_.treeMs = ms(tTree, tDispatch);
+    lastStats_.ingestMs =
+        ms(tIngest, tTree) + ms(tTreeDone, tDispatch);
+    lastStats_.treeMs = ms(tTree, tTreeDone);
+    lastStats_.selectedZoom = result.selectedZoom;
+    lastStats_.desiredTileCount = result.desiredTileCount;
+    lastStats_.scannedTileCount = result.scannedTileCount;
+    lastStats_.renderTileCount = result.renderTiles.size();
+    lastStats_.requestTileCount = result.requestTiles.size();
 
     // 发缺瓦片请求(获取层单一化):fetch+解码+在途去重全在 tileCache_ ——
     // 与 drape/场共享实例时,同一块数据瓦跨消费方网络恰一次、解码恰一次。
@@ -338,19 +392,29 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
         for (const TileKey& key : result.requestTiles) {
             std::weak_ptr<Inbox> weakInbox = inbox_;
             auto tileCache = tileCache_;
+            auto landingTicket = std::make_shared<WorkLedger::Ticket>(
+                WorkLedger::shared().acquire(
+                    WorkLedger::Kind::Landing, "mvtVectorFetch"));
             tileCache_->request(
                 key,
-                [key, weakInbox, tileCache](std::shared_ptr<const Payload> tile) {
+                [key, weakInbox, tileCache, landingTicket](
+                    std::shared_ptr<const Payload> tile) {
                     auto inbox = weakInbox.lock();
-                    if (!inbox) return;
-                    std::lock_guard<std::mutex> lock(inbox->mutex);
-                    if (tile) {
-                        inbox->decoded.emplace_back(key, std::move(tile));
-                    } else {
-                        const auto failure = tileCache->failureInfo(key);
-                        inbox->failed.push_back(
-                            {key, failure.retryNotBeforeMs, failure.retryable});
+                    if (inbox) {
+                        std::lock_guard<std::mutex> lock(inbox->mutex);
+                        if (tile) {
+                            inbox->decoded.emplace_back(key, std::move(tile));
+                        } else {
+                            const auto failure = tileCache->failureInfo(key);
+                            inbox->failed.push_back(
+                                {key, failure.retryNotBeforeMs,
+                                 failure.retryable});
+                        }
                     }
+                    // 先入箱再释放：Landing 唤醒后的那一帧必须已经
+                    // 能看到产物。每请求一张票也避免 aggregate slot 在
+                    // callback/update 并发时“先释放、后误重领”的睡死窗口。
+                    landingTicket->release();
                 });
         }
     }
@@ -364,23 +428,46 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
         }
         std::shared_ptr<const Payload> tile = tree_.loadedTileShared(key);
         if (!tile || !sinks_.tessellate) continue;
-        tessellating_.insert(key);
         ++lastStats_.tessellateDispatched;
         std::weak_ptr<Inbox> weakInbox = inbox_;
         TessellateFn tessellate = sinks_.tessellate;
         std::vector<std::string> includeLayers = options_.includeLayers;
         std::vector<SourceLayerRule> rules = options_.layerRules;
-        const uint64_t epoch = rulesEpoch_;
+        const uint64_t rulesEpoch = rulesEpoch_;
+        const uint64_t viewEpoch = viewEpoch_;
+        const uint64_t taskId = nextTaskId_++;
+        tessellating_[key] = taskId;
         ToFeaturesFn toFeatures = toFeatures_;
+        auto landingTicket = std::make_shared<WorkLedger::Ticket>(
+            WorkLedger::shared().acquire(
+                WorkLedger::Kind::Landing, "mvtVectorTessellate"));
         auto work = [key, weakInbox, tile, tessellate, includeLayers, rules,
-                     epoch, toFeatures]() {
+                     rulesEpoch, viewEpoch, taskId, toFeatures,
+                     landingTicket]() {
             auto inbox = weakInbox.lock();
-            if (!inbox) return;
-            std::vector<Feature> features =
-                toFeatures(key, tile, includeLayers, rules);
-            FeatureTileMesh mesh = tessellate(key, std::move(features));
-            std::lock_guard<std::mutex> lock(inbox->mutex);
-            inbox->meshes.emplace_back(key, std::move(mesh), epoch);
+            if (!inbox) {
+                landingTicket->release();
+                return;
+            }
+            try {
+                std::vector<Feature> features =
+                    toFeatures(key, tile, includeLayers, rules);
+                FeatureTileMesh mesh = tessellate(key, std::move(features));
+                {
+                    std::lock_guard<std::mutex> lock(inbox->mutex);
+                    inbox->meshes.push_back(typename Inbox::MeshResult{
+                        key, std::move(mesh), rulesEpoch, viewEpoch, taskId});
+                }
+            } catch (...) {
+                {
+                    std::lock_guard<std::mutex> lock(inbox->mutex);
+                    inbox->meshFailures.push_back(typename Inbox::MeshFailure{
+                        key, rulesEpoch, viewEpoch, taskId});
+                }
+            }
+            // 与 fetch 同契约：成功/异常都在结果入箱后释放，
+            // 渲染线程无需轮询 worker，但不会错过完成唤醒。
+            landingTicket->release();
         };
         if (decodePool_) decodePool_->enqueue(std::move(work));
         else work();
@@ -397,8 +484,6 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
     // 就绪的那一次 update 里,与替换内容的 commit 同帧退场。过渡期宁可
     // 旧内容多留几帧,决不出现空窗;同理,替换内容不提前上屏(占位者
     // 还在时提前 commit = 祖先/子瓦同框重影)。
-    std::unordered_set<TileKey> renderSet(result.renderTiles.begin(),
-                                          result.renderTiles.end());
     auto isAncestorOf = [](const TileKey& a, const TileKey& b) {
         if (a.schemeId != b.schemeId || a.z >= b.z) return false;
         const int d = b.z - a.z;
@@ -461,13 +546,32 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
             unit.push_back(r);
         }
         if (!ready) continue;  // 占位者继续顶着,不空窗
+        std::vector<TileKey> committedInUnit;
         for (const TileKey& r : unit) {
             auto it = readyMeshes_.find(r);
             if (it == readyMeshes_.end()) continue;  // 同帧被前一单元提走
-            if (sinks_.commit) sinks_.commit(r, std::move(it->second));
+            if (!sinks_.commit) continue;
+            const TileMeshCommitResult commitResult =
+                sinks_.commit(r, it->second);
+            if (commitResult == TileMeshCommitResult::RetryableFailure) {
+                ready = false;
+                break;
+            }
             readyMeshes_.erase(it);
             activeTiles_.insert(r);
+            committedInUnit.push_back(r);
             ++commits;
+        }
+        if (!ready) {
+            // GPU commit 不是可回滚事务；若单元中的后续瓦片上传失败，
+            // 立即撤销本单元已成功上传的替换者，保留旧占位者，避免父子
+            // 同框。失败瓦片仍留在 readyMeshes_，下一帧重试。
+            for (const TileKey& committed : committedInUnit) {
+                if (sinks_.drop) sinks_.drop(committed);
+                activeTiles_.erase(committed);
+                ++lastStats_.drops;
+            }
+            continue;
         }
         if (sinks_.drop) sinks_.drop(occ);
         activeTiles_.erase(occ);
@@ -491,13 +595,25 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
             }
         }
         if (blocked) continue;
-        if (sinks_.commit) sinks_.commit(key, std::move(it->second));
+        if (!sinks_.commit) continue;
+        const TileMeshCommitResult commitResult =
+            sinks_.commit(key, it->second);
+        if (commitResult == TileMeshCommitResult::RetryableFailure) continue;
         readyMeshes_.erase(it);
         activeTiles_.insert(key);
         ++commits;
     }
     lastStats_.commits = static_cast<int>(commits);
     lastStats_.commitMs = ms(tCommit, Clock::now());
+    lastStats_.pendingTileCount = tree_.pendingCount();
+    lastStats_.tessellatingTileCount = tessellating_.size();
+    lastStats_.readyTileCount = readyMeshes_.size();
+    lastStats_.activeTileCount = activeTiles_.size();
+    for (const TileKey& a : activeTiles_) {
+        for (const TileKey& b : activeTiles_) {
+            if (isAncestorOf(a, b)) ++lastStats_.activeAncestorPairs;
+        }
+    }
 
     syncWorkTickets();
 }
@@ -505,14 +621,8 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
 template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>
 void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::
     syncWorkTickets() {
-    // Landing:fetch/decode 在途(tree_ 选中未到 = pending_)或 worker 镶嵌在途。
-    // tree_.pendingCount 覆盖 request 派发→decode 回来这段窗口(此时 tessellating_
-    // 与 readyMeshes_ 都空);ingest 与 dispatch 在同一次 update 内串行,无跨帧缝。
-    const bool landing =
-        tree_.pendingCount() > 0 || !tessellating_.empty();
     // Pumped:已镶好、等渲染线程 commit 的网格。停帧 = 永不 commit,故须出帧。
     const bool pumped = !readyMeshes_.empty();
-    loadSlot_.reconcile(WorkLedger::Kind::Landing, "mvtVectorLoad", landing);
     commitSlot_.reconcile(WorkLedger::Kind::Pumped, "mvtVectorCommit", pumped);
     // 退避截止时间本身不是 Landing（没有网络/worker 会自然释放令牌），
     // 但按需渲染若此时入睡就永远不会再调用 update。短暂持有独立 Pumped
@@ -541,24 +651,32 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::setLayerRules(
 }
 
 template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>
-void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::ingestInbox() {
+void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::suspend() {
+    ingestTileInbox();
+    ++viewEpoch_;
+    lastDesiredSet_.clear();
+    tessellating_.clear();
+    const std::unordered_set<TileKey> emptyRenderSet;
+    ingestMeshInbox(emptyRenderSet);
+    readyMeshes_.clear();
+    for (const TileKey& key : activeTiles_) {
+        if (sinks_.drop) sinks_.drop(key);
+    }
+    activeTiles_.clear();
+    syncWorkTickets();
+}
+
+template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>
+void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::ingestTileInbox() {
     std::vector<std::pair<TileKey, std::shared_ptr<const Payload>>> decoded;
-    std::vector<std::tuple<TileKey, FeatureTileMesh, uint64_t>> meshes;
     std::vector<typename Inbox::FailedTile> failed;
     {
         std::lock_guard<std::mutex> lock(inbox_->mutex);
         decoded.swap(inbox_->decoded);
-        meshes.swap(inbox_->meshes);
         failed.swap(inbox_->failed);
     }
     for (auto& [key, tile] : decoded) {
         tree_.provideShared(key, std::move(tile));
-    }
-    for (auto& [key, mesh, epoch] : meshes) {
-        tessellating_.erase(key);
-        // 规则已变 → 这块是旧规则的产物,丢掉;下一次 update 会按新规则重派。
-        if (epoch != rulesEpoch_) continue;
-        readyMeshes_[key] = std::move(mesh);
     }
     for (const auto& failure : failed) {
         if (failure.retryable) {
@@ -566,6 +684,38 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::ingestInbox() {
         } else {
             tree_.markFailed(failure.key);
         }
+    }
+}
+
+template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>
+void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::ingestMeshInbox(
+    const std::unordered_set<TileKey>& renderSet) {
+    std::vector<typename Inbox::MeshResult> meshes;
+    std::vector<typename Inbox::MeshFailure> failures;
+    {
+        std::lock_guard<std::mutex> lock(inbox_->mutex);
+        meshes.swap(inbox_->meshes);
+        failures.swap(inbox_->meshFailures);
+    }
+    auto finishTask = [&](const TileKey& key, uint64_t taskId) {
+        auto it = tessellating_.find(key);
+        if (it != tessellating_.end() && it->second == taskId) {
+            tessellating_.erase(it);
+        }
+    };
+    for (auto& result : meshes) {
+        finishTask(result.key, result.taskId);
+        if (result.rulesEpoch != rulesEpoch_ ||
+            result.viewEpoch != viewEpoch_ ||
+            !renderSet.count(result.key)) {
+            continue;
+        }
+        readyMeshes_[result.key] = std::move(result.mesh);
+    }
+    for (const auto& failure : failures) {
+        finishTask(failure.key, failure.taskId);
+        // worker 异常不污染已解码 tile；清掉在途状态后，只要 key 仍是
+        // 当前渲染集，下一次 update 会重新派发镶嵌。
     }
 }
 

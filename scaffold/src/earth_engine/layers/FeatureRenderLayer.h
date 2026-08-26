@@ -7,6 +7,7 @@
 #include "../renderer/SymbolShape.h"
 #include "../core/async/WorkLedger.h"
 #include "../core/math/Rectangle.h"
+#include "../core/math/Mat4.h"
 #include "../debug/PlatformLog.h"
 #include "../core/math/Vec3.h"
 #include "../tiling/TileKey.h"
@@ -215,7 +216,7 @@ public:
     FeatureRenderLayer& operator=(const FeatureRenderLayer&) = delete;
 
     const std::string& id() const { return layerId_; }
-    void setVisible(bool v) { visible_ = v; }
+    void setVisible(bool v);
     bool visible() const { return visible_; }
 
     FeatureStore& store() { return store_; }
@@ -412,6 +413,15 @@ private:
             std::string name;
         };
         std::vector<TileLabelSource> tileLabelSources;
+        /// 本桶尚未完成的唯一 codepoint 集。首次 bake 构建，之后 Ready /
+        /// MissingTerminal 项就地移除；后台期间不再重复 decode 全部 name，
+        /// 也不从头扫描已经完成的前缀。
+        std::vector<uint32_t> labelRequiredGlyphs;
+        bool labelRequiredGlyphsReady = false;
+        /// 标签派生 VBO/IBO 的连续创建失败数。瞬时 GPU/驱动失败至少要能
+        /// 跨帧重试，不能在稳定视野永久丢标；同时设有限上限，避免永久
+        /// OOM 把帧循环钉死。
+        int labelUploadFailures = 0;
         /// V27:标注烘焙已达稳态(成功 / 确认无可显示字形 / buffer 失败按
         /// 原语义等翻转重试)。区分"在途(预算没补完,下帧继续)"与"不会
         /// 再有产物"——谓词 hasPendingLabelWork 只把前者算作在途,否则
@@ -424,6 +434,12 @@ private:
         /// 掉(硬件深度 + T2 判定都读它),表现为"标记点闪一下就没"。
         /// store 桶靠 rebuildBucket 重钳,瓦片桶没有重镶路径,靠它。
         std::vector<TileSymbolCpu> tileSymbolSources;
+        /// source 所属瓦片 zoom（cross-tile id 量化容差输入）与当前已物化
+        /// 的整数 view zoom。commit 保留完整 source；build 每个 zoom 档
+        /// 只把 active top-N 展开成 point/label GPU 派生数据。
+        int sourceTileZoom = 0;
+        int symbolViewZoomBucket = -1;
+        uint64_t symbolSelectionSignature = 0;
         /// E 方案 P2:瓦片线重钳源(每 ribbon 顶点 lon/lat 弧度 +
         /// colorPacked,与 lineVertexBuffer 同序)。地形代次变化时重采样
         /// 重传顶点缓冲(索引不变);镜像 tileSymbolSources 的重钳路径。
@@ -459,6 +475,10 @@ private:
     /// 重镶单桶:镶嵌桶内全部要素 → 减原点转 float → 建 buffer。
     /// 桶空/全退化 → 从 buckets_ 移除。预览摘除中的要素跳过。
     void rebuildBucket(BucketKey key);
+
+    /// 字体图集换代后，旧标签 UV/顶点缓冲全部失效；保留瓦片原始标签源，
+    /// 由后续按帧预算重新烘焙。渲染线程调用。
+    void invalidateTileBucketLabels(BucketGpu& gpu);
 
     /// 区域采样函数(空 = 无地形或 Absolute 模式)。
     using AreaSampleFn = std::function<std::optional<float>(double, double)>;
@@ -638,30 +658,41 @@ public:
                                      int minZoom = 0,
                                      int maxZoom = 30);
 
-    /// **渲染线程**:上传并整瓦原子替换。mesh 为空 → 等价 dropTileMesh。
-    /// 上传失败 → 丢弃该瓦(下次 provide 重试),不留半张。
-    void commitTileMesh(const TileKey& key, TileMeshCpu&& mesh);
+    /// **渲染线程**:上传并整瓦原子替换。mesh 为空 → EmptyTerminal；
+    /// 上传失败 → RetryableFailure，调用方保留 CPU mesh 后续重试。
+    TileMeshCommitResult commitTileMesh(const TileKey& key,
+                                        TileMeshCpu& mesh);
+    TileMeshCommitResult commitTileMesh(const TileKey& key,
+                                        TileMeshCpu&& mesh) {
+        return commitTileMesh(key, mesh);
+    }
 
     /// **渲染线程**:移除一块瓦片的 GPU 资源。
     void dropTileMesh(const TileKey& key);
 
-    /// **渲染线程**:瓦片桶标签烘焙(符号刀B)。桶有标签源且字体就绪且
-    /// 尚未烘过 → 生成 glyph quads + LabelEntry + GPU buffer。commit 时
-    /// 与字体就绪翻转时都会调,幂等。
-    void bakeTileBucketLabels(BucketGpu& gpu);
+    enum class TileLabelBakeResult {
+        Settled,
+        Deferred,
+        AtlasSaturated,
+        RetryableFailure
+    };
 
-    /// P6:每帧新字形栅格化预算。`stbtt_GetGlyphSDF` 实测 **2-3.5ms/字形**
-    /// (32px + 6px padding,CJK),平移进新区域时一张瓦能带来 34 个新字形
-    /// = 74ms 卡顿。烘焙需要整桶字形齐备,故预算加在**栅格化**而非烘焙上:
-    /// 缺字形的桶本帧只补 kGlyphRasterBudgetPerFrame 个,补不齐就整桶推迟
-    /// (bakeTileBucketLabels 幂等,下一帧接着补)。
-    /// 用**时间**而非个数计:实测单字形 3-7ms 波动近一倍(字形复杂度),
-    /// 按个数定预算会随内容漂(实测 2 个 = 5.7-14.1ms)。至少放行 1 个,
-    /// 否则复杂字形永远排不上、标签永不出现。
+    /// **渲染线程**:瓦片桶标签烘焙(符号刀B)。桶有标签源且字体就绪且
+    /// 尚未烘过 → 生成 glyph quads + LabelEntry + GPU buffer。只在命令
+    /// 构建阶段按 Renderer 级共享预算推进；commit 只登记源，避免在帧前
+    /// 提交路径绕过预算。字体就绪翻转只清 settled，随后同样由预算 drain。
+    /// AtlasSaturated 表示全局字形并发/本帧启动预算已满，调用方应立即停止
+    /// 整层桶扫描；下一帧由 hasPendingLabelWork 继续供帧。
+    TileLabelBakeResult bakeTileBucketLabels(BucketGpu& gpu,
+                                             double viewZoom);
+
+    /// P6:Renderer 级共享的新字形栅格化预算。预算所有权在 GlyphAtlas，
+    /// 因为同一 Renderer 下可能有多个 FeatureRenderLayer；若放在 layer
+    /// 成员，每层重置一次会退化为 N×4ms。单字形不可抢占，因此每帧至少
+    /// 放行一个，之后达到时间上限便延迟剩余桶。
     double lastPlacementMs_ = 0.0;
     size_t lastPlacementCandidates_ = 0;
     static constexpr double kGlyphRasterBudgetMs = 4.0;
-    double glyphRasterBudgetMs_ = kGlyphRasterBudgetMs;
 
     /// P6:地形代次重钳的每帧桶预算。重钳一次要重建全部瓦片桶(~60 个)
     /// 的点 buffer + 重烘标签,实测单帧 27ms。代次变化本就 120 帧节流,
@@ -677,6 +708,9 @@ public:
                             std::vector<uint32_t>& pointIndices,
                             std::vector<PaintRange>& pointRanges,
                             std::vector<BucketGpu::TileLabelSource>& labelSrc);
+    bool rebuildTileBucketSymbolsForZoom(BucketGpu& gpu,
+                                         int viewZoomBucket,
+                                         bool force = false);
 
     /// **渲染线程**:地形代次变化后按新地形重采锚点高度并重建点/标签
     /// GPU 资源(store 桶的 rebuildBucket 对应物)。无符号源则空转。
@@ -848,9 +882,23 @@ private:
     void appendTerrainOcclusion(const Renderer& renderer,
                                 RenderCommand& cmd) const;
 
+    struct CommandFrameParams {
+        Mat4 viewProjection;
+        Mat4 view;
+        double viewportWidth = 0.0;
+        double viewportHeight = 0.0;
+        double cameraHeight = 0.0;
+        double zoomLevel = 0.0;
+        float lineWidthPx = 0.0f;
+        float pointSizePx = 0.0f;
+        float symbolDepthPush = 0.0f;
+        float halfWidthPerEyeZ = 0.0f;
+    };
+
     /// 生成一对 fill/line 命令追加进 commands(常驻桶与预览路径共用)。
     void appendBucketCommands(const BucketGpu& gpu,
                               const FrameState& frameState,
+                              const CommandFrameParams& frameParams,
                               Renderer& renderer,
                               RenderCommandList& commands) const;
 
@@ -889,9 +937,10 @@ private:
 
     // ---- 文字标注(P5b) ----
     // buildRenderCommands 每帧缓存(编辑预览/重镶路径无 Renderer 引用);
-    // 字体就绪状态翻转 → 全部桶重镶补标注。
+    // 字体就绪状态或代次变化 → 全部桶重镶/重烘补标注。
     GlyphAtlas* glyphAtlas_ = nullptr;
     bool lastAtlasReady_ = false;
+    uint64_t lastGlyphRevision_ = 0;
 
     // ---- 位图图标(P6c) ----
     // 与字体同构:图标可在建桶之后才注入,图集代次变化 → 全桶重镶补 uv。
@@ -917,6 +966,10 @@ private:
     /// POI min/max 都是整数 zoom 门槛；跨整数档立即重跑 placement，
     /// 避免一次性缩放结束后因 300ms 节流而停在旧可见集。
     int lastPlacementZoomBucket_ = -1;
+    /// 瓦片标签派生几何只覆盖当前整数 zoom 窗口；跨档时失效并按保留的
+    /// tileLabelSources 重烘，避免为当前不可见的数千 POI 预烘字形/quad。
+    int lastLabelBakeZoomBucket_ = -1;
+    bool symbolBucketsAwaitingRebuild_ = false;
     /// V27:桶换代(bake 出新标注/重镶)→ 下一帧全量 placement 绕过 300ms
     /// 节流(与 priorityChanged 即时重跑同款),runFull 后清位。不即时跑的
     /// 话,新 entries 的 target 永远没人置,停帧窗口内 = 标注隐形。
@@ -925,6 +978,10 @@ private:
     /// 永不收敛,Pumped 语义严合)。syncLabelWorkTicket 按 hasPendingLabelWork
     /// 谓词 acquire/release,照抄 TerrainPageStore::syncWorkTicket 模式。
     WorkLedger::Ticket labelWorkTicket_;
+    /// 当前相机是否落在本层整体 zoom 范围内。hasPendingLabelWork 是 Scene
+    /// 与 WorkLedger 的共同真值，不能让一个已经整体门控掉的层继续持有
+    /// labelConverge；由每帧 build 在任何早退前更新。
+    bool labelWorkActiveForCurrentView_ = false;
 
     // ---- 标签避让 placement(P5c) ----
     LabelPlacement labelPlacement_;

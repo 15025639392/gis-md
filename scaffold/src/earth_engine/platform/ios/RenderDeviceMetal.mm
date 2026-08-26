@@ -970,6 +970,62 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                         length:cmd.gltfUniforms.geomorphUpFactor.size() *
                                sizeof(float)
                        atIndex:2];
+        } else if (cmd.hasVectorUniforms) {
+            const VectorUniformBlock& u = cmd.vectorUniforms;
+            auto setVertex = [&](const void* data, size_t bytes,
+                                 NSUInteger index) {
+                [impl_->currentEncoder setVertexBytes:data
+                                               length:bytes
+                                              atIndex:index];
+            };
+            auto setFragment = [&](const void* data, size_t bytes,
+                                   NSUInteger index) {
+                [impl_->currentEncoder setFragmentBytes:data
+                                                 length:bytes
+                                                atIndex:index];
+            };
+            setVertex(u.modelViewProjection.data(),
+                      u.modelViewProjection.size() * sizeof(float), 1);
+            switch (cmd.kind) {
+                case RenderCommandKind::VectorFill:
+                case RenderCommandKind::VectorStencil:
+                    setFragment(u.color.data(), u.color.size() * sizeof(float), 0);
+                    if (cmd.kind == RenderCommandKind::VectorStencil &&
+                        cmd.vertexStride == 24) {
+                        setVertex(u.modelView.data(),
+                                  u.modelView.size() * sizeof(float), 2);
+                        setVertex(&u.halfWidthPerEyeZ,
+                                  sizeof(u.halfWidthPerEyeZ), 3);
+                    }
+                    break;
+                case RenderCommandKind::VectorExtrusion:
+                    setVertex(u.lightDir.data(), u.lightDir.size() * sizeof(float), 2);
+                    setFragment(&u.ambient, sizeof(u.ambient), 0);
+                    break;
+                case RenderCommandKind::VectorLine:
+                    setVertex(u.viewport.data(), u.viewport.size() * sizeof(float), 2);
+                    setVertex(&u.lineWidthPx, sizeof(u.lineWidthPx), 3);
+                    setFragment(&u.dashPeriodMeters,
+                                 sizeof(u.dashPeriodMeters), 0);
+                    setFragment(&u.dashOnFraction,
+                                 sizeof(u.dashOnFraction), 1);
+                    break;
+                case RenderCommandKind::VectorPoint:
+                    setVertex(u.viewport.data(), u.viewport.size() * sizeof(float), 2);
+                    setVertex(&u.pointSizePx, sizeof(u.pointSizePx), 3);
+                    setVertex(&u.depthPushNdc, sizeof(u.depthPushNdc), 4);
+                    break;
+                case RenderCommandKind::VectorLabel:
+                    setVertex(u.viewport.data(), u.viewport.size() * sizeof(float), 2);
+                    setVertex(&u.depthPushNdc, sizeof(u.depthPushNdc), 3);
+                    setFragment(u.color.data(), u.color.size() * sizeof(float), 0);
+                    setFragment(u.haloColor.data(), u.haloColor.size() * sizeof(float), 1);
+                    setFragment(&u.sdfEdge, sizeof(u.sdfEdge), 2);
+                    setFragment(&u.sdfHaloDelta, sizeof(u.sdfHaloDelta), 3);
+                    break;
+                default:
+                    break;
+            }
         } else {
             setUniform("u_modelViewProjection", 1);
             setUniform("u_model", 2);
@@ -990,6 +1046,16 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         } else {
 
         // Fragment uniforms
+        // Legacy VectorLayer uses the generic color shader rather than the
+        // FeatureRenderLayer fixed block.  colorFragment consumes u_color at
+        // buffer(0); without this binding Metal reused stale bytes from the
+        // previous draw while GLES uploaded the map value correctly.
+        auto colorIt = cmd.uniforms.find("u_color");
+        if (colorIt != cmd.uniforms.end()) {
+            [impl_->currentEncoder setFragmentBytes:colorIt->second.data()
+                                             length:colorIt->second.size() * sizeof(float)
+                                            atIndex:0];
+        }
         auto fragIt = cmd.uniforms.find("u_lightDir");
         if (fragIt != cmd.uniforms.end()) {
             [impl_->currentEncoder setFragmentBytes:fragIt->second.data()

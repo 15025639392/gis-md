@@ -11,6 +11,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "../../helpers/MockRenderDevice.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -123,12 +124,15 @@ TEST_F(FeatureRenderLayerTest, PolygonEmitsFillAndOutlineCommands) {
         EXPECT_NE(nullptr, cmd->indexBuffer);
         EXPECT_GT(cmd->indexCount, 0);
         EXPECT_EQ(7u, cmd->frameId);
-        ASSERT_EQ(1u, cmd->uniforms.count("u_modelViewProjection"));
+        EXPECT_TRUE(cmd->hasVectorUniforms);
+        EXPECT_TRUE(cmd->uniforms.empty());
     }
     EXPECT_EQ(16, fill->vertexStride);  // P6b:+color(RGBA8)
     EXPECT_EQ(48, line->vertexStride);  // P6b:+color(RGBA8)
-    ASSERT_EQ(1u, line->uniforms.count("u_viewport"));
-    ASSERT_EQ(1u, line->uniforms.count("u_lineWidthPx"));
+    EXPECT_FLOAT_EQ(800.0f, line->vectorUniforms.viewport[0]);
+    EXPECT_FLOAT_EQ(600.0f, line->vectorUniforms.viewport[1]);
+    EXPECT_FLOAT_EQ(layer_->style().lineWidthPx,
+                    line->vectorUniforms.lineWidthPx);
     // 方形外环 4 顶点闭合 ribbon:2n=8 顶点,6·段数=24 索引
     EXPECT_EQ(24, line->indexCount);
     // 方形 CDT:4 顶点 → 2 三角形 = 6 索引
@@ -198,6 +202,31 @@ TEST_F(FeatureRenderLayerTest, TilePaintRangesShareOneBufferPair) {
     EXPECT_EQ(commands[0].indexBuffer, commands[1].indexBuffer);
     EXPECT_LT(commands[0].indexOffset, commands[1].indexOffset);
     EXPECT_LT(commands[1].indexOffset, commands[2].indexOffset);
+}
+
+TEST_F(FeatureRenderLayerTest, TileCommitReportsRetryableGpuFailure) {
+    Feature polygon = makePolygon(6.0, 29.0, 0.01);
+    FeatureTileMesh mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {polygon});
+    const TileKey key{SchemeId("XYZ-WebMercator"), 10, 100, 200};
+    device_.failBufferCreationAtAttempt = device_.bufferCreationAttempts + 1;
+
+    EXPECT_EQ(TileMeshCommitResult::RetryableFailure,
+              layer_->commitTileMesh(key, mesh));
+    EXPECT_TRUE(build().empty()) << "上传失败不能留下半张瓦片";
+
+    device_.failBufferCreationAtAttempt = -1;
+    EXPECT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(key, mesh))
+        << "同一 CPU mesh 必须可在后续帧重试";
+    EXPECT_FALSE(build().empty());
+}
+
+TEST_F(FeatureRenderLayerTest, EmptyTileCommitIsTerminalSuccess) {
+    FeatureTileMesh mesh;
+    const TileKey key{SchemeId("XYZ-WebMercator"), 10, 100, 200};
+    EXPECT_EQ(TileMeshCommitResult::EmptyTerminal,
+              layer_->commitTileMesh(key, mesh));
 }
 
 TEST_F(FeatureRenderLayerTest, GlobalPaintOrderSeparatesFillAndLineAcrossTiles) {
@@ -386,17 +415,21 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     EXPECT_FALSE(cmd.depthTest);
     EXPECT_FALSE(cmd.depthWrite);
     EXPECT_TRUE(cmd.blend);
-    ASSERT_EQ(1u, cmd.uniforms.count("u_symbolOcclusion"));
-    ASSERT_EQ(1u, cmd.uniforms.count("u_pointSizePx"));
-    ASSERT_EQ(1u, cmd.uniforms.count("u_viewport"));
+    ASSERT_TRUE(cmd.hasVectorUniforms);
+    EXPECT_TRUE(cmd.uniforms.empty());
+    EXPECT_FLOAT_EQ(layer_->style().symbolOccludedMinOpacity,
+                    cmd.vectorUniforms.symbolOcclusion[1]);
+    EXPECT_FLOAT_EQ(layer_->style().pointSizePx,
+                    cmd.vectorUniforms.pointSizePx);
+    EXPECT_FLOAT_EQ(800.0f, cmd.vectorUniforms.viewport[0]);
+    EXPECT_FLOAT_EQ(600.0f, cmd.vectorUniforms.viewport[1]);
     // T2 不变量:**没有图标图集时也要占位**,深度纹理恒落 textures[1]。
     // 后端按下标 1:1 绑纹理单元,下标随图集有无浮动会把深度绑到图集的
     // 采样器上 —— 表现为图标被一张深度图替换,极难从现象反推。
     ASSERT_EQ(2u, cmd.textures.size());
     EXPECT_EQ(nullptr, cmd.textures[0]);  // 本例无图集
     EXPECT_EQ(nullptr, cmd.textures[1]);  // host 无深度通路
-    ASSERT_EQ(1u, cmd.uniforms.count("u_terrainOcclusion"));
-    EXPECT_FLOAT_EQ(0.0f, cmd.uniforms.at("u_terrainOcclusion")[0]);
+    EXPECT_FLOAT_EQ(0.0f, cmd.vectorUniforms.terrainOcclusion[0]);
 
     // 顶点打包:4 × (anchor rel 3f + offsetUnit 2f + uv 2f + color 4B +
     // shape 1f);首顶点 anchor = 桶原点 → rel(0,0,0),corner=(-1,-1) →
@@ -705,6 +738,242 @@ TEST_F(FeatureRenderLayerTest, TileSymbolZoomWindowGatesPointAndLabel) {
     EXPECT_EQ(1, layer_->labelPlacementStats().candidates);
 }
 
+TEST_F(FeatureRenderLayerTest, TileLabelsBakeOnlyCurrentZoomWindowAndRebakeOnChange) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();  // 缓存 glyph atlas
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    mesh.hasOrigin = true;
+    TileSymbolCpu coarse;
+    coarse.lonRad = 0.0;
+    coarse.latRad = 0.0;
+    coarse.colorPacked = 1.0f;
+    coarse.name = "A";
+    coarse.minZoom = 0;
+    coarse.maxZoom = 3;
+    TileSymbolCpu fine = coarse;
+    fine.name = "B";
+    fine.minZoom = 3;
+    fine.maxZoom = 30;
+    mesh.symbols = {coarse, fine};
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
+        std::move(mesh));
+
+    // fixture 高空 viewZoom≈2：只允许 coarse 窗口参与字形/quad 烘焙。
+    build();
+    EXPECT_TRUE(renderer_->glyphAtlas()->hasGlyph('A'));
+    EXPECT_FALSE(renderer_->glyphAtlas()->hasGlyph('B'))
+        << "未来 zoom 不可见标签不得提前占 worker/图集/完整帧";
+    EXPECT_EQ(1, layer_->labelPlacementStats().candidates);
+
+    // viewZoom≈4，跨整数窗口后必须从保留源增量重烘 fine 标签。
+    const double radius = Ellipsoid::WGS84().radii().x();
+    camera_.lookAt(Vec3(radius + 2.5e6, 0.0, 0.0), Vec3::zero(),
+                   Vec3(0.0, 0.0, 1.0));
+    ++frame_.frameId;
+    build();
+    EXPECT_TRUE(renderer_->glyphAtlas()->hasGlyph('B'))
+        << "跨 zoom 后不能因上一窗口 settled 而永久漏标";
+    EXPECT_EQ(1, layer_->labelPlacementStats().candidates);
+}
+
+TEST_F(FeatureRenderLayerTest, TileSymbolCapacityPreservesIndependentZoomWindows) {
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    mesh.hasOrigin = true;
+    for (int i = 0; i < 128; ++i) {
+        TileSymbolCpu fine;
+        fine.lonRad = i * 1e-7;
+        fine.latRad = 0.0;
+        fine.colorPacked = 1.0f;
+        fine.rank = 1;
+        fine.minZoom = 18;
+        fine.maxZoom = 30;
+        mesh.symbols.push_back(fine);
+    }
+    TileSymbolCpu coarse;
+    coarse.lonRad = -1e-5;
+    coarse.latRad = 0.0;
+    coarse.colorPacked = 1.0f;
+    coarse.rank = 9;
+    coarse.minZoom = 0;
+    coarse.maxZoom = 18;
+    mesh.symbols.push_back(coarse);
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
+        std::move(mesh));
+
+    RenderCommandList commands = build();
+    int coarseIndices = 0;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorPoint) {
+            coarseIndices += cmd.indexCount;
+        }
+    }
+    EXPECT_EQ(6, coarseIndices)
+        << "fine 档 top-N 不能在 commit 时永久挤掉 coarse 档唯一符号";
+
+    const double radius = Ellipsoid::WGS84().radii().x();
+    const double height = 4.0e7 / std::exp2(18.25);
+    camera_.lookAt(Vec3(radius + height, 0.0, 0.0), Vec3::zero(),
+                   Vec3(0.0, 0.0, 1.0));
+    ++frame_.frameId;
+    commands = build();
+    int fineIndices = 0;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorPoint) {
+            fineIndices += cmd.indexCount;
+        }
+    }
+    EXPECT_EQ(128 * 6, fineIndices);
+}
+
+TEST_F(FeatureRenderLayerTest, TileLabelBakeGpuFailureRetriesWithoutZoomChange) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    mesh.hasOrigin = true;
+    TileSymbolCpu symbol;
+    symbol.lonRad = 0.0;
+    symbol.latRad = 0.0;
+    symbol.colorPacked = 1.0f;
+    symbol.name = "AB";
+    mesh.symbols.push_back(symbol);
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
+        std::move(mesh));
+
+    // 当前 build 先重建 point VBO/IBO，随后第三次创建才是 label VBO。
+    device_.failBufferCreationAtAttempt =
+        device_.bufferCreationAttempts + 3;
+    RenderCommandList commands = build();
+    EXPECT_TRUE(layer_->hasPendingLabelWork());
+    EXPECT_FALSE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorLabel;
+    }));
+
+    device_.failBufferCreationAtAttempt = -1;
+    ++frame_.frameId;
+    commands = build();
+    EXPECT_TRUE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorLabel;
+    })) << "稳定 camera 下的瞬时 label GPU 失败必须跨帧自愈";
+}
+
+TEST_F(FeatureRenderLayerTest, PendingLabelTicketReleasesOutsideLayerZoomRange) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    FeatureRenderStyle style = layer_->style();
+    style.maxZoom = 3.0;
+    layer_->setStyle(style);
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    mesh.hasOrigin = true;
+    TileSymbolCpu symbol;
+    symbol.lonRad = 0.0;
+    symbol.latRad = 0.0;
+    symbol.colorPacked = 1.0f;
+    symbol.name = "AB";
+    mesh.symbols.push_back(symbol);
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
+        std::move(mesh));
+
+    const int before =
+        WorkLedger::shared().outstandingForLabel("labelConverge");
+    build();
+    EXPECT_GT(WorkLedger::shared().outstandingForLabel("labelConverge"),
+              before);
+
+    const double radius = Ellipsoid::WGS84().radii().x();
+    camera_.lookAt(Vec3(radius + 2.0e6, 0.0, 0.0), Vec3::zero(),
+                   Vec3(0.0, 0.0, 1.0));
+    ++frame_.frameId;
+    build();
+    EXPECT_EQ(before,
+              WorkLedger::shared().outstandingForLabel("labelConverge"));
+    EXPECT_FALSE(layer_->hasPendingLabelWork());
+}
+
+TEST_F(FeatureRenderLayerTest, BusyLayerHiddenReleasesLabelTicketImmediately) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    Feature point;
+    point.type = GeometryType::Point;
+    point.rings = {{Cartographic(0.0, 0.0)}};
+    point.properties["name"] = "AB";
+    layer_->store().addFeature(std::move(point));
+
+    const int before =
+        WorkLedger::shared().outstandingForLabel("labelConverge");
+    build();
+    EXPECT_GT(WorkLedger::shared().outstandingForLabel("labelConverge"),
+              before);
+    layer_->setVisible(false);
+    EXPECT_EQ(before,
+              WorkLedger::shared().outstandingForLabel("labelConverge"));
+}
+
+TEST_F(FeatureRenderLayerTest, SameActiveZoomWindowDoesNotRebuildTileLabels) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    mesh.hasOrigin = true;
+    TileSymbolCpu symbol;
+    symbol.lonRad = 0.0;
+    symbol.latRad = 0.0;
+    symbol.colorPacked = 1.0f;
+    symbol.name = "AB";
+    symbol.minZoom = 18;
+    symbol.maxZoom = 30;
+    mesh.symbols.push_back(symbol);
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
+        std::move(mesh));
+
+    const double radius = Ellipsoid::WGS84().radii().x();
+    auto setZoom = [&](double zoom) {
+        const double height = 4.0e7 / std::exp2(zoom);
+        camera_.lookAt(Vec3(radius + height, 0.0, 0.0), Vec3::zero(),
+                       Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+    };
+    setZoom(18.25);
+    build();
+    const int buffersAt18 = device_.createdBufferCount;
+    setZoom(19.25);
+    build();
+    EXPECT_EQ(buffersAt18, device_.createdBufferCount)
+        << "[18,30) active 集未变时跨整数 zoom 不应销毁重建 point/label VBO";
+}
+
 // rank 升序截断:超过单瓦上限时留 rank 最小(最重要)的那批。这是
 // placement 预算刀之前的容量闸 —— 上限本身是实现细节,契约是「重要的
 // 活下来 + 总量被钉住」。
@@ -846,8 +1115,8 @@ TEST_F(FeatureRenderLayerTest, SymbolDepthPushedToNearAtHighAltitude) {
 
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
-    ASSERT_EQ(1u, commands[0].uniforms.count("u_depthPushNdc"));
-    EXPECT_GT(commands[0].uniforms.at("u_depthPushNdc")[0], 0.9f);
+    ASSERT_TRUE(commands[0].hasVectorUniforms);
+    EXPECT_GT(commands[0].vectorUniforms.depthPushNdc, 0.9f);
 }
 
 TEST_F(FeatureRenderLayerTest, SymbolDepthTestedNormallyAtLowAltitude) {
@@ -864,8 +1133,8 @@ TEST_F(FeatureRenderLayerTest, SymbolDepthTestedNormallyAtLowAltitude) {
 
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
-    ASSERT_EQ(1u, commands[0].uniforms.count("u_depthPushNdc"));
-    EXPECT_FLOAT_EQ(0.0f, commands[0].uniforms.at("u_depthPushNdc")[0]);
+    ASSERT_TRUE(commands[0].hasVectorUniforms);
+    EXPECT_FLOAT_EQ(0.0f, commands[0].vectorUniforms.depthPushNdc);
 }
 
 TEST_F(FeatureRenderLayerTest, InvisibleLayerEmitsNothing) {
@@ -908,7 +1177,9 @@ TEST_F(FeatureRenderLayerTest, VerticesAreBucketOriginRelative) {
     }
 
     // mvp 必须吸收原点平移:与直接 viewProj(float) 不同
-    const auto& mvpU = commands[0].uniforms.at("u_modelViewProjection");
+    ASSERT_TRUE(commands[0].hasVectorUniforms);
+    EXPECT_TRUE(commands[0].uniforms.empty());
+    const auto& mvpU = commands[0].vectorUniforms.modelViewProjection;
     ASSERT_EQ(16u, mvpU.size());
 }
 
@@ -1016,12 +1287,16 @@ TEST(GlyphAtlasTest, DecodeUtf8MixedText) {
 TEST(GlyphAtlasTest, RasterizesAndPacksGlyphs) {
     std::vector<uint8_t> font = loadHostFont();
     if (font.empty()) GTEST_SKIP() << "no host font available";
+    std::vector<uint8_t> replacementFont = font;
 
     earth_engine::testing::MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
     GlyphAtlas atlas(&device);
+    EXPECT_EQ(0u, atlas.revision());
     if (!atlas.setFontData(std::move(font))) {
         GTEST_SKIP() << "host font not stbtt-parsable";
     }
+    EXPECT_EQ(1u, atlas.revision());
     ASSERT_TRUE(atlas.ready());
     EXPECT_GT(atlas.ascent(), 0.0f);
 
@@ -1044,6 +1319,60 @@ TEST(GlyphAtlasTest, RasterizesAndPacksGlyphs) {
     EXPECT_GT(space->advance, 0.0f);
     // 重复取:同一实例(缓存)
     EXPECT_EQ(a, atlas.ensureGlyph('A'));
+
+    ASSERT_TRUE(atlas.setFontData(std::move(replacementFont)));
+    EXPECT_EQ(2u, atlas.revision())
+        << "ready→ready 换字体也必须通知已烘焙标签失效";
+}
+
+TEST(GlyphAtlasTest, BudgetIsSharedOncePerRenderFrame) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+
+    earth_engine::testing::MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    GlyphAtlas atlas(&device);
+    if (!atlas.setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+
+    // 0ms 预算仍放行全局第一个缺字形，防复杂字形永久饥饿；同 frameId
+    // 再 begin（模拟第二个 FeatureRenderLayer）不得重置预算。
+    atlas.beginFrameGlyphBudget(7, 0.0);
+    EXPECT_EQ(GlyphAtlas::BudgetedGlyphResult::Ready,
+              atlas.ensureGlyphBudgeted('A'));
+    atlas.beginFrameGlyphBudget(7, 1000.0);
+    EXPECT_EQ(GlyphAtlas::BudgetedGlyphResult::Saturated,
+              atlas.ensureGlyphBudgeted('B'))
+        << "同一 Renderer 帧的后续图层不能重新获得一份预算";
+    EXPECT_EQ(1u, atlas.frameGlyphRasterAttempts());
+
+    atlas.beginFrameGlyphBudget(8, 0.0);
+    EXPECT_EQ(GlyphAtlas::BudgetedGlyphResult::Ready,
+              atlas.ensureGlyphBudgeted('B'));
+    EXPECT_EQ(1u, atlas.frameGlyphRasterAttempts());
+}
+
+TEST(GlyphAtlasTest, FailedGlyphUploadLeavesGlyphRetryable) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+
+    earth_engine::testing::MockRenderDevice device;
+    GlyphAtlas atlas(&device);
+    if (!atlas.setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+
+    device.textureRegionUploadSucceeds = false;
+    EXPECT_EQ(nullptr, atlas.ensureGlyph('A'));
+    EXPECT_EQ(0u, atlas.residentGlyphCount());
+    EXPECT_EQ(0, atlas.shelfUsedHeightPx());
+
+    device.textureRegionUploadSucceeds = true;
+    const GlyphAtlas::Glyph* glyph = atlas.ensureGlyph('A');
+    ASSERT_NE(nullptr, glyph);
+    EXPECT_EQ(1u, atlas.residentGlyphCount());
+    EXPECT_GT(atlas.shelfUsedHeightPx(), 0);
 }
 
 // 符号刀B:瓦片实例带 name → 准入烘出标签 quads(32B 布局),与点命令
@@ -1077,6 +1406,46 @@ TEST_F(FeatureRenderLayerTest, TileSymbolLabelsRenderWhenFontReady) {
     ASSERT_NE(nullptr, label) << "瓦片符号标签未出命令";
     EXPECT_EQ(32, label->vertexStride);
     EXPECT_EQ(12, label->indexCount);  // "AB" 2 字形 × 6
+}
+
+TEST_F(FeatureRenderLayerTest, TileLabelsRebakeAfterReadyFontReplacement) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    std::vector<uint8_t> replacementFont = font;
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();  // 缓存首次字体代次
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    mesh.hasOrigin = true;
+    TileSymbolCpu symbol;
+    symbol.lonRad = 6.0 * kDeg;
+    symbol.latRad = 29.0 * kDeg;
+    symbol.colorPacked = 1.0f;
+    symbol.name = "AB";
+    mesh.symbols.push_back(symbol);
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+    RenderCommandList commands = build();
+    ASSERT_TRUE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorLabel;
+    }));
+
+    const int buffersBeforeReplacement = device_.createdBufferCount;
+    const uint64_t oldRevision = renderer_->glyphAtlas()->revision();
+    ASSERT_TRUE(renderer_->glyphAtlas()->setFontData(
+        std::move(replacementFont)));
+    ASSERT_GT(renderer_->glyphAtlas()->revision(), oldRevision);
+
+    commands = build();
+    EXPECT_EQ(buffersBeforeReplacement + 2, device_.createdBufferCount)
+        << "换字体后必须重建标签 VBO/IBO，不能继续使用旧图集 UV";
+    ASSERT_TRUE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorLabel;
+    }));
 }
 
 TEST_F(FeatureRenderLayerTest, TileSymbolPaintOrderSplitsLabelCommands) {
@@ -1350,10 +1719,11 @@ TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
     ASSERT_EQ(2u, label->textures.size());
     EXPECT_NE(nullptr, label->textures[0]);
     EXPECT_EQ(nullptr, label->textures[1]);
-    ASSERT_EQ(1u, label->uniforms.count("u_terrainOcclusion"));
-    EXPECT_FLOAT_EQ(0.0f, label->uniforms.at("u_terrainOcclusion")[0]);
-    ASSERT_EQ(1u, label->uniforms.count("u_sdfEdge"));
-    ASSERT_EQ(1u, label->uniforms.count("u_sdfHaloDelta"));
+    ASSERT_TRUE(label->hasVectorUniforms);
+    EXPECT_TRUE(label->uniforms.empty());
+    EXPECT_FLOAT_EQ(0.0f, label->vectorUniforms.terrainOcclusion[0]);
+    EXPECT_GT(label->vectorUniforms.sdfEdge, 0.0f);
+    EXPECT_GE(label->vectorUniforms.sdfHaloDelta, 0.0f);
     EXPECT_EQ("color", label->pass);
     EXPECT_TRUE(label->blend);
 
@@ -1496,6 +1866,27 @@ TEST_F(FeatureLabelPlacementTest, FadeIsGradualAndUploadsStopWhenSettled) {
     for (size_t i = 5; i < count; i += 8) {
         EXPECT_FLOAT_EQ(1.0f, floats[i]);
     }
+}
+
+TEST_F(FeatureLabelPlacementTest, FadeUploadsOnlyChangedLabelRanges) {
+    // 同桶、同位置两条标签只会放行一条；碰撞落选者 opacity 始终为 0，
+    // 不应因为另一条在 fade 就跟着重传。旧实现会上传整个 label VBO。
+    layer_->store().addFeature(makeNamedPoint(0.0, 0.0, "AAAA"));
+    layer_->store().addFeature(makeNamedPoint(0.0001, 0.0, "BBBB"));
+
+    const size_t bytesBefore = device_.totalBufferUpdateBytes;
+    RenderCommandList commands = build();
+    const RenderCommand* label = nullptr;
+    for (const auto& cmd : commands) {
+        if (cmd.kind == RenderCommandKind::VectorLabel) label = &cmd;
+    }
+    ASSERT_NE(nullptr, label);
+    const auto* vb = dynamic_cast<const DummyBuffer*>(label->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const size_t uploaded = device_.totalBufferUpdateBytes - bytesBefore;
+    EXPECT_GT(uploaded, 0u);
+    EXPECT_LT(uploaded, vb->bytes().size())
+        << "只有 placed 标签变化时不得重传同桶 collided 标签顶点";
 }
 
 TEST_F(FeatureLabelPlacementTest, BucketRebuildResyncsSettledOpacity) {
@@ -1894,9 +2285,9 @@ TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
     EXPECT_EQ(24, vol->vertexStride);  // pos(12)+extrude(12)
     EXPECT_EQ(vol->vertexBuffer, col->vertexBuffer);
     // 宽度挤出 uniform 齐备(mvp + modelView + 每米眼深半宽)。
-    ASSERT_EQ(1u, vol->uniforms.count("u_modelViewProjection"));
-    ASSERT_EQ(1u, vol->uniforms.count("u_modelView"));
-    ASSERT_EQ(1u, vol->uniforms.count("u_halfWidthPerEyeZ"));
+    ASSERT_TRUE(vol->hasVectorUniforms);
+    EXPECT_TRUE(vol->uniforms.empty());
+    EXPECT_GT(vol->vectorUniforms.halfWidthPerEyeZ, 0.0f);
     // stencil 模式下不再产出方案 A 的线 ribbon。
     for (const auto& cmd : commands) {
         EXPECT_NE(RenderCommandKind::VectorLine, cmd.kind);
@@ -2005,8 +2396,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineDashSplitsIntoClosedBodies) {
     ASSERT_NE(nullptr, vol);
     ASSERT_NE(nullptr, col);
     // FS 不再判里程:dash uniform 与顶点里程分量一并退役。
-    EXPECT_EQ(0u, vol->uniforms.count("u_dashPeriodMeters"));
-    EXPECT_EQ(0u, vol->uniforms.count("u_dashOnFraction"));
+    EXPECT_TRUE(vol->uniforms.empty());
     // 体/色 pass 共用同一份几何(前置 ribbon 的双索引已退役)。
     EXPECT_EQ(vol->indexBuffer, col->indexBuffer);
     EXPECT_EQ(vol->indexCount, col->indexCount);
@@ -2122,7 +2512,8 @@ TEST_F(FeatureRenderLayerTest, DataDrivenPointColorBakedPerFeature) {
     EXPECT_EQ((std::array<int, 4>{255, 0, 0, 255}), c0);
     EXPECT_EQ((std::array<int, 4>{0, 0, 255, 255}), c1);
     // u_color 已退役(顶点色接管)。
-    EXPECT_EQ(0u, commands[0].uniforms.count("u_color"));
+    EXPECT_TRUE(commands[0].hasVectorUniforms);
+    EXPECT_TRUE(commands[0].uniforms.empty());
 }
 
 TEST_F(FeatureRenderLayerTest, ZoomDrivenLineWidthUniform) {
@@ -2137,8 +2528,8 @@ TEST_F(FeatureRenderLayerTest, ZoomDrivenLineWidthUniform) {
     // 相机高 ~8.6e6m → zoom = log2(4e7/高) ≈ 2.2 → 宽度 ≈ 2 + 2.2 ≈ 4.2
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
-    ASSERT_EQ(1u, commands[0].uniforms.count("u_lineWidthPx"));
-    const float width = commands[0].uniforms.at("u_lineWidthPx")[0];
+    ASSERT_TRUE(commands[0].hasVectorUniforms);
+    const float width = commands[0].vectorUniforms.lineWidthPx;
     EXPECT_GT(width, 2.0f);
     EXPECT_LT(width, 8.0f);
 }
@@ -2175,7 +2566,8 @@ TEST_F(FeatureRenderLayerTest, StencilVolumesGroupedByResolvedColor) {
             ASSERT_LT(i + 1, commands.size());
             const auto& col = commands[i + 1];
             ASSERT_EQ(StencilPhase::ClassifyColor, col.stencilPhase);
-            reds.push_back(col.uniforms.at("u_color")[0]);
+            ASSERT_TRUE(col.hasVectorUniforms);
+            reds.push_back(col.vectorUniforms.color[0]);
         }
     }
     EXPECT_EQ(2, volumePasses);

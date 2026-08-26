@@ -138,6 +138,9 @@ public:
             return false;
         }
         ++updatedBufferCount;
+        lastBufferUpdateOffset = offset;
+        lastBufferUpdateSize = size;
+        totalBufferUpdateBytes += size;
         return true;
     }
 
@@ -244,6 +247,9 @@ public:
     bool textureRegionUploadSucceeds = false;
     int createdBufferCount = 0;
     int updatedBufferCount = 0;
+    size_t lastBufferUpdateOffset = 0;
+    size_t lastBufferUpdateSize = 0;
+    size_t totalBufferUpdateBytes = 0;
     int bufferCreationAttempts = 0;
     int failBufferCreationAtAttempt = -1;
     int shaderCount = 0;

@@ -2346,8 +2346,8 @@ clear=0.0 + GreaterEqual。`P[0][0]=f/aspect`、`P[1][1]=f`(`f=1/tan(fov/2)`)、
 | `setRenderDevice` | .cpp:132-153 | Creates Renderer + SceneRenderPipeline, calls **`renderer_->initialize()` (no-arg)**, inits environment GPU resources; null device tears both down. **No globe mesh built or passed** — `GlobeMesh`/`Globe::createMesh` deleted |
 | `update(dt)` | .cpp:162-177 | Phase 1. Builds `SceneFrameUpdateInput` via `frameRuntime_.makeFrameUpdateInput` and calls `SceneFrameUpdateCoordinator::update` (static) |
 | `render()` | .cpp:213-238 | Phase 2. Guards on `renderer_`/`renderPipeline_`/`isReady()`; builds `SceneRenderPipeline::Context` from frameState + coordinator getters; `beforeSubmit` lambda = `updatePresentationTrace`; feeds result diagnostics back to telemetry |
-| `interactionContext()` | .cpp:541-548 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
-| Tileset API | .cpp:452-478 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
+| `interactionContext()` | .cpp:554-561 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
+| Tileset API | .cpp:465-491 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
 
 No `globeMesh_` member and no `struct GlobeMesh` forward-decl remain (both deleted post-refactor). Two-phase flow: `update(dt)` mutates FrameState + runs tileset selection; `render()` reads the same FrameState, builds ordered RenderCommands, submits. No rendering in update; no selection in render. Behavior change: with no fallback-globe path, nothing is drawn before tiles load (clear color only).
 
@@ -2493,12 +2493,12 @@ Render flow in `render()` (.cpp:209-286):
 |---|---|---|---|
 | 0 | `reserveCommands` | .cpp:345-364 | Reserve = **4 + vectorLayers*4 + Σ tileset renderEntries** |
 | 1 | ~~`buildStableLayerCommands`~~ | — | ⚠️ **已撤销,函数不存在**。此行原描述 stable-key streaming(prefixes `terrain:` / `content:N:`,经 `tileCommandSet_.update`)—— 该机制连同两个成员一起已从代码里移除;瓦片命令现由第 4 步 `buildLayerCommands` 直接插入。(2026-08-06 复核) |
-| 2 | `buildSkyCommands` | .cpp:365-404 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
-| 3 | `buildAtmosphereCommands` | .cpp:405-433 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
-| 4 | `buildLayerCommands` | .cpp:434-667 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
-| 5 | `applyMvpUniforms` | .cpp:719-727 | `SceneRenderCommandUniformUpdater::apply` |
-| 6 | `sortAndValidate` | .cpp:728-778 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
-| 5.5 | `assembleTerrainBatches` | .cpp:668-718 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 2 | `buildSkyCommands` | .cpp:373-412 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
+| 3 | `buildAtmosphereCommands` | .cpp:413-441 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
+| 4 | `buildLayerCommands` | .cpp:442-675 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
+| 5 | `applyMvpUniforms` | .cpp:727-735 | `SceneRenderCommandUniformUpdater::apply` |
+| 6 | `sortAndValidate` | .cpp:736-781 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:676-726 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
 | 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:779-808 / :809-858 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
 | 7 | `aggregateDiagnostics` | .cpp:859-887 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
 | 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:893-977 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
@@ -2578,7 +2578,7 @@ Fat, backend-neutral draw descriptor produced by command factories and consumed 
 | `mvpRenderOrder(kind)` | .h:309, .cpp:112-135 | Sky 0，glTF 15，atmosphere 20，普通矢量/Stencil 30，label 31，Unknown 100。 |
 | `mvpRenderCommandLess` / `mvpRenderCommandsNeedSort` | .h:312-313, .cpp:137-146 | 复用统一比较器；相同 MVP pass 时先比较 `vectorPaintOrder`，因此跨瓦片/跨几何类型的矢量层级也能触发 fast-path 排序。 |
 | `validateMvpRenderCommands` | .h:317-319, .cpp:148-322 | 校验 MVP order 与 vector ordinal 单调性，并锁死 glTF、fill/line、extrusion、point/label、stencil 两 phase 的状态契约。 |
-| `sortMvpRenderCommands` | .h:321, .cpp:324-329 | `stable_sort`：MVP order → vector ordinal → glTF opaque/translucent 与透明深度；相同 ordinal 保留 stencil volume/color 命令对顺序。 |
+| `sortMvpRenderCommands` | .h:321, .cpp:335-390 | 索引 `stable_sort`：MVP order → vector ordinal → glTF opaque/translucent 与透明深度；相同 ordinal 保留 stencil volume/color 命令对顺序，并避免反复搬移重命令体。 |
 
 ### RenderCommandStreamingSet.h / .cpp
 
@@ -2745,22 +2745,22 @@ OpenGL ES 3.0 backend implementing `renderer/RenderDevice.h`. Assumes caller own
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| Capability queries | .cpp:274-285 | `maxTextureSize`/`maxDrawBuffers` via `glGetIntegerv`; `supportsFloatTextures`/`supportsInstancing` hardcoded `true` (GLES 3.0 core); `rendererString` from `GL_RENDERER` |
+| Capability queries | .cpp:303-333 | `maxTextureSize`/`maxDrawBuffers` via `glGetIntegerv`; `supportsFloatTextures`/`supportsInstancing` hardcoded `true` (GLES 3.0 core); `rendererString` from `GL_RENDERER` |
 | `GLTextureRecycler` | .cpp:116-159 / .h:60-109 | **H-S7(2026-08-21)**:2D 带 data 纹理对象回收池——GLTexture 析构归还、createTexture 按 (target,internalFormat,format,type,size,mipmap) 精确复用,同尺寸只付 glTexSubImage2D(免 glGen+分配,rasterTex 0.5-0.75ms/张的成本主体)。shared_ptr 共持,context 失效只清 CPU id;池上限 48 |
-| `createTexture` | .cpp:305-495 | Format map RGBA8/RGB8/R8/Depth32F/RGBA16F(HDR,`GL_HALF_FLOAT`); anisotropy via `GL_EXT_texture_filter_anisotropic` (ext-guarded, .cpp:305-495,163-171); wrap map (.cpp:305-495); mipmap gen;**H-S7:2D 带 data 先查回收池** |
-| `updateTextureRegion` | .cpp:496-572 | Bounds-checked `glTexSubImage2D`; rejects `rowBytes != width*4`; returns `glGetError()==GL_NO_ERROR` |
-| `updateTextureArrayRegion` | .cpp:573-616 | **H-S4 批量上传**:数组纹理多层子区域一次灌入(depth=层数)经单次 PBO,失败回落直传。边缘 LUT 逐层小上传 burst 的消解点 |
-| `createBuffer` / `updateBuffer` | .cpp:664-682 / :683-704 | Index→`GL_ELEMENT_ARRAY_BUFFER` else `GL_ARRAY_BUFFER`; Dynamic→`GL_DYNAMIC_DRAW`; `updateBuffer` bounds-checked `glBufferSubData` |
-| `createShader` | .cpp:705-786 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
-| `createFramebuffer` | .cpp:829-955 | Returns `nullptr` (MVP uses default FBO) |
-| `beginFrame` | .cpp:989-993 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back. Stale-depth comment (.cpp:989-993) |
-| `submit` | .cpp:1279-1909 | Redundancy-cached program/VBO/IBO/texture + 15 attrib-enable flags; per-command dispatch below. Batch-end attrib/buffer/texture-unit teardown (.cpp:1563-1563). Perf log every 120 submits or ≥25ms (.cpp:1627). ⚠️ The `surface=%d` column and the `SurfaceTile` kind counter were removed 2026-08-07 with that draw path. |
-| `endFrame` | .cpp:2230-2239 | 收尾可选 GPU timer；`eglSwapBuffers` 仍由外部负责 |
-| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2280-2315 | State init (reverse-Z `GL_GEQUAL`), viewport cache, no-op destroy (EGL ctx may be dead) |
+| `createTexture` | .cpp:334-524 | Format map RGBA8/RGB8/R8/Depth32F/RGBA16F(HDR,`GL_HALF_FLOAT`); anisotropy via `GL_EXT_texture_filter_anisotropic` (ext-guarded, .cpp:334-524,163-171); wrap map (.cpp:334-524); mipmap gen;**H-S7:2D 带 data 先查回收池** |
+| `updateTextureRegion` | .cpp:525-601 | Bounds-checked `glTexSubImage2D/3D`;按纹理格式校验 rowBytes；数组纹理 layer 单层上传走 PBO；returns `glGetError()==GL_NO_ERROR` |
+| `updateTextureArrayRegion` | .cpp:602-645 | **H-S4 批量上传**:数组纹理多层子区域一次灌入(depth=层数)经单次 PBO,失败回落直传。边缘 LUT 逐层小上传 burst 的消解点 |
+| `createBuffer` / `updateBuffer` | .cpp:693-711 / :712-733 | Index→`GL_ELEMENT_ARRAY_BUFFER` else `GL_ARRAY_BUFFER`; Dynamic→`GL_DYNAMIC_DRAW`; `updateBuffer` bounds-checked `glBufferSubData` |
+| `createShader` | .cpp:734-815 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
+| `createFramebuffer` | .cpp:858-984 | Creates color/depth attachments and validates framebuffer completeness |
+| `beginFrame` | .cpp:1018-1022 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back |
+| `submit` | .cpp:1308-2041 | Redundancy-cached program/VBO/IBO/texture + attrib-enable flags; fixed vector/glTF uniform blocks bypass generic map；逐命令 draw。 |
+| `endFrame` | .cpp:2355-2369 | 收尾可选 GPU timer；`eglSwapBuffers` 仍由外部负责 |
+| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2405-2472 | State init (reverse-Z `GL_GEQUAL`), viewport cache, context-bound cache reset |
 
-Per-command command-kind counters in `submit` (.cpp:1279-1909) tally only `SurfaceTile` / `GltfPrimitive[Instanced]` / `VectorOverlay` / `Sky+AtmosphereBackground` / `Unknown` — the `GlobeSurface` kind no longer exists in `RenderCommandKind`.
+Per-command command-kind counters in `submit` (.cpp:1308-2041) tally glTF/vector/environment/unknown commands；`GlobeSurface` kind no longer exists in `RenderCommandKind`.
 
-**Stride-based vertex-layout dispatch** in `submit` (.cpp:1279-1909) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
+**Stride-based vertex-layout dispatch** in `submit` (.cpp:1308-2041) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
 - stride 32 OR glTF (kind `GltfPrimitive[Instanced]` && stride==**120**): attrib0 POSITION, 1 NORMAL, 2 TEXCOORD (4 floats for glTF, else 2); glTF adds attribs 10-14 (COLOR_0/TANGENT/TEXCOORD sets 2-7) (.cpp:476-524)
 - `GltfPrimitiveInstanced` + `instanceStride==kGltfInstanceMatrixStride` (100): attribs 3-9 from `instanceBuffer` with `glVertexAttribDivisor(...,1)` — instance model matrix (4×vec4) + normal matrix (3×vec3) (.cpp:525-575)
 - `GltfPrimitiveInstanced` + `vertexStride==32` + `instanceStride==kTerrainInstanceStride` (96): the **terrain batch** layout — per-vertex attribs 0-3 from the shared template, attribs 4-9 = 6×vec4 per-instance with divisor 1 (rel×3 / dispMorph / clipUv / layers) (.cpp:1047-1051 selects, :1687-1697 sets up)
@@ -2799,8 +2799,8 @@ Metal 2 backend (iOS/macOS) via `CAMetalLayer`. PImpl (.mm:62-75). Internal wrap
 | `createShader` | .mm:415-668 | Compiles combined VS+FS MSL source; entry-point sniffing selects 6 `PipelineLayout` variants (Surface/Tile/Gltf/GltfInstanced/Color/DebugLine, .mm:443-443 — **no globe-shader detection**); builds `MTLVertexDescriptor` per layout; emits paired opaque(blend=NO)+blended(blend=YES) PSOs |
 | `beginFrame` | .mm:765-796 | `nextDrawable`; clearColor (0.1,0.3,0.6,1); **reverse-Z `clearDepth=0.0`**; retains drawable via `objc_setAssociatedObject` |
 | `submit` | .mm:919-1267 | Per-command PSO/depth-state select; vertex buffer @0, instance buffer @7; **fixed uniform indices 0..83** (see below); texture+sampler binding 0..kGltfWaterMaskTextureSlot; cull/blend; indexed/instanced draw |
-| `endFrame` | .mm:1256-1262 | End encoding, `presentDrawable`, `CFRelease`, commit |
-| `onSurfaceChanged` | .mm:1281-1286 | Sets `drawableSize`; allocates `Depth32Float` depth texture (RenderTarget, Private) |
+| `endFrame` | .mm:1325-1345 | End encoding, `presentDrawable`, `CFRelease`, commit |
+| `onSurfaceChanged` | .mm:1350-1365 | Sets `drawableSize`; allocates `Depth32Float` depth texture (RenderTarget, Private) |
 
 Vertex descriptors (.mm:325-433): DebugLine stride 8; Tile stride 20 (pos+uv); Color stride 12 (pos); Surface stride 32 (pos+normal+uv); Gltf/GltfInstanced stride 120 (attribs 0-2 + 10-14); GltfInstanced adds bufferIndex-7 attribs 3-9 (`kGltfInstanceMatrixStride`=**100**, `MTLVertexStepFunctionPerInstance`).
 
@@ -3048,24 +3048,24 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `setStyle` | .cpp:282-323 | 换样式并标脏；越界表达式（含 paint order）在此剥离降级 |
-| `makeClampSampler` / `prepareClampedFeature` | .cpp:353-379 / :380-460 | 贴地方案 A:边细分 + Steiner 采高；区域高度范围可让 worker 跳过逐点采样 |
-| `syncDirtyBuckets` | .cpp:461-469 | 每帧入口:重建脏桶,返回重建数 |
-| `tessellateFeatureInto` | .cpp:470-784 | 镶嵌总控；接收已解析的 paint ordinal，并分派 fill/line/extrusion/stencil |
-| `appendFillVolume` / `appendLineVolume` | .cpp:867-1041 / :1042-1294 | 面体 / 线体按 `(paintOrder,color)` 分组，避免贴地路径丢失逐要素层级 |
-| `uploadBucketGpu` | .cpp:1297-1435 | 单几何类仍上传一对 VBO/IBO；paint ranges 保存 index offset/count，point/label 也按 ordinal 保存 ranges，stencil group 保存 ordinal |
-| `rebuildBucket` | .cpp:1436-1534 | 单桶重建 |
-| `stencilClassificationSupported` / `resolvePaintOrder` / `flattenPaintRanges` | .cpp:1535-1573 / :1539-1544 / :1545-1573 | 能力快照；属性表达式解析 ordinal；按 ordinal flatten 到共享 buffer ranges |
-| `tessellateTileMesh` / `appendTileSymbol` / `commitTileMesh` / `buildTileSymbolGpu` / `reclampTileBucketSymbols` | .cpp:1608-1682 / :1650-1682 / :1683-1773 / :1774-1843 / :1844-1895 | MVT worker 分组镶嵌、符号携带 ordinal、渲染线程按 ordinal 准入与重钳 |
-| `bakeTileBucketLabels` / `dropTileMesh` | .cpp:2133-2231 / :2232-2245 | 字体就绪后补烘标签并按 ordinal 分段；移除瓦片桶 |
-| `buildRenderCommands` | .cpp:2246-2525 | 出命令总入口 |
-| `visibleBucketKeys` | .cpp:2456-2525 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:2526-2624 | 标签避让 + fade + 地平线剔除(P5c) |
-| `dumpLabelLifecycle` | .cpp:2698-2807 | 七态只读聚合 dump |
-| `appendTerrainOcclusion` | .cpp:2827-2842 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:2843-3226 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:3227-3242 / :3243-3249 / :3250-3275 | 编辑预览三接口 |
-| `pick` | .cpp:3319-3537 | 要素拾取 |
+| `setStyle` | .cpp:332-377 | 换样式并标脏；越界表达式（含 paint order）在此剥离降级 |
+| `makeClampSampler` / `prepareClampedFeature` | .cpp:407-433 / :434-514 | 贴地方案 A:边细分 + Steiner 采高；区域高度范围可让 worker 跳过逐点采样 |
+| `syncDirtyBuckets` | .cpp:515-523 | 每帧入口:重建脏桶,返回重建数 |
+| `tessellateFeatureInto` | .cpp:524-843 | 镶嵌总控；接收已解析的 paint ordinal，并分派 fill/line/extrusion/stencil |
+| `appendFillVolume` / `appendLineVolume` | .cpp:932-1106 / :1107-1359 | 面体 / 线体按 `(paintOrder,color)` 分组，避免贴地路径丢失逐要素层级 |
+| `uploadBucketGpu` | .cpp:1360-1503 | 单几何类仍上传一对 VBO/IBO；paint ranges 保存 index offset/count，point/label 也按 ordinal 保存 ranges，stencil group 保存 ordinal |
+| `rebuildBucket` | .cpp:1504-1602 | 单桶重建 |
+| `stencilClassificationSupported` / `resolvePaintOrder` / `flattenPaintRanges` | .cpp:1603-1606 / :1607-1612 / :1613-1641 | 能力快照；属性表达式解析 ordinal；按 ordinal flatten 到共享 buffer ranges |
+| `tessellateTileMesh` / `appendTileSymbol` / `commitTileMesh` / `buildTileSymbolGpu` / `reclampTileBucketSymbols` | .cpp:1696-1737 / :1738-1770 / :1771-1854 / :1855-1927 / :2024-2034 | MVT worker 分组镶嵌、保留完整符号源，渲染线程按当前 zoom 派生/cap 并重钳 |
+| `bakeTileBucketLabels` / `dropTileMesh` | .cpp:2290-2443 / :2444-2457 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
+| `buildRenderCommands` | .cpp:2458-2806 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
+| `visibleBucketKeys` | .cpp:2807-2876 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:2877-2988 | 标签避让 + fade + 地平线剔除(P5c) |
+| `dumpLabelLifecycle` | .cpp:3095-3214 | 七态只读聚合 dump |
+| `appendTerrainOcclusion` | .cpp:3235-3251 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:3252-3652 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:3653-3668 / :3669-3675 / :3676-3701 | 编辑预览三接口 |
+| `pick` | .cpp:3745-3963 | 要素拾取 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
