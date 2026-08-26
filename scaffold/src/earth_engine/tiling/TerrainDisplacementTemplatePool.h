@@ -182,7 +182,7 @@ public:
         float heightRange = 1.0f;  // maxHeight − minHeight(下限保护 >0)
         int gridSize = 0;
         int layer = -1;            // 本瓦片高度数据所在层
-        uint32_t epoch = 0;        // 该层分配代;层被重分配后旧 epoch 失效
+        uint32_t epoch = 0;        // = layerPool.generation 快照;层重分配后旧值失效
     };
 
     // 无缝北极星 ①-1:每层在 (gridN+1) 方高度数据**之下**多开 4 行,存边吸附
@@ -255,9 +255,8 @@ public:
     // array 里,不校验档位会拿错 array 的层)。
     bool heightLayerCurrent(int gridSize, int layer, uint32_t epoch) const {
         const HeightArray* a = findHeightArray(gridSize);
-        return a && layer >= 0 &&
-               static_cast<size_t>(layer) < a->layerEpochs.size() &&
-               a->layerEpochs[static_cast<size_t>(layer)] == epoch;
+        return a &&
+               a->layerPool.current(TerrainPageLayerPool::Handle{layer, epoch});
     }
 
     size_t residentTemplateCount() const;
@@ -334,12 +333,11 @@ private:
     struct HeightArray {
         std::unique_ptr<Texture> texture;
         int gridSize = 0;
-        TerrainPageLayerPool layerPool;          // 层 LRU(blockLayers=1)
-        std::vector<uint32_t> layerEpochs;       // 每层分配代
+        TerrainPageLayerPool layerPool;          // 层 LRU(blockLayers=1,含 generation)
         /// 每层最后上传的边 LUT 字节(2026-08-21 H-B1):updateEdgeLutRows 按
         /// 内容变更检测,字节相同则跳过 GPU 上传 —— 108 瓦视野惯性期每帧
         /// 108 次小纹理上传(frameState 6.8-11.4ms)的根因。层被重分配
-        /// (epoch 变)时清空,照常上传。
+        /// (generation 变)时清空,照常上传。
         std::vector<std::vector<uint8_t>> layerEdgeLutBytes;
         std::unordered_map<uint64_t, HeightTexture> index;  // 瓦片键 → 驻留视图
     };

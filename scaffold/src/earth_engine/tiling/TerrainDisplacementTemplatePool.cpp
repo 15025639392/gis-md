@@ -306,7 +306,6 @@ TerrainDisplacementTemplatePool::ensureHeightArray(int gridSize) {
     a.texture = std::move(tex);
     a.gridSize = gridSize;
     a.layerPool.configure(layers, 1);
-    a.layerEpochs.assign(static_cast<size_t>(layers), 0u);
     a.layerEdgeLutBytes.assign(static_cast<size_t>(layers), {});
     return &a;
 }
@@ -485,8 +484,8 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     if (evicted != 0) {
         ++heightFrameStats_.evicted;
         arr->index.erase(evicted);
-        ++arr->layerEpochs[static_cast<size_t>(layer)];
-        // 层被重分配:旧 LUT 字节作废,下帧照常上传。
+        // 层被重分配:layerPool.acquire 已自增该层 generation(旧 epoch 失效),
+        // 旧 LUT 字节作废,下帧照常上传。
         if (static_cast<size_t>(layer) < arr->layerEdgeLutBytes.size()) {
             arr->layerEdgeLutBytes[static_cast<size_t>(layer)].clear();
         }
@@ -562,7 +561,7 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     view.heightRange = range;
     view.gridSize = gridSize;
     view.layer = layer;
-    view.epoch = arr->layerEpochs[static_cast<size_t>(layer)];
+    view.epoch = layerH.generation;  // layerPool 的分配代(唯一事实源)
     auto inserted = arr->index.emplace(k, view);
     return &inserted.first->second;
 }
