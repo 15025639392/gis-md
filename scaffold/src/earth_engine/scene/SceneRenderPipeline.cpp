@@ -822,12 +822,6 @@ void SceneRenderPipeline::runTerrainDepthPrepass(Context& context) const {
     }
     RenderCommandList depthCommands =
         terrainDepthPrepass_.extractTerrainCommands(context.commands);
-    if (depthCommands.empty()) {
-        // 本帧没有真实地形(纯椭球/加载期 fill 代理)→ 不跑 prepass。此时
-        // 深度纹理保持上一帧内容,但符号侧靠 u_terrainDepthEnabled 关掉判定,
-        // 不会读到陈旧深度(见 FeatureRenderLayer 绑定处)。
-        return;
-    }
     Framebuffer* depthTarget = terrainDepthPrepass_.ensureFramebuffer(
         context.surfaceWidthPixels, context.surfaceHeightPixels);
     if (!depthTarget) {
@@ -843,7 +837,12 @@ void SceneRenderPipeline::runTerrainDepthPrepass(Context& context) const {
     // 地形命令合进同一个 "terrain" 名字 —— 半分辨率 depth-only 与全分辨率带片元
     // 着色是两笔性质完全不同的成本,合成一个数就问不出"prepass 到底值不值"。
     context.renderDevice->beginGpuRegion("pass.terrainDepthPrepass", false);
-    context.renderer.submit(depthCommands);
+    // beginPass 已清成 reverse-Z far depth。即使本帧没有稳定地表命令也必须
+    // 完成这次 clear：符号命令在 build 阶段已绑定跨帧稳定的 depth texture，
+    // 跳过会采到上一帧/未初始化内容并随机消失。
+    if (!depthCommands.empty()) {
+        context.renderer.submit(depthCommands);
+    }
     context.renderDevice->endGpuRegion();
     context.renderDevice->beginPass(context.sceneTarget);
 

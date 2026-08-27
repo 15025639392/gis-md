@@ -4125,7 +4125,9 @@ struct Renderer::Impl {
     std::unique_ptr<ShaderProgram> terrainShader;
     // Terrain instanced shader (合批 Step 3:32B 模板 + 96B per-instance 流)
     std::unique_ptr<ShaderProgram> terrainInstancedShader;
-    // T2 深度 prepass:同顶点段 + 空片元(见 kTerrainDepthOnlyFragmentGLSL)
+    // T2 深度 prepass:各顶点布局复用自己的顶点段 + 同一空片元。
+    std::unique_ptr<ShaderProgram> gltfDepthShader;
+    std::unique_ptr<ShaderProgram> gltfDepthInstancedShader;
     std::unique_ptr<ShaderProgram> terrainDepthShader;
     std::unique_ptr<ShaderProgram> terrainDepthInstancedShader;
     Renderer::TerrainOcclusionParams terrainOcclusion;
@@ -4212,10 +4214,21 @@ bool Renderer::initialize() {
         return false;
     }
 
-    // T2 深度 prepass shader:顶点段与主地形 shader **同一份源**,只换空片元。
+    // T2 深度 prepass shader:顶点段与对应主 shader **同一份源**,只换空片元。
+    // EllipsoidTerrainContentProvider 以及未切 compact 模板的 CPU baked terrain
+    // 使用 120B glTF 布局，不能绑定 32B terrain 顶点 shader。
     // GLES 侧接线;Metal 侧不建(→ TerrainDepthPrepass::initialize 返回 false
     // → 符号保持原 u_depthPushNdc 行为,零回归)。创建失败非致命。
     if (!isMetal) {
+        ShaderDesc gltfDepthSd;
+        gltfDepthSd.vertexSource = kGltfVertexGLSL;
+        gltfDepthSd.fragmentSource = kTerrainDepthOnlyFragmentGLSL;
+        impl_->gltfDepthShader = dev->createShader(gltfDepthSd);
+        if (!impl_->gltfDepthShader) {
+            fprintf(stderr,
+                    "[Renderer] gltfDepthShader failed — 椭球/CPU地形符号遮挡不可用\n");
+        }
+
         ShaderDesc terrainDepthSd;
         terrainDepthSd.vertexSource = kTerrainVertexGLSL;
         terrainDepthSd.fragmentSource = kTerrainDepthOnlyFragmentGLSL;
@@ -4243,6 +4256,16 @@ bool Renderer::initialize() {
     // terrainInstancedShader()==null → TerrainInstanceBatcher no-op → Metal
     // 逐字节走逐 draw,零回归)。创建失败非致命,同样回落逐 draw。
     if (!isMetal) {
+        ShaderDesc gltfDepthInstancedSd;
+        gltfDepthInstancedSd.vertexSource = kGltfInstancedVertexGLSL;
+        gltfDepthInstancedSd.fragmentSource = kTerrainDepthOnlyFragmentGLSL;
+        impl_->gltfDepthInstancedShader =
+            dev->createShader(gltfDepthInstancedSd);
+        if (!impl_->gltfDepthInstancedShader) {
+            fprintf(stderr,
+                    "[Renderer] gltfDepthInstancedShader failed — 实例化glTF地形符号遮挡不可用\n");
+        }
+
         ShaderDesc terrainInstancedSd;
         terrainInstancedSd.vertexSource = kTerrainInstancedVertexGLSL;
         terrainInstancedSd.fragmentSource = withPageStoreSampling(
@@ -4389,6 +4412,8 @@ void Renderer::dispose() {
     impl_->surfacePlaceholderTexture.reset();
     impl_->gltfShader.reset();
     impl_->gltfInstancedShader.reset();
+    impl_->gltfDepthShader.reset();
+    impl_->gltfDepthInstancedShader.reset();
     impl_->terrainShader.reset();
     impl_->terrainDepthShader.reset();
     impl_->terrainDepthInstancedShader.reset();
@@ -4410,6 +4435,12 @@ void Renderer::setTerrainOcclusion(const TerrainOcclusionParams& params) {
 }
 const Renderer::TerrainOcclusionParams& Renderer::terrainOcclusion() const {
     return impl_->terrainOcclusion;
+}
+ShaderProgram* Renderer::gltfDepthShader() const {
+    return impl_->gltfDepthShader.get();
+}
+ShaderProgram* Renderer::gltfDepthInstancedShader() const {
+    return impl_->gltfDepthInstancedShader.get();
 }
 ShaderProgram* Renderer::terrainDepthShader() const {
     return impl_->terrainDepthShader.get();

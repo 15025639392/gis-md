@@ -62,6 +62,7 @@
 #include "earth_engine/platform/android/AndroidPlatformBridge.h"
 #include "earth_engine/interaction/InputEvent.h"
 #include "earth_engine/interaction/PickingService.h"
+#include "earth_engine/sdk/EarthSceneConfig.h"
 #include "earth_engine/sdk/EarthEngineSdkFacade.h"
 #include "earth_engine/threading/RenderThreadPlacement.h"
 
@@ -91,6 +92,49 @@ static size_t startupSizeProperty(const char* name, size_t fallback) {
     const unsigned long parsed = std::strtoul(prop, &end, 10);
     if (end == prop || *end != '\0' || parsed == 0) return fallback;
     return static_cast<size_t>(parsed);
+}
+
+static std::optional<double> startupDoubleProperty(const char* name) {
+    char prop[PROP_VALUE_MAX] = {0};
+    __system_property_get(name, prop);
+    if (!prop[0]) return std::nullopt;
+    char* end = nullptr;
+    const double parsed = std::strtod(prop, &end);
+    if (end == prop || *end != '\0' || !std::isfinite(parsed)) {
+        return std::nullopt;
+    }
+    return parsed;
+}
+
+static void applyStartupCameraOverride(earth_engine::EarthSceneConfig& config) {
+    const std::optional<double> lon =
+        startupDoubleProperty("debug.ee.camlon");
+    const std::optional<double> lat =
+        startupDoubleProperty("debug.ee.camlat");
+    const std::optional<double> height =
+        startupDoubleProperty("debug.ee.camh");
+    const std::optional<double> pitch =
+        startupDoubleProperty("debug.ee.campitch");
+    if (!lon || !lat || !height || !pitch) {
+        return;
+    }
+
+    config.initialCamera.longitudeDegrees = *lon;
+    config.initialCamera.latitudeDegrees = *lat;
+    config.initialCamera.heightMeters = *height;
+    // CamPose 日志里 pitch 是向下为负；SceneCameraConfig 需要地平线上方仰角。
+    config.initialCamera.obliqueElevationDegrees =
+        std::clamp(std::abs(*pitch), 0.1, 89.9);
+    config.initialCamera.obliqueAzimuthDegrees =
+        startupDoubleProperty("debug.ee.camheading").value_or(0.0);
+    config.initialCamera.freezeCamera =
+        startupBoolProperty("debug.ee.camfreeze", false);
+
+    LOGI("Startup camera override: center=%.5f,%.5f camH=%.1f "
+         "pitchDeg=%.2f headingDeg=%.2f freeze=%d",
+         *lon, *lat, *height, *pitch,
+         config.initialCamera.obliqueAzimuthDegrees,
+         config.initialCamera.freezeCamera ? 1 : 0);
 }
 
 // ============================================================
@@ -932,6 +976,7 @@ static bool createEngine() {
 
         EarthSceneConfig sceneConfig =
             minimal_globe_demo::makeDefaultDemoSceneConfig(&sourceOverrides);
+        applyStartupCameraOverride(sceneConfig);
         sceneConfig.aerialFog = startupBoolProperty(
             "debug.ee.aerialfog", sceneConfig.aerialFog);
         sceneConfig.gpuPassTiming = startupBoolProperty(
@@ -1395,9 +1440,11 @@ static bool createEngine() {
             rs.lineWidthPx = 0.0f;
             rs.buildingExtrusion = false;
             rs.stencilFillEnabled = false;
-            // [A/B] V30 细分与 CDT even-odd flood-fill 不兼容(细分后
-            // 填成碎点/网格,真机实证),保持关闭。
-            rs.globeFillMaxEdgeMeters = 0.0;
+            // z10 大面若不细分，二维 CDT 三角映到 ECEF 后会成为穿过球内的长
+            // 弦，缺口/地平线处表现为黑色跨球射线。使用公里级上限恢复球面
+            // 贴合；不回到曾触发碎网格和 worker 爆量的 400m 密度。
+            rs.globeFillMaxEdgeMeters =
+                minimal_globe_demo::kAmapRegionsGlobeFillMaxEdgeMeters;
             // z10 粗源只在远景显示:zoom ≤ 11.5(camHeight ≳ 13.8km)时
             // 出粗面;近景(zoom > 11.5)让位给主源 z12-14 细面,避免
             // 粗像素块盖在细面上 = 双源叠加「破破烂烂」。
@@ -1457,7 +1504,7 @@ static bool createEngine() {
             gAmapRegionsSource = std::make_unique<AmapRegionsVectorSource>(
                 rOpts, std::move(rSinks), gAmapRegionCache,
                 gMvtTessellationPool);
-            LOGI("AmapE3: regions VectorFill installed (z3/6/8/10 type2, globeFill 400m)");
+            LOGI("AmapE3: regions VectorFill installed (z3/6/8/10 type2, globeFill 10km)");
 
             // ---- 常显 z12 粗水层:复刻 amap.com 的「粗档水底 + 细档面」叠层。----
             // 引擎 tile-bucket 做 LOD 替换(z14 子瓦加载后 z12 父瓦被替换),

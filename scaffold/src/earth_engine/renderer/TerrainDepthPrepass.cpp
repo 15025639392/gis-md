@@ -11,23 +11,32 @@ bool TerrainDepthPrepass::initialize(RenderDevice* device, Renderer* renderer) {
     if (!device || !renderer) {
         return false;
     }
-    ShaderProgram* shader = renderer->terrainDepthShader();
-    if (!shader) {
+    ShaderProgram* gltfShader = renderer->gltfDepthShader();
+    ShaderProgram* gltfInstancedShader = renderer->gltfDepthInstancedShader();
+    ShaderProgram* terrainShader = renderer->terrainDepthShader();
+    ShaderProgram* terrainInstancedShader =
+        renderer->terrainDepthInstancedShader();
+    if (!gltfShader && !gltfInstancedShader && !terrainShader &&
+        !terrainInstancedShader) {
         // 后端未提供 depth-only shader(如 Metal 侧尚未接线)→ 整条通路不
         // 可用,符号保持原行为。
         return false;
     }
     device_ = device;
-    shader_ = shader;
-    instancedShader_ = renderer->terrainDepthInstancedShader();
+    gltfShader_ = gltfShader;
+    gltfInstancedShader_ = gltfInstancedShader;
+    terrainShader_ = terrainShader;
+    terrainInstancedShader_ = terrainInstancedShader;
     return true;
 }
 
 void TerrainDepthPrepass::dispose() {
     framebuffer_.reset();
     device_ = nullptr;
-    shader_ = nullptr;
-    instancedShader_ = nullptr;
+    gltfShader_ = nullptr;
+    gltfInstancedShader_ = nullptr;
+    terrainShader_ = nullptr;
+    terrainInstancedShader_ = nullptr;
     width_ = 0;
     height_ = 0;
 }
@@ -73,9 +82,11 @@ RenderCommandList TerrainDepthPrepass::extractTerrainCommands(
     }
     out.reserve(scene.size());
     for (const RenderCommand& cmd : scene) {
-        // 只取**真实地形**:fill 代理是加载期的临时面,它的深度不代表地面,
-        // 拿它做遮挡会让符号在瓦片没加载好时随机消失。
-        if (cmd.terrainSurfaceSource != TerrainSurfaceCommandSource::RealTerrain) {
+        // 真实地形与永久椭球都是稳定地表。fill 代理是加载期临时面，拿它
+        // 做遮挡会让符号随瓦片生命周期随机消失。
+        if (cmd.terrainSurfaceSource != TerrainSurfaceCommandSource::RealTerrain &&
+            cmd.terrainSurfaceSource !=
+                TerrainSurfaceCommandSource::EllipsoidFallback) {
             continue;
         }
         const bool instanced =
@@ -83,11 +94,16 @@ RenderCommandList TerrainDepthPrepass::extractTerrainCommands(
         if (cmd.kind != RenderCommandKind::GltfPrimitive && !instanced) {
             continue;
         }
-        ShaderProgram* depthShader = instanced ? instancedShader_ : shader_;
+        ShaderProgram* depthShader = nullptr;
+        if (cmd.vertexStride == 32) {
+            depthShader =
+                instanced ? terrainInstancedShader_ : terrainShader_;
+        } else if (cmd.vertexStride == 120) {
+            depthShader = instanced ? gltfInstancedShader_ : gltfShader_;
+        }
         if (!depthShader) {
-            // 实例化 depth shader 缺席时**整帧放弃 prepass**,而不是只画逐
-            // draw 那部分 —— 半张深度图比没有更糟:合批覆盖的区域会被判成
-            // 「无地形」,那里的符号该遮挡却不遮挡,且随合批资格逐帧跳变。
+            // 任一布局缺席时**整帧放弃 prepass**，而不是只画一部分地表。
+            // 半张深度图比没有更糟：缺口会让符号随命令布局/合批资格跳变。
             return RenderCommandList();
         }
         RenderCommand depthCmd = cmd;

@@ -132,6 +132,16 @@ TEST(PlatformIntegrationTest, SdkFacadeInstallsDebugScene) {
         engine.render(0.0);
     }
     EXPECT_GT(device.submitCount, 0);
+    bool sawEllipsoidSurface = false;
+    for (const RenderCommand& command : device.submittedCommands) {
+        sawEllipsoidSurface = sawEllipsoidSurface ||
+            (command.terrainRenderContent &&
+             command.terrainSurfaceSource ==
+                 TerrainSurfaceCommandSource::EllipsoidFallback &&
+             command.depthTest && command.depthWrite);
+    }
+    EXPECT_TRUE(sawEllipsoidSurface)
+        << "TerrainSourceKind::None must keep a depth-writing ellipsoid surface";
 }
 
 TEST(PlatformIntegrationTest, TestDataHelperCreatesValidImages) {

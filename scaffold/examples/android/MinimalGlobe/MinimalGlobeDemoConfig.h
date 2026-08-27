@@ -174,6 +174,9 @@ constexpr bool kHideAmapBuildingsForCompare = false;
 /// 高德矢量:type2 面走 VectorFill(z10 粗源,V30 地球网格);drape overlay
 /// 仍注册但无地形页则不出。type1/3 路网+建筑走主源 FeatureRenderLayer。
 constexpr bool kEnableAmapVectorDemo = true;
+// z10 regions 的球面三角边上限。10km 足以把源瓦片切成贴球弦面，同时比
+// 曾出过碎网格/worker 爆量的 400m 密度低约 625 倍（三角面积口径）。
+constexpr double kAmapRegionsGlobeFillMaxEdgeMeters = 10000.0;
 /// 高德 web key(dev;产品换 key 只改这里,referer 白名单见
 /// kAmapReferer)。
 constexpr const char* kAmapWebKey =

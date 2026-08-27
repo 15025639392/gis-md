@@ -167,6 +167,18 @@ SceneTerrainRuntimeSources createTerrainRuntimeSources(
     PlatformBridge& platformBridge) {
     SceneTerrainRuntimeSources sources;
     if (config.kind == TerrainSourceKind::None) {
+        // `None` means "no elevation source", not "no globe". Keep a
+        // permanent ellipsoid terrain provider so raster overlays have a
+        // surface and the main scene depth buffer contains a continuous globe
+        // before vector fills/lines are drawn. This restores the public
+        // EarthSceneConfig contract ("keeps the ellipsoid surface").
+        constexpr const char* kEllipsoidScheme = "XYZ-WebMercator";
+        sources.tileScheme = createTileSchemeForId(kEllipsoidScheme);
+        sources.contentProvider =
+            std::make_unique<EllipsoidTerrainContentProvider>(
+                kEllipsoidScheme,
+                config.ellipsoidFallbackMaxZoom,
+                config.ellipsoidFallbackGridSize);
         return sources;
     }
 

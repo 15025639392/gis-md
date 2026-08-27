@@ -27,22 +27,26 @@ class Texture;
 // 分辨率;半分辨率省 4× 带宽与光栅化。半像素级的误判只影响紧贴山脊线的
 // 符号,而那里本就该淡出。
 //
-// 顶点着色器**复用地形主 shader 的顶点段**(kTerrainVertexGLSL /
-// kTerrainInstancedVertexGLSL)配一个空片元 —— 位移/geomorph/边界吸附逻辑
-// 一份代码,深度与主 pass 逐位一致。复制一份会随主 shader 演进而漂移,
-// 那种漂移表现为「符号莫名其妙被遮挡」,极难归因。
+// 顶点着色器按命令布局复用对应主 shader 的顶点段：120B glTF 覆盖永久椭球
+// /CPU baked terrain，32B terrain 覆盖 compact/位移 terrain。两者配同一空片元，
+// 深度与主 pass 一致，不能跨布局误绑 shader。
 class TerrainDepthPrepass {
 public:
     // device/shader 任一不可用则返回 false,调用方按「无深度纹理」降级
     // (符号退回原 u_depthPushNdc 行为,零回归)。
     bool initialize(RenderDevice* device, Renderer* renderer);
     void dispose();
-    bool ready() const { return device_ != nullptr && shader_ != nullptr; }
+    bool ready() const {
+        return device_ != nullptr &&
+               (gltfShader_ != nullptr || gltfInstancedShader_ != nullptr ||
+                terrainShader_ != nullptr || terrainInstancedShader_ != nullptr);
+    }
 
     // 按当前场景尺寸确保 FBO(尺寸变化则重建)。返回 nullptr 表示不可用。
     Framebuffer* ensureFramebuffer(int sceneWidthPixels, int sceneHeightPixels);
 
-    // 从完整场景命令表里挑出真实地形命令,换成 depth-only shader。
+    // 从完整场景命令表里挑出稳定地表命令(真实地形 + 永久椭球),按顶点布局
+    // 换成 depth-only shader。临时 FillProxy 不参与，避免加载期符号跳变。
     // 返回空表 = 本帧没有地形可画(调用方跳过整个 prepass)。
     RenderCommandList extractTerrainCommands(const RenderCommandList& scene) const;
 
@@ -55,8 +59,10 @@ public:
 
 private:
     RenderDevice* device_ = nullptr;
-    ShaderProgram* shader_ = nullptr;           // 逐 draw 地形(非实例化)
-    ShaderProgram* instancedShader_ = nullptr;  // 实例化合批地形(可为空)
+    ShaderProgram* gltfShader_ = nullptr;              // 120B 非实例化
+    ShaderProgram* gltfInstancedShader_ = nullptr;     // 120B 实例化
+    ShaderProgram* terrainShader_ = nullptr;           // 32B 非实例化
+    ShaderProgram* terrainInstancedShader_ = nullptr;  // 32B 实例化
     std::unique_ptr<Framebuffer> framebuffer_;
     int width_ = 0;
     int height_ = 0;

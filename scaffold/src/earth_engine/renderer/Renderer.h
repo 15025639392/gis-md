@@ -57,9 +57,11 @@ public:
 
     /// 简单颜色 shader（矢量图层线/面渲染）
     ShaderProgram* colorShader() const;
-    /// T2 地形深度 prepass 用的 depth-only shader(顶点段与主地形 shader 同
-    /// 一份源,只换空片元)。Metal 侧未接线返回 nullptr —— 调用方据此整条
-    /// 降级,符号回到原 u_depthPushNdc 行为。
+    /// T2 地形深度 prepass 用的 depth-only shader。glTF 变体覆盖永久椭球
+    /// /CPU baked terrain 的 120B 布局；terrain 变体覆盖 32B compact 布局。
+    /// Metal 侧未接线返回 nullptr —— 调用方据此整条降级。
+    ShaderProgram* gltfDepthShader() const;
+    ShaderProgram* gltfDepthInstancedShader() const;
     ShaderProgram* terrainDepthShader() const;
     ShaderProgram* terrainDepthInstancedShader() const;
 

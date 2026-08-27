@@ -184,11 +184,15 @@ using earth_engine::minimal_globe_demo::DemoSourceOverrides;
 using earth_engine::minimal_globe_demo::parseDemoSourceOverrides;
 using earth_engine::minimal_globe_demo::makeDefaultDemoSceneConfig;
 using earth_engine::minimal_globe_demo::kEnableAmapVectorDemo;
+using earth_engine::minimal_globe_demo::kAmapRegionsGlobeFillMaxEdgeMeters;
 using earth_engine::minimal_globe_demo::kEnableGaodeRoadNetOverlayForDemo;
 using earth_engine::minimal_globe_demo::kUseGaodeSatelliteForDemo;
 
 TEST(DemoSourceConfig, CompleteAmapTileStackIsEnabled) {
     EXPECT_TRUE(kEnableAmapVectorDemo);
+    EXPECT_GT(kAmapRegionsGlobeFillMaxEdgeMeters, 0.0);
+    EXPECT_GE(kAmapRegionsGlobeFillMaxEdgeMeters, 5000.0);
+    EXPECT_LE(kAmapRegionsGlobeFillMaxEdgeMeters, 20000.0);
     EXPECT_TRUE(kUseGaodeSatelliteForDemo);
     EXPECT_TRUE(kEnableGaodeRoadNetOverlayForDemo);
 
