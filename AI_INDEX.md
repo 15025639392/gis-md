@@ -75,8 +75,8 @@ Renderer  (renderer/) — RenderCommand list model, streaming/stable command set
   └── RenderDevice  (abstract) ──┬── RenderDeviceGLES   (platform/android — GLSL ES 3.0)
                                  └── RenderDeviceMetal  (platform/ios — MSL)
 
-SDK entry:  sdk/EarthEngineSdkFacade — installs terrain + raster overlays + glTF content + camera/time
-            into an existing Engine from an EarthSceneConfig.
+SDK entry:  sdk/EarthEngineSdkFacade — installs terrain + raster overlays + MVT source/layer bundles
+            + glTF content + camera/time into an existing Engine from an EarthSceneConfig.
 ```
 
 ### Frame loop
@@ -510,14 +510,37 @@ Per-frame issue/finalize rate limiter across named lanes. No cesium-native 1:1; 
 | `FrameResourceLane` | .h:7-15 | TerrainRequest, ContentRequest, RasterRequest, TerrainFinalize, ContentFinalize, RasterTextureUpload, TerminalState. |
 | `FrameResourcePriority` | .h:17-21 | Preload=0, Normal=1, Urgent=2. **I-P2(2026-08-22)已接线**:`canIssue` 对 Urgent 使用 `limit + reservedUrgentNetworkRequestsPerFrame`(超额,默认 2),预算紧张帧不被 preload 占满饿死;`canFinalize` 仍忽略 priority —— finalize 是主线程工作,平滑期必须限流(见 SmoothingConservesMainThreadWork)。 |
 | `FrameResourceBudgetConfig` | .h:23-42 | Per-lane limits. **`maxNetworkRequestsPerFrame`**=20 (.h:27), **`maxNetworkInflight`**=20 (.h:32); terrain/content + raster overrides default 0 → fall back to the 20 defaults (.h:28-34). `maxMainThreadFinalizesPerFrame`=1 (.h:35), `maxTerminalStateTransitionsPerFrame`=64 (.h:36), `maxRasterUploadsPerFrame`=1 (.h:37). **`reservedUrgentNetworkRequestsPerFrame`**=2 (.h:41,I-P2). Note: per-lane cap, **not** a global network sum cap (comment .h:24-26). |
-| `FrameResourceBudgetSnapshot` | .h:43-68 | Read-model of counters + resolved limits; built in `snapshot()` (.cpp:193-239). Exposes `reservedUrgentNetworkRequestsPerFrame` (I-P2). |
-| `beginFrame` | .cpp:7-20 | Resets all counters, stores config. |
-| `canIssue` / `tryIssue` | .cpp:24-80 | Terrain+Content share the `terrainContentNetworkRequestsIssued_` pool vs `networkRequestLimit` (.cpp:28-35); Raster uses its own counter (.cpp:36-38). **I-P2:Urgent 每帧超额 reserved 个**(`.cpp:26-28` 计算 overflow);`tryIssue` also bumps `contentNetworkRequestsIssued_` and global `networkRequestsIssued_`. Finalize/upload/terminal lanes always issuable (.cpp:39-43). |
-| `hasNetworkInflightCapacity` | .cpp:85-100 | `currentInflight + fanout <= networkInflightLimit(lane)`; no-lane overload delegates to TerrainRequest lane (.cpp:93-100). |
-| `canFinalize` / `tryFinalize` | .cpp:102-159 | Gated first by `mainThreadTimeExpired()` (.cpp:108). RasterTextureUpload vs `maxRasterUploadsPerFrame`; Terrain/ContentFinalize share `mainThreadFinalizesUsed_` vs `maxMainThreadFinalizesPerFrame`; TerminalState vs its cap; request lanes defer to `canIssue`. ⚠️ priority 不参与超额(主线程限流,设计意图)。 |
-| `recordElapsed` / `mainThreadTimeExpired` | .cpp:161-169 | Accumulates `mainThreadElapsedMs_` (lane arg unused); expired when `mainThreadTimeMs>0 && elapsed>=it`. |
-| `positiveUnits` | .cpp:240-242 | `max(1, estimatedUnits)` — fanout/cost floors at 1. |
-| `networkRequestLimit` / `networkInflightLimit` | .cpp:244-290 | Resolve per-lane limit with 0→default fallback; non-network lanes return the network default. |
+| `FrameResourceBudgetSnapshot` | .h:43-68 | Read-model of counters + resolved limits; built in `snapshot()` (.cpp:313-359). Exposes `reservedUrgentNetworkRequestsPerFrame` (I-P2). |
+| `beginFrame` | .cpp:61-77 | Resets all counters, stores config; the optional Scene arbiter attachment remains frame-owner managed. |
+| `canIssue` / `tryIssue` | .cpp:78-160 | Terrain+Content share the local terrain/content pool while Raster keeps its local counter. With a sealed Scene arbiter, probes also check the mapped producer/stage grant and real execution consumes it before incrementing local counters. Urgent keeps its Scene priority class; the local reserved overflow cannot exceed the Scene hard grant. |
+| `hasNetworkInflightCapacity` | .cpp:161-177 | `currentInflight + fanout <= networkInflightLimit(lane)`; no-lane overload delegates to TerrainRequest lane. |
+| `canFinalize` / `tryFinalize` | .cpp:178-258 | Main-thread time + local finalize/upload caps remain the first protection; successful work also consumes mapped Scene `MainThreadFinalize` or `GpuUpload` quota. |
+| `recordElapsed` / `mainThreadTimeExpired` | .cpp:259-267 | Accumulates `mainThreadElapsedMs_` (lane arg unused); expired when `mainThreadTimeMs>0 && elapsed>=it`. |
+| `positiveUnits` | .cpp:360-363 | `max(1, estimatedUnits)` — fanout/cost floors at 1. |
+| `networkRequestLimit` / `networkInflightLimit` | .cpp:364-410 | Resolve per-lane limit with 0→default fallback; non-network lanes return the network default. |
+
+### SceneFrameResourceArbiter.h / .cpp
+
+Scene-owned two-phase arbiter that gives terrain, raster, MVT, and PageStore
+shared quotas within each independently configured stage. Producers declare demand before `sealAllocations()`;
+consumers then call `tryAcquire()` as work crosses the corresponding resource
+stage.  Budgets are independent per stage and priority class, with a terrain
+urgent floor and persistent producer-level round-robin cursors for cross-frame
+fairness. `WorkerDispatch` and `ComposeDispatch` may feed the same underlying
+thread pool but remain separate admission stages; `GpuUpload` counts logical
+transactions rather than bytes, duration, or driver calls. MVT has source-level
+rotation, while Terrain Tilesets still consume their producer grant in
+primary→pending→content order.
+
+| Item | Lines | Description |
+| --- | --- | --- |
+| `SceneFrameResourceProducer` / `SceneFrameResourceStage` | .h:14-31 | Producer and resource-shaped stage enums (`NetworkRequest`, `WorkerDispatch`, `MainThreadFinalize`, `GpuUpload`, `ComposeDispatch`). |
+| `SceneFrameResourceArbiterConfig::stageBudget` | .h:53-62 / .cpp:55-91 | Selects the configured cap and terrain urgent reservation for a stage. |
+| `ProducerLease` | .h:122-153 / .cpp:106-146 | Frame-generation-scoped producer handle; stale leases cannot declare or consume work. |
+| `beginFrame` / `suggestedDemand` / `declareDemand` / `sealAllocations` | .cpp:149-270 / :327-338 | Carries previous-frame used/denied observations into an adaptive demand hint, resets frame counters, collects producer demand, then allocates urgent → normal → preload at producer scope. |
+| `allocateRoundRobin` | .cpp:503-545 | Persistent per-stage/priority producer cursor; terrain reservation skips only an already-served terrain turn and does not reset fairness each frame. |
+| `tryAcquire` / `noteUnservedDemand` | .cpp:271-310 | Admission gate plus real denied-work observation; sealed grants never change during execution. |
+| `snapshot` | .cpp:384-481 | Producer × stage × priority demand/granted/used/deferred read-model plus stage and total aggregates. |
 
 ### Uri.h / .cpp
 
@@ -934,9 +957,10 @@ Thread-safe FIFO carrying CPU-prepared bytes across one main-thread frame hop �
 |---|---|---|
 | `PendingGpuUpload` | .h:15-19 | `{TileKey tileKey; std::string cacheKey; GpuReadyData data;}`. `cacheKey` used for `eraseUpload`. |
 | `push` | .h:26-29 | Worker-thread enqueue under `mutex_`. |
-| `tryPop` | .h:32-38 | Main-thread FIFO pop (`std::optional`). |
-| `hasWork` / `size` / `clear` | .h:41-54 | Non-blocking state queries + drain. |
-| `mutex_`, `queue_` | .h:57-58 | `std::deque<PendingGpuUpload>` guarded by its own mutex. |
+| `tryPop` | .h:75-109 | Immediate committed FIFO pop (`std::optional`) for callers that do not need admission deferral; erase/clear cancellations are skipped by the sequence contract. |
+| `tryPopProvisional` / `commitPop` / `requeue` | .h:114-168 | Tokenized dequeue for frame admission: the drain loop resolves each payload exactly once, and denial restores the same head without mutating FIFO sequence state. |
+| `hasWork` / `size` / `pendingBytes` / `clear` | .h:170-216 | Non-blocking state queries plus queue reset. |
+| `mutex_`, sequence state | .h:218-255 | `std::deque<PendingGpuUpload>` and FIFO/provisional tokens guarded by one mutex. |
 
 ### GpuReadyData.h
 
@@ -1795,7 +1819,7 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 
 ### RoadFieldSource.h / .cpp
 
-路网 SDF 场的页级生产者(刀2):页 key → 覆盖矩形(可选 GCJ 平移,MvtRectCoverage)→ z14 祖先瓦(共享 MvtTileFetchCache)→ LineFieldRasterizer CPU scatter 烘焙 → R8 buffer 回调。不冒充 ImageryProvider、不进页存储 alphaOver assembler —— 经 TerrainPageStore::Config::roadFieldRequest(std::function)注入,页存储对本类零依赖。失败瓦当"无线"照烘,全失败产全 0 场(反向编码失败安全);取消仍回调;Assembly 自持 + weak 线程池(拆除竞态)。
+⚠️ **即将废弃的兼容路径，禁止新增依赖。** 路网 SDF 场的页级生产者(刀2):页 key → 覆盖矩形(可选 GCJ 平移,MvtRectCoverage)→ z14 祖先瓦(共享 MvtTileFetchCache)→ LineFieldRasterizer CPU scatter 烘焙 → R8 buffer 回调。不冒充 ImageryProvider、不进页存储 alphaOver assembler —— 经 TerrainPageStore::Config::roadFieldRequest(std::function)注入,页存储对本类零依赖。失败瓦当"无线"照烘,全失败产全 0 场(反向编码失败安全);取消仍回调;Assembly 自持 + weak 线程池(拆除竞态)。该标记只覆盖 `RoadFieldSource` → D2 → `TerrainPageStore` 场平面，不覆盖 MVT 面/点或 `FeatureRenderLayer` 几何线。
 
 | Item | Lines | Description |
 |---|---|---|
@@ -2336,18 +2360,19 @@ clear=0.0 + GreaterEqual。`P[0][0]=f/aspect`、`P[1][1]=f`(`f=1/tan(fov/2)`)、
 
 ### Scene.h / .cpp
 
-`Scene` is the top-level 3D scene facade. Owns Camera/CameraSystem/Renderer/render pipeline and delegates all domain work to 5 coordinators + a render pipeline. cesium-native has no direct `Scene` equivalent; this is the engine's own composition root.
+`Scene` is the top-level 3D scene facade. Owns Camera/CameraSystem/Renderer/render pipeline, the frame resource arbiter, and Scene-managed MVT source/layer runtime bundles; delegates all domain work to 5 coordinators + a render pipeline. cesium-native has no direct `Scene` equivalent; this is the engine's own composition root.
 
 | Item | Lines | Description |
 |---|---|---|
 | Owned coordinators (5) | .h:109-121 | `layers_` (SceneLayerCoordinator), `tilesets_` (SceneTilesetCoordinator), `interaction_` (SceneInteractionCoordinator), `environment_` (SceneEnvironmentCoordinator), `telemetry_` (SceneTelemetryCoordinator) |
 | `renderPipeline_` / `frameRuntime_` | .h:104-105 | Owned `SceneRenderPipeline` + `SceneFrameRuntime` (holds FrameState + RenderCommandList + frame/time counters) |
 | ctor | .cpp:21-43 | Constructs coordinators; sets reverse-Z perspective near=**150.0**, far=**1e12** (.cpp:30-34, "OpenGlobus PlanetCamera reverse-Z defaults"); wires feature-state callback interaction→layers |
-| `setRenderDevice` | .cpp:132-153 | Creates Renderer + SceneRenderPipeline, calls **`renderer_->initialize()` (no-arg)**, inits environment GPU resources; null device tears both down. **No globe mesh built or passed** — `GlobeMesh`/`Globe::createMesh` deleted |
-| `update(dt)` | .cpp:162-177 | Phase 1. Builds `SceneFrameUpdateInput` via `frameRuntime_.makeFrameUpdateInput` and calls `SceneFrameUpdateCoordinator::update` (static) |
-| `render()` | .cpp:213-238 | Phase 2. Guards on `renderer_`/`renderPipeline_`/`isReady()`; builds `SceneRenderPipeline::Context` from frameState + coordinator getters; `beforeSubmit` lambda = `updatePresentationTrace`; feeds result diagnostics back to telemetry |
-| `interactionContext()` | .cpp:554-561 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
-| Tileset API | .cpp:465-491 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
+| `setRenderDevice` | .cpp:137-161 | Creates Renderer + SceneRenderPipeline, calls **`renderer_->initialize()` (no-arg)**, inits environment GPU resources; null device tears both down. **No globe mesh built or passed** — `GlobeMesh`/`Globe::createMesh` deleted |
+| `update(dt)` | .cpp:172-190 | Phase 1. Builds `SceneFrameUpdateInput` via `frameRuntime_.makeFrameUpdateInput` and calls `SceneFrameUpdateCoordinator::update` (static) |
+| `render()` | .cpp:286-311 | Phase 2. Guards on `renderer_`/`renderPipeline_`/`isReady()`; builds `SceneRenderPipeline::Context` from frameState + coordinator getters; `beforeSubmit` lambda = `updatePresentationTrace`; feeds result diagnostics back to telemetry |
+| `interactionContext()` | .cpp:695-703 | Assembles `SceneInteractionContext` (camera, controller, primary tileset, vector layers) per call for pick/input via `frameRuntime_.makeInteractionContext` |
+| Tileset API | .cpp:551-577 | `setTileset`→primary (+re-configures surface picker), `addTileset`→content; `hasTerrain()` = primary present |
+| MVT runtime API | `.cpp:607-647` | `addMvtVectorSource` / `removeMvtVectorSource` / `mvtVectorLayer`; source and sink-bound `FeatureRenderLayer` are one Scene-owned lifecycle bundle. |
 
 No `globeMesh_` member and no `struct GlobeMesh` forward-decl remain (both deleted post-refactor). Two-phase flow: `update(dt)` mutates FrameState + runs tileset selection; `render()` reads the same FrameState, builds ordered RenderCommands, submits. No rendering in update; no selection in render. Behavior change: with no fallback-globe path, nothing is drawn before tiles load (clear color only).
 
@@ -2376,7 +2401,7 @@ Holds the mutable per-frame containers and factory methods that pack coordinator
 | `setViewport` | .cpp:9-16 | Writes viewport px + dpr into frameState_ |
 | `set/clearSelectorViewOverride` | .cpp:18-27 | Test/debug hook to inject fixed culling frustums |
 | `makeFrameUpdateInput` | .cpp:29-58 | Packs `SceneFrameUpdateInput` (frameState + diagnostics + camera + controller + prep-renderer + tilesets + frameId/elapsedTime-by-ref + interaction focus + timeController + skyGradient) |
-| `makeInteractionContext` | .cpp:60-73 | Packs `SceneInteractionContext` (camera, controller, viewport, terrain tileset, vector layers, elapsedTime) |
+| `makeInteractionContext` | .cpp:67-85 | Packs `SceneInteractionContext` (camera, controller, viewport, terrain tileset, vector layers, elapsedTime) |
 
 ### SceneFrameUpdateCoordinator.h / .cpp
 
@@ -2409,9 +2434,9 @@ Owns the primary (terrain) tileset + N content tilesets; fans update/occlusion-c
 | Item | Lines | Description |
 |---|---|---|
 | State | .h:42-44 | `primary_`, `contentTilesets_` vector, `occlusionCallback_` |
-| `setPrimary`/`addContent` | .cpp:13-26 | Store + `applyOcclusionCallback` |
+| `setPrimary`/`addContent` | .cpp:30-55 | Store + `applyOcclusionCallback` |
 | `set/clearOcclusionCallback` | .cpp:28-51 | Propagate callback to primary + all content |
-| `update` | .cpp:72-116 | `primary_->update` timed → `terrainUpdateMs`; loops content → `contentTilesetUpdateMs`; Android logs any content tileset update > **5.0** ms |
+| `update` | .cpp:87-133 | `primary_->update` timed → `terrainUpdateMs`; loops content → `contentTilesetUpdateMs`; Android logs any content tileset update > **5.0** ms |
 | `SceneTilesetUpdateResult` | .h:14-17 | `terrainUpdateMs`, `contentTilesetUpdateMs` |
 
 ### SceneEnvironmentCoordinator.h / .cpp
@@ -2462,8 +2487,8 @@ Static picking against terrain + vector layers. Context: `ScenePickingContext` (
 
 | Item | Lines | Description |
 |---|---|---|
-| `pick` | .cpp:9-47 | `pickTerrain` (lng/lat height sampler from SceneTerrainQuery) then vector `pick`; keeps nearest of the two |
-| `pickInteractionFocus` | .cpp:49-71 | Terrain-only pick; outputs `worldPosition` if valid |
+| `pick` | .cpp:51-140 | `pickTerrain` (lng/lat height sampler from SceneTerrainQuery) then vector `pick`; keeps nearest of the two |
+| `pickInteractionFocus` | .cpp:141-163 | Terrain-only pick; outputs `worldPosition` if valid |
 
 ### SceneTelemetryCoordinator.h / .cpp
 
@@ -2627,18 +2652,18 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:1326-1412 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=3(涓流,勿在拖动期冻结)、`maxComposeDispatchesPerFrame`=8(每帧 compose 入队上限,2026-08-20 派发门) |
-| `updateVisiblePages(view, ...)` | .cpp:609-1311 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1506-1599 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1600-1649 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1758-1890 / :1676-1716 | 解码结果派发 worker 合成(渲染线程只做账本校验,每帧入队 ≤ `maxComposeDispatchesPerFrame`,超出进待派队列) / 发起缺页请求 |
-| `drainReadyUploads` | .cpp:1913-2041 | worker 快照按预算上传 + 叠画;`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走) |
-| `erasePageEntry` | .cpp:1490-1505 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
-| `resamplePageSource` | .cpp:293-361 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
-| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:408-511 / :554-608 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
-| `placeTileInSourceGrid` (static) | .cpp:416-511 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
-| `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:365-345 / :346-351 / :352-355 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
-| `packKey` / `unpackKey` (static) | .cpp:391-402 / :383-390 | TileKey ↔ uint64 页键 |
+| `initialize(device, Config)` | .cpp:1416-1502 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=3(涓流,勿在拖动期冻结)、`maxComposeDispatchesPerFrame`=8(每帧 compose 入队上限,2026-08-20 派发门) |
+| `updateVisiblePages(view, ...)` | .cpp:655-1393 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1597-1690 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
+| `tick()` | .cpp:1691-1756 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:1885-2032 / :1786-1873 | 解码结果派发 worker 合成，异步生产路径消费 PageStore `ComposeDispatch` grant；无 worker 的测试/同步 fallback 就地执行。页 fetch 消费 PageStore `NetworkRequest` grant，拒绝后保留待重试 |
+| `drainReadyUploads` | .cpp:2055-2203 | worker 快照按本地预算与 PageStore `GpuUpload` grant 上传；`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走)。grant 单位是逻辑事务，不等于底层写调用数 |
+| `erasePageEntry` | .cpp:1581-1596 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `resamplePageSource` | .cpp:339-407 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
+| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:454-461 / :600-620 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
+| `placeTileInSourceGrid` (static) | .cpp:462-557 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
+| `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:408-423 / :424-429 / :430-433 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
+| `packKey` / `unpackKey` (static) | .cpp:442-453 / :434-441 | TileKey ↔ uint64 页键 |
 
 **常量**:`kIndirSideTexels`=64、`kIndirArrayLayers`=256 (.h:72-73)。
 
@@ -3048,24 +3073,24 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `setStyle` | .cpp:332-377 | 换样式并标脏；越界表达式（含 paint order）在此剥离降级 |
-| `makeClampSampler` / `prepareClampedFeature` | .cpp:407-433 / :434-514 | 贴地方案 A:边细分 + Steiner 采高；区域高度范围可让 worker 跳过逐点采样 |
-| `syncDirtyBuckets` | .cpp:515-523 | 每帧入口:重建脏桶,返回重建数 |
-| `tessellateFeatureInto` | .cpp:524-843 | 镶嵌总控；接收已解析的 paint ordinal，并分派 fill/line/extrusion/stencil |
-| `appendFillVolume` / `appendLineVolume` | .cpp:932-1106 / :1107-1359 | 面体 / 线体按 `(paintOrder,color)` 分组，避免贴地路径丢失逐要素层级 |
-| `uploadBucketGpu` | .cpp:1360-1503 | 单几何类仍上传一对 VBO/IBO；paint ranges 保存 index offset/count，point/label 也按 ordinal 保存 ranges，stencil group 保存 ordinal |
-| `rebuildBucket` | .cpp:1504-1602 | 单桶重建 |
-| `stencilClassificationSupported` / `resolvePaintOrder` / `flattenPaintRanges` | .cpp:1603-1606 / :1607-1612 / :1613-1641 | 能力快照；属性表达式解析 ordinal；按 ordinal flatten 到共享 buffer ranges |
-| `tessellateTileMesh` / `appendTileSymbol` / `commitTileMesh` / `buildTileSymbolGpu` / `reclampTileBucketSymbols` | .cpp:1696-1737 / :1738-1770 / :1771-1854 / :1855-1927 / :2024-2034 | MVT worker 分组镶嵌、保留完整符号源，渲染线程按当前 zoom 派生/cap 并重钳 |
-| `bakeTileBucketLabels` / `dropTileMesh` | .cpp:2290-2443 / :2444-2457 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
-| `buildRenderCommands` | .cpp:2458-2806 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
-| `visibleBucketKeys` | .cpp:2807-2876 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:2877-2988 | 标签避让 + fade + 地平线剔除(P5c) |
-| `dumpLabelLifecycle` | .cpp:3095-3214 | 七态只读聚合 dump |
-| `appendTerrainOcclusion` | .cpp:3235-3251 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:3252-3652 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:3653-3668 / :3669-3675 / :3676-3701 | 编辑预览三接口 |
-| `pick` | .cpp:3745-3963 | 要素拾取 |
+| `setStyle` | .cpp:363-408 | 换样式并标脏；越界表达式（含 paint order）在此剥离降级 |
+| `makeClampSampler` / `prepareClampedFeature` | .cpp:438-464 / :465-545 | 贴地方案 A:边细分 + Steiner 采高；区域高度范围可让 worker 跳过逐点采样 |
+| `syncDirtyBuckets` | .cpp:546-554 | 每帧入口:重建脏桶,返回重建数 |
+| `tessellateFeatureInto` | .cpp:555-874 | 镶嵌总控；接收已解析的 paint ordinal，并分派 fill/line/extrusion/stencil |
+| `appendFillVolume` / `appendLineVolume` | .cpp:963-1137 / :1138-1390 | 面体 / 线体按 `(paintOrder,color)` 分组，避免贴地路径丢失逐要素层级 |
+| `uploadBucketGpu` | .cpp:1391-1534 | 单几何类仍上传一对 VBO/IBO；paint ranges 保存 index offset/count，point/label 也按 ordinal 保存 ranges，stencil group 保存 ordinal |
+| `rebuildBucket` | .cpp:1535-1633 | 单桶重建 |
+| `stencilClassificationSupported` / `resolvePaintOrder` / `flattenPaintRanges` | .cpp:1634-1637 / :1638-1643 / :1644-1672 | 能力快照；属性表达式解析 ordinal；按 ordinal flatten 到共享 buffer ranges |
+| `tessellateTileMesh` / `appendTileSymbol` / `commitTileMesh` / `buildTileSymbolGpu` / `reclampTileBucketSymbols` | .cpp:1727-1768 / :1769-1801 / :1802-1885 / :1886-1958 / :2055-2065 | MVT worker 分组镶嵌、保留完整符号源，渲染线程按当前 zoom 派生/cap 并重钳 |
+| `bakeTileBucketLabels` / `dropTileMesh` | .cpp:2321-2474 / :2475-2488 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
+| `buildRenderCommands` | .cpp:2489-2837 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
+| `visibleBucketKeys` | .cpp:2838-2907 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:2908-3019 | 标签避让 + fade + 地平线剔除(P5c) |
+| `dumpLabelLifecycle` | .cpp:3126-3245 | 七态只读聚合 dump |
+| `appendTerrainOcclusion` | .cpp:3266-3282 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:3283-3683 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:3684-3699 / :3700-3706 / :3707-3734 | 编辑预览三接口 |
+| `pick` | .cpp:3778-4072 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
@@ -3225,7 +3250,7 @@ nativeDebugRestyle 读外置 style-day/night.json(tools/mvt_demo/styles/)。
 
 ### LineFieldRasterizer.h / .cpp
 
-路网线「线段纹素」场烘焙(D2 定稿,场线宽像素一致专项):MVT 线要素 → 256² **RGBA8 线段纹素**(R,G=最近点偏移 ±kLineFieldOffsetRangeTexels(4)、B=方向角 [0,π)、A=fwd|back 端点余量 4bit×2,A==0=空哨兵/失败安全)。FS 取 2×2 邻域 4 条线段各自解析算胶囊距离取 min(PageStoreSamplingGLSL.h),**全程无插值** → 折线数据精确重建仅剩量化误差(真实路网模拟 texelPx=4:漏画 0.28%/有害幽灵 0/误差 0.025px)。勿回头:标量距离场(插值跨线心尖点→漏画 63%)/向量场(中轴过零→幽灵)/d+θ 紧凑编码(θ 误差旋转锚点)。逐段 scatter,亚毫秒/页;坐标语义与 rasterizeMvtRect 同构;只消费 line 通道(lineWidthPixels 不消费)。纯函数,worker 可并发。
+⚠️ **即将废弃的兼容实现，禁止新增依赖。** 路网线「线段纹素」场烘焙(D2 历史定稿,场线宽像素一致专项):MVT 线要素 → 256² **RGBA8 线段纹素**(R,G=最近点偏移 ±kLineFieldOffsetRangeTexels(4)、B=方向角 [0,π)、A=fwd|back 端点余量 4bit×2,A==0=空哨兵/失败安全)。FS 取 2×2 邻域 4 条线段各自解析算胶囊距离取 min(PageStoreSamplingGLSL.h),**全程无插值** → 折线数据精确重建仅剩量化误差(真实路网模拟 texelPx=4:漏画 0.28%/有害幽灵 0/误差 0.025px)。历史替代编码保留为回归依据:标量距离场(插值跨线心尖点→漏画 63%)/向量场(中轴过零→幽灵)/d+θ 紧凑编码(θ 误差旋转锚点)。逐段 scatter,亚毫秒/页;坐标语义与 rasterizeMvtRect 同构;只消费 line 通道(lineWidthPixels 不消费)。纯函数,worker 可并发。
 
 | Item | Lines | Description |
 |---|---|---|
@@ -3525,8 +3550,8 @@ Ray-picking service. Generates ray via `Camera::getPickRay()`, tests against ell
 | `pick()` | .cpp:75-251 | Ellipsoid fallback first, then ray-vs-feature; keeps nearest by `distance` |
 | — Polygon path | .cpp:103-138 | ECEF-projects ring[0], fan-triangulates around v0, ray-triangle test |
 | — LineString path | .cpp:139-246 | Ray-segment shortest-distance (constrained Eberly variant); dynamic per-pixel tolerance × 10 (.cpp:143-149); **`kEpsSeg`** = 1e-12 (.cpp:178) |
-| `pickEllipsoid()` | .cpp:253-281 | Ray-ellipsoid only; sets Ellipsoid hit + cartographic/distance |
-| `pickTerrain()` | .cpp:283-386 | 射线 vs 地形高度场行进:自适应步长(相机海拔 1/4,钳 [10m,800m])从相机出发找首个 rayHeight<terrainHeight 区间,二分精修,命中点**在射线上且是可见面**(低空朝坡/崖不再返回"椭球交点+抬升"的山后点——起手锚点贴眼/增益崩塌的根源);未命中地形时返回椭球入口点(平地/海面与旧行为一致);射线碰不到椭球返回 None。每次手势/点选一次,~O(20-40) 次采样器调用,不进渲染循环。Note: sampler callback-injected (`terrainTileset->sampleHeight`, `RenderGridConsistent`), decoupled from tile/GPU terrain |
+| `pickEllipsoid()` | .cpp:265-294 | Ray-ellipsoid only; sets Ellipsoid hit + cartographic/distance |
+| `pickTerrain()` | .cpp:295-398 | 射线 vs 地形高度场行进:自适应步长(相机海拔 1/4,钳 [10m,800m])从相机出发找首个 rayHeight<terrainHeight 区间,二分精修,命中点**在射线上且是可见面**(低空朝坡/崖不再返回"椭球交点+抬升"的山后点——起手锚点贴眼/增益崩塌的根源);未命中地形时返回椭球入口点(平地/海面与旧行为一致);射线碰不到椭球返回 None。每次手势/点选一次,~O(20-40) 次采样器调用,不进渲染循环。Note: sampler callback-injected (`terrainTileset->sampleHeight`, `RenderGridConsistent`), decoupled from tile/GPU terrain |
 
 ### SelectionManager.h / .cpp
 
@@ -3562,20 +3587,20 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:65-75 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:76-82 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:83-120 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:534-1144 | Per-frame driver. Guards `surfaceCreated_ && isReady()` (logs BLOCKED, .cpp:534). Auto-computes delta via `steady_clock` when ≤0, fallback 1/60 (.cpp:534-1144). Ordered phases each timed via `perf::nowMs()` + `scene_->recordEngineTiming`: `device_->beginFrame` → `scene_->update` → `scene_->render` → `device_->endFrame` (.cpp:534-1144). `scene_->finishEngineFrame` + `perf::logTiming` summary (.cpp:616-617). |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:1146-1149 | Forward to `scene_->onInputEvent`. |
-| `onDragStart/Move/End` | .h:65-67, .cpp:1150-1158 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:556-1155 | Per-frame driver. Guards `surfaceCreated_ && isReady()`, auto-computes delta via `steady_clock` when ≤0, then times `device_->beginFrame` → `scene_->update` → PageStore pump → `scene_->render` → `device_->endFrame`. The PageStore pump receives the same Scene arbiter used by terrain/raster/MVT. |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:1156-1159 | Forward to `scene_->onInputEvent`. |
+| `onDragStart/Move/End` | .h:65-67, .cpp:1160-1183 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1217-1220 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1225-1228 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1256-1259 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1264-1267 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1246-1251 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1285-1290 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
-| `getClearColor` | .cpp:1327-1334 | Reads `frameState().clearR/G/B/A`. |
-| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1336-1339 | Runtime `Diagnostics` + per-frame `PresentationTrace`. |
-| `camera() / isReady()` | .h:130-131, .cpp:1175-1178, 1344-1348 | `isReady` = `scene_ && scene_->isReady()`. |
+| `getClearColor` | .cpp:1367-1374 | Reads `frameState().clearR/G/B/A`. |
+| `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1375-1385 | Runtime `Diagnostics` + per-frame `PresentationTrace`; `frameResourceArbiterSnapshot()` sits between them and exposes producer×stage accounting. |
+| `camera() / isReady()` | .h:130-131, .cpp:1185-1188, 1387-1391 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:700-748 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
@@ -3583,7 +3608,7 @@ Post-refactor: the fallback-globe path is gone. `Renderer::initialize()` no long
 
 ### EarthEngineSdkFacade.h / .cpp
 
-Thin SDK entry point: `installScene(EarthSceneConfig)` builds providers/overlays/terrain and installs one unified `Tileset` (+ optional glTF Tileset) into an already-created `Engine`. Caller owns Engine/RenderDevice/PlatformBridge; facade owns the created `RasterOverlay` / `ActivatedRasterOverlay` runtime objects (.h:54-56), released on destroy or re-install. Copy/move deleted (.h:32-33).
+Thin SDK entry point: `installScene(EarthSceneConfig)` builds providers/overlays/terrain, installs Scene-owned MVT source/layer bundles, and installs one unified `Tileset` (+ optional glTF Tileset) into an already-created `Engine`. Caller owns Engine/RenderDevice/PlatformBridge; facade owns raster activation objects while Scene owns installed MVT runtimes. Copy/move deleted.
 
 | Item | Lines | Description |
 | --- | --- | --- |
@@ -3591,6 +3616,8 @@ Thin SDK entry point: `installScene(EarthSceneConfig)` builds providers/overlays
 | `installScene(EarthSceneConfig)` | .h:37, .cpp:285-746 | Move-stores config_, `resetCamera()`, clears overlay vectors, builds raster stack, creates unified Tileset, optional glTF Tileset, sets sim time. See per-kind rows below. |
 | `resetCamera()` | .h:39, .cpp:748-823 | Rebuilds camera from `initialCamera` via `Ellipsoid::WGS84().cartographicToCartesian` + `geodeticSurfaceNormal`; `camera().lookAt(camEcef, targetEcef, up)`. No source rebuild. |
 | `config()` | .h:41 | Const accessor for stored `EarthSceneConfig`. |
+| `installMvtSource` / `installMvtSources` | .cpp:318-429 | Builds source-specific fetch/cache/pools plus a `FeatureRenderLayer`, then transfers the bundle to Engine/Scene. |
+| `addMvtSource` / `removeMvtSource` | .h:43-45, .cpp:431-456 | Runtime SDK lifecycle API; updates stored config and routes teardown through Scene's source-aware removal protocol. |
 | `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:786-802 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
 
 Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:285-746):
@@ -3631,7 +3658,8 @@ Declarative config consumed by `installScene`. No logic; enums + POD structs.
 | `struct SceneTilesetConfig` | .h:45-48 | `mainThreadLoadingTimeLimit`, `tileCacheUnloadTimeLimit` (both 0.0 ⇒ Tileset defaults). |
 | `struct RasterOverlaySourceConfig` | .h:50-98 | Largest struct: imageryKind + shared fields (zoom/SSE/opacity/role/priority/fallback, **`maximumSimultaneousTileLoads`**=20 .h:59, **`maximumScreenSpaceError`**=2.0 .h:60) plus per-provider blocks — WMS (.h:67-69), tile W/H (.h:70-71), WMTS (.h:72-79, default `wmtsSchemeId="XYZ-WebMercator"` .h:76), Bing (.h:80-84, default `bingMapStyle="Aerial"` .h:81), GoogleMapTiles (.h:85-97, default apiBaseUrl .h:85, mapType `"satellite"` .h:89). |
 | `struct GltfSourceConfig` | .h:100-112 | `enabled`, `tileSchemeId="Geographic-TMS"`, tileLevel/X/Y (defaults 0/1/0), url, name, lon/lat/height, `uniformScale`=1.0. |
-| `struct EarthSceneConfig` | .h:114-127 | Top-level: `initialCamera`, `terrain`, `tileset`, `vector<RasterOverlaySourceConfig> rasterOverlays`, `gltf`, `fixedSimulationJulianDate` (0.0 ⇒ keep epoch). |
+| `struct MvtSourceConfig` | .h:200+ | Scene-owned MVT declaration: id/URL/subdomains/zoom/refinement/layer rules, cache/pool limits, request priority, optional custom fetcher/shared cache. |
+| `struct EarthSceneConfig` | top-level struct | `initialCamera`, `terrain`, `tileset`, `rasterOverlays`, `mvtSources`, `gltf`, time and diagnostics options. |
 
 ---
 
@@ -3784,7 +3812,7 @@ SSE (screen-space error) — `screenSpaceErrorForView` (.cpp:41-58): projects tw
 | **`maxTerminalStateTransitionsPerFrame`** | 64 | .h:36 |
 | **`maxRasterUploadsPerFrame`** | 1 | .h:37 |
 
-Zero lane-specific limits fall back to the shared default; not a global sum cap (.h:24-26). Lane checks in `tryIssue`/`canIssue` (.cpp:48-77).
+Zero lane-specific limits fall back to the shared default. They remain Tileset-local guards; when attached to a sealed Scene arbiter, `tryIssue`/`canIssue` (.cpp:78-160) also consume/check the mapped Scene producer×stage grant, so the local urgent reserve cannot exceed the Scene hard allocation.
 
 ### GltfRenderGeometryBuilder.h — GPU vertex formats
 

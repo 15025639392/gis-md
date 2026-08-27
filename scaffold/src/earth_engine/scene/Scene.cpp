@@ -122,6 +122,7 @@ Scene::~Scene() {
 }
 
 void Scene::setTerrainPageStore(TerrainPageStore* store) {
+    terrainPageStore_ = store;
     if (renderer_) {
         renderer_->setTerrainPageStore(store);
     }
@@ -176,6 +177,10 @@ void Scene::update(double deltaSeconds) {
             cameraSystem_.get(),
             renderer_.get(),
             *tilesets_,
+            !mvtSources_.empty(),
+            static_cast<uint32_t>(mvtSources_.size()),
+            terrainPageStore_ != nullptr &&
+                tilesets_->hasAnyRasterOverlay(),
             deltaSeconds,
             interaction_->hasInteractionFocus(),
             interaction_->interactionFocusDirection(),
@@ -195,8 +200,44 @@ void Scene::update(double deltaSeconds) {
         const Rectangle viewRect = MvtVectorSource::horizonViewRectangle(
             cameraCarto, minRadius);
         const double cameraHeight = std::max(1.0, cameraCarto.height());
+        std::vector<MvtVectorSource*> activeSources;
+        activeSources.reserve(mvtSources_.size());
         for (auto& runtime : mvtSources_) {
-            if (runtime.source) runtime.source->update(viewRect, cameraHeight);
+            if (runtime.source) activeSources.push_back(runtime.source.get());
+        }
+        if (!activeSources.empty()) {
+            mvtUpdateCursor_ %= activeSources.size();
+        }
+        SceneFrameResourceArbiter& arbiter =
+            frameRuntime_.resourceArbiter();
+        const auto fairShare = [&arbiter](
+            SceneFrameResourceStage stage, size_t remainingSources) {
+            const uint32_t remaining = arbiter.remaining(
+                SceneFrameResourceProducer::Mvt,
+                stage,
+                FrameResourcePriority::Normal);
+            if (remainingSources == 0) return uint32_t{0};
+            return static_cast<uint32_t>(
+                (static_cast<uint64_t>(remaining) + remainingSources - 1) /
+                remainingSources);
+        };
+        for (size_t offset = 0; offset < activeSources.size(); ++offset) {
+            const size_t index =
+                (mvtUpdateCursor_ + offset) % activeSources.size();
+            const size_t remainingSources = activeSources.size() - offset;
+            MvtVectorSource::FrameAdmissionLimits limits;
+            limits.networkRequests = fairShare(
+                SceneFrameResourceStage::NetworkRequest, remainingSources);
+            limits.workerDispatches = fairShare(
+                SceneFrameResourceStage::WorkerDispatch, remainingSources);
+            limits.gpuUploads = fairShare(
+                SceneFrameResourceStage::GpuUpload, remainingSources);
+            activeSources[index]->update(
+                viewRect, cameraHeight, &arbiter, limits);
+        }
+        if (!activeSources.empty()) {
+            mvtUpdateCursor_ =
+                (mvtUpdateCursor_ + 1) % activeSources.size();
         }
     }
     telemetry_->diagnostics().mvtVectorUpdateMs =
@@ -222,6 +263,10 @@ void Scene::clearOcclusionCallback() {
 
 const Diagnostics& Scene::diagnostics() const {
     return telemetry_->diagnostics();
+}
+
+SceneFrameResourceArbiterSnapshot Scene::frameResourceArbiterSnapshot() const {
+    return frameRuntime_.resourceArbiter().snapshot();
 }
 
 void Scene::recordEngineTiming(
@@ -652,7 +697,9 @@ SceneInteractionContext Scene::interactionContext() const {
         camera_.get(),
         cameraSystem_.get(),
         tilesets_->primary(),
-        &layers_->vectorLayers());
+        &layers_->vectorLayers(),
+        &layers_->featureRenderLayers(),
+        &frameRuntime_.frameState());
 }
 
 void Scene::onInputEvent(const InputEvent& event) {

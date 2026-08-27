@@ -16,6 +16,32 @@
 - **interaction/**:平台无关的手势识别 + 拾取 + 选中状态机,**完全回调解耦**——`InputManager` 不碰 Camera/Selection/GPU,只把归一化 `Gesture` 回调出去。`PickingService` 纯几何 CPU 拾取,无 GPU 回读。`SelectionManager` 只管选中/悬停状态。
 - **胶水层**:`SceneInteractionCoordinator` 持 InputManager/PickingService/SelectionManager 三者;`SceneInputCoordinator` 是纯静态函数,把 `Gesture` 映射到 `CameraSystem`/`SelectionManager` 调用。
 
+### 统一 picking（Scene/Engine）
+
+`Engine::pick(screenX, screenY)` 是唯一公共入口，候选按
+`ScenePickingCoordinator` 聚合：地形/椭球作为 fallback，旧
+`VectorLayer` 与 `FeatureRenderLayer` 业务要素都在同一结果中竞争最近命中。
+`FeatureRenderLayer` 复用自身的屏幕空间 CPU 查询（R-tree 预筛、
+`Vertex > Edge > Fill` 优先级、`ClampToGround` 采样），不会在 Scene 层复制
+几何算法。
+
+统一 `PickResult` 保留 `layerId`、字符串 `featureId`，并为
+`FeatureRenderLayer` 提供 `featureNumericId`、源 `sourceFeatureId`、
+`featurePart`、环/顶点索引、渲染位置和相机距离。`cartographic/worldPosition`
+描述渲染态命中点（包含样式高度偏移或地形钳位），编辑工具若需要写回原始
+几何，应继续使用 `FeatureRenderLayer::pick()` 返回的存储态 `position`。
+
+可见性和样式 zoom 窗口在 layer 查询阶段生效；候选与 terrain 比较使用相机
+距离，屏幕容差只负责判定“是否命中”，不参与深度排序。相同距离保持 Scene
+注册顺序，避免帧间选择抖动。
+
+当前边界：MVT source 虽由 Scene 托管，但 MVT 瓦片桶的 fill/line/symbol
+payload 尚未携带可回查的逐要素身份，不能伪装成统一业务 feature pick；
+`FeatureRenderLayer::pick()` 的统一接线覆盖的是其 `FeatureStore` 业务路径。
+统一 picking 只定义“查询并返回命中结果”的契约；`SelectionManager` 当前仍只把
+hover/selected 视觉状态写回旧 `VectorLayer`。`FeatureRenderLayer` 的交互态样式
+需要独立的 feature-state 设计，不能由 picking 结果接线隐式获得。
+
 ---
 
 ## 核心设计决策 + 理由

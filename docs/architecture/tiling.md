@@ -96,7 +96,8 @@ root 选择、细化、kick、剔除、复用、plan-append、遍历上下文构
 | Failed 态必须进保护集 | 否则 fill 代理每帧重建成风暴(掠视 40ms) |
 | CancellationToken 桥接 | 每在飞请求存 token,tileset 析构时统一取消并等待 |
 | 两把独立互斥量不可混淆 | `TileLoadLifecycle::mutex_` 守 requestState+pendingLoads;`GpuUploadQueue` 有第二把独立锁,只防 unload 路径与 push/pop 竞争(push/pop 都在主线程) |
-| 预算按帧记账,非全局求和上限 | `FrameResourceBudget` 各 lane 零值回退共享默认。**短板**:`FrameResourcePriority`(Preload/Normal/Urgent)被静默忽略,三档共用计数器,Urgent 可能被 Preload 饿死(gap-audit P1) |
+| 局部预算 + Scene 帧级总量双重门控 | `FrameResourceBudget` 保留每个 Tileset 的 lane/inflight/时间保护，同时接入 `SceneFrameResourceArbiter`；多个 Tileset 与 raster/MVT/PageStore 共享 Scene stage 总量。Scene 层识别 Urgent/Normal/Preload，并为 terrain urgent 保底；局部队列仍负责更细的组内顺序 |
+| MVT source 级公平 | MVT 多 source 在 Scene 层按剩余 grant 分片并轮转起始 source；实例份额耗尽不会伪造全局 denial，未用额度可回流。Terrain 多 Tileset 尚无实例级轮转，仍按 primary→pending→content 消费共享 grant |
 | two-phase FrameState | 命令带 `frameId`/`generation`,`validateMvpRenderCommands` 拒绝 frameId 不匹配或 generation==0 |
 | WorkLedger label 必须静态字面量 | 脏位只存指针,label 要活到诊断打印那一刻 |
 
@@ -113,7 +114,9 @@ root 选择、细化、kick、剔除、复用、plan-append、遍历上下文构
 - 调度基础设施(frame budget/优先级分组/preloadAncestors&Siblings/loadingDescendantLimit)独立调研判"已是生产级"。
 
 ### ⚠️ 短板 / 已知债
-- **优先级在两处被架空**:①`GpuUploadQueue` FIFO 非优先级序;②`FrameResourcePriority` 在预算门控里被静默忽略——Urgent 可能被 Preload 饿死(gap-audit P1)。
+- **优先级仍有一处边界**:`GpuUploadQueue` 保持严格 FIFO，Scene arbiter 只决定
+  terrain producer 本帧能上传多少，不在队列内部按 tile 紧急度重排；这是保持
+  FIFO/生命周期确定性的取舍，不等价于 tile 级 urgent GPU 优先队列。
 - **上传/finalize 默认预算极紧**(`maxMainThreadFinalizesPerFrame`=1、`maxRasterUploadsPerFrame`=1),是"下载完成→能画"延迟的观感天花板之一。
 - **无退避重试**:`FailedTemporarily` 每帧重打服务器,自造 DoS(gap-audit P1)。
 - **无请求级取消**(有 defer 无 cancel),快速平移仍等废请求跑完。
@@ -130,7 +133,12 @@ root 选择、细化、kick、剔除、复用、plan-append、遍历上下文构
 
 - **新 Provider 类型**:实现 `TerrainProvider`/`ImageryProvider` 接口,经 `TilesetTerrainProviders` + `TileLoadRequestPlanner::classify`(Skip/TerrainContentUpsample/Content 分支)接入,**不需改选择遍历核心**。
 - **新剔除策略**:在 `TileSelectionCullingPolicy`(视锥/雾)或 `TileSoftwareOcclusionPolicy`(地平线)旁新增同构策略类,在 `TileSelectionVisitPreparation::prepare` 挂接。cesium 有 `ITileExcluder`(clipping polygon/region mask)本引擎**未实现**,可作扩展参考。
-- **新调度信号**:新增 `FrameResourceLane` 枚举值 + 对应 limit 分支;若涉及跨帧在途生命周期,**应经 `WorkLedger::acquire(Kind,label)` 注册,而不是在 `Scene::hasConvergingWork` 手写新判据**(后者是明确的反模式)。
+- **新调度信号**:局部 Tileset 工作先新增 `FrameResourceLane` 与 limit 映射；若会与
+  raster/MVT/PageStore 竞争同类资源，还必须映射到
+  `SceneFrameResourceProducer`+`SceneFrameResourceStage`，在 seal 前声明 demand，
+  在真实副作用前 `tryAcquire`。涉及跨帧在途生命周期仍应经
+  `WorkLedger::acquire(Kind,label)` 注册，而不是在 `Scene::hasConvergingWork`
+  手写新判据。
 - **新加载优先级维度**:`TileLoadPriorityPolicy` 当前 `{Preload,Normal,Urgent}`+组内序;扩展需同改 `hasHigherPriority`、`toFramePriority`、`TilePendingLoadQueue` 选取逻辑。
 - **优先接线未完成的既有能力**(优于新写代码):异步地形顶点上传(仅需 `decoupleImageryFromGeometry=false` 或提供另一生产者)、`TileIncrementalFrontier`(已捕获未剪枝)、影像 provider 统一 HTTP 缓存接入(目前仅 QM/heightmap 走 `HttpCache`,XYZ/Bing/Google/TMS/WMS/WMTS 全直连)。
 
@@ -143,6 +151,11 @@ root 选择、细化、kick、剔除、复用、plan-append、遍历上下文构
 **自研/非对照**:
 - **帧间选择复用**(`TileSelectionReusePolicy`):视角不变跳过完整遍历,cesium 无直接等价。
 - **`WorkLedger`**:账本化在途工作是自研,针对本引擎"四判据各自为政"问题。
+- **`SceneFrameResourceArbiter`**:Scene 实例级两阶段资源仲裁是自研；cesium-native
+  提供 Tileset 内容生命周期与请求调度行为参考，但没有本项目这种把多个 Tileset、
+  MVT 与 PageStore 放进同一 producer×stage 帧配额表的组合根。
+  demand 采用活跃 producer 启动额度 + 上一帧 used/denied 自适应 hint，而不是启用即
+  固定占满预算；各执行点仍在真实副作用前 `tryAcquire`，拒绝工作留队跨帧续跑。
 - **`viewerRequestVolume` 门控**在 visit 路径存在,cesium inline selection 无此机制——新增而非缺失,会使输出偏离 cesium。
 - **`TerrainPageLayerPool`/`TerrainPageStore`**(等尺寸块 LRU 页表)是"北极星合成方案"自研设计,非 cesium 概念。
 - **已删除**:异步选择/影子树(`TileSelectionShadowRunner` 等)2026-08-07 全删——release 下 selector 非瓶颈从未生产启用,增量切面等价性 oracle 裁决 NO-GO。

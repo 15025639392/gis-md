@@ -10,6 +10,7 @@
 #include <cmath>
 #include <future>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -199,6 +200,8 @@ struct FakeSinks {
     int tessellateCalls = 0;
     size_t lastFeatureCount = 0;
     bool failCommits = false;
+    size_t commitAttempts = 0;
+    std::optional<size_t> failCommitAttempt;
     std::vector<TileKey> committed;
     std::vector<TileKey> dropped;
 
@@ -214,7 +217,10 @@ struct FakeSinks {
             return mesh;
         };
         s.commit = [this](const TileKey& k, FeatureTileMesh&) {
-            if (failCommits) {
+            ++commitAttempts;
+            if (failCommits ||
+                (failCommitAttempt &&
+                 *failCommitAttempt == commitAttempts)) {
                 return TileMeshCommitResult::RetryableFailure;
             }
             committed.push_back(k);
@@ -244,6 +250,95 @@ TEST(MvtVectorSource, FetchDecodeTessellateCommitPipeline) {
     EXPECT_FALSE(sinks.committed.empty());
     EXPECT_GT(source.activeTileCount(), 0u);
     EXPECT_EQ(sinks.committed.size(), source.activeTileCount());
+}
+
+TEST(MvtVectorSource, FrameAdmissionDenialRetriesOnNextFrame) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
+    const Rectangle view = rectDeg(1, 1, 40, 40);
+
+    SceneFrameResourceArbiterConfig deniedConfig;
+    deniedConfig.networkRequest.maxUnitsPerFrame = 0;
+    deniedConfig.workerDispatch.maxUnitsPerFrame = 0;
+    deniedConfig.gpuUpload.maxUnitsPerFrame = 0;
+    SceneFrameResourceArbiter arbiter;
+    arbiter.beginFrame(1, deniedConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Mvt,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal,
+        64));
+    ASSERT_TRUE(arbiter.sealAllocations());
+    source.update(view, heightForZoom(2), &arbiter);
+    EXPECT_TRUE(fetch.requested.empty())
+        << "denied MVT requests must not reach transport";
+
+    SceneFrameResourceArbiterConfig allowedConfig;
+    allowedConfig.networkRequest.maxUnitsPerFrame = 64;
+    allowedConfig.workerDispatch.maxUnitsPerFrame = 64;
+    allowedConfig.gpuUpload.maxUnitsPerFrame = 64;
+    arbiter.beginFrame(2, allowedConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Mvt,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal,
+        64));
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Mvt,
+        SceneFrameResourceStage::WorkerDispatch,
+        FrameResourcePriority::Normal,
+        64));
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Mvt,
+        SceneFrameResourceStage::GpuUpload,
+        FrameResourcePriority::Normal,
+        64));
+    ASSERT_TRUE(arbiter.sealAllocations());
+    source.update(view, heightForZoom(2), &arbiter);
+    EXPECT_FALSE(fetch.requested.empty())
+        << "deferred request must be retried with a fresh frame grant";
+}
+
+TEST(MvtVectorSource, LocalFairShareBacklogExpandsNextFrameDemand) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    MvtVectorSource::Options options = optionsForTest();
+    options.tree.minZoom = 4;
+    options.tree.maxZoom = 4;
+    MvtVectorSource source(options, sinks.fn(), fetch.cache());
+    const Rectangle view = rectDeg(1, 1, 40, 30);
+
+    SceneFrameResourceArbiterConfig config;
+    config.networkRequest.maxUnitsPerFrame = 64;
+    SceneFrameResourceArbiter arbiter;
+    arbiter.beginFrame(1, config);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Mvt,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal,
+        64));
+    ASSERT_TRUE(arbiter.sealAllocations());
+
+    MvtVectorSource::FrameAdmissionLimits limits;
+    limits.networkRequests = 1;
+    source.update(view, heightForZoom(4), &arbiter, limits);
+    ASSERT_EQ(1u, fetch.requested.size());
+    EXPECT_GT(arbiter.snapshot()
+                  .producerStage(
+                      SceneFrameResourceProducer::Mvt,
+                      SceneFrameResourceStage::NetworkRequest)
+                  .deferred,
+              0u);
+
+    arbiter.beginFrame(2, config);
+    EXPECT_GT(arbiter.suggestedDemand(
+                  SceneFrameResourceProducer::Mvt,
+                  SceneFrameResourceStage::NetworkRequest,
+                  FrameResourcePriority::Normal),
+              1u);
 }
 
 TEST(MvtVectorSource, BoundsPerSourceTessellationWithoutDroppingTiles) {
@@ -776,6 +871,129 @@ TEST(MvtVectorSource, LodSwapIsAtomicNoHoleNoOverlap) {
     for (const TileKey& k : act) {
         EXPECT_EQ(k.z, 3) << "换手应已收敛回 z3";
     }
+}
+
+TEST(MvtVectorSource, AtomicReplacementWaitsForGpuGrantThenSwapsAsUnit) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    MvtVectorSource::Options options = optionsForTest();
+    options.tree.refinement = VectorTileRefinementPolicy::GeometryReplace;
+    MvtVectorSource source(options, sinks.fn(), fetch.cache());
+    const Rectangle view = rectDeg(20, 20, 25, 25);
+
+    auto runFrame = [&](uint64_t frame, int zoom, uint32_t gpuBudget) {
+        SceneFrameResourceArbiterConfig config;
+        config.networkRequest.maxUnitsPerFrame = 64;
+        config.workerDispatch.maxUnitsPerFrame = 64;
+        config.gpuUpload.maxUnitsPerFrame = gpuBudget;
+        SceneFrameResourceArbiter arbiter;
+        arbiter.beginFrame(frame, config);
+        EXPECT_TRUE(arbiter.declareDemand(
+            SceneFrameResourceProducer::Mvt,
+            SceneFrameResourceStage::NetworkRequest,
+            FrameResourcePriority::Normal,
+            64));
+        EXPECT_TRUE(arbiter.declareDemand(
+            SceneFrameResourceProducer::Mvt,
+            SceneFrameResourceStage::WorkerDispatch,
+            FrameResourcePriority::Normal,
+            64));
+        EXPECT_TRUE(arbiter.declareDemand(
+            SceneFrameResourceProducer::Mvt,
+            SceneFrameResourceStage::GpuUpload,
+            FrameResourcePriority::Normal,
+            64));
+        EXPECT_TRUE(arbiter.sealAllocations());
+        source.update(view, heightForZoom(zoom), &arbiter);
+        return arbiter.snapshot();
+    };
+
+    for (uint64_t frame = 1; frame <= 8 && source.activeTileCount() == 0;
+         ++frame) {
+        runFrame(frame, 3, 64);
+    }
+    ASSERT_GT(source.activeTileCount(), 0u);
+
+    // Build the replacement meshes while the GPU lane is closed. The old
+    // coarse tile must remain visible and no replacement may commit.
+    for (uint64_t frame = 9; frame <= 20; ++frame) {
+        runFrame(frame, 4, 0);
+    }
+    EXPECT_EQ(0, source.lastUpdateStats().commits);
+    EXPECT_GT(source.pendingCommitCount(), 0u);
+
+    const size_t commitsBefore = sinks.committed.size();
+    runFrame(21, 4, 1);
+    EXPECT_GT(sinks.committed.size(), commitsBefore);
+    EXPECT_EQ(0u, source.lastUpdateStats().activeAncestorPairs)
+        << "atomic replacement must not leave parent/child overlap";
+    EXPECT_EQ(0u, source.pendingCommitCount());
+}
+
+TEST(MvtVectorSource,
+     AtomicReplacementRetryKeepsUncommittedMeshesAndRecoversAfterMidUnitFailure) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    MvtVectorSource::Options options = optionsForTest();
+    options.tree.refinement = VectorTileRefinementPolicy::GeometryReplace;
+    MvtVectorSource source(options, sinks.fn(), fetch.cache());
+    const Rectangle view = rectDeg(20, 20, 25, 25);
+
+    auto runFrame = [&](uint64_t frame, int zoom, uint32_t gpuBudget) {
+        SceneFrameResourceArbiterConfig config;
+        config.networkRequest.maxUnitsPerFrame = 64;
+        config.workerDispatch.maxUnitsPerFrame = 64;
+        config.gpuUpload.maxUnitsPerFrame = gpuBudget;
+        SceneFrameResourceArbiter arbiter;
+        arbiter.beginFrame(frame, config);
+        EXPECT_TRUE(arbiter.declareDemand(
+            SceneFrameResourceProducer::Mvt,
+            SceneFrameResourceStage::NetworkRequest,
+            FrameResourcePriority::Normal,
+            64));
+        EXPECT_TRUE(arbiter.declareDemand(
+            SceneFrameResourceProducer::Mvt,
+            SceneFrameResourceStage::WorkerDispatch,
+            FrameResourcePriority::Normal,
+            64));
+        EXPECT_TRUE(arbiter.declareDemand(
+            SceneFrameResourceProducer::Mvt,
+            SceneFrameResourceStage::GpuUpload,
+            FrameResourcePriority::Normal,
+            64));
+        EXPECT_TRUE(arbiter.sealAllocations());
+        source.update(view, heightForZoom(zoom), &arbiter);
+    };
+
+    for (uint64_t frame = 1; frame <= 8 && source.activeTileCount() == 0;
+         ++frame) {
+        runFrame(frame, 3, 64);
+    }
+    ASSERT_GT(source.activeTileCount(), 0u);
+
+    for (uint64_t frame = 9; frame <= 20; ++frame) {
+        runFrame(frame, 4, 0);
+    }
+    ASSERT_GT(source.pendingCommitCount(), 0u);
+    const int tessellationsBeforeFailure = sinks.tessellateCalls;
+    sinks.failCommitAttempt = sinks.commitAttempts + 2;
+    runFrame(21, 4, 1);
+    EXPECT_GT(source.pendingCommitCount(), 0u)
+        << "a mid-unit retryable failure must leave the replacement pending";
+    EXPECT_EQ(0u, source.lastUpdateStats().activeAncestorPairs)
+        << "rollback must keep the old placeholder without overlap";
+
+    sinks.failCommitAttempt.reset();
+    for (uint64_t frame = 22; frame <= 30 && source.pendingCommitCount() > 0;
+         ++frame) {
+        runFrame(frame, 4, 4);
+    }
+    EXPECT_EQ(0u, source.pendingCommitCount());
+    EXPECT_GT(source.activeTileCount(), 1u);
+    EXPECT_GT(sinks.tessellateCalls, tessellationsBeforeFailure)
+        << "a successfully committed child may be re-tessellated after rollback";
 }
 
 // ---------------------------------------------------------------------------

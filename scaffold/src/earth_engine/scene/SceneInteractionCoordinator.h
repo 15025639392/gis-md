@@ -18,6 +18,7 @@ class Camera;
 class CameraSystem;
 class Tileset;
 class VectorLayer;
+class FeatureRenderLayer;
 
 struct SceneInteractionContext {
     Camera* camera = nullptr;
@@ -26,6 +27,9 @@ struct SceneInteractionContext {
     double viewportHeightPixels = 0.0;
     const Tileset* terrainTileset = nullptr;
     const std::vector<std::unique_ptr<VectorLayer>>* vectorLayers = nullptr;
+    const FrameState* frameState = nullptr;
+    const std::vector<std::unique_ptr<FeatureRenderLayer>>*
+        featureRenderLayers = nullptr;
     double elapsedTimeSeconds = 0.0;
 };
 

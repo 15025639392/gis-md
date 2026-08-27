@@ -12,6 +12,21 @@ namespace earth_engine {
 
 SceneTilesetCoordinator::~SceneTilesetCoordinator() = default;
 
+bool SceneTilesetCoordinator::hasAnyRasterOverlay() const {
+    const auto hasRaster = [](const std::unique_ptr<Tileset>& tileset) {
+        return tileset && !tileset->rasterOverlays().empty();
+    };
+    if (hasRaster(primary_) || hasRaster(pendingPrimary_)) {
+        return true;
+    }
+    for (const auto& tileset : contentTilesets_) {
+        if (hasRaster(tileset)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 void SceneTilesetCoordinator::setPrimary(std::unique_ptr<Tileset> tileset) {
     pendingPrimary_.reset();
     pendingTakeoverState_ = {};
@@ -71,16 +86,17 @@ void SceneTilesetCoordinator::clearOcclusionCallback() {
 
 SceneTilesetUpdateResult SceneTilesetCoordinator::update(
     FrameState& frameState,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    SceneFrameResourceArbiter* resourceArbiter) {
     SceneTilesetUpdateResult result;
     if (primary_) {
         const double startMs = perf::nowMs();
-        primary_->update(frameState, pPrepRenderer);
+        primary_->update(frameState, pPrepRenderer, resourceArbiter);
         result.terrainUpdateMs = perf::nowMs() - startMs;
     }
     if (pendingPrimary_) {
         const double startMs = perf::nowMs();
-        pendingPrimary_->update(frameState, pPrepRenderer);
+        pendingPrimary_->update(frameState, pPrepRenderer, resourceArbiter);
         result.terrainUpdateMs += perf::nowMs() - startMs;
         if (!primary_ ||
             ScenePrimaryTilesetTakeoverPolicy::shouldCommit(
@@ -101,7 +117,7 @@ SceneTilesetUpdateResult SceneTilesetCoordinator::update(
         for (auto& tileset : contentTilesets_) {
             if (tileset) {
                 const double t0 = perf::nowMs();
-                tileset->update(frameState, pPrepRenderer);
+                tileset->update(frameState, pPrepRenderer, resourceArbiter);
                 const double t_tile = perf::nowMs() - t0;
                 if (t_tile > 5.0) {
                     platformLog(LogLevel::Info, "EarthPerf",

@@ -132,7 +132,9 @@ void TilesetUpdateFrameRuntime::runBaseCoveragePreload(
 TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     Tileset& tileset,
     const FrameState& frameState,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    SceneFrameResourceArbiter* resourceArbiter) {
+    tileset.frameResourceBudget_.attachSceneArbiter(resourceArbiter);
     // cesium-native: increment generation each frame so that
     // RenderCommand validator (non-zero check) accepts terrain commands.
     ++tileset.generation_;

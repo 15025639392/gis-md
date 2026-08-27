@@ -648,6 +648,7 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
     asyncState_->alive.store(false, std::memory_order_release);
     RetiredAsyncResources retired;
     std::vector<std::shared_ptr<MappedSourceImageSet>> abandonedSourceSets;
+    std::deque<std::function<void()>> abandonedComposeTasks;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         // pendingUploads 的节流名额已在加载完成入队时释放，直接丢弃
@@ -665,11 +666,18 @@ RasterOverlayTileProvider::~RasterOverlayTileProvider() {
         asyncState_->pendingSourceFallbackCount.store(
             0,
             std::memory_order_release);
+        abandonedComposeTasks.swap(
+            asyncState_->pendingRasterComposeTasks);
         asyncState_->inFlightRequests.clear();
     }
     for (const auto& sourceSet : abandonedSourceSets) {
         sourceSet->markAbandoned();
         sourceSet->releaseThrottleSlotOnce();
+    }
+    for (std::function<void()>& task : abandonedComposeTasks) {
+        if (task) {
+            task();
+        }
     }
     asyncState_->resolveDestructionIfComplete();
 }
@@ -1401,6 +1409,11 @@ bool RasterOverlayTileProvider::pendingUploadBackpressureActive() const {
 
 bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
                                          FrameResourceBudget* budget) {
+    if (budget && budget->sceneArbiter() != nullptr) {
+        asyncState_->sceneResourceManaged.store(
+            true,
+            std::memory_order_release);
+    }
     if (tile.isMappedRasterTile()) {
         return loadMappedRasterTile(tile, budget);
     }
@@ -1441,6 +1454,11 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
 
 bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
                                                   FrameResourceBudget* budget) {
+    if (budget && budget->sceneArbiter() != nullptr) {
+        asyncState_->sceneResourceManaged.store(
+            true,
+            std::memory_order_release);
+    }
     // cesium-native: loadTileThrottled only starts Unloaded tiles. Once a
     // mapped raster tile is Loading, it may still have unissued source futures
     // waiting for raster request budget. Keep pumping those shared source

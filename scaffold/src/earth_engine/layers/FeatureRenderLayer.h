@@ -48,8 +48,19 @@ struct FeaturePickResult {
     /// Vertex/Edge:屏幕像素距离;Fill:0。
     double distancePx = 0.0;
     /// Vertex = 该顶点存储坐标;Edge = 边上最近点(线性插值);
-    /// Fill = 拾取射线与椭球交点。
+    /// Fill = 存储坐标系下的地表 anchor（统一 Scene 结果的渲染态位置
+    /// 另见 renderedPosition）。
     Cartographic position;
+
+    /// 与 worldPosition 对应的渲染大地坐标（含样式/地形高度）。
+    Cartographic renderedPosition;
+
+    /// 命中点在 ECEF 中的渲染位置（含 heightOffset / ClampToGround）。
+    /// 统一 Scene picking 用它与地形/其它对象比较射线距离；编辑调用方
+    /// 仍应使用 position（存储坐标，不含样式偏移）进行几何编辑。
+    Vec3 worldPosition = Vec3::zero();
+    /// 从相机到 worldPosition 的射线距离（meter）。
+    double distanceMeters = 0.0;
 
     bool isValid() const { return part != Part::None; }
 };

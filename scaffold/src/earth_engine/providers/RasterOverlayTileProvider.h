@@ -489,7 +489,10 @@ private:
         TileKey originalKey;
         TileKey requestedKey;
         uint64_t ownerToken = 0;
-        std::function<int()> issue;
+        // Returns -1 when Scene/local admission denied the transport before
+        // provider.requestTile, 0 for cache/in-flight reuse, or 1 when a new
+        // source request was issued.
+        std::function<int(std::function<bool()>)> issue;
     };
     struct RetiredAsyncResources {
         RetiredAsyncResources() {
@@ -529,6 +532,17 @@ private:
         std::deque<std::string> activeMappedSourceSetOrder;
         std::deque<PendingSourceFallback> pendingSourceFallbacks;
         std::atomic<uint32_t> pendingSourceFallbackCount{0};
+        // Multi-source raster composition becomes ready from provider
+        // callbacks, but the Scene arbiter is frame-scoped and must never be
+        // captured by those callbacks. Keep ready work here until the render
+        // thread pumps it with the current frame's Raster/WorkerDispatch
+        // grant.
+        std::deque<std::function<void()>> pendingRasterComposeTasks;
+        // Once a load is started with a Scene frame budget, keep subsequent
+        // multi-source composition callbacks on the Scene-managed handoff
+        // path. This is sticky for the provider lifetime so callbacks never
+        // retain a frame-scoped arbiter pointer.
+        std::atomic<bool> sceneResourceManaged{false};
         std::deque<std::pair<std::string, uint64_t>>
             sourceTileDepotCacheLru;
         std::unordered_map<const DecodedImage*, SharedRasterImageRefs>

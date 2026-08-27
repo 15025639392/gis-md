@@ -4,6 +4,7 @@
 #include "SceneFrameDiagnostics.h"
 #include "SceneFrameStateBuilder.h"
 #include "SceneTilesetCoordinator.h"
+#include "../core/resources/SceneFrameResourceArbiter.h"
 #include "Camera.h"
 #include "../camera/CameraSystem.h"
 #include "../core/geodesy/Ellipsoid.h"
@@ -14,6 +15,158 @@
 #include <cstdio>
 
 namespace earth_engine {
+
+namespace {
+
+SceneFrameResourceArbiterConfig sceneResourceConfig() {
+    SceneFrameResourceArbiterConfig config;
+    config.networkRequest = {24, 4};
+    config.workerDispatch = {16, 2};
+    config.mainThreadFinalize = {8, 2};
+    config.gpuUpload = {8, 0};
+    config.composeDispatch = {8, 0};
+    return config;
+}
+
+void declareAdaptiveDemand(
+    SceneFrameResourceArbiter& arbiter,
+    const SceneFrameResourceArbiterConfig& config,
+    SceneFrameResourceProducer producer,
+    SceneFrameResourceStage stage,
+    uint32_t urgentBootstrap,
+    uint32_t normalBootstrap,
+    uint32_t preloadBootstrap = 0) {
+    const uint32_t cap = config.stageBudget(stage).maxUnitsPerFrame;
+    const auto declare = [&](FrameResourcePriority priority,
+                             uint32_t bootstrap) {
+        const uint32_t hinted = arbiter.suggestedDemand(
+            producer, stage, priority);
+        const uint32_t units = std::min(cap, std::max(bootstrap, hinted));
+        if (units != 0) {
+            arbiter.declareDemand(producer, stage, priority, units);
+        }
+    };
+    declare(FrameResourcePriority::Urgent, urgentBootstrap);
+    declare(FrameResourcePriority::Normal, normalBootstrap);
+    declare(FrameResourcePriority::Preload, preloadBootstrap);
+}
+
+void seedSceneResourceDemands(SceneFrameResourceArbiter& arbiter,
+                              const SceneFrameResourceArbiterConfig& config,
+                              const SceneTilesetCoordinator& tilesets,
+                              bool mvtActive,
+                              uint32_t mvtSourceCount,
+                              bool pageStoreActive) {
+    if (tilesets.hasAnyTileset()) {
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Terrain,
+            SceneFrameResourceStage::NetworkRequest,
+            1,
+            1);
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Terrain,
+            SceneFrameResourceStage::MainThreadFinalize,
+            1,
+            1);
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Terrain,
+            SceneFrameResourceStage::WorkerDispatch,
+            1,
+            1);
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Terrain,
+            SceneFrameResourceStage::GpuUpload,
+            0,
+            1);
+    }
+    if (tilesets.hasAnyRasterOverlay()) {
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Raster,
+            SceneFrameResourceStage::NetworkRequest,
+            1,
+            1);
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Raster,
+            SceneFrameResourceStage::MainThreadFinalize,
+            1,
+            1);
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Raster,
+            SceneFrameResourceStage::WorkerDispatch,
+            0,
+            1);
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Raster,
+            SceneFrameResourceStage::GpuUpload,
+            0,
+            1);
+    }
+    if (mvtActive) {
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Mvt,
+            SceneFrameResourceStage::NetworkRequest,
+            0,
+            std::max<uint32_t>(1, mvtSourceCount));
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Mvt,
+            SceneFrameResourceStage::WorkerDispatch,
+            0,
+            1);
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::Mvt,
+            SceneFrameResourceStage::GpuUpload,
+            0,
+            1);
+    }
+    if (pageStoreActive) {
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::PageStore,
+            SceneFrameResourceStage::NetworkRequest,
+            0,
+            1);
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::PageStore,
+            SceneFrameResourceStage::GpuUpload,
+            0,
+            1);
+        declareAdaptiveDemand(
+            arbiter,
+            config,
+            SceneFrameResourceProducer::PageStore,
+            SceneFrameResourceStage::ComposeDispatch,
+            0,
+            1);
+    }
+    arbiter.sealAllocations();
+}
+
+} // namespace
 
 void SceneFrameUpdateCoordinator::update(
     const SceneFrameUpdateInput& input) {
@@ -110,8 +263,16 @@ void SceneFrameUpdateCoordinator::update(
     input.diagnostics.environmentUpdateMs =
         frameStateResult.environmentUpdateMs;
 
-    SceneTilesetUpdateResult tilesetUpdateResult =
-        input.tilesets.update(input.frameState, input.pPrepRenderer);
+    const SceneFrameResourceArbiterConfig resourceConfig =
+        sceneResourceConfig();
+    input.resourceArbiter.beginFrame(
+        input.frameState.frameId, resourceConfig);
+    seedSceneResourceDemands(input.resourceArbiter, resourceConfig,
+                             input.tilesets,
+                             input.mvtActive, input.mvtSourceCount,
+                             input.pageStoreActive);
+    SceneTilesetUpdateResult tilesetUpdateResult = input.tilesets.update(
+        input.frameState, input.pPrepRenderer, &input.resourceArbiter);
     const double t_tsu = perf::nowMs();
     input.diagnostics.terrainUpdateMs = tilesetUpdateResult.terrainUpdateMs;
     input.diagnostics.contentTilesetUpdateMs =

@@ -1,8 +1,62 @@
 #include "FrameResourceBudget.h"
 
+#include "SceneFrameResourceArbiter.h"
+
 #include <algorithm>
 
 namespace earth_engine {
+
+namespace {
+
+SceneFrameResourceProducer producerForLane(FrameResourceLane lane) {
+    switch (lane) {
+        case FrameResourceLane::RasterRequest:
+        case FrameResourceLane::RasterTextureUpload:
+            return SceneFrameResourceProducer::Raster;
+        case FrameResourceLane::TerrainRequest:
+        case FrameResourceLane::ContentRequest:
+        case FrameResourceLane::TerrainFinalize:
+        case FrameResourceLane::ContentFinalize:
+        case FrameResourceLane::TerminalState:
+            return SceneFrameResourceProducer::Terrain;
+    }
+    return SceneFrameResourceProducer::Terrain;
+}
+
+SceneFrameResourceStage stageForLane(FrameResourceLane lane) {
+    switch (lane) {
+        case FrameResourceLane::TerrainRequest:
+        case FrameResourceLane::ContentRequest:
+        case FrameResourceLane::RasterRequest:
+            return SceneFrameResourceStage::NetworkRequest;
+        case FrameResourceLane::TerrainFinalize:
+        case FrameResourceLane::ContentFinalize:
+        case FrameResourceLane::TerminalState:
+            return SceneFrameResourceStage::MainThreadFinalize;
+        case FrameResourceLane::RasterTextureUpload:
+            return SceneFrameResourceStage::GpuUpload;
+    }
+    return SceneFrameResourceStage::NetworkRequest;
+}
+
+FrameResourcePriority scenePriorityForLane(
+    FrameResourceLane lane,
+    FrameResourcePriority priority) {
+    // Preserve the local queue's priority class at Scene scope. Terrain has
+    // an additional urgent floor, but that floor must not silently demote an
+    // urgent raster (or future producer) request into the normal round-robin
+    // lane; otherwise the unified arbiter cannot express the caller's
+    // visibility contract.
+    (void)lane;
+    return priority;
+}
+
+} // namespace
+
+void FrameResourceBudget::attachSceneArbiter(
+    SceneFrameResourceArbiter* arbiter) {
+    sceneArbiter_ = arbiter;
+}
 
 void FrameResourceBudget::beginFrame(
     uint64_t frameNumber,
@@ -30,6 +84,20 @@ bool FrameResourceBudget::canIssue(FrameResourceLane lane,
         priority == FrameResourcePriority::Urgent
             ? config_.reservedUrgentNetworkRequestsPerFrame
             : 0;
+    if (sceneArbiter_ && sceneArbiter_->allocationsSealed()) {
+        const auto producer = producerForLane(lane);
+        const auto stage = stageForLane(lane);
+        if (sceneArbiter_->remaining(
+                producer, stage, scenePriorityForLane(lane, priority)) <
+            positiveUnits(estimatedFanout)) {
+            sceneArbiter_->noteUnservedDemand(
+                producer,
+                stage,
+                scenePriorityForLane(lane, priority),
+                positiveUnits(estimatedFanout));
+            return false;
+        }
+    }
     switch (lane) {
         case FrameResourceLane::TerrainRequest:
             return terrainContentNetworkRequestsIssued_ +
@@ -56,6 +124,14 @@ bool FrameResourceBudget::tryIssue(FrameResourceLane lane,
                                    int estimatedFanout) {
     if (!canIssue(lane, priority, estimatedFanout)) {
         return false;
+    }
+    if (sceneArbiter_ && sceneArbiter_->allocationsSealed()) {
+        if (!sceneArbiter_->tryAcquire(
+                producerForLane(lane), stageForLane(lane),
+                scenePriorityForLane(lane, priority),
+                positiveUnits(estimatedFanout))) {
+            return false;
+        }
     }
     switch (lane) {
         case FrameResourceLane::TerrainRequest:
@@ -106,6 +182,19 @@ bool FrameResourceBudget::canFinalize(FrameResourceLane lane,
     if (mainThreadTimeExpired()) {
         return false;
     }
+    if (sceneArbiter_ && sceneArbiter_->allocationsSealed()) {
+        if (sceneArbiter_->remaining(
+                producerForLane(lane), stageForLane(lane),
+                scenePriorityForLane(lane, priority)) <
+            positiveUnits(estimatedCostUnits)) {
+            sceneArbiter_->noteUnservedDemand(
+                producerForLane(lane),
+                stageForLane(lane),
+                scenePriorityForLane(lane, priority),
+                positiveUnits(estimatedCostUnits));
+            return false;
+        }
+    }
     // ⚠️ finalize/upload 是**主线程工作**,不参与 I-P2 的 urgent 超额:
     //   - 平滑/交互期主线程时间预算必须守住(即使 urgent)——设计意图见
     //     TileFrameResourceBudgetPlannerTest.SmoothingConservesMainThreadWork;
@@ -136,6 +225,15 @@ bool FrameResourceBudget::tryFinalize(FrameResourceLane lane,
                                       int estimatedCostUnits) {
     if (!canFinalize(lane, priority, estimatedCostUnits)) {
         return false;
+    }
+
+    if (sceneArbiter_ && sceneArbiter_->allocationsSealed()) {
+        if (!sceneArbiter_->tryAcquire(
+                producerForLane(lane), stageForLane(lane),
+                scenePriorityForLane(lane, priority),
+                positiveUnits(estimatedCostUnits))) {
+            return false;
+        }
     }
 
     const uint32_t units = positiveUnits(estimatedCostUnits);
@@ -173,13 +271,35 @@ bool FrameResourceBudget::canStartRasterOverlayMapping() const {
             config_.maxRasterOverlayMappingsPerFrame) {
         return false;
     }
-    return config_.rasterOverlayMappingTimeMs <= 0.0 ||
-           rasterOverlayMappingElapsedMs_ <
-               config_.rasterOverlayMappingTimeMs;
+    if (config_.rasterOverlayMappingTimeMs > 0.0 &&
+        rasterOverlayMappingElapsedMs_ >= config_.rasterOverlayMappingTimeMs) {
+        return false;
+    }
+    if (!sceneArbiter_ || !sceneArbiter_->allocationsSealed()) {
+        return true;
+    }
+    if (sceneArbiter_->remaining(
+            SceneFrameResourceProducer::Raster,
+            SceneFrameResourceStage::MainThreadFinalize,
+            FrameResourcePriority::Normal) > 0) {
+        return true;
+    }
+    sceneArbiter_->noteUnservedDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::MainThreadFinalize,
+        FrameResourcePriority::Normal);
+    return false;
 }
 
 bool FrameResourceBudget::tryStartRasterOverlayMapping() {
     if (!canStartRasterOverlayMapping()) {
+        return false;
+    }
+    if (sceneArbiter_ && sceneArbiter_->allocationsSealed() &&
+        !sceneArbiter_->tryAcquire(
+            SceneFrameResourceProducer::Raster,
+            SceneFrameResourceStage::MainThreadFinalize,
+            FrameResourcePriority::Normal)) {
         return false;
     }
     ++rasterOverlayMappingsUsed_;

@@ -88,6 +88,8 @@ PendingGpuUpload makeUpload(const std::string& cacheKey) {
 
 TEST(GpuUploadQueueTest, TracksPendingBytesAcrossPushPopEraseAndClear) {
     GpuUploadQueue queue;
+    const uint32_t violationsBefore = contracts::totalViolations(
+        contracts::Id::GpuUploadQueueFifo);
     queue.push(makeUpload("a"));
     queue.push(makeUpload("b"));
 
@@ -105,11 +107,41 @@ TEST(GpuUploadQueueTest, TracksPendingBytesAcrossPushPopEraseAndClear) {
     EXPECT_EQ("b", popped->cacheKey);
     EXPECT_EQ(0u, queue.size());
     EXPECT_EQ(0, queue.pendingBytes());
+    EXPECT_EQ(violationsBefore,
+              contracts::totalViolations(
+                  contracts::Id::GpuUploadQueueFifo))
+        << "erasing an item is a cancellation, not a FIFO violation";
 
     queue.push(makeUpload("c"));
     queue.clear();
     EXPECT_FALSE(queue.hasWork());
     EXPECT_EQ(0, queue.pendingBytes());
+}
+
+TEST(GpuUploadQueueTest, AdmissionDenialProvisionalRequeuePreservesFifoSequence) {
+    GpuUploadQueue queue;
+    queue.push(makeUpload("a"));
+    queue.push(makeUpload("b"));
+
+    auto first = queue.tryPopProvisional();
+    ASSERT_TRUE(first.has_value());
+    EXPECT_EQ("a", first->cacheKey);
+    EXPECT_TRUE(queue.requeue(std::move(*first)));
+
+    auto retried = queue.tryPopProvisional();
+    ASSERT_TRUE(retried.has_value());
+    EXPECT_EQ("a", retried->cacheKey);
+    EXPECT_TRUE(queue.commitPop(*retried));
+    auto second = queue.tryPop();
+    ASSERT_TRUE(second.has_value());
+    EXPECT_EQ("b", second->cacheKey);
+
+    // A later enqueue must continue the original sequence after a
+    // provisional pop/requeue cycle.
+    queue.push(makeUpload("c"));
+    auto third = queue.tryPop();
+    ASSERT_TRUE(third.has_value());
+    EXPECT_EQ("c", third->cacheKey);
 }
 
 TEST(GpuUploadQueueTest, InvalidPayloadReleasesLifecycleUploadClaim) {

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/core/resources/SceneFrameResourceArbiter.h"
 
 using namespace earth_engine;
 
@@ -194,4 +195,82 @@ TEST(FrameResourceBudgetTest, SnapshotExposesUrgentReservedSlots) {
     budget.beginFrame(22, config);
     const FrameResourceBudgetSnapshot snapshot = budget.snapshot();
     EXPECT_EQ(3u, snapshot.reservedUrgentNetworkRequestsPerFrame);
+}
+
+TEST(FrameResourceBudgetTest, MultipleTilesetsShareSceneNetworkGrant) {
+    SceneFrameResourceArbiterConfig sceneConfig;
+    sceneConfig.networkRequest.maxUnitsPerFrame = 2;
+    sceneConfig.networkRequest.reservedUrgentTerrainUnits = 0;
+    SceneFrameResourceArbiter sceneArbiter;
+    sceneArbiter.beginFrame(30, sceneConfig);
+    ASSERT_TRUE(sceneArbiter.declareDemand(
+        SceneFrameResourceProducer::Terrain,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal,
+        4));
+    ASSERT_TRUE(sceneArbiter.sealAllocations());
+
+    FrameResourceBudgetConfig localConfig;
+    localConfig.maxNetworkRequestsPerFrame = 8;
+    localConfig.maxNetworkInflight = 8;
+    FrameResourceBudget primary;
+    FrameResourceBudget content;
+    primary.attachSceneArbiter(&sceneArbiter);
+    content.attachSceneArbiter(&sceneArbiter);
+    primary.beginFrame(30, localConfig);
+    content.beginFrame(30, localConfig);
+
+    EXPECT_TRUE(primary.tryIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Normal));
+    EXPECT_TRUE(content.tryIssue(
+        FrameResourceLane::ContentRequest,
+        FrameResourcePriority::Normal));
+    EXPECT_FALSE(primary.tryIssue(
+        FrameResourceLane::TerrainRequest,
+        FrameResourcePriority::Normal));
+    EXPECT_FALSE(content.tryIssue(
+        FrameResourceLane::ContentRequest,
+        FrameResourcePriority::Normal));
+
+    const auto snapshot = sceneArbiter.snapshot();
+    EXPECT_EQ(2u, snapshot.stage(SceneFrameResourceStage::NetworkRequest).used);
+    EXPECT_EQ(2u, snapshot.producerStage(
+                           SceneFrameResourceProducer::Terrain,
+                           SceneFrameResourceStage::NetworkRequest)
+                       .used);
+}
+
+TEST(FrameResourceBudgetTest, RasterUrgentKeepsUrgentScenePriority) {
+    SceneFrameResourceArbiterConfig sceneConfig;
+    sceneConfig.networkRequest.maxUnitsPerFrame = 1;
+    sceneConfig.networkRequest.reservedUrgentTerrainUnits = 0;
+    SceneFrameResourceArbiter sceneArbiter;
+    sceneArbiter.beginFrame(31, sceneConfig);
+    ASSERT_TRUE(sceneArbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Urgent));
+    ASSERT_TRUE(sceneArbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(sceneArbiter.sealAllocations());
+
+    FrameResourceBudgetConfig localConfig;
+    localConfig.maxNetworkRequestsPerFrame = 8;
+    FrameResourceBudget budget;
+    budget.attachSceneArbiter(&sceneArbiter);
+    budget.beginFrame(31, localConfig);
+
+    EXPECT_TRUE(budget.tryIssue(
+        FrameResourceLane::RasterRequest,
+        FrameResourcePriority::Urgent));
+    EXPECT_FALSE(budget.tryIssue(
+        FrameResourceLane::RasterRequest,
+        FrameResourcePriority::Normal));
+    EXPECT_EQ(1u, sceneArbiter.used(
+                      SceneFrameResourceProducer::Raster,
+                      SceneFrameResourceStage::NetworkRequest,
+                      FrameResourcePriority::Urgent));
 }

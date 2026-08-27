@@ -10,6 +10,8 @@ namespace earth_engine {
 class Camera;
 class Tileset;
 class VectorLayer;
+class FeatureRenderLayer;
+struct FrameState;
 
 struct ScenePickingContext {
     const PickingService* pickingService = nullptr;
@@ -18,6 +20,9 @@ struct ScenePickingContext {
     double viewportHeightPixels = 0.0;
     const Tileset* terrainTileset = nullptr;
     const std::vector<std::unique_ptr<VectorLayer>>* vectorLayers = nullptr;
+    const FrameState* frameState = nullptr;
+    const std::vector<std::unique_ptr<FeatureRenderLayer>>*
+        featureRenderLayers = nullptr;
 };
 
 class ScenePickingCoordinator {

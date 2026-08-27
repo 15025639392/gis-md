@@ -8,6 +8,7 @@
 #include "StyleFilter.h"
 #include "VectorTileTree.h"
 #include "../core/async/WorkLedger.h"
+#include "../core/resources/SceneFrameResourceArbiter.h"
 #include "../debug/PlatformLog.h"
 #include "../tiling/TileKey.h"
 
@@ -16,6 +17,7 @@
 #include <cmath>
 #include <cstdint>
 #include <functional>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <condition_variable>
@@ -96,6 +98,16 @@ public:
         size_t maxTessellationsInFlight = 0;
     };
 
+    // Scene may host several independent sources behind the same MVT producer
+    // grant. These per-call limits split that aggregate grant fairly without
+    // turning a local instance share into a false global admission denial.
+    // Standalone callers keep the historical unlimited behavior.
+    struct FrameAdmissionLimits {
+        uint32_t networkRequests = std::numeric_limits<uint32_t>::max();
+        uint32_t workerDispatches = std::numeric_limits<uint32_t>::max();
+        uint32_t gpuUploads = std::numeric_limits<uint32_t>::max();
+    };
+
     /// worker 侧镶嵌钩子:把一块瓦片的要素镶成网格。由调用方绑定
     /// (典型:FeatureRenderLayer::tessellateTileMesh + 一份样式快照)。
     /// **必须线程安全且不碰渲染线程状态** —— 它在解码线程上跑。
@@ -143,7 +155,9 @@ public:
 
     /// 渲染线程每帧调用:驱动树、发缺瓦片请求、消化 worker 产物、
     /// 按渲染集差分 commit/drop 瓦片网格。
-    void update(const Rectangle& viewRect, double cameraHeightMeters);
+    void update(const Rectangle& viewRect, double cameraHeightMeters,
+                SceneFrameResourceArbiter* resourceArbiter = nullptr,
+                FrameAdmissionLimits frameLimits = {});
 
     /// 暂停不可见 Source，但继续排空异步收件箱和释放工作票据。
     /// 用于有样式 zoom 门控的粗层；直接跳过 update 会冻结 worker 结果。
@@ -376,7 +390,9 @@ Rectangle VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::
 
 template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>
 void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
-    const Rectangle& viewRect, double cameraHeightMeters) {
+    const Rectangle& viewRect, double cameraHeightMeters,
+    SceneFrameResourceArbiter* resourceArbiter,
+    FrameAdmissionLimits frameLimits) {
     using Clock = std::chrono::steady_clock;
     auto ms = [](Clock::time_point a, Clock::time_point b) {
         return std::chrono::duration<double, std::milli>(b - a).count();
@@ -415,6 +431,36 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
     lastStats_.renderTileCount = result.renderTiles.size();
     lastStats_.requestTileCount = result.requestTiles.size();
 
+    uint32_t networkRequests = 0;
+    uint32_t workerDispatches = 0;
+    uint32_t gpuUploads = 0;
+    const auto tryAcquireFrameResource = [&resourceArbiter](
+        SceneFrameResourceStage stage,
+        uint32_t limit,
+        uint32_t& used,
+        uint32_t units = 1) {
+        if (used > limit || units > limit - used) {
+            if (resourceArbiter) {
+                resourceArbiter->noteInstanceDeferredDemand(
+                    SceneFrameResourceProducer::Mvt,
+                    stage,
+                    FrameResourcePriority::Normal,
+                    units);
+            }
+            return false;
+        }
+        if (resourceArbiter &&
+            !resourceArbiter->tryAcquire(
+                SceneFrameResourceProducer::Mvt,
+                stage,
+                FrameResourcePriority::Normal,
+                units)) {
+            return false;
+        }
+        used += units;
+        return true;
+    };
+
     // 发缺瓦片请求(获取层单一化):fetch+解码+在途去重全在 tileCache_ ——
     // 与 drape/场共享实例时,同一块数据瓦跨消费方网络恰一次、解码恰一次。
     // 回调持 shared_ptr 收件箱,本对象析构后迟到安全;回调本体只做入箱
@@ -422,6 +468,13 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
     // 不重复走到这里,cache 的 inflight 兜跨消费方并发。
     if (tileCache_) {
         for (const TileKey& key : result.requestTiles) {
+            if (!tryAcquireFrameResource(
+                    SceneFrameResourceStage::NetworkRequest,
+                    frameLimits.networkRequests,
+                    networkRequests)) {
+                tree_.deferRequest(key);
+                continue;
+            }
             std::weak_ptr<Inbox> weakInbox = inbox_;
             std::weak_ptr<MvtTileFetchCacheT<Payload, DecodeTraits>>
                 weakTileCache = tileCache_;
@@ -472,6 +525,12 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
             ? sinks_.prepareTessellate(key)
             : sinks_.tessellate;
         if (!tile || !tessellate) continue;
+        if (!tryAcquireFrameResource(
+                SceneFrameResourceStage::WorkerDispatch,
+                frameLimits.workerDispatches,
+                workerDispatches)) {
+            continue;
+        }
         ++lastStats_.tessellateDispatched;
         std::weak_ptr<Inbox> weakInbox = inbox_;
         std::vector<std::string> includeLayers = options_.includeLayers;
@@ -626,6 +685,18 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
             unit.push_back(r);
         }
         if (!ready) continue;  // 占位者继续顶着,不空窗
+        // A replacement unit is an atomic visibility transaction. Its cost is
+        // one arbitration unit (not one child tile): charging unit.size()
+        // makes a valid 4^k descendant swap permanently impossible when the
+        // frame GPU grant is smaller than the transaction. The local commit
+        // cap still counts actual uploaded tiles for burst control.
+        if (!unit.empty() &&
+            !tryAcquireFrameResource(
+                SceneFrameResourceStage::GpuUpload,
+                frameLimits.gpuUploads,
+                gpuUploads)) {
+            continue;  // 原子置换单元不可拆；旧占位者继续上屏
+        }
         std::vector<TileKey> committedInUnit;
         for (const TileKey& r : unit) {
             auto it = readyMeshes_.find(r);
@@ -645,7 +716,10 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
         if (!ready) {
             // GPU commit 不是可回滚事务；若单元中的后续瓦片上传失败，
             // 立即撤销本单元已成功上传的替换者，保留旧占位者，避免父子
-            // 同框。失败瓦片仍留在 readyMeshes_，下一帧重试。
+            // 同框。失败及尚未尝试的瓦仍留在 readyMeshes_；已经 commit
+            // 成功的瓦可能已被 sink 消费 CPU mesh，故 drop 后由下一帧从
+            // loaded tile 重新 tessellate。Retryable GPU failure 很少见，
+            // 这里选择稀有失败时重算，避免每次正常 LOD 换手都复制整份 mesh。
             for (const TileKey& committed : committedInUnit) {
                 if (sinks_.drop) sinks_.drop(committed);
                 activeTiles_.erase(committed);
@@ -676,6 +750,12 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
         }
         if (blocked) continue;
         if (!sinks_.commit) continue;
+        if (!tryAcquireFrameResource(
+                SceneFrameResourceStage::GpuUpload,
+                frameLimits.gpuUploads,
+                gpuUploads)) {
+            break;
+        }
         const TileMeshCommitResult commitResult =
             sinks_.commit(key, it->second);
         if (commitResult == TileMeshCommitResult::RetryableFailure) continue;

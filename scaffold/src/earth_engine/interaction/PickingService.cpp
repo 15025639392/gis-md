@@ -125,6 +125,9 @@ PickResult PickingService::pick(
                         // 替换最近的
                         if (!best.isValid() || dist < best.distance) {
                             best.hitType = PickResult::HitType::VectorFeature;
+                            best.sourceKind =
+                                PickResult::FeatureSourceKind::VectorLayer;
+                            best.featurePart = PickResult::FeaturePart::Fill;
                             best.layerId = layer->id();
                             best.featureId = feature.id;
                             best.distance = dist;
@@ -228,16 +231,25 @@ PickResult PickingService::pick(
                     double distSq = dx * dx + dy * dy + dz * dz;
 
                     if (distSq < toleranceSq) {
-                        double dist = std::sqrt(distSq);
-                        if (!best.isValid() || dist < best.distance) {
+                        const Vec3 segmentPoint(spx, spy, spz);
+                        // PickResult::distance is the camera/ray depth used
+                        // by ScenePickingCoordinator for cross-layer ordering;
+                        // the perpendicular miss distance is only a hit
+                        // tolerance and must not decide occlusion.
+                        const double cameraDistance =
+                            segmentPoint.distanceTo(rayOrigin);
+                        if (!best.isValid() ||
+                            cameraDistance < best.distance) {
                             best.hitType = PickResult::HitType::VectorFeature;
+                            best.sourceKind =
+                                PickResult::FeatureSourceKind::VectorLayer;
+                            best.featurePart = PickResult::FeaturePart::Edge;
                             best.layerId = layer->id();
                             best.featureId = feature.id;
-                            best.distance = dist;
-                            best.worldPosition = Vec3(spx, spy, spz);
+                            best.distance = cameraDistance;
+                            best.worldPosition = segmentPoint;
                             best.cartographic =
-                                e.cartesianToCartographic(
-                                    Vec3(spx, spy, spz));
+                                e.cartesianToCartographic(segmentPoint);
                             best.screenX = screenXPixels;
                             best.screenY = screenYPixels;
                         }

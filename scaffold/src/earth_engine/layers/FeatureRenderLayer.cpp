@@ -10,6 +10,7 @@
 #include "../scene/Camera.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../debug/PerfTimer.h"
+#include "../core/math/IntersectionTests.h"
 #include "../core/math/Mat4.h"
 #include "../core/math/Ray.h"
 #include "../debug/PlatformLog.h"
@@ -3727,6 +3728,8 @@ struct ScreenVertex {
     double x = 0.0;
     double y = 0.0;
     bool valid = false;  // 相机前方(clip.w > 0)
+    Vec3 worldPosition = Vec3::zero();
+    Cartographic renderedPosition;
 };
 
 double pointSegmentDistance2D(double px, double py,
@@ -3777,12 +3780,21 @@ FeaturePickResult FeatureRenderLayer::pick(const FrameState& frameState,
                                            float screenYPx,
                                            float tolerancePx) const {
     FeaturePickResult result;
-    if (!frameState.camera || store_.empty()) return result;
+    if (!visible_ || !frameState.camera || store_.empty()) return result;
 
     const Camera& cam = *frameState.camera;
     const double vpW = static_cast<double>(frameState.viewportWidthPixels);
     const double vpH = static_cast<double>(frameState.viewportHeightPixels);
     if (vpW <= 0.0 || vpH <= 0.0) return result;
+    const double cameraHeight =
+        ellipsoid_.cartesianToCartographic(cam.position()).height();
+    const double viewZoom = std::min(
+        24.0,
+        std::max(0.0, std::log2(
+            4.0e7 / std::max(1.0, cameraHeight))));
+    if (viewZoom < style_.minZoom || viewZoom > style_.maxZoom) {
+        return result;
+    }
 
     // 1. 射线∩"要素实际所在面"定拾取邻域中心。必须抬到位:斜视下裸椭球
     //    交点沿视线偏出 ~面高·tan(俯角),800m 面 45° 斜视即偏 ~800m,足以
@@ -3880,14 +3892,16 @@ FeaturePickResult FeatureRenderLayer::pick(const FrameState& frameState,
                           : 0.0f) +
                       style_.heightOffset
                 : c.height() + style_.heightOffset;
-        const Vec3 ecef = ellipsoid_.cartographicToCartesian(
-            Cartographic(c.longitude(), c.latitude(), h));
+        const Cartographic rendered(c.longitude(), c.latitude(), h);
+        const Vec3 ecef = ellipsoid_.cartographicToCartesian(rendered);
         const glm::dvec4 clip =
             viewProj * glm::dvec4(ecef.x(), ecef.y(), ecef.z(), 1.0);
         if (clip.w <= 0.0) return sv;
         sv.x = (clip.x / clip.w + 1.0) * 0.5 * vpW;
         sv.y = (1.0 - clip.y / clip.w) * 0.5 * vpH;
         sv.valid = true;
+        sv.worldPosition = ecef;
+        sv.renderedPosition = rendered;
         return sv;
     };
 
@@ -3929,6 +3943,10 @@ FeaturePickResult FeatureRenderLayer::pick(const FrameState& frameState,
                     bestVertex.vertexIndex = static_cast<int>(i);
                     bestVertex.distancePx = d;
                     bestVertex.position = cartoRing[i];
+                    bestVertex.renderedPosition = ring[i].renderedPosition;
+                    bestVertex.worldPosition = ring[i].worldPosition;
+                    bestVertex.distanceMeters =
+                        ring[i].worldPosition.distanceTo(cam.position());
                 }
             }
             // 边(polygon 环含闭合末边;LineString 不闭合;Point 无边)
@@ -3954,6 +3972,26 @@ FeaturePickResult FeatureRenderLayer::pick(const FrameState& frameState,
                         a.longitude() + (b.longitude() - a.longitude()) * t,
                         a.latitude() + (b.latitude() - a.latitude()) * t,
                         a.height() + (b.height() - a.height()) * t);
+                    const Cartographic& renderedA =
+                        ring[i].renderedPosition;
+                    const Cartographic& renderedB =
+                        ring[j].renderedPosition;
+                    bestEdge.renderedPosition = Cartographic(
+                        renderedA.longitude() +
+                            (renderedB.longitude() - renderedA.longitude()) * t,
+                        renderedA.latitude() +
+                            (renderedB.latitude() - renderedA.latitude()) * t,
+                        renderedA.height() +
+                            (renderedB.height() - renderedA.height()) * t);
+                    // Interpolating endpoint ECEF positions follows the chord
+                    // through the ellipsoid. For long surface lines that can
+                    // place the representative hit hundreds of meters below
+                    // terrain and make the feature lose unified depth sorting.
+                    bestEdge.worldPosition =
+                        ellipsoid_.cartographicToCartesian(
+                            bestEdge.renderedPosition);
+                    bestEdge.distanceMeters =
+                        bestEdge.worldPosition.distanceTo(cam.position());
                 }
             }
         }
@@ -3967,6 +4005,47 @@ FeaturePickResult FeatureRenderLayer::pick(const FrameState& frameState,
             bestFill.distancePx = 0.0;
             bestFill.position = Cartographic(
                 hitCarto.longitude(), hitCarto.latitude(), 0.0);
+            bestFill.renderedPosition = hitCarto;
+            bestFill.worldPosition = hitEcef;
+            bestFill.distanceMeters = hitEcef.distanceTo(cam.position());
+        }
+    }
+
+    if (bestFill.isValid() && !clampMode) {
+        // Screen containment establishes one winning fill candidate. Resolve
+        // only that feature against the same absolute-height triangle mesh as
+        // rendering, avoiding per-overlap re-tessellation during a click.
+        if (const Feature* feature = store_.getFeature(bestFill.featureId)) {
+            const TessellatedFill fill = PolygonTessellator::tessellate(
+                *feature, ellipsoid_, style_.heightOffset, nullptr,
+                style_.globeFillMaxEdgeMeters);
+            double nearestT = std::numeric_limits<double>::infinity();
+            for (size_t i = 0; i + 2 < fill.fillIndices.size(); i += 3) {
+                const uint32_t ia = fill.fillIndices[i];
+                const uint32_t ib = fill.fillIndices[i + 1];
+                const uint32_t ic = fill.fillIndices[i + 2];
+                if (ia >= fill.positions.size() ||
+                    ib >= fill.positions.size() ||
+                    ic >= fill.positions.size()) {
+                    continue;
+                }
+                const auto triangleT =
+                    IntersectionTests::rayTriangleParametric(
+                        ray, fill.positions[ia], fill.positions[ib],
+                        fill.positions[ic], false);
+                if (triangleT && *triangleT >= 0.0 &&
+                    *triangleT < nearestT) {
+                    nearestT = *triangleT;
+                }
+            }
+            if (std::isfinite(nearestT)) {
+                bestFill.worldPosition = ray.pointAt(nearestT);
+                bestFill.renderedPosition =
+                    ellipsoid_.cartesianToCartographic(
+                        bestFill.worldPosition);
+                bestFill.distanceMeters =
+                    bestFill.worldPosition.distanceTo(cam.position());
+            }
         }
     }
 

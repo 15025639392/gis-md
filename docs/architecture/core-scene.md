@@ -69,6 +69,59 @@ source.suspend()
 4. `device->endFrame()` —— 呈现 drawable;`finishEngineFrame()` 记录总 CPU 帧耗时。
 - **理由**:四阶段严格串行、职责单向(**update 不渲染、render 不做选择**),使每阶段可独立计时/测试,让"哪个阶段占用多少帧预算"有明确归属。
 
+### 7. Scene 帧级统一资源仲裁
+
+`SceneFrameResourceArbiter` 由每个 `SceneFrameRuntime` 独立持有，不是进程
+singleton。它把 terrain、raster、MVT、`TerrainPageStore` 在同一帧对网络请求、
+worker 派发、主线程 finalize、GPU 上传与 compose 派发的竞争收敛到同一张
+producer×stage 配额表。各 stage 独立分配；`WorkerDispatch` 与 `ComposeDispatch`
+都可能最终进入同一个 `AsyncSystem` 线程池，因此这里提供的是帧级准入与可观测性，
+不是严格的共享线程池全局 QoS。
+生命周期固定为：
+
+```text
+beginFrame
+  → declareDemand(全部启用 producer)
+  → sealAllocations(按 stage/priority/producer 分配)
+  → tryAcquire(各执行点消费自己的 grant)
+```
+
+先收集、后分配的两阶段设计在 **producer 分配层** 避免 `primary → pending →
+content → MVT → PageStore` 的调用先后决定谁吃满某个 stage 的预算。
+Urgent/Normal/Preload 先按优先级分配；
+terrain urgent 有显式保留额度，剩余额度按 producer 跨帧 round-robin，未使用
+保留量会立即回流。`FrameResourceBudget` 仍是每个 Tileset 的局部保护与兼容计账
+入口，但成功执行还必须消费 Scene grant，因此多个 Tileset 不再把帧总量按实例数
+放大。
+
+demand 不是按“系统已启用”固定声明整段满额：活跃 producer 每个相关 stage 只带
+一个启动额度，上一帧实际消费量与 admission denial 会形成下一帧 hint，并被 stage
+上限钳住。这样冷启动不会因零历史永久停住，持续积压会在一帧后扩容，而启用但
+空闲的 MVT/PageStore/raster 不再长期占走大块不可借用 grant。snapshot 的
+`deferred` 也会纳入真实执行点观察到的 admission denial，而不只看预声明与 grant
+之差。
+
+MVT producer 内另有 source 级公平：Scene 将 source 数量纳入首帧 demand，并以
+source 为单位按剩余 grant 做 ceiling 分片，随后
+每帧轮转起始 source。某个 source 未用完的份额会回流给后续 source；这层实例级
+分片不改变 arbiter 的 producer×stage 总账，也不会把“本实例份额耗尽”误记成全局
+admission denial。若实例份额耗尽但本地仍有候选工作，source 会记录独立的
+instance-deferred 观察值；它进入 snapshot 与下一帧 hint，但不污染全局 denial 计数，
+因此持续 backlog 仍会扩容而不会永久锁在 bootstrap 吞吐。Terrain producer 下的
+多个 Tileset 目前仍按 `primary → pending → content` 固定顺序消费共享 grant，尚未
+实现 Tileset 实例级轮转；Scene 总量不会按实例放大，但先后顺序仍可能影响实例间
+延迟。
+
+统一的是帧级 admission，不是生命周期或缓存实现：provider inflight、MVT cache、
+PageStore 页池/compose 上限、GPU FIFO 等局部约束仍保留。被拒绝的工作必须留在
+原队列下一帧重试；`GpuUpload` 的单位是逻辑事务，不是字节、耗时或 driver call：
+一次 MVT 原子 LOD 置换可提交多个 child，PageStore 的 image/field indirection 事务
+也可能包含多次 GPU 写入。各路径都在事务真正提交前扣款。PageStore 在没有 compose
+worker 的测试/同步 fallback 中会就地执行，不消费 `ComposeDispatch`，生产异步路径
+则受该 stage admission。`Scene`/`Engine` 暴露
+`frameResourceArbiterSnapshot()`，可按 producer×stage×priority 观察 demand、
+granted、used 与 deferred。
+
 ---
 
 ## 数据流(关键路径)
@@ -77,7 +130,7 @@ source.suspend()
 
 **SDK 装配路径**:`installScene` → 按 config 各字段构造 provider/overlay → 构造统一 `Tileset` → `engine_.setTileset` → `Scene::setTileset` → `SceneTilesetCoordinator::setPrimary`。可选 glTF 内容走 `engine_.addTileset`。
 
-**Scene::update 驱动各 coordinator**:`SceneFrameRuntime::makeFrameUpdateInput` 把 frameState/diagnostics/camera/controller/tilesets/timeController/skyGradient(按引用)打包成 `SceneFrameUpdateInput`,交给静态 `SceneFrameUpdateCoordinator::update`:①resetPerFrame+updateFrameRate ②cameraController.update ③build FrameState(含视锥构造、交互焦点 TTL、太阳方向/天空色) ④tilesets.update(primary + content tilesets 各自计时)。
+**Scene::update 驱动各 coordinator**:`SceneFrameRuntime::makeFrameUpdateInput` 把 frameState/diagnostics/camera/controller/tilesets/timeController/skyGradient(按引用)打包成 `SceneFrameUpdateInput`,交给静态 `SceneFrameUpdateCoordinator::update`:①resetPerFrame+updateFrameRate ②cameraController.update ③build FrameState(含视锥构造、交互焦点 TTL、太阳方向/天空色) ④Scene resource begin/declare/seal ⑤tilesets.update(primary + content tilesets 共享同一 arbiter) ⑥`Scene::update` 继续驱动 MVT，`Engine::render` 随后驱动 PageStore，二者消费同一帧 grant。
 
 ---
 
@@ -91,6 +144,8 @@ source.suspend()
 | 对照测试即行为规格 | `tests/unit/geodesy/*` 中 `*MatchesCesiumNative` 用例定义的是"必须与 cesium 一致",改大地测量代码时是规格文档 |
 | 异步回调只带按值/弱引用自持数据 | 全仓两起真实事故(裸引用悬空、裸指针)总结的通用法则;回调不能假设宿主还活着 |
 | Scene 两阶段流分离 | `update(dt)` 只 mutate FrameState + 跑选择,`render()` 只读同一份 FrameState 建命令提交 |
+| Scene resource allocation 必须先 seal 再执行 | 所有 producer 在执行前声明需求；seal 后不得追加 demand，也不得借用别的 producer 未消费 grant，避免调用顺序偏置 |
+| admission denial 必须可跨帧续跑 | 请求、worker 任务、GPU 上传或原子换手被拒绝时留在所属队列/状态，不标失败、不拆事务、不丢占位内容 |
 | 审计对拍 | `Scene::auditWorkLedger` 每帧比对令牌数与真值,不等即 ERROR——防漏接入新迁移点的静默失效 |
 
 ---

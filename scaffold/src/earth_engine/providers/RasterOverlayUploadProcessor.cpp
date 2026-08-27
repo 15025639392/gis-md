@@ -6,6 +6,7 @@
 #include "RasterOverlayImageCompositing.h"
 #include "RasterTextureUploader.h"
 #include "../core/resources/FrameResourceBudget.h"
+#include "../core/resources/SceneFrameResourceArbiter.h"
 #include "../core/async/AsyncSystem.h"
 #include "../debug/PerfTimer.h"
 #include "../debug/PlatformLog.h"
@@ -71,6 +72,45 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
     }
 
     TileRasterOverlayUploadResult result;
+    // Provider callbacks can finish on any thread and outlive the frame that
+    // issued their requests. They therefore enqueue compose-ready work into
+    // ProviderAsyncState instead of retaining a frame arbiter pointer. The
+    // render thread admits that work here against the current frame.
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(asyncState_->mutex);
+            if (asyncState_->pendingRasterComposeTasks.empty()) {
+                break;
+            }
+        }
+
+        SceneFrameResourceArbiter* sceneArbiter = budget->sceneArbiter();
+        if (sceneArbiter != nullptr && sceneArbiter->allocationsSealed() &&
+            !sceneArbiter->tryAcquire(
+                SceneFrameResourceProducer::Raster,
+                SceneFrameResourceStage::WorkerDispatch,
+                FrameResourcePriority::Normal)) {
+            break;
+        }
+
+        std::function<void()> task;
+        {
+            std::lock_guard<std::mutex> lock(asyncState_->mutex);
+            if (asyncState_->pendingRasterComposeTasks.empty()) {
+                continue;
+            }
+            task = std::move(asyncState_->pendingRasterComposeTasks.front());
+            asyncState_->pendingRasterComposeTasks.pop_front();
+        }
+        try {
+            // Copy into the pool's packaged task so the local fallback remains
+            // callable if enqueue itself rejects during shutdown.
+            (void)AsyncSystem::pool().enqueue(task);
+        } catch (...) {
+            task();
+        }
+    }
+
     const double sourcePumpStartMs = perf::nowMs();
     issueActiveMappedSourceImageSets(
         budget,

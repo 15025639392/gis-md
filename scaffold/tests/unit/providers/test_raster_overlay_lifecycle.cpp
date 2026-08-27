@@ -12,6 +12,7 @@
 #include "earth_engine/core/geodesy/Gcj02CoordinateTransform.h"
 #include "earth_engine/core/geodesy/Projection.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/core/resources/SceneFrameResourceArbiter.h"
 #include "earth_engine/debug/Policies.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
 #include "earth_engine/renderer/RenderCommand.h"
@@ -232,6 +233,39 @@ public:
 
     int requestCount = 0;
     std::string attributionValue;
+};
+
+class AdmissionObservingImageryProvider final : public ImageryProvider {
+public:
+    explicit AdmissionObservingImageryProvider(
+        SceneFrameResourceArbiter& resourceArbiter)
+        : arbiter(resourceArbiter) {}
+
+    std::string id() const override { return "admission-observing"; }
+    std::string schemeId() const override { return "XYZ-WebMercator"; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 18; }
+    int tileWidth() const override { return 2; }
+    int tileHeight() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key,
+                     CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority =
+                         HttpRequestPriority::Normal) override {
+        usedAtRequest.push_back(arbiter.used(
+            SceneFrameResourceProducer::Raster,
+            SceneFrameResourceStage::NetworkRequest,
+            FrameResourcePriority::Normal));
+        callback(key, makeImage(2, 2, 64));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(
+        const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    SceneFrameResourceArbiter& arbiter;
+    std::vector<uint32_t> usedAtRequest;
 };
 
 class RgbImageryProvider final : public ImageryProvider {
@@ -3853,6 +3887,200 @@ TEST(
     EXPECT_EQ(2u, imagery.requestedKeys.size());
     EXPECT_EQ(sharedSourceKey, imagery.requestedKeys[0]);
     EXPECT_EQ(newSourceKey, imagery.requestedKeys[1]);
+}
+
+TEST(
+    RasterOverlayLifecycleTest,
+    MappedRasterComposeConsumesCurrentSceneWorkerGrantAndRetriesNextFrame) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+
+    const TileKey westKey{scheme->id(), 3, 2, 3};
+    const TileKey eastKey{scheme->id(), 3, 3, 3};
+    const Rectangle westBounds = scheme->tileToRectangle(westKey);
+    const Rectangle eastBounds = scheme->tileToRectangle(eastKey);
+    const Rectangle mixedBounds(
+        westBounds.west(),
+        westBounds.south(),
+        eastBounds.east(),
+        westBounds.north());
+
+    SceneFrameResourceArbiter arbiter;
+    SceneFrameResourceArbiterConfig deniedSceneConfig;
+    deniedSceneConfig.workerDispatch.maxUnitsPerFrame = 0;
+    deniedSceneConfig.gpuUpload.maxUnitsPerFrame = 1;
+    arbiter.beginFrame(1, deniedSceneConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal,
+        2));
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::WorkerDispatch,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::GpuUpload,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(arbiter.sealAllocations());
+
+    FrameResourceBudgetConfig localConfig;
+    localConfig.maxRasterUploadsPerFrame = 1;
+    FrameResourceBudget deniedBudget;
+    deniedBudget.beginFrame(1, localConfig);
+    deniedBudget.attachSceneArbiter(&arbiter);
+
+    RasterOverlayTileProvider::RasterTileMapping mapping =
+        provider.mapRasterTilesToGeometryTile(
+            projectForProvider(provider, mixedBounds),
+            512.0,
+            512.0);
+    ASSERT_NE(nullptr, mapping.tile);
+    ASSERT_TRUE(mapping.tile->isMappedRasterTile());
+    ASSERT_EQ(2u, mapping.sourceTiles.sourceKeys.size());
+    ASSERT_TRUE(provider.loadTile(*mapping.tile, &deniedBudget));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
+              mapping.tile->getState());
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_EQ(
+        0,
+        provider.processPendingUploads(false, &deniedBudget)
+            .processedUploads);
+    EXPECT_EQ(0u, arbiter.used(
+                      SceneFrameResourceProducer::Raster,
+                      SceneFrameResourceStage::WorkerDispatch,
+                      FrameResourcePriority::Normal));
+    EXPECT_EQ(0, provider.getPendingUploadCount());
+    EXPECT_TRUE(provider.hasPendingWork());
+
+    SceneFrameResourceArbiterConfig allowedSceneConfig;
+    allowedSceneConfig.workerDispatch.maxUnitsPerFrame = 1;
+    allowedSceneConfig.gpuUpload.maxUnitsPerFrame = 1;
+    arbiter.beginFrame(2, allowedSceneConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::WorkerDispatch,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::GpuUpload,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(arbiter.sealAllocations());
+
+    FrameResourceBudget allowedBudget;
+    allowedBudget.beginFrame(2, localConfig);
+    allowedBudget.attachSceneArbiter(&arbiter);
+    provider.processPendingUploads(false, &allowedBudget);
+    EXPECT_EQ(1u, arbiter.used(
+                      SceneFrameResourceProducer::Raster,
+                      SceneFrameResourceStage::WorkerDispatch,
+                      FrameResourcePriority::Normal));
+    ASSERT_EQ(1, waitForPendingUploadCount(provider, 1));
+    EXPECT_EQ(
+        1,
+        provider.processPendingUploads(false, &allowedBudget)
+            .processedUploads);
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              mapping.tile->getState());
+}
+
+TEST(
+    RasterOverlayLifecycleTest,
+    RasterSourceAcquiresSceneNetworkGrantBeforeProviderRequestSideEffect) {
+    SceneFrameResourceArbiter arbiter;
+    SceneFrameResourceArbiterConfig sceneConfig;
+    sceneConfig.networkRequest.maxUnitsPerFrame = 1;
+    arbiter.beginFrame(1, sceneConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(arbiter.sealAllocations());
+
+    FrameResourceBudgetConfig localConfig;
+    localConfig.maxNetworkRequestsPerFrame = 1;
+    localConfig.maxNetworkInflight = 1;
+    localConfig.maxRasterNetworkRequestsPerFrame = 1;
+    localConfig.maxRasterNetworkInflight = 1;
+    FrameResourceBudget budget;
+    budget.beginFrame(1, localConfig);
+    budget.attachSceneArbiter(&arbiter);
+
+    AdmissionObservingImageryProvider imagery(arbiter);
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(
+        imagery, *scheme, std::move(uploader));
+    auto tile = provider.getTile(TileKey{scheme->id(), 2, 1, 1});
+    ASSERT_NE(nullptr, tile);
+
+    ASSERT_TRUE(provider.loadTile(*tile, &budget));
+    ASSERT_EQ(1u, imagery.usedAtRequest.size());
+    EXPECT_EQ(1u, imagery.usedAtRequest.front());
+    EXPECT_EQ(1u, budget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(1u, arbiter.used(
+                      SceneFrameResourceProducer::Raster,
+                      SceneFrameResourceStage::NetworkRequest,
+                      FrameResourcePriority::Normal));
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+}
+
+TEST(
+    RasterOverlayLifecycleTest,
+    RasterSourceSceneAdmissionDenialDoesNotCallProviderAndRetries) {
+    SceneFrameResourceArbiter arbiter;
+    SceneFrameResourceArbiterConfig deniedConfig;
+    deniedConfig.networkRequest.maxUnitsPerFrame = 0;
+    arbiter.beginFrame(1, deniedConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(arbiter.sealAllocations());
+
+    FrameResourceBudgetConfig localConfig;
+    localConfig.maxNetworkRequestsPerFrame = 1;
+    localConfig.maxNetworkInflight = 1;
+    localConfig.maxRasterNetworkRequestsPerFrame = 1;
+    localConfig.maxRasterNetworkInflight = 1;
+    FrameResourceBudget deniedBudget;
+    deniedBudget.beginFrame(1, localConfig);
+    deniedBudget.attachSceneArbiter(&arbiter);
+
+    AdmissionObservingImageryProvider imagery(arbiter);
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme, nullptr);
+    auto tile = provider.getTile(TileKey{scheme->id(), 2, 2, 1});
+    ASSERT_NE(nullptr, tile);
+
+    ASSERT_TRUE(provider.loadTile(*tile, &deniedBudget));
+    EXPECT_TRUE(imagery.usedAtRequest.empty());
+    EXPECT_EQ(0u, deniedBudget.rasterNetworkRequestsIssued());
+    EXPECT_EQ(0u, arbiter.used(
+                      SceneFrameResourceProducer::Raster,
+                      SceneFrameResourceStage::NetworkRequest,
+                      FrameResourcePriority::Normal));
+    EXPECT_TRUE(provider.hasPendingWork());
+
+    SceneFrameResourceArbiterConfig allowedConfig;
+    allowedConfig.networkRequest.maxUnitsPerFrame = 1;
+    arbiter.beginFrame(2, allowedConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Raster,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(arbiter.sealAllocations());
+    FrameResourceBudget allowedBudget;
+    allowedBudget.beginFrame(2, localConfig);
+    allowedBudget.attachSceneArbiter(&arbiter);
+
+    provider.processPendingUploads(false, &allowedBudget);
+    ASSERT_EQ(1u, imagery.usedAtRequest.size());
+    EXPECT_EQ(1u, imagery.usedAtRequest.front());
 }
 
 TEST(

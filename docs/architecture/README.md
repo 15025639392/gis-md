@@ -42,7 +42,7 @@ core/ 地基 (数学/大地测量/异步/缓存/网络)                     → 
 
 | 文档 | 覆盖 | 一句话定性 |
 |---|---|---|
-| [tiling.md](tiling.md) ★ | 瓦片选择/遍历/LOD/调度/GPU上传/缓存 | 逐算法对齐 cesium-native,极端小类分解;优先级在两处被架空 |
+| [tiling.md](tiling.md) ★ | 瓦片选择/遍历/LOD/调度/GPU上传/缓存 | 逐算法对齐 cesium-native,极端小类分解;Scene 已识别三档优先级，GPU 队列内部仍保持 FIFO |
 | [terrain.md](terrain.md) ★ | 地形内容/网格/GPU位移/无缝/高程服务 | 共享模板+GPU纹理位移是亮点;几何密度钉死粗一个数量级 |
 | [terrain-runtime-pipeline.md](terrain-runtime-pipeline.md) ★ | Scene→选择→加载→RenderPlan→提交 | 统一四叉树上的渐进式地形流水线;目标LOD与实际绘制解耦 |
 | [renderer.md](renderer.md) ★ | RenderCommand/双后端/契约头/页存储 | 命令校验+编译期契约治理强;Metal 后端结构性缺口 |
@@ -50,7 +50,7 @@ core/ 地基 (数学/大地测量/异步/缓存/网络)                     → 
 | [vector.md](vector.md) | FeatureStore 编辑层 + MVT 三分工底图（道路线场即将废弃） | 表示随负载三分工是亮点;样式系统割裂四套且运行期改不了(V26) |
 | [camera-interaction.md](camera-interaction.md) | 控制器/约束求解/手势/拾取 | 真值按控制器分离 + 单一钳位出口;手势无外部对照系 |
 | [environment.md](environment.md) | 时间→太阳→天空/大气/日落着色/HDR | 天空↔雾单一治理点;两套天空模型 + HDR 半成品挂起 |
-| [core-scene.md](core-scene.md) | 数学/大地测量/异步/缓存 + 场景装配 | 大地测量有 cesium 对照测试守卫;WorkLedger 尚未接管 gating |
+| [core-scene.md](core-scene.md) | 数学/大地测量/异步/缓存 + 场景装配 | 大地测量有 cesium 对照测试守卫;WorkLedger + SceneFrameResourceArbiter 统一在途与帧级资源仲裁 |
 
 ## 贯穿全引擎的设计取向(读任何一份前先建立这层认知)
 
@@ -65,12 +65,19 @@ core/ 地基 (数学/大地测量/异步/缓存/网络)                     → 
 接新功能前值得先知道的系统级短板(细节见各文档):
 
 - **Metal 后端系统性滞后**:离屏后处理链、stencil 贴地分类、地形 GPU 位移/烘焙、矢量场解算 MSL、HDR 终端 pass 在 Metal 上或缺失或未真机验证。跨平台功能不要假设 Metal 与 GLES 等价。(renderer/terrain/vector/environment)
-- **优先级信号多处被架空**:`FrameResourcePriority` 在预算门控被静默忽略、`GpuUploadQueue` 是 FIFO 非优先级序——高 SSE 瓦片不能优先上屏。(tiling)
+- **优先级仍有局部边界**:`FrameResourcePriority` 已进入 Scene 级
+  Urgent/Normal/Preload 分配，terrain urgent 也有保底；但 `GpuUploadQueue` 内部仍是
+  FIFO，不按 tile 紧急度重排，故“获得多少上传额度”和“哪块 tile 先上传”是两层
+  不同策略。(tiling)
 - **shader 无 host 执行级守卫**:GLSL/MSL 是 C++ 字符串运行时才编译,host ctest 抓不到,唯一验证途径是真机肉眼——已多次导致 GPU/CPU 实现静默分叉。(terrain T-P6、environment L-P4、vector)
 - **样式系统割裂四套 + 面/线两路运行期改不了**:矢量要做运行期换肤/热加载,除了要动四套样式模型,面 drape 与线/场的样式是构造期注入/首帧快照,**没有失效通路**——不重启进程换不了。判据 **V26**。(vector)
 - **HttpCache 无过期/无 ETag 重验**,缺 cesium 式请求侧护栏(按屏幕优先级重排 + 相机移走 cancel)。(imagery/core-scene)
 - **手势系统无外部对照系**,核心判据 anchorErr 的常驻探针已被移除,排查需先重新插桩。(camera-interaction)
-- **WorkLedger 尚未真正接管 gating**(过渡态),旧的"四判据各自为政"风险敞口在 gating 层面尚未消除。(core-scene)
+- **Scene 资源仲裁仍是保守 demand 的第一阶段实现**:当前按启用的 producer
+  声明启动额度，持续工作由上一帧 used + denial 自适应扩容；尚未在 seal 前收集
+  每个 producer 的精确候选队列，因此 snapshot 仍可能显示“已启用但本帧无实际工作”
+  的少量 deferred。后续应把真实候选队列接入 demand 收集，但不能绕过 Scene arbiter
+  直接发请求/上传。(core-scene/tiling)
 
 ## 维护约定
 

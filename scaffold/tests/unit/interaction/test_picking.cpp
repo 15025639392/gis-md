@@ -1,7 +1,14 @@
 #include <gtest/gtest.h>
 #include <cmath>
+#include <memory>
+#include <string>
+#include <vector>
 #include "earth_engine/interaction/PickingService.h"
+#include "earth_engine/layers/FeatureRenderLayer.h"
 #include "earth_engine/scene/Camera.h"
+#include "earth_engine/scene/FrameState.h"
+#include "earth_engine/scene/Scene.h"
+#include "earth_engine/scene/ScenePickingCoordinator.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/math/Ray.h"
@@ -194,4 +201,260 @@ TEST_F(PickingServiceTest, RayTriangleMatchesNativeBackFaceAndOriginHits) {
         v2,
         t));
     EXPECT_NEAR(0.0, t, 1e-12);
+}
+
+TEST(ScenePickingCoordinatorTest,
+     PicksFeatureRenderLayerAndPreservesStableIdentity) {
+    Camera camera;
+    camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    camera.lookAt(surface + Vec3(40000.0, 0.0, 0.0), surface, Vec3::unitZ());
+
+    FrameState frame;
+    frame.camera = &camera;
+    frame.viewportWidthPixels = 800;
+    frame.viewportHeightPixels = 600;
+
+    auto layer = std::make_unique<FeatureRenderLayer>(
+        "scene-feature", nullptr, Ellipsoid::WGS84());
+    Feature feature;
+    feature.type = GeometryType::Polygon;
+    feature.sourceId = "source-42";
+    feature.rings = {{
+        Cartographic(-0.05 * M_PI / 180.0, -0.05 * M_PI / 180.0),
+        Cartographic(0.05 * M_PI / 180.0, -0.05 * M_PI / 180.0),
+        Cartographic(0.05 * M_PI / 180.0, 0.05 * M_PI / 180.0),
+        Cartographic(-0.05 * M_PI / 180.0, 0.05 * M_PI / 180.0),
+        Cartographic(-0.05 * M_PI / 180.0, -0.05 * M_PI / 180.0)}};
+    const FeatureId featureId = layer->store().addFeature(std::move(feature));
+
+    std::vector<std::unique_ptr<FeatureRenderLayer>> layers;
+    layers.push_back(std::move(layer));
+    PickingService service;
+    ScenePickingContext context;
+    context.pickingService = &service;
+    context.camera = &camera;
+    context.viewportWidthPixels = 800.0;
+    context.viewportHeightPixels = 600.0;
+    context.frameState = &frame;
+    context.featureRenderLayers = &layers;
+
+    const PickResult result =
+        ScenePickingCoordinator::pick(context, 400.0f, 300.0f);
+
+    ASSERT_EQ(PickResult::HitType::VectorFeature, result.hitType);
+    EXPECT_EQ(PickResult::FeatureSourceKind::FeatureRenderLayer,
+              result.sourceKind);
+    EXPECT_EQ(PickResult::FeaturePart::Fill, result.featurePart);
+    EXPECT_EQ("scene-feature", result.layerId);
+    EXPECT_EQ(std::to_string(featureId), result.featureId);
+    EXPECT_EQ(featureId, result.featureNumericId);
+    EXPECT_EQ("source-42", result.sourceFeatureId);
+    EXPECT_GE(result.distance, 0.0);
+    EXPECT_GT(result.worldPosition.length(), 6.0e6);
+}
+
+TEST(ScenePickingCoordinatorTest,
+     AbsoluteFillUsesRenderedFeatureHeightForDepth) {
+    Camera camera;
+    camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    camera.lookAt(surface + Vec3(40000.0, 0.0, 0.0), surface, Vec3::unitZ());
+
+    FrameState frame;
+    frame.camera = &camera;
+    frame.viewportWidthPixels = 800;
+    frame.viewportHeightPixels = 600;
+
+    auto layer = std::make_unique<FeatureRenderLayer>(
+        "absolute-fill", nullptr, Ellipsoid::WGS84());
+    Feature feature;
+    feature.type = GeometryType::Polygon;
+    feature.rings = {{
+        Cartographic(-0.05 * M_PI / 180.0,
+                     -0.05 * M_PI / 180.0, 800.0),
+        Cartographic(0.05 * M_PI / 180.0,
+                     -0.05 * M_PI / 180.0, 800.0),
+        Cartographic(0.05 * M_PI / 180.0,
+                     0.05 * M_PI / 180.0, 800.0),
+        Cartographic(-0.05 * M_PI / 180.0,
+                     0.05 * M_PI / 180.0, 800.0),
+        Cartographic(-0.05 * M_PI / 180.0,
+                     -0.05 * M_PI / 180.0, 800.0)}};
+    const FeatureId featureId = layer->store().addFeature(std::move(feature));
+
+    std::vector<std::unique_ptr<FeatureRenderLayer>> layers;
+    layers.push_back(std::move(layer));
+    PickingService service;
+    ScenePickingContext context;
+    context.pickingService = &service;
+    context.camera = &camera;
+    context.viewportWidthPixels = 800.0;
+    context.viewportHeightPixels = 600.0;
+    context.frameState = &frame;
+    context.featureRenderLayers = &layers;
+
+    const PickResult result =
+        ScenePickingCoordinator::pick(context, 400.0f, 300.0f);
+
+    ASSERT_EQ(PickResult::HitType::VectorFeature, result.hitType);
+    EXPECT_EQ(PickResult::FeatureSourceKind::FeatureRenderLayer,
+              result.sourceKind);
+    EXPECT_EQ(featureId, result.featureNumericId);
+    EXPECT_EQ(PickResult::FeaturePart::Fill, result.featurePart);
+    // Default fill mesh is a planar ECEF triangle fan, so this 0.1° square's
+    // center is ~4.8 m below the ideal 800 m ellipsoid surface. The result
+    // must match that rendered mesh and, critically, must not flatten to 0 m.
+    EXPECT_NEAR(800.0, result.cartographic.height(), 10.0);
+}
+
+TEST(ScenePickingCoordinatorTest, HiddenFeatureRenderLayerIsNotPickable) {
+    Camera camera;
+    camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    camera.lookAt(surface + Vec3(40000.0, 0.0, 0.0), surface, Vec3::unitZ());
+
+    FrameState frame;
+    frame.camera = &camera;
+    frame.viewportWidthPixels = 800;
+    frame.viewportHeightPixels = 600;
+
+    auto layer = std::make_unique<FeatureRenderLayer>(
+        "hidden-feature", nullptr, Ellipsoid::WGS84());
+    Feature feature;
+    feature.type = GeometryType::Point;
+    feature.rings = {{Cartographic(0.0, 0.0)}};
+    layer->store().addFeature(std::move(feature));
+    layer->setVisible(false);
+
+    std::vector<std::unique_ptr<FeatureRenderLayer>> layers;
+    layers.push_back(std::move(layer));
+    PickingService service;
+    ScenePickingContext context;
+    context.pickingService = &service;
+    context.camera = &camera;
+    context.viewportWidthPixels = 800.0;
+    context.viewportHeightPixels = 600.0;
+    context.frameState = &frame;
+    context.featureRenderLayers = &layers;
+
+    const PickResult result =
+        ScenePickingCoordinator::pick(context, 400.0f, 300.0f);
+
+    EXPECT_EQ(PickResult::HitType::Ellipsoid, result.hitType);
+    EXPECT_EQ(PickResult::FeatureSourceKind::None, result.sourceKind);
+}
+
+TEST(ScenePickingCoordinatorTest, ScenePickUsesFeatureRenderLayerRegistry) {
+    Scene scene;
+    scene.setViewport(800, 600);
+    scene.camera().setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    scene.camera().lookAt(
+        surface + Vec3(40000.0, 0.0, 0.0), surface, Vec3::unitZ());
+
+    auto layer = std::make_unique<FeatureRenderLayer>(
+        "scene-registry", nullptr, Ellipsoid::WGS84());
+    Feature feature;
+    feature.type = GeometryType::Point;
+    feature.rings = {{Cartographic(0.0, 0.0)}};
+    const FeatureId featureId = layer->store().addFeature(std::move(feature));
+    scene.addFeatureRenderLayer(std::move(layer));
+
+    const PickResult result = scene.pick(400.0f, 300.0f);
+
+    ASSERT_EQ(PickResult::HitType::VectorFeature, result.hitType);
+    EXPECT_EQ(PickResult::FeatureSourceKind::FeatureRenderLayer,
+              result.sourceKind);
+    EXPECT_EQ("scene-registry", result.layerId);
+    EXPECT_EQ(std::to_string(featureId), result.featureId);
+    EXPECT_EQ(PickResult::FeaturePart::Vertex, result.featurePart);
+}
+
+TEST(ScenePickingCoordinatorTest, FeatureBehindSurfaceDoesNotBeatFallback) {
+    Camera camera;
+    camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    camera.lookAt(surface + Vec3(40000.0, 0.0, 0.0), surface, Vec3::unitZ());
+
+    FrameState frame;
+    frame.camera = &camera;
+    frame.viewportWidthPixels = 800;
+    frame.viewportHeightPixels = 600;
+
+    auto layer = std::make_unique<FeatureRenderLayer>(
+        "buried-feature", nullptr, Ellipsoid::WGS84());
+    Feature feature;
+    feature.type = GeometryType::Point;
+    feature.rings = {{Cartographic(0.0, 0.0, -1000.0)}};
+    layer->store().addFeature(std::move(feature));
+
+    std::vector<std::unique_ptr<FeatureRenderLayer>> layers;
+    layers.push_back(std::move(layer));
+    PickingService service;
+    ScenePickingContext context;
+    context.pickingService = &service;
+    context.camera = &camera;
+    context.viewportWidthPixels = 800.0;
+    context.viewportHeightPixels = 600.0;
+    context.frameState = &frame;
+    context.featureRenderLayers = &layers;
+
+    const PickResult result =
+        ScenePickingCoordinator::pick(context, 400.0f, 300.0f);
+
+    EXPECT_EQ(PickResult::HitType::Ellipsoid, result.hitType);
+    EXPECT_EQ(PickResult::FeatureSourceKind::None, result.sourceKind);
+}
+
+TEST(ScenePickingCoordinatorTest, PreservesLineEdgeDetails) {
+    Camera camera;
+    camera.setPerspective(glm::radians(60.0), 1.0, 50000000.0);
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    camera.lookAt(surface + Vec3(40000.0, 0.0, 0.0), surface, Vec3::unitZ());
+
+    FrameState frame;
+    frame.camera = &camera;
+    frame.viewportWidthPixels = 800;
+    frame.viewportHeightPixels = 600;
+
+    auto layer = std::make_unique<FeatureRenderLayer>(
+        "line-feature", nullptr, Ellipsoid::WGS84());
+    Feature feature;
+    feature.type = GeometryType::LineString;
+    // A one-degree surface segment has a ~243 m ECEF chord sag at its
+    // midpoint. Unified picking must use a surface/rendered position rather
+    // than classify that chord point as hidden behind the ellipsoid fallback.
+    feature.rings = {{Cartographic(-0.5 * M_PI / 180.0, 0.0),
+                      Cartographic(0.5 * M_PI / 180.0, 0.0)}};
+    const FeatureId featureId = layer->store().addFeature(std::move(feature));
+
+    std::vector<std::unique_ptr<FeatureRenderLayer>> layers;
+    layers.push_back(std::move(layer));
+    PickingService service;
+    ScenePickingContext context;
+    context.pickingService = &service;
+    context.camera = &camera;
+    context.viewportWidthPixels = 800.0;
+    context.viewportHeightPixels = 600.0;
+    context.frameState = &frame;
+    context.featureRenderLayers = &layers;
+
+    const PickResult result =
+        ScenePickingCoordinator::pick(context, 400.0f, 300.0f);
+
+    ASSERT_EQ(PickResult::HitType::VectorFeature, result.hitType);
+    EXPECT_EQ(PickResult::FeatureSourceKind::FeatureRenderLayer,
+              result.sourceKind);
+    EXPECT_EQ(PickResult::FeaturePart::Edge, result.featurePart);
+    EXPECT_EQ(featureId, result.featureNumericId);
+    EXPECT_EQ(0, result.ringIndex);
+    EXPECT_EQ(0, result.vertexIndex);
+    EXPECT_NEAR(0.0, result.cartographic.height(), 1e-3);
 }

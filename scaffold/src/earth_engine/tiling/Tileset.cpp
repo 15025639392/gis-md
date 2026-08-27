@@ -497,9 +497,12 @@ std::optional<float> Tileset::sampleHeightOptional(
 
 void Tileset::update(
     const FrameState& frameState,
-    IPrepareRendererResources* pPrepRenderer) {
+    IPrepareRendererResources* pPrepRenderer,
+    SceneFrameResourceArbiter* resourceArbiter) {
+    frameResourceBudget_.attachSceneArbiter(resourceArbiter);
     const double t0 = perf::nowMs();
-    TilesetUpdateFrameFacade::update(*this, frameState, pPrepRenderer);
+    TilesetUpdateFrameFacade::update(
+        *this, frameState, pPrepRenderer, resourceArbiter);
     // Phase B:facade 已跑完 processPendingLoads + drainGpuUploadQueue;残余积压
     // 持 Pumped 令牌强制续帧排空(ContentLoaded→Done 上传尾,替代 settle 依赖)。
     gpuUploadSlot_.reconcile(

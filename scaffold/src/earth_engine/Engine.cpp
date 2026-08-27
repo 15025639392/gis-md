@@ -387,6 +387,29 @@ void Engine::setTerrainPageStoreEnabled(bool enabled) {
     }
 }
 
+bool Engine::ensureTerrainPageStore() {
+    if (!terrainPageStoreEnabled_ || terrainPageStoreInitFailed_) {
+        return false;
+    }
+    if (terrainPageStore_) {
+        return true;
+    }
+    auto store = std::make_unique<TerrainPageStore>();
+    TerrainPageStore::Config pageStoreConfig;
+    pageStoreConfig.composeWorkers = &AsyncSystem::pool();
+    pageStoreConfig.roadFieldRequest = roadFieldRequest_;
+    pageStoreConfig.roadFieldColor = roadFieldColor_;
+    pageStoreConfig.roadFieldWidthRamp = roadFieldWidthRampPx_;
+    pageStoreConfig.roadFieldMaxZoom = roadFieldMaxZoom_;
+    if (!store->initialize(device_, pageStoreConfig)) {
+        terrainPageStoreInitFailed_ = true;
+        return false;
+    }
+    terrainPageStore_ = std::move(store);
+    scene_->setTerrainPageStore(terrainPageStore_.get());
+    return true;
+}
+
 Renderer* Engine::renderer() const {
     return scene_ ? scene_->renderer() : nullptr;
 }
@@ -575,6 +598,11 @@ bool Engine::render(double deltaSeconds) {
         terrainDisplacementPool_->setGpuHeightBakeEnabled(gpuHeightBakeEnabled_);
         scene_->setTerrainDisplacementPool(terrainDisplacementPool_.get());
     }
+    // PageStore participates in the Scene allocation sealed by update(), so
+    // create/attach it before that update. Lazy creation after update would
+    // make its first frame invisible to demand collection and force every
+    // request/upload to defer for one avoidable frame.
+    ensureTerrainPageStore();
 
     {
         // Update first so this frame's FrameState (camera + sky clear color) is
@@ -661,25 +689,6 @@ bool Engine::render(double deltaSeconds) {
     double pageStoreTickMs = 0.0;  // [churn 归因] tick 段(drain+upload)
     double pageStoreIndirMs = 0.0; // [churn 归因] 内含:两个间接纹理上传累计
     if (terrainPageStoreEnabled_ && !terrainPageStoreInitFailed_) {
-        if (!terrainPageStore_) {
-            auto store = std::make_unique<TerrainPageStore>();
-            TerrainPageStore::Config pageStoreConfig;
-            // 合成下 worker(真机 compose 单帧尖刺 33-37ms 的归属定案)。
-            pageStoreConfig.composeWorkers = &AsyncSystem::pool();
-            // 刀2 路网 SDF 场"第二平面"(demo/宿主注入;空=无场,零回归)。
-            pageStoreConfig.roadFieldRequest = roadFieldRequest_;
-            pageStoreConfig.roadFieldColor = roadFieldColor_;
-            pageStoreConfig.roadFieldWidthRamp = roadFieldWidthRampPx_;
-            pageStoreConfig.roadFieldMaxZoom = roadFieldMaxZoom_;
-            if (store->initialize(device_, pageStoreConfig)) {
-                terrainPageStore_ = std::move(store);
-                // surface 重建会重建页存储 → 叠画钩子必须重新挂上,否则矢量
-                // 在重建后静默消失(且无任何报错)。
-                scene_->setTerrainPageStore(terrainPageStore_.get());
-            } else {
-                terrainPageStoreInitFailed_ = true;
-            }
-        }
         // 渲染线程驱动:目标锁定后 kick 异步影像 fetch + 排空已到达影像灌 layer。
         if (terrainPageStore_) {
             const double pageStoreStartMs = perf::nowMs();
@@ -708,13 +717,14 @@ bool Engine::render(double deltaSeconds) {
                         frameState.selectorViews.front(),
                         tileset->tilePlan().tilesToRenderThisFrame,
                         pageProvidersScratch_,
-                        tileset->maximumScreenSpaceError());
+                        tileset->maximumScreenSpaceError(),
+                        &scene_->frameResourceArbiter());
                     pageStoreUvpMs = perf::nowMs() - uvpStartMs;
                     pageStoreIndirMs = terrainPageStore_->lastIndirUploadMs();
                 }
             }
             const double tickStartMs = perf::nowMs();
-            terrainPageStore_->tick();
+            terrainPageStore_->tick(&scene_->frameResourceArbiter());
             pageStoreTickMs = perf::nowMs() - tickStartMs;
             // 这段跑在 update 与 begin 之间,不属于头行任何既有分段 ——
             // 不单独计时的话,页存储的合成/上传/叠画成本在慢帧归因里
@@ -1364,6 +1374,10 @@ void Engine::getClearColor(float& r, float& g, float& b, float& a) const {
 
 const Diagnostics& Engine::diagnostics() const {
     return scene_->diagnostics();
+}
+
+SceneFrameResourceArbiterSnapshot Engine::frameResourceArbiterSnapshot() const {
+    return scene_->frameResourceArbiterSnapshot();
 }
 
 const PresentationTrace& Engine::presentationTrace() const {

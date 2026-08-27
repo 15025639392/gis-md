@@ -122,7 +122,9 @@ ScenePickingContext SceneInteractionCoordinator::pickingContext(
         context.viewportWidthPixels,
         context.viewportHeightPixels,
         context.terrainTileset,
-        context.vectorLayers};
+        context.vectorLayers,
+        context.frameState,
+        context.featureRenderLayers};
 }
 
 SceneInputCoordinatorContext SceneInteractionCoordinator::inputContext(

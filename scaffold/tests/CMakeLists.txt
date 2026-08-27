@@ -172,6 +172,12 @@ add_executable(test_frame_resource_budget
 target_link_libraries(test_frame_resource_budget PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_frame_resource_budget COMMAND test_frame_resource_budget)
 
+add_executable(test_scene_frame_resource_arbiter
+    unit/core/test_scene_frame_resource_arbiter.cpp
+)
+target_link_libraries(test_scene_frame_resource_arbiter PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_scene_frame_resource_arbiter COMMAND test_scene_frame_resource_arbiter)
+
 add_executable(test_cartographic
     unit/geodesy/test_cartographic.cpp
 )

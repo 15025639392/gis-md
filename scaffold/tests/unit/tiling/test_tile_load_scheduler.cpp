@@ -2,6 +2,7 @@
 
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
+#include "earth_engine/core/resources/SceneFrameResourceArbiter.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
 #include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
@@ -762,6 +763,80 @@ TEST(
     }));
     EXPECT_TRUE(
         TileLoadRequestDispatcher::hasUpsampleClipWorkerCapacity());
+}
+
+TEST(TileLoadSchedulerTest, UpsampleClipConsumesSceneWorkerDispatchGrant) {
+    TileLoadLifecycle lifecycle;
+    const TileKey key{"worker-budget", 1, 0, 0};
+
+    SceneFrameResourceArbiter arbiter;
+    SceneFrameResourceArbiterConfig deniedConfig;
+    deniedConfig.workerDispatch.maxUnitsPerFrame = 0;
+    arbiter.beginFrame(1, deniedConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Terrain,
+        SceneFrameResourceStage::WorkerDispatch,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(arbiter.sealAllocations());
+
+    bool issued = false;
+    EXPECT_EQ(
+        TileLoadDispatchResult::Blocked,
+        TileLoadRequestDispatcher::requestUpsampleClip(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            key,
+            "worker-budget-denied",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            0,
+            [](const int&) {
+                return TileLoadResult::createTerminal(TileLoadStatus::Failed);
+            },
+            [&issued]() { issued = true; },
+            &arbiter));
+    EXPECT_FALSE(issued);
+    EXPECT_EQ(0u, lifecycle.pendingRequestCount());
+    EXPECT_EQ(0u, arbiter.used(
+                      SceneFrameResourceProducer::Terrain,
+                      SceneFrameResourceStage::WorkerDispatch,
+                      FrameResourcePriority::Normal));
+
+    SceneFrameResourceArbiterConfig allowedConfig;
+    allowedConfig.workerDispatch.maxUnitsPerFrame = 1;
+    arbiter.beginFrame(2, allowedConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::Terrain,
+        SceneFrameResourceStage::WorkerDispatch,
+        FrameResourcePriority::Normal));
+    ASSERT_TRUE(arbiter.sealAllocations());
+
+    EXPECT_EQ(
+        TileLoadDispatchResult::Issued,
+        TileLoadRequestDispatcher::requestUpsampleClip(
+            lifecycle.mutex(),
+            lifecycle.condition(),
+            lifecycle.requestState(),
+            lifecycle.pendingLoads(),
+            key,
+            "worker-budget-allowed",
+            TileLoadPriorityGroup::Normal,
+            0.0,
+            0,
+            [](const int&) {
+                return TileLoadResult::createTerminal(TileLoadStatus::Failed);
+            },
+            [&issued]() { issued = true; },
+            &arbiter));
+    EXPECT_TRUE(issued);
+    EXPECT_EQ(1u, arbiter.used(
+                      SceneFrameResourceProducer::Terrain,
+                      SceneFrameResourceStage::WorkerDispatch,
+                      FrameResourcePriority::Normal));
+    EXPECT_TRUE(waitForUpsampleAsync(
+        [&]() { return lifecycle.pendingRequestCount() == 0u; }));
 }
 
 TEST(

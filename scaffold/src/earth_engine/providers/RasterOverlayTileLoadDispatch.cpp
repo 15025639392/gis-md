@@ -62,6 +62,10 @@ int availableRasterRequestSlots(FrameResourceBudget* budget,
         snapshot.rasterNetworkRequestsIssued;
     const uint32_t inflightSlots =
         snapshot.maxRasterNetworkInflight - currentInflight;
+    // Scene availability is consumed atomically in requestSource immediately
+    // before provider.requestTile. Do not fold it into this planning probe:
+    // doing so would leave denied work outside the provider's retryable source
+    // set and would not record a real admission denial for next-frame demand.
     return static_cast<int>(std::min(frameSlots, inflightSlots));
 }
 
@@ -96,6 +100,11 @@ bool isTransientRasterSourceFailure(
 bool RasterOverlayTileProvider::loadMappedRasterTile(
     RasterOverlayTile& tile,
     FrameResourceBudget* budget) {
+    if (budget && budget->sceneArbiter() != nullptr) {
+        asyncState_->sceneResourceManaged.store(
+            true,
+            std::memory_order_release);
+    }
     auto loadState = tile.getState();
     switch (loadState) {
         case RasterOverlayTile::LoadState::Unloaded:
@@ -530,18 +539,22 @@ int RasterOverlayTileProvider::issueMappedSourceImageSet(
         budget,
         state->activeRasterSourceRequests.load(
             std::memory_order_relaxed));
+    std::function<bool()> tryAdmitSource;
+    if (budget) {
+        tryAdmitSource = [budget]() {
+            return budget->tryIssue(
+                FrameResourceLane::RasterRequest,
+                FrameResourcePriority::Normal,
+                1);
+        };
+    }
     const int newlyIssued =
         sourceSet->issueSome(
             maxToIssue,
+            tryAdmitSource,
             onSourceIssued,
             onSourceFinished,
             onSourceFailed);
-    if (budget && newlyIssued > 0) {
-        budget->tryIssue(
-            FrameResourceLane::RasterRequest,
-            FrameResourcePriority::Normal,
-            newlyIssued);
-    }
     return newlyIssued;
 }
 
@@ -656,16 +669,30 @@ int RasterOverlayTileProvider::issuePendingSourceFallbacks(
 
         ++processed;
         const double issueStartMs = perf::nowMs();
-        const int newlyIssued = fallback.issue ? fallback.issue() : 0;
-        issueMs += perf::nowMs() - issueStartMs;
-        if (newlyIssued > 0) {
-            issued += newlyIssued;
-            if (budget) {
-                budget->tryIssue(
+        std::function<bool()> tryAdmitSource;
+        if (budget) {
+            tryAdmitSource = [budget]() {
+                return budget->tryIssue(
                     FrameResourceLane::RasterRequest,
                     FrameResourcePriority::Normal,
-                    newlyIssued);
-            }
+                    1);
+            };
+        }
+        const int newlyIssued =
+            fallback.issue ? fallback.issue(std::move(tryAdmitSource)) : 0;
+        issueMs += perf::nowMs() - issueStartMs;
+        if (newlyIssued < 0) {
+            std::lock_guard<std::mutex> lock(asyncState_->mutex);
+            asyncState_->pendingSourceFallbacks.push_front(
+                std::move(fallback));
+            asyncState_->pendingSourceFallbackCount.store(
+                static_cast<uint32_t>(
+                    asyncState_->pendingSourceFallbacks.size()),
+                std::memory_order_release);
+            break;
+        }
+        if (newlyIssued > 0) {
+            issued += newlyIssued;
         }
     }
     const double totalMs = perf::nowMs() - totalStartMs;

@@ -656,7 +656,9 @@ void TerrainPageStore::updateVisiblePages(
     const SelectorView& view,
     const std::vector<TilesetTile*>& visibleTiles,
     const std::vector<RasterOverlayTileProvider*>& providers,
-    double terrainMaxScreenSpaceError) {
+    double terrainMaxScreenSpaceError,
+    SceneFrameResourceArbiter* resourceArbiter) {
+    resourceArbiter_ = resourceArbiter;
     // 放在最前而不是最后:本函数有多处早退,放末尾会被跳过。用上一帧的在途
     // 状态对账 —— 迟一帧只会多渲一帧(安全方向),而漏对账是永远停不下来。
     syncWorkTicket();
@@ -705,6 +707,18 @@ void TerrainPageStore::updateVisiblePages(
     RasterOverlayTileProvider* provider = providers.front();
     const TileScheme& scheme = provider->getTileScheme();
     const int providerMaxLevel = provider->getMaximumLevel();
+    auto hasReadyPageUpload = [&]() {
+        bool ready = false;
+        if (readyInbox_) {
+            std::lock_guard<std::mutex> lock(readyInbox_->mutex);
+            ready = !readyInbox_->items.empty();
+        }
+        if (!ready && fieldInbox_) {
+            std::lock_guard<std::mutex> lock(fieldInbox_->mutex);
+            ready = !fieldInbox_->items.empty();
+        }
+        return ready;
+    };
 
     // ===== Phase 1:构建 per-tile 参数 + determination 输入签名(便宜,无逐 cell)。
     // zoom = 屏幕合适影像源 LOD = 相机相关(tileSSE 已烘距离;分母=地形阈值 16 匹配
@@ -1080,6 +1094,33 @@ void TerrainPageStore::updateVisiblePages(
             indirPool_.touch(p.tileKeyPacked, frameId_);
         }
         if (ind.layer >= 0) {
+            // One visible tile's image+field indirection writes form one GPU
+            // transaction. Keep one PageStore grant for already-ready page
+            // content so per-frame indirection maintenance cannot permanently
+            // starve the uploads that make those mappings useful.
+            if (resourceArbiter_) {
+                const uint32_t remaining = resourceArbiter_->remaining(
+                    SceneFrameResourceProducer::PageStore,
+                    SceneFrameResourceStage::GpuUpload,
+                    FrameResourcePriority::Normal);
+                const uint32_t readyReserve = hasReadyPageUpload() ? 1u : 0u;
+                if (remaining <= readyReserve ||
+                    !resourceArbiter_->tryAcquire(
+                        SceneFrameResourceProducer::PageStore,
+                        SceneFrameResourceStage::GpuUpload,
+                        FrameResourcePriority::Normal)) {
+                    // Never expose stale indirection metadata after a denied
+                    // write. The tile falls back to mappedRaster this frame;
+                    // retaining the pool ownership lets the next frame retry
+                    // the same layer without churn.
+                    ind.layer = -1;
+                    ind.fullyResident = false;
+                    ind.lastFrame = frameId_;
+                    cache.lastFrame = frameId_;
+                    ++determinationDirtyRevision_;
+                    continue;
+                }
+            }
             // 尺寸与行距必须跟 **cell 网格**走。写成 gridN 而缓冲按 cellsX 排,
             // 行距差一格 → 每行递进错位 → 屏幕大片读到未初始化 texel(A=0)只剩
             // 零星正确块。真机截图立刻现形,host 测试看不到(不走纹理上传)。
@@ -1529,6 +1570,7 @@ void TerrainPageStore::invalidateFieldPages(int newFieldMaxZoom) {
         ++entry.targetEpoch;         // 挡旧代 straggler(drain epoch 闸)
         entry.pendingRebake = true;  // 顶帧到换手完成(hasWorkInFlight)
         entry.token.cancel();        // 旧代生产停(迟到经 epoch 闸丢弃)
+        entry.fetchIssued = false;
         // unpackKey 还原 z/x/y(schemeId 缺省无碍:RoadFieldSource 只用 z/x/y,
         // 见 requestField 的 tileToUnitRect)。resetDisplay=false 保旧线上屏。
         const TileKey fieldKey = unpackKey(key);
@@ -1646,11 +1688,27 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     }
 }
 
-void TerrainPageStore::tick() {
+void TerrainPageStore::tick(SceneFrameResourceArbiter* resourceArbiter) {
+    resourceArbiter_ = resourceArbiter;
     if (!arrayTexture_) {
         return;
     }
     ++frameId_;  // 推进帧号(下帧 determination 的 LRU touch/淘汰基准)
+    for (auto& page : pages_) {
+        PageEntry& entry = page.second;
+        if (entry.fetchIssued.size() == providers_.size() &&
+            std::find(entry.fetchIssued.begin(), entry.fetchIssued.end(), false) !=
+                entry.fetchIssued.end()) {
+            kickPageFetches(
+                entry.fetchKey, page.first, entry.layer, entry);
+        }
+    }
+    for (auto& [fieldPacked, entry] : fieldPages_) {
+        if (!entry.fetchIssued && (!entry.uploaded || entry.pendingRebake)) {
+            kickFieldFetch(unpackKey(fieldPacked), fieldPacked, entry.layer,
+                           entry, !entry.uploaded);
+        }
+    }
     const double tickStartMs = perf::nowMs();
     drainInbox();        // 阶段 A:原始影像 → worker 合成任务(或就地跑)
     drainReadyUploads();  // 阶段 B:worker 快照 → 预算内上传 + 叠画
@@ -1700,6 +1758,7 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
                                      int layer, PageEntry& pe,
                                      bool holdUntilComplete) {
     pe.layer = layer;
+    pe.fetchKey = fetchKey;
     if (pe.compose) {
         // 旧 compose 省功早退(在途 worker 据此跳过;真正的安全线是 drain 的
         // epoch 闸 —— 迟到快照 item.epoch < 新 targetEpoch 会被丢弃)。
@@ -1710,6 +1769,8 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
                                     config_.pageSizeTexels);
     pe.compose->epoch = pe.targetEpoch;
     pe.compose->holdUntilComplete = holdUntilComplete;
+    pe.fetchTokens.clear();
+    pe.fetchIssued.clear();
     pe.totalSources = static_cast<int>(providers_.size());
     pe.lastProgressFrame = frameId_;
     pe.needsRebake = false;
@@ -1725,12 +1786,23 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
 void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
                                        uint64_t pageKey, int layer,
                                        PageEntry& entry) {
-    entry.fetchTokens.assign(providers_.size(), CancellationToken{});
+    if (entry.fetchTokens.size() != providers_.size()) {
+        entry.fetchTokens.assign(providers_.size(), CancellationToken{});
+        entry.fetchIssued.assign(providers_.size(), false);
+    }
     std::shared_ptr<PendingInbox> inbox = inbox_;
     for (size_t s = 0; s < providers_.size(); ++s) {
-        if (providers_[s] == nullptr) {
+        if (providers_[s] == nullptr || entry.fetchIssued[s]) {
             continue;
         }
+        if (resourceArbiter_ &&
+            !resourceArbiter_->tryAcquire(
+                SceneFrameResourceProducer::PageStore,
+                SceneFrameResourceStage::NetworkRequest,
+                FrameResourcePriority::Normal)) {
+            continue;
+        }
+        entry.fetchIssued[s] = true;
         const int source = static_cast<int>(s);
         // C-1b:**每个源各自钳到自己的 maxZoom**。页 zoom 由屏幕(与底图上限)驱动,
         // 常深于标注/矢量类源的上限;不钳则那些源恒 404 → 永不到达 → assembler 卡在
@@ -1769,23 +1841,29 @@ void TerrainPageStore::kickFieldFetch(const TileKey& fieldKey,
     if (!config_.roadFieldRequest || !fieldInbox_) {
         return;
     }
-    const int side = config_.pageSizeTexels;
+    if (entry.fetchIssued) {
+        return;
+    }
+    if (resourceArbiter_ &&
+        !resourceArbiter_->tryAcquire(
+            SceneFrameResourceProducer::PageStore,
+            SceneFrameResourceStage::NetworkRequest,
+            FrameResourcePriority::Normal)) {
+        return;
+    }
+    entry.fetchIssued = true;
+    entry.lastProgressFrame = frameId_;
     entry.token = CancellationToken{};
     // V28:换肤原地重烘 resetDisplay=false → 不清 uploaded,旧场 R8 继续上屏顶住,
     // 新场到达覆写同层完成换手。新建/churn 建页 resetDisplay=true → 无内容可显,置 false。
     if (resetDisplay) {
         entry.uploaded = false;
     }
-    entry.lastProgressFrame = frameId_;
     const uint64_t epoch = entry.targetEpoch;  // 快照本代号进回调
     std::shared_ptr<RoadFieldInbox> fieldInbox = fieldInbox_;
     config_.roadFieldRequest(
         fieldKey, entry.token,
-        [fieldInbox, fieldPacked, layer, epoch, side](std::vector<uint8_t> r8) {
-            if (r8.size() != static_cast<size_t>(side) *
-                                 static_cast<size_t>(side) * 4u) {
-                return;  // 尺寸不符:丢弃(防生产者配置漂移写坏层)
-            }
+        [fieldInbox, fieldPacked, layer, epoch](std::vector<uint8_t> r8) {
             // 回调只捕 inbox shared_ptr —— 页存储先亡不悬垂,迟到结果
             // 经账本校验丢弃。
             std::lock_guard<std::mutex> lock(fieldInbox->mutex);
@@ -1822,6 +1900,13 @@ void TerrainPageStore::drainInbox() {
     int dispatched = 0;
     while (!pendingComposeTasks_.empty() && dispatched < budget &&
            config_.composeWorkers) {
+        if (resourceArbiter_ &&
+            !resourceArbiter_->tryAcquire(
+                SceneFrameResourceProducer::PageStore,
+                SceneFrameResourceStage::ComposeDispatch,
+                FrameResourcePriority::Normal)) {
+            break;
+        }
         std::function<void()> task =
             std::move(pendingComposeTasks_.front());
         pendingComposeTasks_.pop_front();
@@ -1925,6 +2010,14 @@ void TerrainPageStore::drainInbox() {
         };
         if (config_.composeWorkers) {
             if (dispatched < budget) {
+                if (resourceArbiter_ &&
+                    !resourceArbiter_->tryAcquire(
+                        SceneFrameResourceProducer::PageStore,
+                        SceneFrameResourceStage::ComposeDispatch,
+                        FrameResourcePriority::Normal)) {
+                    pendingComposeTasks_.push_back(std::move(task));
+                    continue;
+                }
                 config_.composeWorkers->enqueue(std::move(task));
                 ++dispatched;
             } else {
@@ -1987,10 +2080,22 @@ void TerrainPageStore::drainReadyUploads() {
             if (it == fieldPages_.end() || it->second.layer != item.layer) {
                 continue;  // 淘汰/换租后的迟到场:丢弃
             }
+            if (item.r8.size() != static_cast<size_t>(side) *
+                                       static_cast<size_t>(side) * 4u) {
+                continue;  // 尺寸不符:丢弃(防生产者配置漂移写坏层)
+            }
             // V28 epoch 闸:换肤前那代的迟到场 R8 丢弃 —— 否则旧样式覆盖已换手的
             // 新线且无后续再纠正(场单源、单次上传即整页,无按源单调可兜)。
             if (item.epoch < it->second.targetEpoch) {
                 continue;
+            }
+            if (resourceArbiter_ &&
+                !resourceArbiter_->tryAcquire(
+                    SceneFrameResourceProducer::PageStore,
+                    SceneFrameResourceStage::GpuUpload,
+                    FrameResourcePriority::Normal)) {
+                fieldRequeueFrom = idx;
+                break;
             }
             const double uploadStartMs = perf::nowMs();
             device_->updateTextureRegion(
@@ -2054,6 +2159,14 @@ void TerrainPageStore::drainReadyUploads() {
         if (!pageUploadSupersedes(item.epoch, item.composedSources, pe.targetEpoch,
                                   pe.contentEpoch, pe.uploadedSources)) {
             continue;
+        }
+        if (resourceArbiter_ &&
+            !resourceArbiter_->tryAcquire(
+                SceneFrameResourceProducer::PageStore,
+                SceneFrameResourceStage::GpuUpload,
+                FrameResourcePriority::Normal)) {
+            requeueFrom = idx;
+            break;
         }
         const double uploadStartMs = perf::nowMs();
         device_->updateTextureRegion(arrayTexture_.get(), 0, 0, side, side,

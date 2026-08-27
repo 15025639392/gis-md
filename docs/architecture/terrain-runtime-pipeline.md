@@ -122,10 +122,13 @@ Engine::render
       → update dynamic near plane
       → write flight / interaction state
       → SceneFrameStateBuilder::build
+      → SceneFrameResourceArbiter::beginFrame / declareDemand / sealAllocations
       → SceneTilesetCoordinator::update
-          → primary Tileset::update
-          → pending primary Tileset::update
-          → additional Tileset::update
+          → primary Tileset::update          ┐
+          → pending primary Tileset::update  ├─ share one Scene frame grant
+          → additional Tileset::update       ┘
+  → Scene::update MVT sources               # consume same frame grant
+  → TerrainPageStore update/tick             # consume same frame grant
 ```
 
 ### 3.2 Tileset 帧工作
@@ -144,6 +147,14 @@ begin FrameResourceBudget
   → optional base coverage pump
   → drain GpuUploadQueue
 ```
+
+这里的 `FrameResourceBudget` 是 Tileset 局部保护，不再是全局总量。它附着到
+Scene arbiter：局部 lane/inflight/毫秒预算先通过后，还要消费 terrain 或 raster
+在对应 Scene stage 获得的 grant。这样 primary/pending/content Tileset 即使依次
+更新，也不会各自获得一整份帧预算；MVT 与 PageStore 也不能在 Tileset 更新结束后
+绕开对应的同帧 stage admission。需要区分：`WorkerDispatch` 与 `ComposeDispatch`
+是独立 stage，虽可能进入同一底层线程池，却不是一个严格共享的线程池总上限；
+`GpuUpload` 也按逻辑事务计费，而不是按字节、耗时或底层 GPU 调用次数计费。
 
 需要特别注意三个顺序契约：
 

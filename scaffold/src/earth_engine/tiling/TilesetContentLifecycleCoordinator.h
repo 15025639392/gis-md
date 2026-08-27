@@ -20,6 +20,7 @@
 #include "../core/async/AsyncSystem.h"
 #include "../debug/PerfTimer.h"
 #include "../core/resources/FrameResourceBudget.h"
+#include "../core/resources/SceneFrameResourceArbiter.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../providers/RasterOverlayTileProvider.h"
 #include "../renderer/IPrepareRendererResources.h"
@@ -330,8 +331,8 @@ public:
                 budget->mainThreadTimeExpired()) {
                 break;
             }
-            std::optional<PendingGpuUpload> upload =
-                context.gpuUploadQueue->tryPop();
+            std::optional<GpuUploadQueue::ProvisionalPop> upload =
+                context.gpuUploadQueue->tryPopProvisional();
             if (!upload) break;
 
             TilesetTile* tile = ensureTile(upload->tileKey);
@@ -339,12 +340,14 @@ public:
                 // Tile was unloaded before async GPU work completed.
                 TilePendingUploadCompletion::eraseUpload(
                     context.loadLifecycle, upload->cacheKey);
+                context.gpuUploadQueue->commitPop(*upload);
                 continue;
             }
             // Safety: tile was reprocessed or unloaded while CPU work ran.
             if (!tile->content.renderContent.asyncGpuUploadPending) {
                 TilePendingUploadCompletion::eraseUpload(
                     context.loadLifecycle, upload->cacheKey);
+                context.gpuUploadQueue->commitPop(*upload);
                 continue;
             }
 
@@ -363,9 +366,21 @@ public:
                 TilePendingUploadCompletion::eraseUpload(
                     context.loadLifecycle,
                     upload->cacheKey);
+                context.gpuUploadQueue->commitPop(*upload);
                 processed = true;
                 ++uploadsThisFrame;
                 continue;
+            }
+
+            SceneFrameResourceArbiter* sceneArbiter =
+                budget != nullptr ? budget->sceneArbiter() : nullptr;
+            if (sceneArbiter != nullptr &&
+                !sceneArbiter->tryAcquire(
+                    SceneFrameResourceProducer::Terrain,
+                    SceneFrameResourceStage::GpuUpload,
+                    FrameResourcePriority::Normal)) {
+                context.gpuUploadQueue->requeue(std::move(*upload));
+                break;
             }
 
             // Call uploadToGpu — creates GPU buffers, clears
@@ -444,6 +459,7 @@ public:
             // Clear the lifecycle key so the tile can be re-loaded if needed.
             TilePendingUploadCompletion::eraseUpload(
                 context.loadLifecycle, upload->cacheKey);
+            context.gpuUploadQueue->commitPop(*upload);
             processed = true;
             ++uploadsThisFrame;
         }

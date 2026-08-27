@@ -303,14 +303,16 @@ private:
                             recordIssuedUpsample(
                                 pass.outcome,
                                 upsampleKind);
-                        });
+                        },
+                        input.budget.sceneArbiter());
                 if (shouldStopAfterDispatch(dispatchResult)) {
                     ++pass.outcome.stoppedAtDispatch;
                     retainRemaining(requestIndex);
                     break;
                 }
                 if (dispatchResult ==
-                    TileLoadDispatchResult::WorkerCapacityBlocked) {
+                        TileLoadDispatchResult::WorkerCapacityBlocked ||
+                    dispatchResult == TileLoadDispatchResult::Blocked) {
                     ++pass.outcome.skippedUpsampleWorkerCapacity;
                     pass.retained.push_back(request);
                     continue;

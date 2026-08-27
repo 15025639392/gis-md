@@ -6,6 +6,7 @@ namespace earth_engine {
 
 struct FrameState;
 class IPrepareRendererResources;
+class SceneFrameResourceArbiter;
 class Tileset;
 
 struct TilesetUpdateFrameRuntimeResult {
@@ -17,7 +18,8 @@ public:
     static TilesetUpdateFrameRuntimeResult run(
         Tileset& tileset,
         const FrameState& frameState,
-        IPrepareRendererResources* pPrepRenderer = nullptr);
+        IPrepareRendererResources* pPrepRenderer = nullptr,
+        SceneFrameResourceArbiter* resourceArbiter = nullptr);
 
 private:
     /// 根层预载(漏底/黑块根修,pinBaseCoverage 开启时每帧调):种入全球

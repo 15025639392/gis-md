@@ -10,6 +10,7 @@ namespace earth_engine {
 
 struct FrameState;
 class IPrepareRendererResources;
+class SceneFrameResourceArbiter;
 class Tileset;
 
 struct SceneTilesetUpdateResult {
@@ -35,12 +36,18 @@ public:
     }
     size_t contentTilesetCount() const { return contentTilesets_.size(); }
     bool hasPrimaryTerrain() const { return primary_ != nullptr; }
+    bool hasAnyTileset() const {
+        return primary_ != nullptr || pendingPrimary_ != nullptr ||
+               !contentTilesets_.empty();
+    }
+    bool hasAnyRasterOverlay() const;
 
     void setOcclusionCallback(TileOcclusionCallback callback);
     void clearOcclusionCallback();
     SceneTilesetUpdateResult update(
         FrameState& frameState,
-        IPrepareRendererResources* pPrepRenderer);
+        IPrepareRendererResources* pPrepRenderer,
+        SceneFrameResourceArbiter* resourceArbiter = nullptr);
 
 private:
     void applyOcclusionCallback(Tileset& tileset) const;

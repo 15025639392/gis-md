@@ -950,6 +950,72 @@ TEST(TerrainPageStoreComposeBudget, DispatchCappedPerFrameAndQueueDrains) {
     EXPECT_EQ(store.pendingComposeCount(), 0);
 }
 
+TEST(TerrainPageStoreComposeBudget, SceneAdmissionDefersComposeUntilNextFrame) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 8;
+    cfg.pageSizeTexels = 4;
+    cfg.maxComposeDispatchesPerFrame = 4;
+    cfg.composeWorkers = &AsyncSystem::pool();
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    const TileKey pageTileKey{"Geographic-TMS", 3, 1, 1};
+    const uint64_t pageKey = TerrainPageStore::packKeyForTest(pageTileKey);
+    store.debugCreatePageForTest(pageKey, 0);
+    auto makeImage = []() {
+        auto img = std::make_unique<DecodedImage>();
+        img->width = 4;
+        img->height = 4;
+        img->channels = 4;
+        img->pixels.assign(4u * 4u * 4u, 128);
+        return img;
+    };
+    for (int i = 0; i < 3; ++i) {
+        store.debugDeliverDecodedImage(pageKey, 0, i, 0, 0, 0,
+                                        makeImage());
+    }
+
+    SceneFrameResourceArbiter arbiter;
+    SceneFrameResourceArbiterConfig denied;
+    denied.composeDispatch.maxUnitsPerFrame = 0;
+    arbiter.beginFrame(1, denied);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::PageStore,
+        SceneFrameResourceStage::ComposeDispatch,
+        FrameResourcePriority::Normal,
+        3));
+    ASSERT_TRUE(arbiter.sealAllocations());
+    store.tick(&arbiter);
+    EXPECT_EQ(store.composeDispatchedThisFrame(), 0);
+    EXPECT_EQ(store.pendingComposeCount(), 3);
+
+    SceneFrameResourceArbiterConfig allowed;
+    allowed.composeDispatch.maxUnitsPerFrame = 2;
+    arbiter.beginFrame(2, allowed);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::PageStore,
+        SceneFrameResourceStage::ComposeDispatch,
+        FrameResourcePriority::Normal,
+        3));
+    ASSERT_TRUE(arbiter.sealAllocations());
+    store.tick(&arbiter);
+    EXPECT_EQ(store.composeDispatchedThisFrame(), 2);
+    EXPECT_EQ(store.pendingComposeCount(), 1);
+
+    allowed.composeDispatch.maxUnitsPerFrame = 1;
+    arbiter.beginFrame(3, allowed);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::PageStore,
+        SceneFrameResourceStage::ComposeDispatch,
+        FrameResourcePriority::Normal,
+        1));
+    ASSERT_TRUE(arbiter.sealAllocations());
+    store.tick(&arbiter);
+    EXPECT_EQ(store.composeDispatchedThisFrame(), 1);
+    EXPECT_EQ(store.pendingComposeCount(), 0);
+}
+
 // ===== [瓦界对齐] computeGeomAffine:几何 UV → 源格逐瓦仿射 =====
 // 背景:instanced 管线的 psUv 是共享模板几何 UV,GCJ 下喂给 details-UV 标定的
 // origin/span 会差出瓦包围矩形翘曲量(真机瓦界错缝 ~30m,肇事瓦对

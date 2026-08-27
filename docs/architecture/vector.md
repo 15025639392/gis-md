@@ -50,6 +50,14 @@ MVT 把"一张瓦片"直接当渲染桶,镶嵌在 worker 完成——峰值 1610
 ### 4. 符号统一路径
 点/标注不管来自 FeatureStore 还是 MVT,最终都走 `FeatureRenderLayer` 的 billboard quad 链:worker 出实例表 → 渲染线程展开 quad+查图集+采地面高 → 发 `VectorPoint`/`VectorLabel` 命令。**渲染固定状态按类型分道**:`VectorFill`/`VectorLine` 强制 `depthTest=true`(贴地几何像素与 3D 位置一一对应);`VectorPoint`/`VectorLabel` 强制 `false`(billboard 四角共用锚点深度,逐像素深度测试会切出不存在的形状边界)。符号遮挡改由锚点判定(连续量非布尔避免临界闪;屏幕空间标定容差非固定米数)——与 maplibre/osgEarth/Cesium 三家同解。
 
+`FeatureStore` 业务要素已接入 Scene/Engine 统一 picking：Scene 只编排候选和
+排序，几何命中仍由 `FeatureRenderLayer::pick()` 负责；统一结果同时带有
+layer/feature 身份、渲染位置和 Vertex/Edge/Fill 细节。MVT source 的生命周期
+已统一托管，但瓦片桶当前仍是“渲染已接通、逐要素 picking 未接通”：
+`FeatureTileMesh`/`TileSymbolCpu` 没有稳定的 source-layer/feature-id 回链。
+在补齐 per-feature picking payload 之前，不应把 tile mesh 的跨瓦片 label ID
+或瓦片键伪造为业务 `featureId`。
+
 ### 5. 样式表达式树(色烘顶点 / 宽走 uniform)
 `StyleExpression` 是表达式求值树(⚠️ `String` 必须用独立命名的 `literalString`,与数字重载会歧义)。颜色类表达式在镶嵌期求值后**烘进顶点属性**;线宽/点大小类**不烘顶点,走 FS/VS uniform 逐帧求值**(按相机高度换算 zoom 后 evaluate)——理由是宽度需连续响应相机变化(屏幕像素恒定语义),烘进顶点会在 LOD 切换/相机移动时不连续或需重镶。MVT 场路径更激进:场编码里完全没有颜色/分类通道,线色是 FS 里**一个全局 uniform**——"表示选得便宜"的对偶代价,直接卡死 V9(dash)与多色路网。
 

@@ -12,6 +12,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "../core/resources/SceneFrameResourceArbiter.h"
+
 #include "../core/math/OrientedBoundingBox.h"
 #include "../core/math/Rectangle.h"
 #include "../threading/CancellationToken.h"
@@ -237,7 +239,7 @@ public:
     /// 每帧(渲染线程,determination 之后、render 之前):推进帧号、排空已到达影像
     /// (限 maxUploadsPerFrame)灌对应页 layer 并置 uploaded。fetch 由 determination
     /// 在页首次命中时 kick(见 updateVisiblePages)。
-    void tick();
+    void tick(SceneFrameResourceArbiter* resourceArbiter = nullptr);
 
     // ==================== 门② 屏幕可见影像页 determination(Step B2b)====================
     // 遍历本帧可见 capped 真实地形瓦片,对每个瓦片选屏幕合适影像 zoom、枚举其 gridN×gridN
@@ -329,7 +331,8 @@ public:
     void updateVisiblePages(const SelectorView& view,
                             const std::vector<TilesetTile*>& visibleTiles,
                             const std::vector<RasterOverlayTileProvider*>& providers,
-                            double terrainMaxScreenSpaceError);
+                            double terrainMaxScreenSpaceError,
+                            SceneFrameResourceArbiter* resourceArbiter = nullptr);
 
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
     int lastVisiblePageCount() const { return lastVisiblePageCount_; }
@@ -566,10 +569,12 @@ private:
 
     struct PageEntry {
         int layer = -1;
+        TileKey fetchKey{};
         /// 合成状态归 worker 侧(shared_ptr:worker 任务可比页存储活得久;
         /// 淘汰置 cancelled,迟到结果经 drain 校验丢弃)。
         std::shared_ptr<PageComposeState> compose;
         std::vector<CancellationToken> fetchTokens;  // 每源一个
+        std::vector<bool> fetchIssued;  // Scene 网络 grant 不足时跨帧续发
         /// **已上传**的合成进度镜像(渲染线程独占,drainReadyUploads 推进)。
         /// determination 判 resident 必须跟"已上传"走 —— 合成下 worker 后
         /// "已合成"与"已上传"分离,跟合成走会让间接纹理采到未写入的层。
@@ -604,6 +609,9 @@ private:
     struct FieldPageEntry {
         int layer = -1;
         CancellationToken token;
+        // Network admission is page-level. A denied field request remains
+        // unissued and is retried by the next determination/tick.
+        bool fetchIssued = false;
         bool uploaded = false;
         uint64_t lastProgressFrame = 0;
         /// V28 场路原子换手样式代。换肤时 `invalidateFieldPages` ++ 并**原地**重
@@ -713,6 +721,7 @@ private:
     std::unique_ptr<Texture> indirArrayTexture_;  // 合批 Step 2:间接纹理共享 array
     TerrainPageLayerPool indirPool_;              // 间接纹理层 LRU(blockLayers=1)
     uint64_t frameId_ = 0;
+    SceneFrameResourceArbiter* resourceArbiter_ = nullptr;
     int uploadedLayerTotal_ = 0;
 
     // 220ms 归属拆分:tick 内两段窗口计时。compose=重采样+按源序合成(纯 CPU),

@@ -34,6 +34,7 @@ class Tileset;
 class FeatureRenderLayer;
 class VectorLayer;
 class Vec3;
+struct SceneFrameResourceArbiterSnapshot;
 
 /// 3D 场景管理器。
 class Scene {
@@ -106,9 +107,16 @@ public:
     void clearOcclusionCallback();
 
     const FrameState& frameState() const { return frameRuntime_.frameState(); }
+    SceneFrameResourceArbiter& frameResourceArbiter() {
+        return frameRuntime_.resourceArbiter();
+    }
+    const SceneFrameResourceArbiter& frameResourceArbiter() const {
+        return frameRuntime_.resourceArbiter();
+    }
 
     /// 运行时诊断（FPS、draw calls、visible tiles 等）
     const Diagnostics& diagnostics() const;
+    SceneFrameResourceArbiterSnapshot frameResourceArbiterSnapshot() const;
     void recordEngineTiming(EngineTimingScope scope, double elapsedMs);
     void finishEngineFrame(double elapsedMs);
     const PresentationTrace& presentationTrace() const;
@@ -198,6 +206,8 @@ private:
     // 矢量图层
     std::unique_ptr<SceneLayerCoordinator> layers_;
     std::vector<MvtRuntime> mvtSources_;
+    size_t mvtUpdateCursor_ = 0;
+    TerrainPageStore* terrainPageStore_ = nullptr;
 
     // 统一 Tileset（cesium-native 对齐）
     std::unique_ptr<SceneTilesetCoordinator> tilesets_;

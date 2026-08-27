@@ -32,6 +32,9 @@ SceneFrameUpdateInput SceneFrameRuntime::makeFrameUpdateInput(
     CameraSystem* cameraSystem,
     IPrepareRendererResources* pPrepRenderer,
     SceneTilesetCoordinator& tilesets,
+    bool mvtActive,
+    uint32_t mvtSourceCount,
+    bool pageStoreActive,
     double deltaSeconds,
     bool hasInteractionFocus,
     Vec3 interactionFocusDirection,
@@ -45,6 +48,10 @@ SceneFrameUpdateInput SceneFrameRuntime::makeFrameUpdateInput(
         cameraSystem,
         pPrepRenderer,
         tilesets,
+        resourceArbiter_,
+        mvtActive,
+        mvtSourceCount,
+        pageStoreActive,
         frameId_,
         elapsedTime_,
         deltaSeconds,
@@ -61,7 +68,10 @@ SceneInteractionContext SceneFrameRuntime::makeInteractionContext(
     Camera* camera,
     CameraSystem* cameraSystem,
     const Tileset* terrainTileset,
-    const std::vector<std::unique_ptr<VectorLayer>>* vectorLayers) const {
+    const std::vector<std::unique_ptr<VectorLayer>>* vectorLayers,
+    const std::vector<std::unique_ptr<FeatureRenderLayer>>*
+        featureRenderLayers,
+    const FrameState* frameState) const {
     return SceneInteractionContext{
         camera,
         cameraSystem,
@@ -69,6 +79,8 @@ SceneInteractionContext SceneFrameRuntime::makeInteractionContext(
         static_cast<double>(frameState_.viewportHeightPixels),
         terrainTileset,
         vectorLayers,
+        frameState,
+        featureRenderLayers,
         elapsedTime_};
 }
 

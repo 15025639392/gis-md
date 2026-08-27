@@ -4,6 +4,8 @@
 
 namespace earth_engine {
 
+class SceneFrameResourceArbiter;
+
 enum class FrameResourceLane {
     TerrainRequest,
     ContentRequest,
@@ -98,6 +100,14 @@ public:
     void beginFrame(uint64_t frameNumber,
                     const FrameResourceBudgetConfig& config);
 
+    // Optional Scene-scope admission hook. The local budget remains the
+    // compatibility/backstop counter; when attached, successful local work
+    // must also acquire the corresponding Scene frame grant.
+    void attachSceneArbiter(SceneFrameResourceArbiter* arbiter);
+
+    // The can* probes remain local-counter predicates, but when a sealed Scene
+    // grant is the rejecting condition they also report unserved demand to the
+    // Scene arbiter so the next frame's adaptive hint can grow.
     bool canIssue(FrameResourceLane lane,
                   FrameResourcePriority priority,
                   int estimatedFanout = 1) const;
@@ -124,6 +134,7 @@ public:
     void recordRasterOverlayMappingElapsed(double elapsedMs);
 
     uint64_t frameNumber() const { return frameNumber_; }
+    SceneFrameResourceArbiter* sceneArbiter() const { return sceneArbiter_; }
     uint32_t networkRequestsIssued() const { return networkRequestsIssued_; }
     uint32_t terrainContentNetworkRequestsIssued() const {
         return terrainContentNetworkRequestsIssued_;
@@ -170,6 +181,7 @@ private:
     uint32_t rasterOverlayMappingsUsed_ = 0;
     double mainThreadElapsedMs_ = 0.0;
     double rasterOverlayMappingElapsedMs_ = 0.0;
+    SceneFrameResourceArbiter* sceneArbiter_ = nullptr;
 };
 
 } // namespace earth_engine

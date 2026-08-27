@@ -8,6 +8,7 @@
 #include "../platform/bridge/PlatformBridge.h"
 
 #include <algorithm>
+#include <atomic>
 #include <deque>
 #include <functional>
 #include <memory>
@@ -57,7 +58,9 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         const std::function<void()>& onSourceFinished,
         const std::function<void()>& onSourceFailed,
         SourceReady onReady,
-        std::vector<TileKey> fallbackInFlightKeys = {}) {
+        std::vector<TileKey> fallbackInFlightKeys = {},
+        std::function<bool()> tryAdmitSource = {},
+        std::function<void()> onSourceAdmissionDenied = {}) {
         if (waiterOwnerToken != 0) {
             std::lock_guard<std::mutex> lock(cacheMutex);
             if (state->activeMappedSourceOwnerTokens.count(waiterOwnerToken) ==
@@ -116,6 +119,17 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         }
 
         auto self = shared_from_this();
+        bool freshTransportAdmitted = false;
+        const auto admitFreshTransport = [&]() {
+            if (!tryAdmitSource) {
+                return true;
+            }
+            try {
+                return tryAdmitSource();
+            } catch (...) {
+                return false;
+            }
+        };
         if (shareInFlight) {
             const std::string inFlightKey = depotCacheKey(originalKey);
             auto waiter =
@@ -144,6 +158,14 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 if (!inserted) {
                     return;
                 }
+                if (!admitFreshTransport()) {
+                    inFlight.erase(it);
+                    if (onSourceAdmissionDenied) {
+                        onSourceAdmissionDenied();
+                    }
+                    return;
+                }
+                freshTransportAdmitted = true;
             }
         }
 
@@ -205,6 +227,31 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                             std::move(waiter)});
                     return;
                 }
+                if (!freshTransportAdmitted && !admitFreshTransport()) {
+                    inFlight.erase(it);
+                    if (waiterOwnerToken != 0) {
+                        auto ownerIt =
+                            state->sourceTileDepotFallbackKeysByOwner.find(
+                                waiterOwnerToken);
+                        if (ownerIt !=
+                            state->sourceTileDepotFallbackKeysByOwner.end()) {
+                            auto& keys = ownerIt->second;
+                            keys.erase(
+                                std::remove(keys.begin(), keys.end(),
+                                            requestedKey),
+                                keys.end());
+                            if (keys.empty()) {
+                                state->sourceTileDepotFallbackKeysByOwner
+                                    .erase(ownerIt);
+                            }
+                        }
+                    }
+                    if (onSourceAdmissionDenied) {
+                        onSourceAdmissionDenied();
+                    }
+                    return;
+                }
+                freshTransportAdmitted = true;
             }
             fallbackInFlightKeys.push_back(requestedKey);
         }
@@ -330,12 +377,24 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                                  onSourceFailed,
                                  onReady,
                                  fallbackInFlightKeys,
-                                 waiterOwnerToken]() mutable {
+                                 waiterOwnerToken](
+                                    std::function<bool()> tryAdmitSource)
+                                    mutable {
                                     // requestSource retains onSourceIssued in
                                     // its async completion callback. A stack
                                     // reference here becomes dangling when a
                                     // failed parent queues another fallback.
                                     auto issued = std::make_shared<int>(0);
+                                    auto admissionDenied =
+                                        std::make_shared<std::atomic<bool>>(
+                                            false);
+                                    std::function<void()>
+                                        onSourceAdmissionDenied =
+                                            [admissionDenied]() {
+                                                admissionDenied->store(
+                                                    true,
+                                                    std::memory_order_release);
+                                            };
                                     self->requestSource(
                                         parentKey,
                                         originalKey,
@@ -350,9 +409,14 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                                         },
                                         onSourceFinished,
                                         onSourceFailed,
-                                        std::move(onReady),
-                                        std::move(fallbackInFlightKeys));
-                                    return *issued;
+                                        onReady,
+                                        fallbackInFlightKeys,
+                                        std::move(tryAdmitSource),
+                                        std::move(onSourceAdmissionDenied));
+                                    return admissionDenied->load(
+                                               std::memory_order_acquire)
+                                        ? -1
+                                        : *issued;
                                 }});
                         self->state->pendingSourceFallbackCount.store(
                             static_cast<uint32_t>(
@@ -738,11 +802,12 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
     }
 
     int issueSome(int maxNewRequests,
+                  const std::function<bool()>& tryAdmitNewRequest,
                   const std::function<void()>& onSourceIssued,
                   const std::function<void()>& onSourceFinished,
                   const std::function<void()>& onSourceFailed) {
         auto issued = std::make_shared<int>(0);
-        std::vector<TileKey> sourceKeys;
+        std::vector<std::pair<size_t, TileKey>> sourceKeys;
         {
             std::lock_guard<std::mutex> lock(mutex);
             if (completed) {
@@ -762,11 +827,13 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
                 if (needsNewRequest) {
                     --remainingNewRequests;
                 }
-                sourceKeys.push_back(sourceKey);
+                sourceKeys.emplace_back(i, sourceKey);
                 sourceIssued[i] = true;
             }
         }
-        for (const TileKey& sourceKey : sourceKeys) {
+        for (const auto& source : sourceKeys) {
+            const size_t sourceIndex = source.first;
+            const TileKey& sourceKey = source.second;
             auto self = shared_from_this();
             depot->requestSource(
                 sourceKey,
@@ -782,6 +849,15 @@ struct RasterOverlayTileProvider::MappedSourceImageSet
                 onSourceFailed,
                 [self](RasterSourceResult&& source) {
                     self->finishOneSource(std::move(source));
+                },
+                {},
+                tryAdmitNewRequest,
+                [self, sourceIndex]() {
+                    std::lock_guard<std::mutex> lock(self->mutex);
+                    if (!self->completed &&
+                        sourceIndex < self->sourceIssued.size()) {
+                        self->sourceIssued[sourceIndex] = false;
+                    }
                 });
         }
         return *issued;
@@ -892,75 +968,98 @@ private:
             onFailure({});
             return;
         }
-        state->activeRasterComposeTasks.fetch_add(
-            1,
-            std::memory_order_relaxed);
-        try {
-            AsyncSystem::pool().enqueue(
-                [self,
-                 completedSources = std::move(completedSources)]() mutable {
-                    bool completedTileLoad = false;
-                    const auto finishAbandonedTileLoad = [&self,
-                                                           &completedTileLoad]() {
-                        if (completedTileLoad ||
-                            self->state->alive.load(
-                                std::memory_order_acquire)) {
-                            return;
-                        }
-                        self->releaseThrottleSlotOnce();
-                        completedTileLoad = true;
-                        self->state->resolveDestructionIfComplete();
-                    };
-                    const auto finishCompose = [&self]() {
-                        self->state->activeRasterComposeTasks.fetch_sub(
-                            1,
-                            std::memory_order_relaxed);
-                        self->state->resolveDestructionIfComplete();
-                        // [2026-08-21 冻屏根修] compose 落地:同步 Landing 票。
-                        RasterOverlayTileProvider::
-                            syncRasterLandingTicketFromAnyThread(self->state);
-                    };
-                    try {
-                        CompositeImageResult composed =
-                            composeMappedSourceImageSet(
-                                *self->scheme,
-                                self->targetBounds,
-                                std::move(completedSources),
-                                self->returnEmptyForAncestorOnly);
-                        if (composed.image) {
-                            if (self->state->alive.load(
-                                    std::memory_order_acquire)) {
-                                completedTileLoad = true;
-                                self->onSuccess(
-                                    std::move(composed.image),
-                                    nullptr,
-                                    projectGeographicToProvider(
-                                        composed.rectangle,
-                                        self->projection),
-                                    composed.moreDetailAvailable,
-                                    std::move(composed.diagnostics),
-                                    std::move(composed.credits));
-                            }
-                        } else {
-                            if (self->state->alive.load(
-                                    std::memory_order_acquire)) {
-                                completedTileLoad = true;
-                                self->onFailure(
-                                    std::move(composed.diagnostics));
-                            }
-                        }
-                        finishAbandonedTileLoad();
-                        finishCompose();
-                    } catch (...) {
+        state->activeRasterComposeTasks.fetch_add(1, std::memory_order_relaxed);
+        std::function<void()> composeTask =
+            [self,
+             completedSources = std::move(completedSources)]() mutable {
+                bool completedTileLoad = false;
+                const auto finishAbandonedTileLoad = [&self,
+                                                       &completedTileLoad]() {
+                    if (completedTileLoad ||
+                        self->state->alive.load(std::memory_order_acquire)) {
+                        return;
+                    }
+                    self->releaseThrottleSlotOnce();
+                    completedTileLoad = true;
+                    self->state->resolveDestructionIfComplete();
+                };
+                const auto finishCompose = [&self]() {
+                    self->state->activeRasterComposeTasks.fetch_sub(
+                        1,
+                        std::memory_order_relaxed);
+                    self->state->resolveDestructionIfComplete();
+                    // [2026-08-21 冻屏根修] compose 落地:同步 Landing 票。
+                    RasterOverlayTileProvider::
+                        syncRasterLandingTicketFromAnyThread(self->state);
+                };
+
+                // Provider teardown drains frame-pending tasks inline. Avoid
+                // doing the expensive composition after the owner is gone;
+                // only release lifecycle/throttle state.
+                if (!self->state->alive.load(std::memory_order_acquire)) {
+                    finishAbandonedTileLoad();
+                    finishCompose();
+                    return;
+                }
+
+                try {
+                    CompositeImageResult composed =
+                        composeMappedSourceImageSet(
+                            *self->scheme,
+                            self->targetBounds,
+                            std::move(completedSources),
+                            self->returnEmptyForAncestorOnly);
+                    if (composed.image) {
                         if (self->state->alive.load(
                                 std::memory_order_acquire)) {
                             completedTileLoad = true;
-                            self->onFailure({});
+                            self->onSuccess(
+                                std::move(composed.image),
+                                nullptr,
+                                projectGeographicToProvider(
+                                    composed.rectangle,
+                                    self->projection),
+                                composed.moreDetailAvailable,
+                                std::move(composed.diagnostics),
+                                std::move(composed.credits));
                         }
-                        finishAbandonedTileLoad();
-                        finishCompose();
+                    } else if (self->state->alive.load(
+                                   std::memory_order_acquire)) {
+                        completedTileLoad = true;
+                        self->onFailure(std::move(composed.diagnostics));
                     }
-                });
+                    finishAbandonedTileLoad();
+                    finishCompose();
+                } catch (...) {
+                    if (self->state->alive.load(
+                            std::memory_order_acquire)) {
+                        completedTileLoad = true;
+                        self->onFailure({});
+                    }
+                    finishAbandonedTileLoad();
+                    finishCompose();
+                }
+            };
+        if (!state->sceneResourceManaged.load(std::memory_order_acquire)) {
+            // Preserve the standalone Provider API contract: without a Scene
+            // budget, composition is dispatched immediately as it was before
+            // Scene-level worker admission was introduced.
+            try {
+                (void)AsyncSystem::pool().enqueue(composeTask);
+            } catch (...) {
+                composeTask();
+            }
+            return;
+        }
+
+        try {
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                state->pendingRasterComposeTasks.push_back(
+                    std::move(composeTask));
+            }
+            RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(
+                state);
         } catch (...) {
             state->activeRasterComposeTasks.fetch_sub(
                 1,

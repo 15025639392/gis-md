@@ -7,6 +7,7 @@
 #include "TileLoadPriorityPolicy.h"
 #include "../core/async/AsyncSystem.h"
 #include "../core/resources/FrameResourceBudget.h"
+#include "../core/resources/SceneFrameResourceArbiter.h"
 #include "../content/GltfContentProvider.h"
 #include "../threading/CancellationToken.h"
 
@@ -203,7 +204,8 @@ public:
         double priority,
         ClipInput clipInput,
         ClipFn clip,
-        OnIssuedFn onIssued) {
+        OnIssuedFn onIssued,
+        SceneFrameResourceArbiter* resourceArbiter = nullptr) {
         CancellationToken token;
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -225,6 +227,14 @@ public:
             }
             if (!tryAcquireUpsampleClipSlot()) {
                 return TileLoadDispatchResult::WorkerCapacityBlocked;
+            }
+            if (resourceArbiter != nullptr &&
+                !resourceArbiter->tryAcquire(
+                    SceneFrameResourceProducer::Terrain,
+                    SceneFrameResourceStage::WorkerDispatch,
+                    TileLoadPriorityPolicy::toFramePriority(group))) {
+                releaseUpsampleClipSlot();
+                return TileLoadDispatchResult::Blocked;
             }
             if (!requestState.beginTerrainRequest(cacheKey, token)) {
                 releaseUpsampleClipSlot();

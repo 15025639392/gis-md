@@ -553,6 +553,13 @@ public:
         failed_.insert(key);
     }
 
+    /// Frame admission denied before transport started. Unlike markFailed this
+    /// keeps no failure/backoff state, so the next update can emit the request
+    /// again under a fresh Scene resource grant.
+    void deferRequest(const TileKey& key) {
+        pending_.erase(key);
+    }
+
     /// 请求失败登记为临时失败。到达退避截止时间后，下一次 update 会
     /// 自动释放该 key，使获取缓存的退避/重试策略重新获得请求控制权。
     void markFailedUntil(const TileKey& key, double retryNotBeforeMs) {

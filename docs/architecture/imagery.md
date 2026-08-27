@@ -99,7 +99,9 @@ ImageryProvider::requestTile (HTTP/bridge)
 ### ⚠️ 短板 / 已知债
 - `RasterOverlayTileProvider.cpp` **4785 行**(P4):四路失效逻辑已收敛部分重复,物理拆文件未做。
 - **HttpCache 无过期/无 ETag 重验**(P1):真机对照影像重复请求曾达 14.9%(地形 0)。
-- `FrameResourceBudget::canIssue` 忽略优先级(P2):帧级延迟,非持续饥饿。
+- Raster 网络请求已保留 `Urgent/Normal/Preload` 语义并接入 Scene grant；当前 provider 源请求
+  在真正调用 `ImageryProvider::requestTile` 前完成 admission，缓存命中与共享在途搭车不消费
+  新请求额度。仍未统一的是底层 HTTP 实现自己的连接池 QoS。
 - 空洞瓦每帧全量 `update()`(P3):未量化 CPU 成本。
 - GCJ 缩放过渡态残差(P5):z≤5 时 px 级竖向残差(z5 约 7px),**标准 mercator 底图同样命中,非 GCJ 特有**。
 - fill 代理 UV 仍走地形 scheme 投影(P6):GCJ 下二阶误差米级,未量化可见性。

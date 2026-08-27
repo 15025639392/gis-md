@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/math/Vec3.h"
+#include "core/resources/SceneFrameResourceArbiter.h"
 #include "data/MvtVectorSource.h"
 #include "scene/Diagnostics.h"
 #include "scene/FrameState.h"
@@ -175,6 +176,7 @@ public:
 
     /// 运行时诊断（FPS、draw calls、visible tiles 等）
     const Diagnostics& diagnostics() const;
+    SceneFrameResourceArbiterSnapshot frameResourceArbiterSnapshot() const;
     /// 一帧表现层契约 trace：camera -> selector -> TilePlan -> RenderCommand。
     const PresentationTrace& presentationTrace() const;
 
@@ -375,6 +377,7 @@ private:
     /// 替代 advanceTime/setTime 里的无条件 requestRender(那会让活时钟把设备
     /// 永久钉在 60fps,见 docs 发热债)。setTime 跳变=大角差→照常渲染。
     void requestRenderIfSunMoved();
+    bool ensureTerrainPageStore();
 
     /// Phase B 平台级唤醒回调(见 setFrameRequestCallback)。非空 = 宿主已接
     /// 唤醒,ledger gating 方可安全启用。

@@ -54,6 +54,7 @@ struct TilesetTestAccess;
 class TilesetSelectionFrameFacade;
 class TilesetUpdateFrameFacade;
 class TilesetUpdateFrameRuntime;
+class SceneFrameResourceArbiter;
 
 /// cesium-native TilesetOptions subset used by the unified terrain tileset.
 /// Defaults intentionally mirror native where the local renderer has the
@@ -141,7 +142,8 @@ public:
     ~Tileset();
 
     void update(const FrameState& frameState,
-                IPrepareRendererResources* pPrepRenderer = nullptr);
+                IPrepareRendererResources* pPrepRenderer = nullptr,
+                SceneFrameResourceArbiter* resourceArbiter = nullptr);
     void buildRenderCommands(Renderer& renderer,
                              RenderCommandList& commands,
                              uint64_t renderFrameId = 0,

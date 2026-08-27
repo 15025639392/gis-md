@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <cstdint>
 #include <optional>
 
 namespace earth_engine {
@@ -26,6 +27,24 @@ struct PickResult {
         VectorFeature
     } hitType = HitType::None;
 
+    /// VectorFeature 的生产路径。保留统一 HitType，避免 SelectionManager
+    /// 分裂成两套状态机；调用方可用 sourceKind 区分旧 VectorLayer 与
+    /// FeatureStore/FeatureRenderLayer。
+    enum class FeatureSourceKind {
+        None,
+        VectorLayer,
+        FeatureRenderLayer
+    } sourceKind = FeatureSourceKind::None;
+
+    /// 矢量要素的精细命中部位。旧 VectorLayer 当前提供 Edge/Fill，
+    /// FeatureRenderLayer 进一步提供 Vertex/Edge/Fill。
+    enum class FeaturePart {
+        None,
+        Vertex,
+        Edge,
+        Fill
+    } featurePart = FeaturePart::None;
+
     /// 地形高度（HitType::Terrain 时有效）
     float terrainHeight = 0.0f;
 
@@ -38,8 +57,23 @@ struct PickResult {
     /// 图层 ID
     std::string layerId;
 
-    /// Feature ID（VectorLayer 命中时）
+    /// 统一字符串 Feature ID。旧 VectorLayer 沿用源字符串；
+    /// FeatureRenderLayer 使用稳定本地 FeatureId 的十进制字符串。
     std::string featureId;
+
+    /// FeatureRenderLayer 稳定本地 ID；其它命中为 0。
+    uint64_t featureNumericId = 0;
+
+    /// 数据源原始 feature.id（若 Feature::sourceId 非空）。它不替代本地
+    /// featureId，因为跨瓦片/多几何拆分时源 ID 未必唯一。
+    std::string sourceFeatureId;
+
+    /// Vertex/Edge 的环/顶点语义；Fill/旧 VectorLayer 为 -1。
+    int ringIndex = -1;
+    int vertexIndex = -1;
+
+    /// FeatureRenderLayer 屏幕命中距离（pixel）；Fill 为 0。
+    double screenDistancePixels = 0.0;
 
     /// 命中距离（从相机到命中点，meter）
     double distance = 0.0;

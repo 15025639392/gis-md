@@ -2,6 +2,7 @@
 
 #include "FrameState.h"
 #include "SceneFrameUpdateCoordinator.h"
+#include "../core/resources/SceneFrameResourceArbiter.h"
 #include "../renderer/RenderCommand.h"
 
 #include <cstdint>
@@ -19,6 +20,7 @@ class SkyGradient;
 class Tileset;
 class TimeController;
 class VectorLayer;
+class FeatureRenderLayer;
 struct SceneInteractionContext;
 
 class SceneFrameRuntime {
@@ -31,6 +33,13 @@ public:
 
     uint64_t& frameId() { return frameId_; }
     uint64_t frameId() const { return frameId_; }
+
+    SceneFrameResourceArbiter& resourceArbiter() {
+        return resourceArbiter_;
+    }
+    const SceneFrameResourceArbiter& resourceArbiter() const {
+        return resourceArbiter_;
+    }
 
     double& elapsedTime() { return elapsedTime_; }
     double elapsedTime() const { return elapsedTime_; }
@@ -46,6 +55,9 @@ public:
         CameraSystem* cameraSystem,
         IPrepareRendererResources* pPrepRenderer,
         SceneTilesetCoordinator& tilesets,
+        bool mvtActive,
+        uint32_t mvtSourceCount,
+        bool pageStoreActive,
         double deltaSeconds,
         bool hasInteractionFocus,
         Vec3 interactionFocusDirection,
@@ -56,7 +68,10 @@ public:
         Camera* camera,
         CameraSystem* cameraSystem,
         const Tileset* terrainTileset,
-        const std::vector<std::unique_ptr<VectorLayer>>* vectorLayers) const;
+        const std::vector<std::unique_ptr<VectorLayer>>* vectorLayers,
+        const std::vector<std::unique_ptr<FeatureRenderLayer>>*
+            featureRenderLayers = nullptr,
+        const FrameState* frameState = nullptr) const;
     bool hasSelectorViewOverride() const {
         return hasSelectorViewOverride_;
     }
@@ -67,6 +82,7 @@ public:
 private:
     FrameState frameState_;
     RenderCommandList renderCommands_;
+    SceneFrameResourceArbiter resourceArbiter_;
     uint64_t frameId_ = 0;
     double elapsedTime_ = 0.0;
     bool hasSelectorViewOverride_ = false;

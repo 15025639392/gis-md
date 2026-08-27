@@ -59,6 +59,8 @@ target_sources(earth_engine_core PRIVATE
 target_sources(earth_engine_core PRIVATE
     earth_engine/core/resources/FrameResourceBudget.h
     earth_engine/core/resources/FrameResourceBudget.cpp
+    earth_engine/core/resources/SceneFrameResourceArbiter.h
+    earth_engine/core/resources/SceneFrameResourceArbiter.cpp
 )
 
 # ============================================================
