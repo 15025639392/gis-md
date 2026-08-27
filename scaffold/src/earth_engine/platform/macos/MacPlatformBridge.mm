@@ -23,6 +23,7 @@ namespace earth_engine {
 class MacHttpRequest final : public HttpRequest {
 public:
     explicit MacHttpRequest(NSURLSessionDataTask* task) : task_(task) {}
+    ~MacHttpRequest() override { cancel(); }
     void cancel() override {
         if (task_) {
             [task_ cancel];

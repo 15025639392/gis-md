@@ -19,6 +19,7 @@ struct Diagnostics {
     double basemapStackUpdateMs = 0.0;
     double terrainUpdateMs = 0.0;
     double contentTilesetUpdateMs = 0.0;
+    double mvtVectorUpdateMs = 0.0;
     double renderCommandBuildMs = 0.0;
     double renderSubmitMs = 0.0;
     int drawCalls = 0;

@@ -3,6 +3,7 @@
 #include "EngineTimingScope.h"
 #include "FrameState.h"
 #include "SceneFrameRuntime.h"
+#include "../data/MvtVectorSource.h"
 #include "../tiling/TileOcclusionCallback.h"
 #include <memory>
 #include <vector>
@@ -122,6 +123,16 @@ public:
     std::unique_ptr<FeatureRenderLayer> removeFeatureRenderLayer(
         const std::string& layerId);
 
+    // ---- MVT source runtime ----
+    // Scene owns the source and its sink-bound FeatureRenderLayer as one
+    // lifecycle unit.  Removal first quiesces the source, then drops the
+    // layer, so worker callbacks can never dereference a retired layer.
+    bool addMvtVectorSource(std::unique_ptr<MvtVectorSource> source,
+                            std::unique_ptr<FeatureRenderLayer> layer);
+    bool removeMvtVectorSource(const std::string& layerId);
+    size_t mvtVectorSourceCount() const;
+    FeatureRenderLayer* mvtVectorLayer(const std::string& layerId) const;
+
     /// 矢量标注字体注入(P5b;TrueType 字节,渲染线程调用)。
     bool setLabelFontData(std::vector<uint8_t> fontData);
 
@@ -158,6 +169,12 @@ public:
     const SkyGradient& skyGradient() const;
 
 private:
+    struct MvtRuntime {
+        std::unique_ptr<MvtVectorSource> source;
+        std::string layerId;
+    };
+
+    void clearMvtVectorSources();
     void configureCameraSurfacePicker();
     SceneInteractionContext interactionContext() const;
     void updatePresentationTrace();
@@ -180,6 +197,7 @@ private:
 
     // 矢量图层
     std::unique_ptr<SceneLayerCoordinator> layers_;
+    std::vector<MvtRuntime> mvtSources_;
 
     // 统一 Tileset（cesium-native 对齐）
     std::unique_ptr<SceneTilesetCoordinator> tilesets_;

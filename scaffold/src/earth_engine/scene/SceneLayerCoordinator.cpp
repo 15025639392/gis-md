@@ -12,11 +12,15 @@ SceneLayerCoordinator::~SceneLayerCoordinator() = default;
 
 void SceneLayerCoordinator::setRenderDevice(RenderDevice* device) {
     renderDevice_ = device;
-    if (!renderDevice_) return;
-    for (auto& layer : vectorLayers_) {
-        if (layer) {
-            layer->initialize(renderDevice_);
+    if (renderDevice_) {
+        for (auto& layer : vectorLayers_) {
+            if (layer) {
+                layer->initialize(renderDevice_);
+            }
         }
+    }
+    for (auto& layer : featureRenderLayers_) {
+        if (layer) layer->setRenderDevice(renderDevice_);
     }
 }
 

@@ -1,6 +1,11 @@
 #pragma once
 
 #include "../layers/RasterOverlay.h"
+#include "../layers/FeatureRenderLayer.h"
+#include "../data/StyleFilter.h"
+#include "../data/VectorTileTree.h"
+#include "../data/MvtTileFetchCache.h"
+#include "../platform/bridge/PlatformBridge.h"
 
 #include <cstdint>
 #include <map>
@@ -187,6 +192,48 @@ struct GltfSourceConfig {
     bool worldAnchored = false;
 };
 
+/// A Scene-owned MVT source rendered through its own FeatureRenderLayer.
+/// Every entry receives an independent decoded/raw cache namespace by default,
+/// so equal z/x/y coordinates from different URLs cannot alias.  Supplying
+/// sharedCache is an explicit opt-in to a provider namespace shared with other
+/// consumers.
+struct MvtSourceConfig {
+    std::string id;
+    /// Standard MVT URL template.  The built-in converter currently expects
+    /// XYZ WebMercator tile coordinates; {z}, {x}, {y}, and {s} are expanded by
+    /// the SDK default fetcher.  Non-XYZ projections require a custom fetch /
+    /// conversion path and are intentionally not inferred from the URL.
+    std::string urlTemplate;
+    /// Values used for {s}, selected deterministically by tile coordinate.
+    /// Defaults preserve the prior numeric 0..3 convention; use {"a","b","c"}
+    /// for common lettered XYZ hosts. Empty falls back to "0".
+    std::vector<std::string> subdomains = {"0", "1", "2", "3"};
+    int minimumZoom = 0;
+    int maximumZoom = 14;
+    size_t maximumCachedTiles = 300;
+    int maximumTilesPerView = 64;
+    int maximumPendingRequests = 64;
+    double zoomBias = 0.0;
+    VectorTileRefinementPolicy refinement =
+        VectorTileRefinementPolicy::SymbolAdditive;
+    std::vector<std::string> includeLayers;
+    std::vector<SourceLayerRule> layerRules;
+    size_t maximumTileCommitsPerUpdate = 4;
+    size_t maximumTessellationsInFlight = 0;
+    size_t decodedCacheTiles = 48;
+    size_t rawCacheTiles = 256;
+    size_t decodeThreads = 1;
+    size_t tessellationThreads = 1;
+    HttpRequestPriority requestPriority = HttpRequestPriority::Low;
+    /// Optional custom fetcher. When empty, SDK uses PlatformBridge::get with
+    /// {z}/{x}/{y} URL substitution and owns the request lifetime.
+    MvtTileFetchCache::FetchFn fetchTile;
+    /// Explicitly shared cache for consumers of the same provider namespace
+    /// (for example raster drape + symbol source). Empty = source-local cache.
+    std::shared_ptr<MvtTileFetchCache> sharedCache;
+    FeatureRenderStyle style;
+};
+
 struct EarthSceneConfig {
     /// Initial SDK scene camera. resetCamera() restores this viewpoint.
     SceneCameraConfig initialCamera;
@@ -196,6 +243,8 @@ struct EarthSceneConfig {
     SceneTilesetConfig tileset;
     /// Ordered raster stack. Ownership becomes SDK runtime state on install.
     std::vector<RasterOverlaySourceConfig> rasterOverlays;
+    /// Ordered MVT sources. Runtime ownership is transferred to Scene.
+    std::vector<MvtSourceConfig> mvtSources;
     /// Optional single glTF source, placed east-north-up on a configured tile.
     GltfSourceConfig gltf;
     /// Julian date set during installScene(); 0.0 leaves the epoch value.

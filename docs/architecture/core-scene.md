@@ -10,7 +10,7 @@
 
 - **core/**:平台无关地基层——数学(`Vec3`/`Mat4`/包围体/裁剪/相交,`core/math/`)、大地测量(椭球/投影/GCJ-02/S2,`core/geodesy/`)、异步原语(`AsyncSystem`/`WorkLedger`,`core/async/`)、缓存(`HttpCache`/`PersistentCache`,`core/cache/`)。**不知道"瓦片""场景""相机"**,只提供被上层复用的纯值类型与线程原语。
 - **scene/**:场景装配与帧编排层。`Scene` 是"cesium-native 无直接对应物"的引擎自研组合根,owns Camera/CameraSystem/Renderer/渲染管线,把工作全部委派给 5 个 Coordinator + 1 个渲染管线,自己不做算法只做装配与阶段编排。**不实现**瓦片选择算法(在 `tiling/`)、具体渲染 API 调用(在 `renderer/`/`platform/`)。
-- **sdk/**:`EarthEngineSdkFacade` 是面向调用方的一次性装配入口,把声明式 `EarthSceneConfig` 翻译成 provider/overlay/tileset 对象图,注入调用方已建好的 `Engine`。facade 不拥有 Engine/RenderDevice/PlatformBridge("Caller owns")。
+- **sdk/**:`EarthEngineSdkFacade` 是面向调用方的一次性装配入口,把声明式 `EarthSceneConfig` 翻译成 provider/overlay/tileset 对象图,注入调用方已建好的 `Engine`。facade 不拥有 Engine/RenderDevice/PlatformBridge("Caller owns")；MVT source 由 facade 创建、由 `Scene` 以 source+`FeatureRenderLayer` runtime bundle 唯一托管。
 - **Engine**:平台面向的生命周期外壳 + 输入路由,owns 唯一一个 `Scene`,几乎每个公开方法都是薄转发。
 
 ---
@@ -43,7 +43,23 @@
 `Scene` 自身只 own 5 个协调器(Layer/Tileset/Interaction/Environment/Telemetry)+ `SceneRenderPipeline` + `SceneFrameRuntime`。与 tiling "极端分解"哲学一致但目的不同:tiling 是为忠实移植 cesium 算法而拆,scene 是为让每个横切关注点(瓦片/图层/交互/环境/遥测)拥有独立可测边界、能各自 mock/替换。`Scene::update`/`render` 本身极薄,只做"构造 context struct → 转发给静态编排器"。`SceneFrameUpdateCoordinator` 是无状态静态编排器,按固定顺序:reset+framerate → camera update → build FrameState → tileset update。
 
 ### 5. SDK facade:一次性装配,不是持续管理
-`installScene(EarthSceneConfig)` 按 `ImagerySourceKind`/`TerrainSourceKind` 分派构造 provider,最终构造统一 `Tileset` 塞进 `engine_.setTileset`。facade 不做后续每帧管理——一旦返回,帧循环完全由 `Engine::render` 驱动。**代价**:部分 provider 初始化路径是**阻塞式**的(TileMapService/WebMapService/BingMaps 的 GetCapabilities、GoogleMapTiles 建 session 用阻塞 POST,默认超时 20s)——是"一次性装配、调用方线程同步等待"设计选择的必然成本,不是 bug。
+`installScene(EarthSceneConfig)` 按 `ImagerySourceKind`/`TerrainSourceKind` 分派构造 provider,按 `mvtSources` 创建 source-specific cache/pool/layer runtime,最终构造统一 `Tileset` 塞进 `engine_.setTileset`。facade 不做后续每帧管理——一旦返回,帧循环完全由 `Engine::render` 驱动：`Scene::update` 在本帧 camera/FrameState/tileset update 完成后自动更新所有 MVT source，`Scene::render` 再构建对应 FeatureRenderLayer 命令。**代价**:部分 provider 初始化路径是**阻塞式**的(TileMapService/WebMapService/BingMaps 的 GetCapabilities、GoogleMapTiles 建 session 用阻塞 POST,默认超时 20s)——是"一次性装配、调用方线程同步等待"设计选择的必然成本,不是 bug。
+
+### MVT runtime 托管契约
+
+`MvtSourceConfig` 是声明式配置入口，支持多个 source。默认每个 source 创建独立的解码/raw cache，因此不同 URL 使用相同 `z/x/y` 不会串源；需要与 MVT 面 drape 或兼容线场共享获取层时，调用方显式传入 `sharedCache`，且必须保证共享者属于同一 provider/request namespace。若未提供 fetcher，SDK 通过 `PlatformBridge::get` 执行 `{z}`/`{x}`/`{y}`/`{s}` 模板替换并持有取消句柄直到回调完成；注入 `fetchTile` 时，取消、超时与“最终一定回调”的契约由调用方承担。
+
+Scene registry 的所有权单位不是裸 source，而是 source 与其 sink-bound `FeatureRenderLayer` 的 bundle。移除、重装或 Engine surface teardown 的顺序固定为：
+
+```text
+source.suspend()
+→ 等待正在执行的 worker tessellation
+→ drop GPU tile buckets
+→ 移除 FeatureRenderLayer
+→ 销毁 source/cache/pool
+```
+
+这保证 worker 不会在 layer 已销毁后继续解引用 sink，也保证 Surface 重建时 layer 先解绑旧 `RenderDevice`、source 再由下一帧重新驱动。按需渲染的 `WorkLedger` 同时覆盖 MVT fetch/tessellation/commit/retry，避免异步结果到达后因宿主停帧而无人消费。
 
 ### 6. Engine 四阶段帧循环:beginFrame → update → render → endFrame
 每阶段单独计时进 `Diagnostics`:

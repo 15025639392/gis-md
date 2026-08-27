@@ -458,6 +458,50 @@ TEST(MvtVectorSource, SuspendDrainsWorkerInboxWithoutCommitting) {
     EXPECT_TRUE(sinks.committed.empty());
 }
 
+TEST(MvtVectorSource, SuspendWaitsForRunningTessellationBeforeLayerTeardown) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    auto pool = std::make_shared<ThreadPool>(1);
+    std::promise<void> started;
+    std::promise<void> release;
+    std::shared_future<void> releaseFuture = release.get_future().share();
+    std::vector<TileKey> committed;
+    MvtVectorSource::Sinks sinks;
+    sinks.tessellate = [&](const TileKey&, std::vector<Feature>&&) {
+        started.set_value();
+        releaseFuture.wait();
+        FeatureTileMesh mesh;
+        mesh.hasOrigin = true;
+        mesh.fillVerts = {0.f, 0.f, 0.f};
+        mesh.fillIndices = {0, 0, 0};
+        return mesh;
+    };
+    sinks.commit = [&](const TileKey& key, FeatureTileMesh&) {
+        committed.push_back(key);
+        return TileMeshCommitResult::Committed;
+    };
+    sinks.drop = [](const TileKey&) {};
+
+    MvtVectorSource source(optionsForTest(), std::move(sinks), fetch.cache(), pool);
+    const Rectangle view = rectDeg(1, 1, 40, 40);
+    source.update(view, heightForZoom(2));
+    source.update(view, heightForZoom(2));
+    ASSERT_EQ(started.get_future().wait_for(std::chrono::seconds(2)),
+              std::future_status::ready);
+
+    auto suspended = std::async(std::launch::async, [&] { source.suspend(); });
+    EXPECT_EQ(suspended.wait_for(std::chrono::milliseconds(50)),
+              std::future_status::timeout);
+    release.set_value();
+    EXPECT_EQ(suspended.wait_for(std::chrono::seconds(2)),
+              std::future_status::ready);
+    suspended.get();
+    EXPECT_TRUE(committed.empty());
+    EXPECT_EQ(WorkLedger::shared().outstandingForLabel(
+                  "mvtVectorTessellate"),
+              0);
+}
+
 TEST(MvtVectorSource, SuspendClearsStaleUpdateStats) {
     FakeFetch fetch;
     fetch.body = makePointTile("pois");
@@ -883,6 +927,15 @@ TEST(MvtRawTileFetchCache, ZeroCapacityStillCoalescesInflightWithoutRetention) {
     ASSERT_TRUE(pending);
     pending(200, {1, 2, 3});
     EXPECT_EQ(callbacks, 3);
+}
+
+TEST(MvtTileFetchCache, PackedHighZoomCoordinatesDoNotAlias) {
+    EXPECT_NE(detail::packDataKey(25, 1 << 24, 0),
+              detail::packDataKey(25, 0, 0));
+    EXPECT_NE(detail::packDataKey(25, 0, 1 << 24),
+              detail::packDataKey(25, 0, 0));
+    EXPECT_NE(detail::packDataKey(24, 0, 0),
+              detail::packDataKey(25, 0, 0));
 }
 
 // 失败有界重试(2026-08-20 用户契约):同一瓦片失败后最多重试 2 次

@@ -12,6 +12,7 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class Engine;
 class ImageryProvider;
+class FeatureRenderLayer;
 class PlatformBridge;
 class RasterOverlay;
 class RenderDevice;
@@ -37,6 +38,11 @@ public:
     /// Install terrain, raster overlays, optional glTF content, initial camera,
     /// and fixed simulation time from a complete scene config.
     void installScene(EarthSceneConfig config);
+    /// Add one Scene-owned MVT source after scene installation. The facade is
+    /// only the factory; Scene remains the sole runtime owner.
+    bool addMvtSource(MvtSourceConfig config);
+    /// Remove a previously installed Scene-owned MVT source and its layer.
+    bool removeMvtSource(const std::string& id);
 
     /// 注册应用自建的影像 overlay(应用实现 ImageryProvider
     /// 冒充影像走地形合成)。**必须在 installScene 之前调用** —— overlay 是
@@ -51,8 +57,11 @@ public:
     void resetCamera();
 
     const EarthSceneConfig& config() const { return config_; }
+    FeatureRenderLayer* mvtVectorLayer(const std::string& id) const;
 
 private:
+    bool installMvtSource(const MvtSourceConfig& config);
+    void installMvtSources(const std::vector<MvtSourceConfig>& configs);
     void addActivatedRasterOverlay(
         std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         std::unique_ptr<ImageryProvider> provider,
@@ -74,6 +83,7 @@ private:
     std::vector<std::unique_ptr<RasterOverlay>> rasterOverlays_;
     std::vector<std::unique_ptr<ActivatedRasterOverlay>>
         activatedRasterOverlays_;
+    std::vector<std::string> installedMvtSourceIds_;
 };
 
 } // namespace earth_engine

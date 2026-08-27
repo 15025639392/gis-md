@@ -13,6 +13,7 @@ void SceneFrameDiagnostics::resetPerFrame(Diagnostics& diagnostics) {
     diagnostics.basemapStackUpdateMs = 0.0;
     diagnostics.terrainUpdateMs = 0.0;
     diagnostics.contentTilesetUpdateMs = 0.0;
+    diagnostics.mvtVectorUpdateMs = 0.0;
     diagnostics.renderCommandBuildMs = 0.0;
     diagnostics.renderSubmitMs = 0.0;
 }

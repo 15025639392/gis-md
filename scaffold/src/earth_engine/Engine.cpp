@@ -12,6 +12,7 @@
 #include "renderer/VtIndirectionSamplePoc.h"
 #include "renderer/RenderDevice.h"
 #include "layers/FeatureRenderLayer.h"
+#include "data/MvtVectorSource.h"
 #include "layers/VectorLayer.h"
 #include "providers/RoadFieldSource.h"
 #include "providers/VectorDrapeImageryProvider.h"
@@ -1051,9 +1052,10 @@ bool Engine::render(double deltaSeconds) {
     }
     char detail[800];
     std::snprintf(detail, sizeof(detail),
-        "begin=%.2f update=%.2f pageStore=%.2f psUvp=%.2f psTick=%.2f psIndir=%.2f render=%.2f submit=%.2f end=%.2f gapA=%.2f gapB=%.2f g0=%.2f g4=%.2f draw=%d tiles=%d hold=%d%s%s%s",
+        "begin=%.2f update=%.2f mvt=%.2f pageStore=%.2f psUvp=%.2f psTick=%.2f psIndir=%.2f render=%.2f submit=%.2f end=%.2f gapA=%.2f gapB=%.2f g0=%.2f g4=%.2f draw=%d tiles=%d hold=%d%s%s%s",
         diag.engineBeginFrameMs,
         diag.sceneUpdateMs,
+        diag.mvtVectorUpdateMs,
         pageStoreMs,
         pageStoreUvpMs,
         pageStoreTickMs,
@@ -1194,7 +1196,36 @@ void Engine::addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer) {
 
 std::unique_ptr<FeatureRenderLayer> Engine::removeFeatureRenderLayer(
     const std::string& layerId) {
+    // Keep the borrowed style target valid when callers use the legacy
+    // generic removal API for a Scene-owned MVT bundle.  MVT layers cannot be
+    // detached independently; Scene performs suspend/wait/drop/removal.
+    FeatureRenderLayer* mvtLayer = scene_->mvtVectorLayer(layerId);
+    if (scene_->removeMvtVectorSource(layerId)) {
+        if (styleSymbolTarget_ == mvtLayer) styleSymbolTarget_ = nullptr;
+        return nullptr;
+    }
     return scene_->removeFeatureRenderLayer(layerId);
+}
+
+bool Engine::addMvtVectorSource(
+    std::unique_ptr<MvtVectorSource> source,
+    std::unique_ptr<FeatureRenderLayer> layer) {
+    return scene_->addMvtVectorSource(std::move(source), std::move(layer));
+}
+
+bool Engine::removeMvtVectorSource(const std::string& layerId) {
+    if (styleSymbolTarget_ == scene_->mvtVectorLayer(layerId)) {
+        styleSymbolTarget_ = nullptr;
+    }
+    return scene_->removeMvtVectorSource(layerId);
+}
+
+size_t Engine::mvtVectorSourceCount() const {
+    return scene_->mvtVectorSourceCount();
+}
+
+FeatureRenderLayer* Engine::mvtVectorLayer(const std::string& layerId) const {
+    return scene_->mvtVectorLayer(layerId);
 }
 
 bool Engine::setLabelFontData(std::vector<uint8_t> fontData) {

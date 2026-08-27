@@ -18,6 +18,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <condition_variable>
 #include <tuple>
 #include <string>
 #include <unordered_map>
@@ -59,6 +60,7 @@ class ThreadPool;
 template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>
 class VectorTileSourceT {
 public:
+    ~VectorTileSourceT() { waitForTessellationTasks(); }
     /// 获取层单一化(符号刀A.5):瓦片获取/解码/在途去重/LRU 全部经
     /// MvtTileFetchCacheT —— 与 drape(面)/路网场(线)共享同一实例时,
     /// 同一块数据瓦网络恰一次、解码恰一次、内存恰一份。本类不再自带
@@ -108,11 +110,16 @@ public:
         const TileKey&, FeatureTileMesh&)>;
     /// 渲染线程侧移除钩子(典型:FeatureRenderLayer::dropTileMesh)。
     using DropFn = std::function<void(const TileKey&)>;
+    /// Render-thread hook that snapshots all layer-dependent tessellation
+    /// state for one tile. The returned function is then safe to run on a
+    /// worker without dereferencing the live layer.
+    using PrepareTessellateFn = std::function<TessellateFn(const TileKey&)>;
 
     struct Sinks {
         TessellateFn tessellate;
         CommitFn commit;
         DropFn drop;
+        PrepareTessellateFn prepareTessellate;
     };
 
     /// tileCache:获取层(fetch+解码+在途去重+LRU)。与其他消费方共享同一
@@ -188,6 +195,16 @@ public:
     /// 已镶好、等待 commit 的瓦片数(诊断:持续 >0 说明上传闸偏紧)。
     size_t pendingCommitCount() const { return readyMeshes_.size(); }
 
+    /// Wait until worker tessellation callbacks have stopped touching sinks.
+    /// Scene uses this as the quiesce barrier before destroying the bound
+    /// FeatureRenderLayer.  Fetch/decode callbacks only retain the inbox and
+    /// are therefore safe after the source is gone; tessellation callbacks
+    /// additionally invoke the caller-provided sink and must be drained.
+    void waitForTessellationTasks() const {
+        std::unique_lock<std::mutex> lock(lifecycleMutex_);
+        lifecycleCv_.wait(lock, [this]() { return activeTessellationTasks_ == 0; });
+    }
+
 private:
     struct Inbox {
         std::mutex mutex;
@@ -248,6 +265,14 @@ private:
     std::unordered_set<TileKey> lastDesiredSet_;
 
     std::shared_ptr<Inbox> inbox_;
+
+    // Number of worker callbacks that may still invoke sinks_.tessellate.
+    // This is deliberately separate from tessellating_ (which is render-thread
+    // bookkeeping and is cleared on epoch changes).  The counter provides a
+    // real teardown barrier rather than relying on source destruction order.
+    mutable std::mutex lifecycleMutex_;
+    mutable std::condition_variable lifecycleCv_;
+    size_t activeTessellationTasks_ = 0;
 
     /// 渲染线程必须持续推进的工作。fetch/decode 与 worker
     /// 镶嵌改为每任务 Landing 票，产物入 inbox 后在完成线程释放并唤醒。
@@ -398,13 +423,14 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
     if (tileCache_) {
         for (const TileKey& key : result.requestTiles) {
             std::weak_ptr<Inbox> weakInbox = inbox_;
-            auto tileCache = tileCache_;
+            std::weak_ptr<MvtTileFetchCacheT<Payload, DecodeTraits>>
+                weakTileCache = tileCache_;
             auto landingTicket = std::make_shared<WorkLedger::Ticket>(
                 WorkLedger::shared().acquire(
                     WorkLedger::Kind::Landing, "mvtVectorFetch"));
             tileCache_->request(
                 key,
-                [key, weakInbox, tileCache, landingTicket](
+                [key, weakInbox, weakTileCache, landingTicket](
                     std::shared_ptr<const Payload> tile) {
                     auto inbox = weakInbox.lock();
                     if (inbox) {
@@ -412,7 +438,11 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
                         if (tile) {
                             inbox->decoded.emplace_back(key, std::move(tile));
                         } else {
-                            const auto failure = tileCache->failureInfo(key);
+                            const auto cache = weakTileCache.lock();
+                            const auto failure = cache
+                                ? cache->failureInfo(key)
+                                : typename MvtTileFetchCacheT<
+                                      Payload, DecodeTraits>::FailureInfo{};
                             inbox->failed.push_back(
                                 {key, failure.retryNotBeforeMs,
                                  failure.retryable});
@@ -438,10 +468,12 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
             continue;
         }
         std::shared_ptr<const Payload> tile = tree_.loadedTileShared(key);
-        if (!tile || !sinks_.tessellate) continue;
+        TessellateFn tessellate = sinks_.prepareTessellate
+            ? sinks_.prepareTessellate(key)
+            : sinks_.tessellate;
+        if (!tile || !tessellate) continue;
         ++lastStats_.tessellateDispatched;
         std::weak_ptr<Inbox> weakInbox = inbox_;
-        TessellateFn tessellate = sinks_.tessellate;
         std::vector<std::string> includeLayers = options_.includeLayers;
         std::vector<SourceLayerRule> rules = options_.layerRules;
         const uint64_t rulesEpoch = rulesEpoch_;
@@ -453,12 +485,22 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
         auto landingTicket = std::make_shared<WorkLedger::Ticket>(
             WorkLedger::shared().acquire(
                 WorkLedger::Kind::Landing, "mvtVectorTessellate"));
-        auto work = [key, weakInbox, tile, tessellate, includeLayers, rules,
+        {
+            std::lock_guard<std::mutex> lock(lifecycleMutex_);
+            ++activeTessellationTasks_;
+        }
+        auto work = [this, key, weakInbox, tile, tessellate, includeLayers, rules,
                      rulesEpoch, viewEpoch, taskId, toFeatures, debugName,
                      landingTicket]() {
+            auto finishTask = [this]() {
+                std::lock_guard<std::mutex> lock(lifecycleMutex_);
+                if (activeTessellationTasks_ > 0) --activeTessellationTasks_;
+                lifecycleCv_.notify_all();
+            };
             auto inbox = weakInbox.lock();
             if (!inbox) {
                 landingTicket->release();
+                finishTask();
                 return;
             }
             try {
@@ -498,9 +540,17 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
             // 与 fetch 同契约：成功/异常都在结果入箱后释放，
             // 渲染线程无需轮询 worker，但不会错过完成唤醒。
             landingTicket->release();
+            finishTask();
         };
-        if (tessellationPool_) tessellationPool_->enqueue(std::move(work));
-        else work();
+        try {
+            if (tessellationPool_) tessellationPool_->enqueue(std::move(work));
+            else work();
+        } catch (...) {
+            std::lock_guard<std::mutex> lock(lifecycleMutex_);
+            if (activeTessellationTasks_ > 0) --activeTessellationTasks_;
+            lifecycleCv_.notify_all();
+            throw;
+        }
     }
 
     const auto tCommit = Clock::now();
@@ -685,6 +735,10 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::suspend() {
     // suspend 是本帧的真实状态，不应继续暴露上一次 update 的瓦片数与
     // 档位；否则远景门控掉 z12 水系后，诊断日志仍会看起来像它在活动。
     lastStats_ = UpdateStats{};
+    // Stop the producer side first, then wait until no worker can dereference
+    // the sink-bound layer.  Only after this barrier is it safe to drop GPU
+    // meshes and let Scene destroy the layer.
+    waitForTessellationTasks();
     ingestTileInbox();
     ++viewEpoch_;
     lastDesiredSet_.clear();

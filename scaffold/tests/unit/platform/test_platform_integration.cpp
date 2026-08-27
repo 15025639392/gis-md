@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <atomic>
+
 #include "earth_engine/Engine.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
@@ -142,6 +144,338 @@ TEST(PlatformIntegrationTest, SdkFacadeInstallsDebugScene) {
     }
     EXPECT_TRUE(sawEllipsoidSurface)
         << "TerrainSourceKind::None must keep a depth-writing ellipsoid surface";
+}
+
+TEST(PlatformIntegrationTest, SdkFacadeOwnsAndDrivesMvtSource) {
+    MockRenderDevice device;
+    MockPlatformBridge bridge;
+    Engine engine(&device);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+
+    std::atomic<int> fetches{0};
+    EarthSceneConfig config;
+    config.initialCamera = {116.3913, 39.9039, 1000000.0};
+    MvtSourceConfig source;
+    source.id = "sdk-mvt";
+    source.minimumZoom = 0;
+    source.maximumZoom = 2;
+    source.includeLayers = {"poi"};
+    source.fetchTile = [&fetches](const TileKey&, MvtTileFetchCache::FetchCallback cb) {
+        fetches.fetch_add(1);
+        cb(404, {});
+    };
+    config.mvtSources.push_back(source);
+
+    {
+        EarthEngineSdkFacade facade(engine, device, bridge);
+        facade.installScene(config);
+        EXPECT_EQ(engine.mvtVectorSourceCount(), 1u);
+        engine.render(1.0 / 60.0);
+        EXPECT_GT(fetches.load(), 0);
+
+        EarthSceneConfig replacement;
+        replacement.initialCamera = config.initialCamera;
+        facade.installScene(replacement);
+        EXPECT_EQ(engine.mvtVectorSourceCount(), 0u);
+    }
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 0u);
+}
+
+TEST(PlatformIntegrationTest, GenericFeatureLayerRemovalCannotDetachMvtBundle) {
+    MockRenderDevice device;
+    MockPlatformBridge bridge;
+    Engine engine(&device);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+
+    MvtVectorSource::Options options;
+    options.tree.minZoom = 0;
+    options.tree.maxZoom = 1;
+    MvtVectorSource::Sinks sinks;
+    auto cache = std::make_shared<MvtTileFetchCache>(
+        [](const TileKey&, MvtTileFetchCache::FetchCallback callback) {
+            callback(404, {});
+        },
+        8);
+    auto source = std::make_unique<MvtVectorSource>(
+        std::move(options), std::move(sinks), std::move(cache));
+    auto layer = std::make_unique<FeatureRenderLayer>(
+        "owned-mvt", &device, Ellipsoid::WGS84());
+
+    ASSERT_TRUE(engine.addMvtVectorSource(std::move(source), std::move(layer)));
+    ASSERT_EQ(engine.mvtVectorSourceCount(), 1u);
+    EXPECT_EQ(engine.removeFeatureRenderLayer("owned-mvt"), nullptr);
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 0u);
+
+    // A subsequent frame must remain safe: the source was removed as a
+    // bundle, rather than leaving a live source with a detached layer sink.
+    engine.render(1.0 / 60.0);
+}
+
+TEST(PlatformIntegrationTest, SdkFacadeCanAddRejectDuplicateAndRemoveMvtSource) {
+    MockRenderDevice device;
+    MockPlatformBridge bridge;
+    Engine engine(&device);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+
+    EarthEngineSdkFacade facade(engine, device, bridge);
+    EarthSceneConfig config;
+    config.initialCamera = {116.3913, 39.9039, 1000000.0};
+    facade.installScene(config);
+
+    MvtSourceConfig source;
+    source.id = "runtime-mvt";
+    source.minimumZoom = 0;
+    source.maximumZoom = 1;
+    source.fetchTile = [](const TileKey&, MvtTileFetchCache::FetchCallback cb) {
+        cb(404, {});
+    };
+    ASSERT_TRUE(facade.addMvtSource(source));
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 1u);
+    EXPECT_FALSE(facade.addMvtSource(source));
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 1u);
+    EXPECT_TRUE(facade.removeMvtSource(source.id));
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 0u);
+    EXPECT_FALSE(facade.removeMvtSource(source.id));
+}
+
+TEST(PlatformIntegrationTest, SdkFacadeCannotRemoveEngineOwnedMvtSource) {
+    MockRenderDevice device;
+    MockPlatformBridge bridge;
+    Engine engine(&device);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+
+    MvtVectorSource::Options options;
+    options.debugName = "external-mvt";
+    options.tree.minZoom = 0;
+    options.tree.maxZoom = 1;
+    MvtVectorSource::Sinks sinks;
+    auto cache = std::make_shared<MvtTileFetchCache>(
+        [](const TileKey&, MvtTileFetchCache::FetchCallback callback) {
+            callback(404, {});
+        },
+        8);
+    auto source = std::make_unique<MvtVectorSource>(
+        std::move(options), std::move(sinks), std::move(cache));
+    auto layer = std::make_unique<FeatureRenderLayer>(
+        "external-mvt", &device, Ellipsoid::WGS84());
+    ASSERT_TRUE(engine.addMvtVectorSource(std::move(source), std::move(layer)));
+
+    EarthEngineSdkFacade facade(engine, device, bridge);
+    EarthSceneConfig config;
+    config.initialCamera = {116.3913, 39.9039, 1000000.0};
+    facade.installScene(config);
+
+    EXPECT_FALSE(facade.removeMvtSource("external-mvt"));
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 1u);
+    EXPECT_TRUE(engine.removeMvtVectorSource("external-mvt"));
+}
+
+TEST(PlatformIntegrationTest, MultipleMvtSourcesKeepIndependentFetchers) {
+    MockRenderDevice device;
+    MockPlatformBridge bridge;
+    Engine engine(&device);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+
+    std::atomic<int> roadsFetches{0};
+    std::atomic<int> placesFetches{0};
+    EarthSceneConfig config;
+    config.initialCamera = {116.3913, 39.9039, 1000000.0};
+
+    MvtSourceConfig roads;
+    roads.id = "roads-source";
+    roads.minimumZoom = 0;
+    roads.maximumZoom = 2;
+    roads.fetchTile = [&roadsFetches](
+        const TileKey&, MvtTileFetchCache::FetchCallback cb) {
+        roadsFetches.fetch_add(1);
+        cb(404, {});
+    };
+    MvtSourceConfig places;
+    places.id = "places-source";
+    places.minimumZoom = 0;
+    places.maximumZoom = 2;
+    places.fetchTile = [&placesFetches](
+        const TileKey&, MvtTileFetchCache::FetchCallback cb) {
+        placesFetches.fetch_add(1);
+        cb(404, {});
+    };
+    config.mvtSources = {roads, places};
+
+    EarthEngineSdkFacade facade(engine, device, bridge);
+    facade.installScene(config);
+    ASSERT_EQ(engine.mvtVectorSourceCount(), 2u);
+    engine.render(1.0 / 60.0);
+
+    EXPECT_GT(roadsFetches.load(), 0);
+    EXPECT_GT(placesFetches.load(), 0);
+}
+
+TEST(PlatformIntegrationTest, DefaultMvtFetchExpandsEachSourceUrlNamespace) {
+    MockRenderDevice device;
+    MockPlatformBridge bridge;
+    Engine engine(&device);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+
+    EarthSceneConfig config;
+    config.initialCamera = {116.3913, 39.9039, 1000000.0};
+    MvtSourceConfig roads;
+    roads.id = "roads-url";
+    roads.urlTemplate = "https://roads.example/{z}/{x}/{y}?shard={s}";
+    roads.subdomains = {"a", "b", "c"};
+    roads.minimumZoom = 0;
+    roads.maximumZoom = 2;
+    MvtSourceConfig places;
+    places.id = "places-url";
+    places.urlTemplate = "https://places.example/{z}/{x}/{y}?shard={s}";
+    places.minimumZoom = 0;
+    places.maximumZoom = 2;
+    config.mvtSources = {roads, places};
+
+    EarthEngineSdkFacade facade(engine, device, bridge);
+    facade.installScene(config);
+    engine.render(1.0 / 60.0);
+
+    const std::vector<std::string> urls = bridge.requestedUrls();
+    ASSERT_FALSE(urls.empty());
+    bool sawRoads = false;
+    bool sawPlaces = false;
+    for (const std::string& url : urls) {
+        EXPECT_EQ(url.find("{z}"), std::string::npos);
+        EXPECT_EQ(url.find("{x}"), std::string::npos);
+        EXPECT_EQ(url.find("{y}"), std::string::npos);
+        EXPECT_EQ(url.find("{s}"), std::string::npos);
+        sawRoads = sawRoads ||
+            url.compare(0, std::string("https://roads.example/").size(),
+                       "https://roads.example/") == 0;
+        sawPlaces = sawPlaces ||
+            url.compare(0, std::string("https://places.example/").size(),
+                       "https://places.example/") == 0;
+    }
+    EXPECT_TRUE(sawRoads);
+    EXPECT_TRUE(sawPlaces);
+    EXPECT_TRUE(std::any_of(
+        urls.begin(), urls.end(), [](const std::string& url) {
+            return url.find("roads.example/") != std::string::npos &&
+                   (url.find("shard=a") != std::string::npos ||
+                    url.find("shard=b") != std::string::npos ||
+                    url.find("shard=c") != std::string::npos);
+        })) << "configured letter subdomains must be supported";
+}
+
+TEST(PlatformIntegrationTest, ExplicitSharedMvtCacheSharesProviderNamespace) {
+    MockRenderDevice device;
+    MockPlatformBridge bridge;
+    Engine engine(&device);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+
+    std::atomic<int> fetches{0};
+    auto sharedCache = std::make_shared<MvtTileFetchCache>(
+        [&fetches](const TileKey&, MvtTileFetchCache::FetchCallback callback) {
+            fetches.fetch_add(1);
+            callback(404, {});
+        },
+        16);
+    EarthSceneConfig config;
+    config.initialCamera = {116.3913, 39.9039, 1000000.0};
+    MvtSourceConfig a;
+    a.id = "shared-a";
+    a.minimumZoom = 0;
+    a.maximumZoom = 1;
+    a.sharedCache = sharedCache;
+    MvtSourceConfig b = a;
+    b.id = "shared-b";
+    config.mvtSources = {a, b};
+
+    EarthEngineSdkFacade facade(engine, device, bridge);
+    facade.installScene(config);
+    engine.render(1.0 / 60.0);
+
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 2u);
+    EXPECT_GT(fetches.load(), 0);
+    EXPECT_EQ(sharedCache->stats().fetches,
+              static_cast<uint64_t>(fetches.load()))
+        << "both sources must use the explicitly supplied cache namespace";
+    EXPECT_GT(sharedCache->stats().failureSkips, 0u)
+        << "the second source must observe the first source's provider-local "
+           "failure ledger instead of issuing duplicate requests";
+}
+
+TEST(PlatformIntegrationTest, RemovingMvtSourceCancelsDefaultFetches) {
+    MockRenderDevice device;
+    MockPlatformBridge bridge;
+    bridge.setHangRequests(true);
+    Engine engine(&device);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+
+    EarthEngineSdkFacade facade(engine, device, bridge);
+    EarthSceneConfig config;
+    config.initialCamera = {116.3913, 39.9039, 1000000.0};
+    MvtSourceConfig source;
+    source.id = "cancel-mvt";
+    source.urlTemplate = "https://mvt.example/{z}/{x}/{y}.pbf";
+    source.minimumZoom = 0;
+    source.maximumZoom = 2;
+    config.mvtSources.push_back(source);
+    facade.installScene(config);
+    engine.render(1.0 / 60.0);
+
+    const int requests = bridge.requestCount();
+    ASSERT_GT(requests, 0);
+    ASSERT_TRUE(facade.removeMvtSource("cancel-mvt"));
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 0u);
+    EXPECT_EQ(bridge.cancelCount(), requests);
+}
+
+TEST(PlatformIntegrationTest, MvtSourceSurvivesSurfaceRecreate) {
+    MockRenderDevice device;
+    MockPlatformBridge bridge;
+    Engine engine(&device);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+
+    std::atomic<int> fetches{0};
+    EarthSceneConfig config;
+    config.initialCamera = {116.3913, 39.9039, 1000000.0};
+    MvtSourceConfig source;
+    source.id = "surface-mvt";
+    source.minimumZoom = 0;
+    source.maximumZoom = 2;
+    source.fetchTile = [&fetches](
+        const TileKey&, MvtTileFetchCache::FetchCallback cb) {
+        fetches.fetch_add(1);
+        cb(404, {});
+    };
+    config.mvtSources.push_back(source);
+
+    EarthEngineSdkFacade facade(engine, device, bridge);
+    facade.installScene(config);
+    engine.render(1.0 / 60.0);
+    const int beforeDestroy = fetches.load();
+    ASSERT_GT(beforeDestroy, 0);
+    ASSERT_EQ(engine.mvtVectorSourceCount(), 1u);
+
+    engine.onSurfaceDestroyed();
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 1u);
+
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+    engine.render(1.0 / 60.0);
+
+    EXPECT_EQ(engine.mvtVectorSourceCount(), 1u);
+    // The failed-fetch backoff may intentionally suppress an immediate
+    // refetch after recreation.  The lifecycle contract is that the source
+    // remains Scene-owned and the recreated surface can render without a
+    // dangling layer/device reference.
+    EXPECT_GE(fetches.load(), beforeDestroy);
+    EXPECT_GT(device.submitCount, 1);
 }
 
 TEST(PlatformIntegrationTest, TestDataHelperCreatesValidImages) {

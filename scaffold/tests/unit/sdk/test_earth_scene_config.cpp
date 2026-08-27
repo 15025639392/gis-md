@@ -10,8 +10,36 @@ TEST(EarthSceneConfig, DefaultsAreEmptyAndNonRendering) {
 
     EXPECT_EQ(config.terrain.kind, TerrainSourceKind::None);
     EXPECT_TRUE(config.rasterOverlays.empty());
+    EXPECT_TRUE(config.mvtSources.empty());
     EXPECT_FALSE(config.gltf.enabled);
     EXPECT_DOUBLE_EQ(config.fixedSimulationJulianDate, 0.0);
+}
+
+TEST(EarthSceneConfig, StoresMultipleMvtSourceDefinitions) {
+    EarthSceneConfig config;
+    MvtSourceConfig roads;
+    roads.id = "roads";
+    roads.urlTemplate = "https://a.example/{z}/{x}/{y}.pbf";
+    roads.subdomains = {"a", "b", "c"};
+    roads.minimumZoom = 3;
+    roads.maximumZoom = 14;
+    roads.includeLayers = {"roads"};
+    roads.refinement = VectorTileRefinementPolicy::GeometryReplace;
+    MvtSourceConfig pois;
+    pois.id = "pois";
+    pois.urlTemplate = "https://b.example/{z}/{x}/{y}.pbf";
+    pois.includeLayers = {"poi"};
+    config.mvtSources = {roads, pois};
+
+    EarthSceneConfig copied = config;
+    ASSERT_EQ(copied.mvtSources.size(), 2u);
+    EXPECT_EQ(copied.mvtSources[0].id, "roads");
+    EXPECT_EQ(copied.mvtSources[0].refinement,
+              VectorTileRefinementPolicy::GeometryReplace);
+    EXPECT_EQ(copied.mvtSources[0].subdomains,
+              (std::vector<std::string>{"a", "b", "c"}));
+    EXPECT_EQ(copied.mvtSources[1].urlTemplate,
+              "https://b.example/{z}/{x}/{y}.pbf");
 }
 
 TEST(EarthSceneConfig, StoresSceneSourceDefinitions) {

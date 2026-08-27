@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core/math/Vec3.h"
+#include "data/MvtVectorSource.h"
 #include "scene/Diagnostics.h"
 #include "scene/FrameState.h"
 #include "style/StyleDocument.h"
@@ -105,6 +106,13 @@ public:
     /// 移除 FeatureStore 渲染层
     std::unique_ptr<FeatureRenderLayer> removeFeatureRenderLayer(
         const std::string& layerId);
+
+    /// Add/remove a Scene-owned MVT source and its sink-bound render layer.
+    bool addMvtVectorSource(std::unique_ptr<MvtVectorSource> source,
+                            std::unique_ptr<FeatureRenderLayer> layer);
+    bool removeMvtVectorSource(const std::string& layerId);
+    size_t mvtVectorSourceCount() const;
+    FeatureRenderLayer* mvtVectorLayer(const std::string& layerId) const;
 
     /// 矢量标注字体注入(P5b):应用层读字体文件供字节(引擎不碰文件系统)。
     /// TrueType/ttc 首字体;CFF/OTF 不支持返回 false。渲染线程调用。

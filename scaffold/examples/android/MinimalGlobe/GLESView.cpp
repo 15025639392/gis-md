@@ -215,8 +215,7 @@ static std::atomic<int> gWidth{0}, gHeight{0};
 
 // 每帧发布相机方位角(弧度),UI 指北针无锁读取。
 static std::atomic<float> gHeadingRadians{0.0f};
-// P6 分段:本帧 gMvtSource->update 耗时(渲染线程唯一写者,读同线程)
-static double gFrameMvtMs = 0.0;
+// P6 分段:Scene 托管的 MVT source 更新耗时通过 Diagnostics 发布。
 
 // Engine + RenderDevice
 static std::unique_ptr<RenderDeviceGLES> gRenderDevice;
@@ -277,7 +276,6 @@ static std::vector<FeatureId> gEditHandleIds;
 // 选择/解码/灌注,网络与样式在这里:fetch 走 CurlScheduler,渲染挂
 // 一个普通 FeatureRenderLayer(store 即 source 的灌注目标)。 ----
 static FeatureRenderLayer* gMvtBasemapLayer = nullptr;  // Engine 持有所有权
-static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
 
 // ---- C2/E3:高德矢量。type2 面:无地形时走 VectorFill(V30 地球网格);
 // drape overlay 仍注册,无页则不出。路网/建筑/POI 仍主源 FeatureRenderLayer。 ----
@@ -649,9 +647,8 @@ static void cancelInputIfNeeded() {
 }
 
 static void clearDemoEngineObjects() {
-    // MVT 源先停:它持有 basemap 层 store 的引用(层归 Engine 所有),
-    // 且在飞的 HttpRequest 句柄析构即取消。
-    gMvtSource.reset();
+    // SDK facade 销毁时先停 Scene-owned MVT bundles；其 HttpRequest 句柄
+    // 随 source-specific fetch state 的 RAII 析构取消。
     gAmapRegionCache.reset();
     gAmapRegionsSource.reset();
     gAmapWater12Source.reset();
@@ -689,6 +686,12 @@ static void clearDemoEngineObjects() {
     gNightStyle = false;
     gSdkFacade.reset();
     gEngine.reset();
+    // The cache is explicitly shared by the demo's MVT drape, deprecated
+    // road-field compatibility path, and Scene-owned symbol source.  Do not
+    // carry it across an Engine rebuild: its z/x/y keys have no provider or
+    // URL namespace, so a changed sources.json URL could otherwise reuse old
+    // provider bytes in the new scene.
+    gMvtTileCache.reset();
     gRenderDevice.reset();
     gMvtDecodePool.reset();
     gAmapPoiDecodePool.reset();
@@ -814,6 +817,9 @@ static bool createEngine() {
         const bool amapVectorEnabled =
             minimal_globe_demo::kEnableAmapVectorDemo &&
             startupBoolProperty("debug.ee.amapvector", true);
+        const bool mvtBasemapEnabled = startupBoolProperty(
+            "debug.ee.mvtbasemap",
+            minimal_globe_demo::kEnableMvtBasemap);
         LOGI("Engine initialized successfully, camera pos: %.1f,%.1f,%.1f",
              gEngine->camera().position().x(),
              gEngine->camera().position().y(),
@@ -981,20 +987,20 @@ static bool createEngine() {
             "debug.ee.aerialfog", sceneConfig.aerialFog);
         sceneConfig.gpuPassTiming = startupBoolProperty(
             "debug.ee.gputiming", sceneConfig.gpuPassTiming);
-        LOGI("RuntimeAB amapVector=%d aerialFog=%d gpuTiming=%d",
+        LOGI("RuntimeAB amapVector=%d mvtBasemap=%d aerialFog=%d gpuTiming=%d",
              amapVectorEnabled ? 1 : 0,
+             mvtBasemapEnabled ? 1 : 0,
              sceneConfig.aerialFog ? 1 : 0,
              sceneConfig.gpuPassTiming ? 1 : 0);
-        gSdkFacade->installScene(sceneConfig);
-
-        // ---- P4 MVT 只读底图:先于编辑演示层挂(先挂先画,垫底)。----
-        if (minimal_globe_demo::kEnableMvtBasemap) {
+        // ---- P4 MVT 只读底图 ----
+        // Source/layer/cache/pool ownership is transferred through the same
+        // declarative scene install as terrain and overlays:
+        // EarthSceneConfig → EarthEngineSdkFacade → Scene.
+        if (mvtBasemapEnabled) {
             // E1:底图走**瓦片桶**(worker 全链镶嵌),不再灌 store,故
             // 细桶那个 workaround 已无意义 —— 它当初是为了让「整城要素塞进
             // 空间分桶 store」时增量激活不退化成整桶全量重镶。桶尺寸留默认,
             // 该层的 store 现在只承载 demo 自己的编辑要素。
-            auto basemapLayer = std::make_unique<FeatureRenderLayer>(
-                "mvt-basemap", gRenderDevice.get(), Ellipsoid::WGS84());
             FeatureRenderStyle bs;
             // 贴地:stencil 分类 + 区域高度范围(零地形采样)。此前这里是
             // Absolute 抬 500m,因为贴地体要逐顶点采地形高度、而 worker 拿不到
@@ -1096,12 +1102,14 @@ static bool createEngine() {
                  {"amenity:hospital",
                   StyleExpression::literal({0.95f, 0.95f, 0.95f, 0.95f})}},
                 StyleExpression::literal({0.92f, 0.26f, 0.21f, 0.95f}));
-            basemapLayer->setStyle(bs);
             // 贴地体的高度范围由 SceneRenderPipeline 每帧从可见地形瓦片汇总,
             // demo 侧不再设 —— 两处真相会在相机飞离本区时打架。
-            gMvtBasemapLayer = basemapLayer.get();
-
-            ensureMvtWorkerPools();
+            MvtSourceConfig mvtConfig;
+            mvtConfig.id = "mvt-basemap";
+            mvtConfig.urlTemplate = gMvtBasemapUrl;
+            mvtConfig.minimumZoom = minimal_globe_demo::kMvtBasemapMinZoom;
+            mvtConfig.maximumZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
+            mvtConfig.style = bs;
             MvtVectorSource::Options mvtOpts;
             // E2:道路分级过滤从数据侧(tippecanoe -j)搬回样式侧。改分级
             // 策略不再需要重切整套瓦片,同一份数据也能给不同样式复用 ——
@@ -1169,53 +1177,30 @@ static bool createEngine() {
                     mvtOpts.layerRules = {poi, roads};
                 }
             }
-            mvtOpts.tree.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
-            mvtOpts.tree.maxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
+            mvtConfig.includeLayers = mvtOpts.includeLayers;
+            mvtConfig.layerRules = mvtOpts.layerRules;
+            mvtConfig.maximumTileCommitsPerUpdate =
+                mvtOpts.maxTileCommitsPerUpdate;
+            mvtConfig.maximumTessellationsInFlight =
+                mvtOpts.maxTessellationsInFlight;
             if (minimal_globe_demo::kEnableEPlanRoadRibbon) {
                 mvtOpts.tree.refinement =
                     VectorTileTree::RefinementPolicy::GeometryReplace;
             }
+            mvtConfig.refinement = mvtOpts.tree.refinement;
             // 获取层单一化(刀A.5):与 drape/场共享同一 MvtTileFetchCache
             // —— 同一块数据瓦三消费方网络恰一次、解码恰一次、内存恰一份。
-            if (!gMvtTileCache) {
-                gMvtTileCache = std::make_shared<MvtTileFetchCache>(
-                    [](const TileKey& key,
-                       MvtTileFetchCache::FetchCallback cb) {
-                        mvtFetchTile(key, std::move(cb));
-                    },
-                    minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtDecodePool);
-            }
-            // E1 接线:镶嵌钩子在 worker 上跑,持一份样式快照(图集置空,
-            // 见 FeatureRenderLayer::workerTessellationContext 的线程契约);
-            // commit/drop 在渲染线程由 update() 调。裸指针安全:两者生命
-            // 周期都由 gMvtSource.reset() 先于图层销毁保证。
-            FeatureRenderLayer* layerPtr = basemapLayer.get();
-            MvtVectorSource::Sinks sinks;
-            sinks.tessellate = [layerPtr](const TileKey& key,
-                                          std::vector<Feature>&& features) {
-                // 贴地体高度范围按**本瓦片矩形**取局部值(拿不到相交地形瓦片
-                // 时退回全屏范围)。宽视野下这是矢量 fill 的主导因子:体高
-                // 直接换算成屏幕覆盖。
-                // kMeasureDisablePerTileRange = A/B 对照组(退回全局范围)。
-                return FeatureRenderLayer::tessellateTileMesh(
-                    minimal_globe_demo::kMeasureDisablePerTileRange
-                        ? layerPtr->workerTessellationContext()
-                        : layerPtr->workerTessellationContextForArea(
-                              mvtTileRectangle(key)),
-                    features);
-            };
-            sinks.commit = [layerPtr](const TileKey& key,
-                                      FeatureTileMesh& mesh) {
-                return layerPtr->commitTileMesh(key, mesh);
-            };
-            sinks.drop = [layerPtr](const TileKey& key) {
-                layerPtr->dropTileMesh(key);
-            };
-            gMvtSource = std::make_unique<MvtVectorSource>(
-                mvtOpts, std::move(sinks), gMvtTileCache,
-                gMvtTessellationPool);
-            gEngine->addFeatureRenderLayer(std::move(basemapLayer));
+            mvtConfig.sharedCache = gMvtTileCache;
+            mvtConfig.decodedCacheTiles = minimal_globe_demo::kMvtTileCacheDecoded;
+            mvtConfig.rawCacheTiles = minimal_globe_demo::kMvtTileCacheRaw;
+            mvtConfig.decodeThreads = gMvtWorkerBudget.decodeThreads;
+            mvtConfig.tessellationThreads = gMvtWorkerBudget.tessellationThreads;
+            sceneConfig.mvtSources.push_back(std::move(mvtConfig));
+        }
+
+        gSdkFacade->installScene(std::move(sceneConfig));
+        if (mvtBasemapEnabled) {
+            gMvtBasemapLayer = gSdkFacade->mvtVectorLayer("mvt-basemap");
             // V26 三期:样式文档分发目标注册(drape/场在前面已建;任一为
             // 空 = 该路不分发)。teardown 与三个 g* 指针同点清。
             gEngine->setStyleTargets(gDrapeProviderRaw, gRoadFieldSource,
@@ -2260,58 +2245,6 @@ static void renderFrame() {
     if (minimal_globe_demo::kEnableVectorDemoLayers) {
         refreshClusterDisplay();
     }
-    if (gMvtSource) {
-        // P4 MVT 底图驱动(渲染线程契约):地平线视口 + 相机高定 zoom。
-        const Ellipsoid& wgs84 = Ellipsoid::WGS84();
-        const Cartographic camCarto =
-            wgs84.cartesianToCartographic(gEngine->camera().position());
-        const Vec3& radii = wgs84.radii();
-        const double minRadius =
-            std::min(radii.x(), std::min(radii.y(), radii.z()));
-        const auto mvtStart = std::chrono::steady_clock::now();
-        gMvtSource->update(
-            MvtVectorSource::horizonViewRectangle(camCarto, minRadius),
-            std::max(1.0, camCarto.height()));
-        gFrameMvtMs = std::chrono::duration<double, std::milli>(
-            std::chrono::steady_clock::now() - mvtStart).count();
-        // P6:mvt 超 8ms 就逐帧报构成 —— 尖峰是稀疏事件,周期采样必漏。
-        if (gFrameMvtMs >= 8.0) {
-            const auto& us = gMvtSource->lastUpdateStats();
-            LOGI("MvtSlow %.1fms = ingest %.2f + tree %.2f + dispatch %.2f "
-                 "+ commit %.2f | commits=%d drops=%d tess=%d",
-                 gFrameMvtMs, us.ingestMs, us.treeMs, us.dispatchMs,
-                 us.commitMs, us.commits, us.drops, us.tessellateDispatched);
-        }
-        // fetch/decode 与 worker 镶嵌各自持有 WorkLedger Landing 票，完成
-        // 入箱后释放并唤醒渲染循环；ready commit/retry 则持 Pumped 票。
-        // 这里不能再按 pending 每帧 requestRender，否则等待网络也会持续
-        // 满帧率渲染，直接抹掉 Landing/Pumped 分治的省帧与交互收益。
-        // V27 标注收敛的续帧申报在引擎层(FeatureRenderLayer 的 labelConverge
-        // Pumped 票 + Scene::hasConvergingWork ④),app 侧无需置脏。
-        static uint64_t mvtLogCounter = 0;
-        if (++mvtLogCounter % 120 == 1) {
-            // cache 三数是 P2(容量)与 V18(内存有界)的共同判据:
-            // refetch 稳态该恒 0(>0 = 容量兜不住工作集,白拉);
-            // residentKB 是**实测**常驻字节,别再填"应该很小"。
-            const auto cs = gMvtTileCache
-                                ? gMvtTileCache->stats()
-                                : MvtTileFetchCache::Stats{};
-            LOGI("VectorE1 mvt: active=%zu meshes=%zu loaded=%zu pending=%zu "
-                 "failed=%zu | cache hit=%llu fetch=%llu refetch=%llu "
-                 "resident=%zu/%zuKB raw=%zu/%zuKB rawHit=%llu",
-                 gMvtSource->activeTileCount(),
-                 gMvtBasemapLayer ? gMvtBasemapLayer->tileMeshCount() : 0,
-                 gMvtSource->tree().loadedCount(),
-                 gMvtSource->tree().pendingCount(),
-                 gMvtSource->tree().failedCount(),
-                 static_cast<unsigned long long>(cs.hits),
-                 static_cast<unsigned long long>(cs.fetches),
-                 static_cast<unsigned long long>(cs.refetches),
-                 cs.residentTiles, cs.residentBytes / 1024, cs.rawTiles,
-                 cs.rawBytes / 1024,
-                 static_cast<unsigned long long>(cs.rawHits));
-        }
-    }
     // C2/E3:高德矢量几何源驱动(type2 VectorFill + 主源 + POI)。
     if (gAmapRegionsSource || gAmapWater12Source || gAmapMainSource ||
         gAmapPoiSource) {
@@ -2548,7 +2481,7 @@ static void renderFrame() {
             static_cast<unsigned long long>(frameId),
             frameTotalMs,
             preMs,
-            gFrameMvtMs,
+            stageDiag.mvtVectorUpdateMs,
             engineMs,
             postEngineMs,
             swapMs,

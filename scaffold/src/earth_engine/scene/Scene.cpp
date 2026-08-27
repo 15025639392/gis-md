@@ -4,6 +4,7 @@
 
 #include <cstring>
 #include "../debug/PlatformLog.h"
+#include "../debug/PerfTimer.h"
 #include "Camera.h"
 #include "SceneEnvironmentCoordinator.h"
 #include "SceneInteractionCoordinator.h"
@@ -14,6 +15,8 @@
 #include "SceneTilesetCoordinator.h"
 #include "PresentationTrace.h"
 #include "../camera/CameraSystem.h"
+#include "../core/geodesy/Cartographic.h"
+#include "../core/geodesy/Ellipsoid.h"
 #include "../environment/SkyGradient.h"
 #include "../interaction/InputEvent.h"
 #include "../layers/FeatureRenderLayer.h"
@@ -114,6 +117,7 @@ Scene::Scene()
 }
 
 Scene::~Scene() {
+    clearMvtVectorSources();
     renderer_.reset();
 }
 
@@ -131,12 +135,17 @@ void Scene::setTerrainDisplacementPool(TerrainDisplacementTemplatePool* pool) {
 
 bool Scene::setRenderDevice(RenderDevice* device) {
     renderDevice_ = device;
-    layers_->setRenderDevice(device);
     if (!device) {
+        for (auto& runtime : mvtSources_) {
+            if (runtime.source) runtime.source->suspend();
+        }
+        layers_->setRenderDevice(nullptr);
         renderPipeline_.reset();
         renderer_.reset();
         return false;
     }
+
+    layers_->setRenderDevice(device);
 
     renderer_ = std::make_unique<Renderer>(device);
     renderPipeline_ = std::make_unique<SceneRenderPipeline>();
@@ -173,6 +182,25 @@ void Scene::update(double deltaSeconds) {
             interaction_->interactionFocusTimeSeconds(),
             environment_->timeController(),
             environment_->skyGradient()));
+
+    const double mvtStartMs = perf::nowMs();
+    const FrameState& frame = frameRuntime_.frameState();
+    if (frame.camera) {
+        const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+        const Cartographic cameraCarto =
+            ellipsoid.cartesianToCartographic(frame.camera->position());
+        const Vec3& radii = ellipsoid.radii();
+        const double minRadius =
+            std::min(radii.x(), std::min(radii.y(), radii.z()));
+        const Rectangle viewRect = MvtVectorSource::horizonViewRectangle(
+            cameraCarto, minRadius);
+        const double cameraHeight = std::max(1.0, cameraCarto.height());
+        for (auto& runtime : mvtSources_) {
+            if (runtime.source) runtime.source->update(viewRect, cameraHeight);
+        }
+    }
+    telemetry_->diagnostics().mvtVectorUpdateMs =
+        perf::nowMs() - mvtStartMs;
 }
 
 void Scene::setSelectorViewOverride(
@@ -279,6 +307,19 @@ bool Scene::hasConvergingWork(const char** outReason) const {
     for (const auto& layer : layers_->featureRenderLayers()) {
         if (layer && layer->visible() && layer->hasPendingLabelWork()) {
             return hit("labelConverge");
+        }
+    }
+
+    // The WorkLedger path already covers MVT fetch/tessellation/commit/retry.
+    // Keep the legacy fallback equally complete for platforms without a frame
+    // wake callback, otherwise an inbox can land after the host has gone idle.
+    for (const auto& runtime : mvtSources_) {
+        if (!runtime.source) continue;
+        if (runtime.source->tree().pendingCount() > 0 ||
+            runtime.source->hasTessellationInFlight() ||
+            runtime.source->pendingCommitCount() > 0 ||
+            runtime.source->tree().hasRetryPending()) {
+            return hit("mvtVectorPending");
         }
     }
 
@@ -503,7 +544,62 @@ void Scene::addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer) {
 
 std::unique_ptr<FeatureRenderLayer> Scene::removeFeatureRenderLayer(
     const std::string& layerId) {
+    // An MVT source and its sink-bound layer are one lifecycle unit.  Route
+    // the legacy generic removal entry point through the source teardown
+    // protocol instead of detaching the layer while Scene keeps updating the
+    // source.  The source-aware API intentionally returns no detached layer.
+    if (removeMvtVectorSource(layerId)) {
+        return nullptr;
+    }
     return layers_->removeFeatureRenderLayer(layerId);
+}
+
+bool Scene::addMvtVectorSource(
+    std::unique_ptr<MvtVectorSource> source,
+    std::unique_ptr<FeatureRenderLayer> layer) {
+    if (!source || !layer || layer->id().empty()) return false;
+    const std::string layerId = layer->id();
+    for (const auto& runtime : mvtSources_) {
+        if (runtime.layerId == layerId) return false;
+    }
+    for (const auto& existing : layers_->featureRenderLayers()) {
+        if (existing && existing->id() == layerId) return false;
+    }
+    layer->setRenderDevice(renderDevice_);
+    layers_->addFeatureRenderLayer(std::move(layer));
+    mvtSources_.push_back(MvtRuntime{std::move(source), layerId});
+    return true;
+}
+
+bool Scene::removeMvtVectorSource(const std::string& layerId) {
+    auto it = std::find_if(
+        mvtSources_.begin(), mvtSources_.end(),
+        [&](const MvtRuntime& runtime) { return runtime.layerId == layerId; });
+    if (it == mvtSources_.end()) return false;
+    if (it->source) it->source->suspend();
+    layers_->removeFeatureRenderLayer(layerId);
+    it->source.reset();
+    mvtSources_.erase(it);
+    return true;
+}
+
+size_t Scene::mvtVectorSourceCount() const { return mvtSources_.size(); }
+
+FeatureRenderLayer* Scene::mvtVectorLayer(const std::string& layerId) const {
+    const auto it = std::find_if(
+        mvtSources_.begin(), mvtSources_.end(),
+        [&](const MvtRuntime& runtime) { return runtime.layerId == layerId; });
+    if (it == mvtSources_.end()) return nullptr;
+    for (const auto& layer : layers_->featureRenderLayers()) {
+        if (layer && layer->id() == it->layerId) return layer.get();
+    }
+    return nullptr;
+}
+
+void Scene::clearMvtVectorSources() {
+    while (!mvtSources_.empty()) {
+        removeMvtVectorSource(mvtSources_.back().layerId);
+    }
 }
 
 bool Scene::setLabelFontData(std::vector<uint8_t> fontData) {

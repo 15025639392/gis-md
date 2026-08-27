@@ -9,8 +9,8 @@
 
 > **高德专属北极星**：供应商协议、Amap 4326/离散 zoom、regions/main/water12/POI 分工、真实链路验收和高德未闭环债务见 [`docs/northstar/amap-vector.md`](northstar/amap-vector.md)。本文只保留 MVT 通用机制，不把高德细节复制成第二份真源。
 
-状态时点:2026-08-18(V26 样式系统三期收官 + §1b 驱动切面/七态 dump 后订正;
-上一时点 2026-08-16 `e13de16f1`)。
+状态时点:2026-08-27(MVT source 纳入 Scene/SDK 托管；V26 样式系统三期收官 + §1b 驱动切面/七态 dump 后订正;
+上一时点 2026-08-18)。
 
 > ⚠️ **生命周期状态：MVT 道路线场即将废弃。** 范围仅限
 > `RoadFieldSource` → `LineFieldRasterizer`/D2 → `TerrainPageStore` 场平面。
@@ -105,6 +105,32 @@ CLAUDE.md「帧收敛申报纪律」)。
   地形代次细化 ────────→ ⑧重钳(锚点高度重采,V27 家族第四缺口根修)
   换样式(V26/V28)────→ drape/场:epoch 原子换手;符号:Re-tess 全桶重镶
 ```
+
+### 1c. Scene / SDK 托管边界（2026-08-27）
+
+MVT 点/标注 source 不再由 Android demo 保存裸 `unique_ptr` 或在 `renderFrame()` 中手工调用 `update()`。当前 SDK 托管契约面向标准 **XYZ WebMercator MVT**（坐标转换仍由 `MvtFeatureConverter` 固定实现）；声明式链路为：
+
+```text
+EarthSceneConfig.mvtSources
+  → EarthEngineSdkFacade
+      → MvtTileFetchCache + tessellation pool + FeatureRenderLayer
+          → Scene MVT runtime registry
+              → Scene::update(camera/FrameState/tileset 完成后自动 update)
+                  → SceneRenderPipeline / FeatureRenderLayer commands
+```
+
+Scene 以 source + sink-bound layer 为不可拆分的 runtime bundle，支持多 source。默认每个 `MvtSourceConfig` 使用独立 cache instance；显式提供 `sharedCache` 才与 drape/兼容消费方共享获取层，且调用方必须保证所有共享者属于同一 provider/request namespace。默认 fetcher 由 `PlatformBridge::get` 提供，URL 模板替换 `{z}`、`{x}`、`{y}`、`{s}`；`subdomains` 可配置数字或字母分片，默认 transport 的请求句柄由 SDK 持有到完成或 source 销毁。若注入 `fetchTile` 或由外部继续持有 `sharedCache`，取消/超时/回调完成契约由调用方负责；此类自定义 transport 不应被描述为 SDK 可取消。
+
+移除、场景重装和 Surface 销毁均走同一退出协议：
+
+```text
+suspend producer
+  → wait active tessellation callbacks
+  → drop old GPU buckets
+  → remove layer / destroy source
+```
+
+Surface 重建只重新绑定 `RenderDevice`，source 保留在 Scene registry；下一帧自动选择、请求、镶嵌和 commit。`WorkLedger` 的 Landing/Pumped 票覆盖 fetch、tessellation、待 commit 和 retry，避免按需渲染停帧后异步产物无人落地。`Scene::diagnostics().mvtVectorUpdateMs` 单独记录托管 source 的渲染线程更新耗时，便于与 terrain、render submit 和 swap 分段对照。
 
 ### 逐边可靠性账(2026-08-18 快照,变更时更新本表)
 

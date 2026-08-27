@@ -215,6 +215,12 @@ public:
     FeatureRenderLayer(const FeatureRenderLayer&) = delete;
     FeatureRenderLayer& operator=(const FeatureRenderLayer&) = delete;
 
+    /// Rebind after a GPU surface/context lifecycle change. Passing nullptr
+    /// releases every GPU-derived bucket while the old context is still valid;
+    /// binding a new device rebuilds editable-store buckets, while MVT tile
+    /// buckets are repopulated by their Scene-owned source.
+    void setRenderDevice(RenderDevice* device);
+
     const std::string& id() const { return layerId_; }
     void setVisible(bool v);
     bool visible() const { return visible_; }

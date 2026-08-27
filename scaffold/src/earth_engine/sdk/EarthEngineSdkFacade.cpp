@@ -11,7 +11,11 @@
 #include "../debug/PlatformLog.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../layers/ActivatedRasterOverlay.h"
+#include "../layers/FeatureRenderLayer.h"
 #include "../layers/RasterOverlay.h"
+#include "../data/MvtFeatureConverter.h"
+#include "../data/MvtVectorSource.h"
+#include "../core/async/AsyncSystem.h"
 #include "../camera/CameraSystem.h"
 #include "../platform/bridge/PlatformBridge.h"
 #include "../providers/BingMapsImageryProvider.h"
@@ -31,8 +35,10 @@
 #include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <condition_variable>
 #include <map>
 #include <memory>
@@ -40,11 +46,33 @@
 #include <optional>
 #include <string>
 #include <utility>
+#include <unordered_map>
 #include <vector>
 
 namespace earth_engine {
 
 namespace {
+
+std::string buildMvtUrl(const std::string& templateUrl,
+                        const TileKey& key,
+                        const std::vector<std::string>& subdomains) {
+    std::string url = templateUrl;
+    const auto replace = [&](const char* token, const std::string& value) {
+        std::size_t pos = 0;
+        while ((pos = url.find(token, pos)) != std::string::npos) {
+            url.replace(pos, std::strlen(token), value);
+            pos += value.size();
+        }
+    };
+    replace("{z}", std::to_string(key.z));
+    replace("{x}", std::to_string(key.x));
+    replace("{y}", std::to_string(key.y));
+    const size_t shardIndex = subdomains.empty()
+        ? 0u
+        : static_cast<size_t>(key.x + key.y) % subdomains.size();
+    replace("{s}", subdomains.empty() ? "0" : subdomains[shardIndex]);
+    return url;
+}
 
 TilesetOptions makeSceneTilesetOptions(const SceneTilesetConfig& config) {
     TilesetOptions options;
@@ -162,6 +190,48 @@ struct SceneTerrainRuntimeSources {
         TileScheme::createGeographicTMS();
 };
 
+struct MvtRequestState {
+    std::mutex mutex;
+    uint64_t nextId = 1;
+    std::unordered_map<uint64_t, std::unique_ptr<HttpRequest>> requests;
+    std::vector<uint64_t> completed;
+
+    ~MvtRequestState() {
+        std::vector<std::unique_ptr<HttpRequest>> active;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            active.reserve(requests.size());
+            for (auto& [id, request] : requests) {
+                (void)id;
+                active.push_back(std::move(request));
+            }
+            requests.clear();
+            completed.clear();
+        }
+        // HttpRequest is an RAII cancellation handle.  Let the unique_ptr
+        // destructors perform exactly one backend cancellation after the
+        // request-state mutex has been released.
+    }
+
+    void cleanup() {
+        std::vector<std::unique_ptr<HttpRequest>> retired;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            retired.reserve(completed.size());
+            for (uint64_t id : completed) {
+                auto it = requests.find(id);
+                if (it == requests.end()) continue;
+                retired.push_back(std::move(it->second));
+                requests.erase(it);
+            }
+            completed.clear();
+        }
+        // HttpRequest destruction may cancel and eventually invoke a callback;
+        // never do that while holding the request-state mutex.
+        retired.clear();
+    }
+};
+
 SceneTerrainRuntimeSources createTerrainRuntimeSources(
     const TerrainSourceConfig& config,
     PlatformBridge& platformBridge) {
@@ -239,14 +309,167 @@ EarthEngineSdkFacade::EarthEngineSdkFacade(Engine& engine,
       renderDevice_(renderDevice),
       platformBridge_(platformBridge) {}
 
-EarthEngineSdkFacade::~EarthEngineSdkFacade() = default;
+EarthEngineSdkFacade::~EarthEngineSdkFacade() {
+    for (const std::string& id : installedMvtSourceIds_) {
+        engine_.removeMvtVectorSource(id);
+    }
+}
+
+bool EarthEngineSdkFacade::installMvtSource(const MvtSourceConfig& config) {
+        if (config.id.empty()) {
+            logError(platformBridge_, "MVT source rejected: empty id");
+            return false;
+        }
+
+        auto decodePool = std::make_shared<ThreadPool>(
+            std::max<std::size_t>(1, config.decodeThreads));
+        auto tessellationPool = std::make_shared<ThreadPool>(
+            std::max<std::size_t>(1, config.tessellationThreads));
+
+        std::shared_ptr<MvtRequestState> requestState =
+            std::make_shared<MvtRequestState>();
+        MvtTileFetchCache::FetchFn fetch = config.fetchTile;
+        if (!fetch) {
+            const std::string urlTemplate = config.urlTemplate;
+            const std::vector<std::string> subdomains = config.subdomains;
+            PlatformBridge* bridge = &platformBridge_;
+            const HttpRequestPriority priority = config.requestPriority;
+            fetch = [bridge, urlTemplate, subdomains, requestState, priority](
+                        const TileKey& key,
+                        MvtTileFetchCache::FetchCallback callback) {
+                if (urlTemplate.empty()) {
+                    callback(0, {});
+                    return;
+                }
+                requestState->cleanup();
+                const uint64_t id = [&]() {
+                    std::lock_guard<std::mutex> lock(requestState->mutex);
+                    return requestState->nextId++;
+                }();
+                std::weak_ptr<MvtRequestState> weakRequestState = requestState;
+                auto handle = bridge->get(
+                    buildMvtUrl(urlTemplate, key, subdomains),
+                    [weakRequestState, callback = std::move(callback), id](
+                        int statusCode, std::vector<uint8_t> body) mutable {
+                        callback(statusCode, std::move(body));
+                        if (auto state = weakRequestState.lock()) {
+                            std::lock_guard<std::mutex> lock(state->mutex);
+                            state->completed.push_back(id);
+                        }
+                    },
+                    HttpRequestOptions{priority});
+                std::lock_guard<std::mutex> lock(requestState->mutex);
+                requestState->requests[id] = std::move(handle);
+            };
+        }
+
+        std::shared_ptr<MvtTileFetchCache> cache = config.sharedCache;
+        if (!cache) {
+            cache = std::make_shared<MvtTileFetchCache>(
+                std::move(fetch), config.decodedCacheTiles,
+                config.rawCacheTiles, decodePool);
+        }
+
+        MvtVectorSource::Options options;
+        options.debugName = config.id;
+        options.tree.minZoom = config.minimumZoom;
+        options.tree.maxZoom = config.maximumZoom;
+        options.tree.maxCachedTiles = config.maximumCachedTiles;
+        options.tree.maxTilesPerView = config.maximumTilesPerView;
+        options.tree.maxPendingRequests = config.maximumPendingRequests;
+        options.tree.zoomBias = config.zoomBias;
+        options.tree.refinement = config.refinement;
+        options.includeLayers = config.includeLayers;
+        options.layerRules = config.layerRules;
+        options.maxTileCommitsPerUpdate =
+            config.maximumTileCommitsPerUpdate;
+        options.maxTessellationsInFlight = config.maximumTessellationsInFlight;
+
+        auto layer = std::make_unique<FeatureRenderLayer>(
+            config.id, &renderDevice_, Ellipsoid::WGS84());
+        layer->setStyle(config.style);
+        FeatureRenderLayer* layerPtr = layer.get();
+        MvtVectorSource::Sinks sinks;
+        sinks.prepareTessellate = [layerPtr](const TileKey& key) {
+            const FeatureRenderLayer::TessellationContext context =
+                layerPtr->workerTessellationContextForArea(
+                    mvtTileRectangle(key));
+            return [context](const TileKey&,
+                             std::vector<Feature>&& features) {
+                return FeatureRenderLayer::tessellateTileMesh(
+                    context, features);
+            };
+        };
+        sinks.commit = [layerPtr](const TileKey& key,
+                                  FeatureTileMesh& mesh) {
+            return layerPtr->commitTileMesh(key, mesh);
+        };
+        sinks.drop = [layerPtr](const TileKey& key) {
+            layerPtr->dropTileMesh(key);
+        };
+        auto source = std::make_unique<MvtVectorSource>(
+            std::move(options), std::move(sinks), std::move(cache),
+            std::move(tessellationPool));
+        if (!engine_.addMvtVectorSource(std::move(source), std::move(layer))) {
+            logError(platformBridge_, "MVT source rejected: duplicate id " +
+                                         config.id);
+            return false;
+        }
+        installedMvtSourceIds_.push_back(config.id);
+        logInfo(platformBridge_, "MVT source installed: " + config.id);
+        return true;
+}
+
+void EarthEngineSdkFacade::installMvtSources(
+    const std::vector<MvtSourceConfig>& configs) {
+    installedMvtSourceIds_.clear();
+    for (const MvtSourceConfig& config : configs) {
+        installMvtSource(config);
+    }
+}
+
+bool EarthEngineSdkFacade::addMvtSource(MvtSourceConfig config) {
+    if (!installMvtSource(config)) return false;
+    config_.mvtSources.push_back(std::move(config));
+    return true;
+}
+
+bool EarthEngineSdkFacade::removeMvtSource(const std::string& id) {
+    // The facade may only tear down bundles it installed.  Engine also
+    // exposes a lower-level MVT API for callers that deliberately manage
+    // their own bundles; blindly forwarding an unknown id would let one
+    // facade delete another owner's source.
+    if (std::find(installedMvtSourceIds_.begin(),
+                  installedMvtSourceIds_.end(), id) ==
+        installedMvtSourceIds_.end()) {
+        return false;
+    }
+    if (!engine_.removeMvtVectorSource(id)) return false;
+    installedMvtSourceIds_.erase(
+        std::remove(installedMvtSourceIds_.begin(),
+                    installedMvtSourceIds_.end(), id),
+        installedMvtSourceIds_.end());
+    config_.mvtSources.erase(
+        std::remove_if(
+            config_.mvtSources.begin(), config_.mvtSources.end(),
+            [&](const MvtSourceConfig& source) { return source.id == id; }),
+        config_.mvtSources.end());
+    return true;
+}
 
 void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     config_ = std::move(config);
     resetCamera();
 
+    for (const std::string& id : installedMvtSourceIds_) {
+        engine_.removeMvtVectorSource(id);
+    }
+    installedMvtSourceIds_.clear();
+
     rasterOverlays_.clear();
     activatedRasterOverlays_.clear();
+
+    installMvtSources(config_.mvtSources);
 
     std::vector<ActivatedRasterOverlay*> rasterOverlays;
     for (const RasterOverlaySourceConfig& overlayConfig :
@@ -702,6 +925,11 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
             contracts::Gate::ImageryDrivenUpsample,
             !config_.tileset.decoupleImageryFromGeometry);
     }
+}
+
+FeatureRenderLayer* EarthEngineSdkFacade::mvtVectorLayer(
+    const std::string& id) const {
+    return engine_.mvtVectorLayer(id);
 }
 
 void EarthEngineSdkFacade::resetCamera() {

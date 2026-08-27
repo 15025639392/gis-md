@@ -463,6 +463,29 @@ TEST_F(FeatureRenderLayerTest, MultiplePointsShareOneCommand) {
     EXPECT_EQ(18, commands[0].indexCount);  // 3 quad × 6
 }
 
+TEST_F(FeatureRenderLayerTest, SurfaceRebindRebuildsEachStoreBucketOnce) {
+    Feature a;
+    a.type = GeometryType::Point;
+    a.rings = {{Cartographic(6.005 * kDeg, 29.005 * kDeg)}};
+    layer_->store().addFeature(a);
+    Feature b = a;
+    b.rings = {{Cartographic(6.006 * kDeg, 29.006 * kDeg)}};
+    layer_->store().addFeature(std::move(b));
+
+    const int beforeInitialBuild = device_.createdBufferCount;
+    build();
+    const int initialBucketBuffers =
+        device_.createdBufferCount - beforeInitialBuild;
+    ASSERT_GT(initialBucketBuffers, 0);
+
+    layer_->setRenderDevice(nullptr);
+    const int beforeRebind = device_.createdBufferCount;
+    layer_->setRenderDevice(&device_);
+    EXPECT_EQ(device_.createdBufferCount - beforeRebind, initialBucketBuffers)
+        << "surface recreation must rebuild a shared bucket once, not once "
+           "per feature";
+}
+
 TEST_F(FeatureRenderLayerTest, PointPaintOrderExprSplitsCommands) {
     FeatureRenderStyle style = layer_->style();
     style.paintOrderExpr = StyleExpression::match(

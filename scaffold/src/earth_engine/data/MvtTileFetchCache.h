@@ -204,9 +204,14 @@ private:
 namespace detail {
 
 inline uint64_t packDataKey(int z, int x, int y) {
-    return (static_cast<uint64_t>(z) << 48) |
-           (static_cast<uint64_t>(static_cast<uint32_t>(x)) << 24) |
-           static_cast<uint64_t>(static_cast<uint32_t>(y));
+    // The engine's supported tile range is z<=25, so reserve eight bits for
+    // zoom and 28 bits each for x/y.  The previous 16+24+24 layout collided
+    // once x or y reached 2^24 (a valid high-zoom coordinate).
+    constexpr uint64_t kCoordMask = (uint64_t{1} << 28) - 1;
+    return (static_cast<uint64_t>(static_cast<uint32_t>(z)) << 56) |
+           ((static_cast<uint64_t>(static_cast<uint32_t>(x)) & kCoordMask)
+            << 28) |
+           (static_cast<uint64_t>(static_cast<uint32_t>(y)) & kCoordMask);
 }
 
 } // namespace detail

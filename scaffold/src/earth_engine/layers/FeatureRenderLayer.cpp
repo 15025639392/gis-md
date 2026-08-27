@@ -26,6 +26,7 @@
 #include <cstring>
 #include <limits>
 #include <tuple>
+#include <unordered_set>
 #include <vector>
 
 namespace earth_engine {
@@ -319,6 +320,35 @@ FeatureRenderLayer::FeatureRenderLayer(std::string layerId,
       store_(bucketCellSizeRadians) {}
 
 FeatureRenderLayer::~FeatureRenderLayer() = default;
+
+void FeatureRenderLayer::setRenderDevice(RenderDevice* device) {
+    if (renderDevice_ == device) return;
+
+    buckets_.clear();
+    tileBuckets_.clear();
+    previewGpu_ = BucketGpu{};
+    previewGpuValid_ = false;
+    pendingReclamp_.clear();
+    symbolBucketsAwaitingRebuild_ = false;
+    labelsAwaitingPlacement_ = false;
+    labelWorkActiveForCurrentView_ = false;
+    labelWorkTicket_.release();
+    glyphAtlas_ = nullptr;
+    iconAtlas_ = nullptr;
+    renderDevice_ = device;
+
+    if (!renderDevice_) return;
+    std::unordered_set<BucketKey> storeBuckets;
+    storeBuckets.reserve(store_.features().size());
+    for (const auto& [id, feature] : store_.features()) {
+        (void)feature;
+        storeBuckets.insert(store_.bucketOf(id));
+    }
+    for (BucketKey key : storeBuckets) {
+        rebuildBucket(key);
+    }
+    previewDirty_ = previewFeatureId_ != kInvalidFeatureId;
+}
 
 void FeatureRenderLayer::setVisible(bool v) {
     if (visible_ == v) return;
