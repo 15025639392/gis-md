@@ -121,7 +121,7 @@ EarthSceneConfig.mvtSources
 
 Scene 以 source + sink-bound layer 为不可拆分的 runtime bundle，支持多 source。默认每个 `MvtSourceConfig` 使用独立 cache instance；显式提供 `sharedCache` 才与 drape/兼容消费方共享获取层，且调用方必须保证所有共享者属于同一 provider/request namespace。默认 fetcher 由 `PlatformBridge::get` 提供，URL 模板替换 `{z}`、`{x}`、`{y}`、`{s}`；`subdomains` 可配置数字或字母分片，默认 transport 的请求句柄由 SDK 持有到完成或 source 销毁。若注入 `fetchTile` 或由外部继续持有 `sharedCache`，取消/超时/回调完成契约由调用方负责；此类自定义 transport 不应被描述为 SDK 可取消。
 
-移除、场景重装和 Surface 销毁均走同一退出协议：
+显式移除 source、场景重装或 Scene 销毁走完整退出协议：
 
 ```text
 suspend producer
@@ -130,7 +130,7 @@ suspend producer
   → remove layer / destroy source
 ```
 
-Surface 重建只重新绑定 `RenderDevice`，source 保留在 Scene registry；下一帧自动选择、请求、镶嵌和 commit。`WorkLedger` 的 Landing/Pumped 票覆盖 fetch、tessellation、待 commit 和 retry，避免按需渲染停帧后异步产物无人落地。`Scene::diagnostics().mvtVectorUpdateMs` 单独记录托管 source 的渲染线程更新耗时，便于与 terrain、render submit 和 swap 分段对照。
+Surface teardown 不执行 remove/destroy，而是 `suspend producer → wait worker → drop GPU buckets → layer.setRenderDevice(nullptr)`；source+layer bundle 继续保留在 Scene registry。Surface 重建时 layer 绑定新的 `RenderDevice`，下一帧自动恢复选择、请求、镶嵌和 commit。`WorkLedger` 的 Landing/Pumped 票覆盖 fetch、tessellation、待 commit 和 retry，避免按需渲染停帧后异步产物无人落地。`Scene::diagnostics().mvtVectorUpdateMs` 单独记录托管 source 的渲染线程更新耗时，便于与 terrain、render submit 和 swap 分段对照。
 
 ### 逐边可靠性账(2026-08-18 快照,变更时更新本表)
 

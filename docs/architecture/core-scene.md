@@ -49,7 +49,7 @@
 
 `MvtSourceConfig` 是声明式配置入口，支持多个 source。默认每个 source 创建独立的解码/raw cache，因此不同 URL 使用相同 `z/x/y` 不会串源；需要与 MVT 面 drape 或兼容线场共享获取层时，调用方显式传入 `sharedCache`，且必须保证共享者属于同一 provider/request namespace。若未提供 fetcher，SDK 通过 `PlatformBridge::get` 执行 `{z}`/`{x}`/`{y}`/`{s}` 模板替换并持有取消句柄直到回调完成；注入 `fetchTile` 时，取消、超时与“最终一定回调”的契约由调用方承担。
 
-Scene registry 的所有权单位不是裸 source，而是 source 与其 sink-bound `FeatureRenderLayer` 的 bundle。移除、重装或 Engine surface teardown 的顺序固定为：
+Scene registry 的所有权单位不是裸 source，而是 source 与其 sink-bound `FeatureRenderLayer` 的 bundle。显式移除 source、重装 Scene 或销毁 Scene 时，完整退出顺序固定为：
 
 ```text
 source.suspend()
@@ -59,7 +59,7 @@ source.suspend()
 → 销毁 source/cache/pool
 ```
 
-这保证 worker 不会在 layer 已销毁后继续解引用 sink，也保证 Surface 重建时 layer 先解绑旧 `RenderDevice`、source 再由下一帧重新驱动。按需渲染的 `WorkLedger` 同时覆盖 MVT fetch/tessellation/commit/retry，避免异步结果到达后因宿主停帧而无人消费。
+这保证 worker 不会在 layer 已销毁后继续解引用 sink。Surface teardown 走保留式协议：`source.suspend()` 等待 worker 并 drop GPU tile buckets，随后 layer 解绑旧 `RenderDevice`，但 source+layer bundle 仍保留在 Scene registry；Surface 重建时 layer 绑定新设备，source 由下一帧重新驱动。按需渲染的 `WorkLedger` 同时覆盖 MVT fetch/tessellation/commit/retry，避免异步结果到达后因宿主停帧而无人消费。
 
 ### 6. Engine 四阶段帧循环:beginFrame → update → render → endFrame
 每阶段单独计时进 `Diagnostics`:
