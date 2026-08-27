@@ -16,6 +16,7 @@ using earth_engine::StyleFilter;
 using earth_engine::VectorRasterStyle;
 using earth_engine::minimal_globe_demo::makeMvtDrapeStyle;
 using earth_engine::minimal_globe_demo::makeMvtRoadFieldStyle;
+using earth_engine::minimal_globe_demo::chooseMvtWorkerBudget;
 
 namespace {
 
@@ -52,6 +53,40 @@ const earth_engine::VectorRasterLayerPaint& layerNamed(
 }
 
 } // namespace
+
+TEST(MvtWorkerBudget, KeepsDecodeIndependentOnLowMemoryPhone) {
+    constexpr int64_t kGiB = 1024LL * 1024LL * 1024LL;
+    const auto budget = chooseMvtWorkerBudget(8, 4 * kGiB);
+    EXPECT_EQ(budget.decodeThreads, 1u);
+    EXPECT_EQ(budget.poiDecodeThreads, 1u);
+    EXPECT_EQ(budget.tessellationThreads, 2u);
+}
+
+TEST(MvtWorkerBudget, UsesBoundedParallelismOnHighMemoryPhone) {
+    constexpr int64_t kGiB = 1024LL * 1024LL * 1024LL;
+    const auto budget = chooseMvtWorkerBudget(8, 16 * kGiB);
+    EXPECT_EQ(budget.decodeThreads, 2u);
+    EXPECT_EQ(budget.poiDecodeThreads, 1u);
+    EXPECT_EQ(budget.tessellationThreads, 3u);
+    EXPECT_LE(budget.decodeThreads + budget.poiDecodeThreads +
+                  budget.tessellationThreads,
+              6u);
+}
+
+TEST(MvtWorkerBudget, UnknownMemoryUsesConservativeSplitPools) {
+    const auto budget = chooseMvtWorkerBudget(8, 0);
+    EXPECT_EQ(budget.decodeThreads, 1u);
+    EXPECT_EQ(budget.poiDecodeThreads, 1u);
+    EXPECT_EQ(budget.tessellationThreads, 2u);
+}
+
+TEST(MvtWorkerBudget, LeavesForegroundCapacityOnFourCoreDevice) {
+    constexpr int64_t kGiB = 1024LL * 1024LL * 1024LL;
+    const auto budget = chooseMvtWorkerBudget(4, 8 * kGiB);
+    EXPECT_EQ(budget.decodeThreads, 1u);
+    EXPECT_EQ(budget.poiDecodeThreads, 1u);
+    EXPECT_EQ(budget.tessellationThreads, 1u);
+}
 
 // ── 建筑分级 ────────────────────────────────────────────────────────────
 // 数据只有 building 类型 + 可选 name(无体量字段),按"是否地标"代理体量。
@@ -148,6 +183,24 @@ TEST(MvtBasemapGrading, MinorRoadsOnlyAtNearest) {
 using earth_engine::minimal_globe_demo::DemoSourceOverrides;
 using earth_engine::minimal_globe_demo::parseDemoSourceOverrides;
 using earth_engine::minimal_globe_demo::makeDefaultDemoSceneConfig;
+using earth_engine::minimal_globe_demo::kEnableAmapVectorDemo;
+using earth_engine::minimal_globe_demo::kEnableGaodeRoadNetOverlayForDemo;
+using earth_engine::minimal_globe_demo::kUseGaodeSatelliteForDemo;
+
+TEST(DemoSourceConfig, CompleteAmapTileStackIsEnabled) {
+    EXPECT_TRUE(kEnableAmapVectorDemo);
+    EXPECT_TRUE(kUseGaodeSatelliteForDemo);
+    EXPECT_TRUE(kEnableGaodeRoadNetOverlayForDemo);
+
+    const auto cfg = makeDefaultDemoSceneConfig();
+    ASSERT_EQ(2u, cfg.rasterOverlays.size());
+    EXPECT_EQ(earth_engine::RasterOverlayRole::BaseImagery,
+              cfg.rasterOverlays[0].role);
+    EXPECT_EQ(earth_engine::RasterOverlayRole::AnnotationOverlay,
+              cfg.rasterOverlays[1].role);
+    EXPECT_EQ("Gaode/Amap satellite", cfg.rasterOverlays[0].attribution);
+    EXPECT_EQ("Gaode/Amap road network", cfg.rasterOverlays[1].attribution);
+}
 
 TEST(DemoSourceOverridesParse, FullAndPartial) {
     DemoSourceOverrides ov;

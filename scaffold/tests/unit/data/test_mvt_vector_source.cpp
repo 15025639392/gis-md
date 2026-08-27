@@ -101,6 +101,90 @@ struct FakeFetch {
     }
 };
 
+TEST(ThreadPoolStats, ReportsQueuedAndActiveWork) {
+    ThreadPool pool(1);
+    std::promise<void> started;
+    std::promise<void> release;
+    std::shared_future<void> releaseFuture = release.get_future().share();
+    auto blocker = pool.enqueue([&] {
+        started.set_value();
+        releaseFuture.wait();
+    });
+    ASSERT_EQ(started.get_future().wait_for(std::chrono::seconds(2)),
+              std::future_status::ready);
+    auto queued = pool.enqueue([] {});
+    const auto busy = pool.stats();
+    EXPECT_EQ(busy.active, 1u);
+    EXPECT_EQ(busy.queued, 1u);
+
+    release.set_value();
+    blocker.get();
+    queued.get();
+    const auto done = pool.stats();
+    EXPECT_EQ(done.enqueued, 2u);
+    EXPECT_EQ(done.completed, 2u);
+    EXPECT_EQ(done.queued, 0u);
+    EXPECT_GT(done.maxQueueWaitMs, 0.0);
+}
+
+TEST(MvtWorkerPools, BlockedTessellationDoesNotStarveDecode) {
+    ThreadPool decodePool(1);
+    ThreadPool tessellationPool(1);
+    std::promise<void> tessStarted;
+    std::promise<void> releaseTess;
+    std::shared_future<void> releaseFuture = releaseTess.get_future().share();
+    auto tess = tessellationPool.enqueue([&] {
+        tessStarted.set_value();
+        releaseFuture.wait();
+    });
+    ASSERT_EQ(tessStarted.get_future().wait_for(std::chrono::seconds(2)),
+              std::future_status::ready);
+
+    auto decode = decodePool.enqueue([] { return 42; });
+    EXPECT_EQ(decode.wait_for(std::chrono::milliseconds(200)),
+              std::future_status::ready);
+    EXPECT_EQ(decode.get(), 42);
+    releaseTess.set_value();
+    tess.get();
+}
+
+TEST(MvtWorkerPools, FirstNetworkMissDecodesOnDecodePool) {
+    auto decodePool = std::make_shared<ThreadPool>(1);
+    std::promise<void> blockerStarted;
+    std::promise<void> releaseBlocker;
+    std::shared_future<void> releaseFuture =
+        releaseBlocker.get_future().share();
+    auto blocker = decodePool->enqueue([&] {
+        blockerStarted.set_value();
+        releaseFuture.wait();
+    });
+    ASSERT_EQ(blockerStarted.get_future().wait_for(std::chrono::seconds(2)),
+              std::future_status::ready);
+
+    const std::vector<uint8_t> body = makePointTile("pois");
+    auto cache = std::make_shared<MvtTileFetchCache>(
+        [body](const TileKey&, MvtTileFetchCache::FetchCallback cb) {
+            cb(200, body);
+        },
+        48, 0, decodePool);
+    std::promise<std::shared_ptr<const MvtTile>> decoded;
+    auto decodedFuture = decoded.get_future();
+    cache->request(TileKey{"test", 1, 0, 0},
+                   [&decoded](std::shared_ptr<const MvtTile> tile) {
+                       decoded.set_value(std::move(tile));
+                   });
+    EXPECT_EQ(decodedFuture.wait_for(std::chrono::milliseconds(50)),
+              std::future_status::timeout)
+        << "network callback must not decode inline while the pool is busy";
+    EXPECT_EQ(decodePool->stats().queued, 1u);
+
+    releaseBlocker.set_value();
+    blocker.get();
+    ASSERT_EQ(decodedFuture.wait_for(std::chrono::seconds(2)),
+              std::future_status::ready);
+    EXPECT_NE(decodedFuture.get(), nullptr);
+}
+
 MvtVectorSource::Options optionsForTest() {
     MvtVectorSource::Options opt;
     opt.tree.maxTilesPerView = 64;
@@ -160,6 +244,31 @@ TEST(MvtVectorSource, FetchDecodeTessellateCommitPipeline) {
     EXPECT_FALSE(sinks.committed.empty());
     EXPECT_GT(source.activeTileCount(), 0u);
     EXPECT_EQ(sinks.committed.size(), source.activeTileCount());
+}
+
+TEST(MvtVectorSource, BoundsPerSourceTessellationWithoutDroppingTiles) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    MvtVectorSource::Options options = optionsForTest();
+    options.tree.minZoom = 4;
+    options.tree.maxZoom = 4;
+    options.maxTessellationsInFlight = 2;
+    MvtVectorSource source(options, sinks.fn(), fetch.cache());
+    const Rectangle view = rectDeg(1, 1, 40, 30);
+
+    source.update(view, heightForZoom(4));
+    ASSERT_GT(fetch.requested.size(), 2u);
+    source.update(view, heightForZoom(4));
+    EXPECT_EQ(source.lastUpdateStats().tessellateDispatched, 2);
+
+    for (int i = 0; i < 100 &&
+                    source.activeTileCount() < fetch.requested.size();
+         ++i) {
+        source.update(view, heightForZoom(4));
+    }
+    EXPECT_EQ(source.activeTileCount(), fetch.requested.size())
+        << "背压只改变派单顺序，不能减少最终瓦片集合";
 }
 
 TEST(MvtVectorSource, LandingTicketsReleaseAfterResultsEnterInbox) {
@@ -347,6 +456,31 @@ TEST(MvtVectorSource, SuspendDrainsWorkerInboxWithoutCommitting) {
     EXPECT_EQ(source.pendingCommitCount(), 0u);
     EXPECT_EQ(source.activeTileCount(), 0u);
     EXPECT_TRUE(sinks.committed.empty());
+}
+
+TEST(MvtVectorSource, SuspendClearsStaleUpdateStats) {
+    FakeFetch fetch;
+    fetch.body = makePointTile("pois");
+    FakeSinks sinks;
+    MvtVectorSource source(optionsForTest(), sinks.fn(), fetch.cache());
+    const Rectangle view = rectDeg(1, 1, 2, 2);
+
+    for (int i = 0; i < 3; ++i) source.update(view, heightForZoom(4));
+    ASSERT_GT(source.lastUpdateStats().desiredTileCount, 0);
+    ASSERT_GT(source.lastUpdateStats().activeTileCount, 0u);
+
+    source.suspend();
+
+    const auto& stats = source.lastUpdateStats();
+    EXPECT_EQ(stats.selectedZoom, 0);
+    EXPECT_EQ(stats.desiredTileCount, 0);
+    EXPECT_EQ(stats.scannedTileCount, 0u);
+    EXPECT_EQ(stats.renderTileCount, 0u);
+    EXPECT_EQ(stats.requestTileCount, 0u);
+    EXPECT_EQ(stats.tessellatingTileCount, 0u);
+    EXPECT_EQ(stats.readyTileCount, 0u);
+    EXPECT_EQ(stats.activeTileCount, 0u);
+    EXPECT_EQ(stats.activeAncestorPairs, 0u);
 }
 
 // E1 必须守住的性质:瓦片离开视口后网格被 drop,但解码结果留在树的 LRU,

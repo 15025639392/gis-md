@@ -516,6 +516,29 @@ TEST(AmapGeometryTest, EvenOddWindingSingleRingUntouched) {
     }
 }
 
+// 转换层的窗内快路径按正绕向识别 outer。公共归一化函数为兼容参考输入
+// 会保留单环原始绕向，因此单个负绕向环必须在转换边界被识别为独立外环，
+// 不能被当作“没有父环的孔”静默丢弃。
+TEST(AmapGeometryTest, DecodedSingleNegativeRingRemainsPolygon) {
+    AmapDecodedLayerPart part;
+    part.z = 10;
+    part.x = 815;
+    part.y = 344;
+    part.type = 2;
+    AmapDecodedFeature f;
+    f.classCode = 30001;
+    f.geomType = 3;
+    // raw 中逆时针；canonical Y 翻转后成为负面积单环。
+    f.rings = {{{500, 100}, {500, 900}, {1800, 900}, {1800, 100}}};
+    part.features.push_back(std::move(f));
+
+    const auto features = amapDecodedPartToFeatures(part, /*toWgs84=*/false);
+    ASSERT_EQ(1u, features.size());
+    ASSERT_EQ(1u, features[0].rings.size());
+    EXPECT_EQ(GeometryType::Polygon, features[0].type);
+    EXPECT_EQ(4u, features[0].rings[0].size());
+}
+
 // 真样本端到端:AMAP_SAMPLE_TILE 指向真实瓦片时,解码→转换全部落在瓦片
 // 地理范围内(重庆 ~106.4-106.5E / 29.4-29.5N)。
 TEST(AmapGeometryTest, RealSampleConvertsToChongqingBounds) {

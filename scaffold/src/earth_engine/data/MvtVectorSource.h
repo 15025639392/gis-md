@@ -8,6 +8,7 @@
 #include "StyleFilter.h"
 #include "VectorTileTree.h"
 #include "../core/async/WorkLedger.h"
+#include "../debug/PlatformLog.h"
 #include "../tiling/TileKey.h"
 
 #include <algorithm>
@@ -65,6 +66,8 @@ public:
 
     struct Options {
         typename VectorTileTreeT<Payload>::Options tree;
+        /// 诊断名：仅用于 worker 慢任务分段日志。
+        std::string debugName;
         /// 只导入这些源图层;空 = 全部。与 layerRules 的关系:includeLayers
         /// 是粗筛(层名白名单),layerRules 是细则(zoom 区间 + 逐要素过滤)。
         /// 两者都设时先过白名单再过细则。
@@ -85,6 +88,10 @@ public:
         /// 与旧的 maxActivationFeaturesPerUpdate 不同:那个拦的是镶嵌,
         /// 是结构性补丁;这个拦的是上传,是正常的帧预算。
         size_t maxTileCommitsPerUpdate = 4;
+        /// 单个 source 同时排入共享 tessellation pool 的最大任务数
+        /// (0 = 不限)。Amap 多 source 共用严格 FIFO 时用它做背压：最终
+        /// 工作集不变，但 regions/main 不能一次把几十个任务灌在 POI 前面。
+        size_t maxTessellationsInFlight = 0;
     };
 
     /// worker 侧镶嵌钩子:把一块瓦片的要素镶成网格。由调用方绑定
@@ -110,19 +117,19 @@ public:
 
     /// tileCache:获取层(fetch+解码+在途去重+LRU)。与其他消费方共享同一
     /// 实例即获得跨消费方去重;解码在 cache 的 fetch 回调线程完成。
-    /// decodePool 为空则镶嵌在 cache 回调线程就地跑(仍不占渲染线程)。
-    /// decodePool 用 shared_ptr:回调可能晚于宿主拆除 —— 回调里对 pool 只持
+    /// tessellationPool 为空则镶嵌在 cache 回调线程就地跑(仍不占渲染线程)。
+    /// tessellationPool 用 shared_ptr:回调可能晚于宿主拆除 —— 回调里对 pool 只持
     /// weak,锁不上就丢弃工作。裸指针版真机崩过(tombstone_22:回调 enqueue
     /// 已析构线程池 = destroyed mutex abort)。
     VectorTileSourceT(Options options, Sinks sinks,
                       std::shared_ptr<MvtTileFetchCacheT<Payload, DecodeTraits>>
                           tileCache,
-                      std::shared_ptr<ThreadPool> decodePool = nullptr,
+                      std::shared_ptr<ThreadPool> tessellationPool = nullptr,
                       ToFeaturesFn toFeatures = ToFeaturesFn{})
         : options_(std::move(options)),
           sinks_(std::move(sinks)),
           tileCache_(std::move(tileCache)),
-          decodePool_(std::move(decodePool)),
+          tessellationPool_(std::move(tessellationPool)),
           toFeatures_(std::move(toFeatures)),
           tree_(options_.tree),
           inbox_(std::make_shared<Inbox>()) {}
@@ -222,7 +229,7 @@ private:
     Options options_;
     Sinks sinks_;
     std::shared_ptr<MvtTileFetchCacheT<Payload, DecodeTraits>> tileCache_;
-    std::shared_ptr<ThreadPool> decodePool_;
+    std::shared_ptr<ThreadPool> tessellationPool_;
     ToFeaturesFn toFeatures_;
 
     UpdateStats lastStats_;
@@ -422,6 +429,10 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
     // 已解码但还没网格的渲染瓦片 → 派 worker 镶嵌。持共享所有权,树的 LRU
     // 淘汰不会把 worker 脚下的数据抽走。
     for (const TileKey& key : result.renderTiles) {
+        if (options_.maxTessellationsInFlight != 0 &&
+            tessellating_.size() >= options_.maxTessellationsInFlight) {
+            break;
+        }
         if (activeTiles_.count(key) || readyMeshes_.count(key) ||
             tessellating_.count(key)) {
             continue;
@@ -438,11 +449,12 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
         const uint64_t taskId = nextTaskId_++;
         tessellating_[key] = taskId;
         ToFeaturesFn toFeatures = toFeatures_;
+        std::string debugName = options_.debugName;
         auto landingTicket = std::make_shared<WorkLedger::Ticket>(
             WorkLedger::shared().acquire(
                 WorkLedger::Kind::Landing, "mvtVectorTessellate"));
         auto work = [key, weakInbox, tile, tessellate, includeLayers, rules,
-                     rulesEpoch, viewEpoch, taskId, toFeatures,
+                     rulesEpoch, viewEpoch, taskId, toFeatures, debugName,
                      landingTicket]() {
             auto inbox = weakInbox.lock();
             if (!inbox) {
@@ -450,9 +462,27 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
                 return;
             }
             try {
+                const auto convertStart = Clock::now();
                 std::vector<Feature> features =
                     toFeatures(key, tile, includeLayers, rules);
+                const auto tessStart = Clock::now();
+                const size_t featureCount = features.size();
                 FeatureTileMesh mesh = tessellate(key, std::move(features));
+                const auto taskEnd = Clock::now();
+                const double convertMs =
+                    std::chrono::duration<double, std::milli>(
+                        tessStart - convertStart).count();
+                const double tessMs =
+                    std::chrono::duration<double, std::milli>(
+                        taskEnd - tessStart).count();
+                if (!debugName.empty() && convertMs + tessMs >= 100.0) {
+                    platformLog(
+                        LogLevel::Info, "VectorTessSlow",
+                        "%s z=%d x=%d y=%d features=%zu convert=%.2fms "
+                        "tess=%.2fms",
+                        debugName.c_str(), key.z, key.x, key.y, featureCount,
+                        convertMs, tessMs);
+                }
                 {
                     std::lock_guard<std::mutex> lock(inbox->mutex);
                     inbox->meshes.push_back(typename Inbox::MeshResult{
@@ -469,7 +499,7 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
             // 渲染线程无需轮询 worker，但不会错过完成唤醒。
             landingTicket->release();
         };
-        if (decodePool_) decodePool_->enqueue(std::move(work));
+        if (tessellationPool_) tessellationPool_->enqueue(std::move(work));
         else work();
     }
 
@@ -652,6 +682,9 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::setLayerRules(
 
 template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>
 void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::suspend() {
+    // suspend 是本帧的真实状态，不应继续暴露上一次 update 的瓦片数与
+    // 档位；否则远景门控掉 z12 水系后，诊断日志仍会看起来像它在活动。
+    lastStats_ = UpdateStats{};
     ingestTileInbox();
     ++viewEpoch_;
     lastDesiredSet_.clear();
@@ -664,6 +697,10 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::suspend() {
     }
     activeTiles_.clear();
     syncWorkTickets();
+    lastStats_.pendingTileCount = tree_.pendingCount();
+    lastStats_.tessellatingTileCount = tessellating_.size();
+    lastStats_.readyTileCount = readyMeshes_.size();
+    lastStats_.activeTileCount = activeTiles_.size();
 }
 
 template <typename Payload, typename DecodeTraits, typename ToFeaturesFn>

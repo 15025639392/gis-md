@@ -35,8 +35,7 @@ class ThreadPool;
 /// 覆盖瓦数超过 maxSourceTiles 也回透明图(远景 z10 覆盖爆炸的地板)。
 class AmapDrapeImageryProvider : public ImageryProvider {
 public:
-    using RegionCache =
-        MvtTileFetchCacheT<std::vector<Feature>, AmapDecodeTraits<true>>;
+    using RegionCache = AmapType1TileCache;
 
     struct Options {
         std::string id = "amap-drape";

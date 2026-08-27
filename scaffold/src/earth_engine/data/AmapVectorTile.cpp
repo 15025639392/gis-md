@@ -237,15 +237,12 @@ void parseFeature(Reader& f, int classCode, int geomType, int layerType,
     }
 }
 
-bool decodeContainer(const uint8_t* data, size_t size,
-                     std::vector<AmapDecodedLayerPart>& out,
-                     std::string* error) {
-    std::vector<uint8_t> inflated;
-    if (!inflateContainer(data, size, inflated, error)) return false;
-
+bool decodeInflatedContainer(const uint8_t* data, size_t size,
+                             std::vector<AmapDecodedLayerPart>& out,
+                             std::string*) {
     Reader root;
-    root.p = inflated.data();
-    root.n = inflated.size();
+    root.p = data;
+    root.n = size;
     int field = 0, wire = 0;
     while (root.tag(field, wire)) {
         if (wire != 2) {
@@ -406,6 +403,15 @@ bool decodeContainer(const uint8_t* data, size_t size,
     return root.ok || !out.empty();
 }
 
+bool decodeContainer(const uint8_t* data, size_t size,
+                     std::vector<AmapDecodedLayerPart>& out,
+                     std::string* error) {
+    std::vector<uint8_t> inflated;
+    if (!inflateContainer(data, size, inflated, error)) return false;
+    return decodeInflatedContainer(inflated.data(), inflated.size(), out,
+                                   error);
+}
+
 }  // namespace
 
 bool decodeAmapTile(const uint8_t* data, size_t size,
@@ -426,14 +432,19 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
     std::vector<uint8_t> inflated;
     if (!inflateContainer(data, size, inflated, error)) return false;
 
-    // 主解码(完整):覆盖 type 1/2/3/4 与容器结构,保持既有语义。
-    if (!decodeAmapTile(data, size, out, error)) return false;
+    // 主解码(完整):复用上面已 inflate 的 protobuf，避免 POI
+    // 每瓦对同一 gzip 再解压一次。
+    out.clear();
+    if (!decodeInflatedContainer(inflated.data(), inflated.size(), out,
+                                 error)) {
+        return false;
+    }
     // The generic building/region decoder does not know the POI label schema:
     // it interprets label/id payloads as Part geometry and emits bogus type-0
     // rings (often class 90001, empty name).  Keep generic type 1/2/4 entries
     // that this container legitimately shares, but discard every generic
     // type-0 part before appending the authoritative POI-label decode below.
-    // Otherwise AmapPoiDecodeTraits would render those id bytes as real points
+    // Otherwise the POI source would render those id bytes as real points
     // and they can occupy the per-tile symbol budget before named POIs.
     out.erase(std::remove_if(out.begin(), out.end(),
                              [](const AmapDecodedLayerPart& part) {

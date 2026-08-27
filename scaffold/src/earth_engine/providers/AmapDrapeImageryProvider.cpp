@@ -42,7 +42,7 @@ struct AmapDrapeImageryProvider::Assembly {
     VectorRasterStyle style;
     std::weak_ptr<ThreadPool> rasterPool;
 
-    std::vector<std::shared_ptr<const std::vector<Feature>>> holders;
+    std::vector<std::shared_ptr<const AmapDecodedTile>> holders;
     std::atomic<int> remaining{0};
 };
 
@@ -53,10 +53,15 @@ void AmapDrapeImageryProvider::runAssembly(
         return;
     }
     std::vector<const Feature*> features;
+    std::vector<std::vector<Feature>> converted;
     for (const auto& holder : assembly->holders) {
         if (!holder) continue;
-        for (const Feature& f : *holder) {
-            if (f.type == GeometryType::Polygon) features.push_back(&f);
+        for (const AmapDecodedLayerPart& part : holder->parts) {
+            if (part.type != 2) continue;
+            converted.push_back(amapDecodedPartToFeatures(part, false));
+            for (const Feature& f : converted.back()) {
+                if (f.type == GeometryType::Polygon) features.push_back(&f);
+            }
         }
     }
     static const UnitTransform kGcjXform = mvt_rect::wgsUnitToGcjUnit;
@@ -153,7 +158,7 @@ void AmapDrapeImageryProvider::requestTile(const TileKey& key,
         TileKey fetchKey{"Amap-Geographic", dataZ, tiles[i].x, tiles[i].y};
         tileCache_->request(
             fetchKey,
-            [assembly, i](std::shared_ptr<const std::vector<Feature>> tile) {
+            [assembly, i](std::shared_ptr<const AmapDecodedTile> tile) {
                 assembly->holders[i] = std::move(tile);
                 if (assembly->remaining.fetch_sub(
                         1, std::memory_order_acq_rel) == 1) {
@@ -165,15 +170,21 @@ void AmapDrapeImageryProvider::requestTile(const TileKey& key,
 
 std::unique_ptr<DecodedImage> AmapDrapeImageryProvider::decodeTile(
     const uint8_t* data, size_t len) {
-    std::vector<Feature> features;
+    AmapDecodedTile tile;
     std::string error;
     if (!data || len == 0 ||
-        !AmapDecodeTraits<true>::decode(data, len, features, &error)) {
+        !AmapDecodedTileDecodeTraits::decode(data, len, tile, &error)) {
         return nullptr;
     }
     std::vector<const Feature*> ptrs;
-    ptrs.reserve(features.size());
-    for (const Feature& f : features) ptrs.push_back(&f);
+    std::vector<std::vector<Feature>> converted;
+    for (const AmapDecodedLayerPart& part : tile.parts) {
+        if (part.type != 2) continue;
+        converted.push_back(amapDecodedPartToFeatures(part, false));
+        for (const Feature& feature : converted.back()) {
+            ptrs.push_back(&feature);
+        }
+    }
     return toDecodedImage(rasterizeFeaturePolygonsRect(
         ptrs, MercatorRect{0.0, 0.0, 1.0, 1.0}, options_.dataMaxZoom,
         styleSnapshot(), options_.tileSize));

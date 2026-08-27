@@ -3,8 +3,10 @@
 #include "earth_engine/tiling/TileScheme.h"
 
 #include <gtest/gtest.h>
+#include <zlib.h>
 
 #include <cmath>
+#include <cstring>
 #include <cstdio>
 #include <cstdlib>
 #include <vector>
@@ -29,23 +31,114 @@ struct FakeAmapFetch {
     int statusCode = 200;
     std::vector<TileKey> requested;
 
-    template <bool RegionsOnly>
-    std::shared_ptr<MvtTileFetchCacheT<std::vector<Feature>,
-                                       AmapDecodeTraits<RegionsOnly>>>
-    cache() {
-        return std::make_shared<
-            MvtTileFetchCacheT<std::vector<Feature>,
-                               AmapDecodeTraits<RegionsOnly>>>(
+    std::shared_ptr<AmapType1TileCache> cache() {
+        return std::make_shared<AmapType1TileCache>(
             [this](const TileKey& key,
-                   MvtTileFetchCacheT<std::vector<Feature>,
-                                      AmapDecodeTraits<RegionsOnly>>::
-                       FetchCallback cb) {
+                   AmapType1TileCache::FetchCallback cb) {
                 requested.push_back(key);
                 cb(statusCode, body);
             },
             48);
     }
 };
+
+void putVarint(std::vector<uint8_t>& bytes, uint64_t value) {
+    while (value >= 0x80) {
+        bytes.push_back(static_cast<uint8_t>(value | 0x80));
+        value >>= 7;
+    }
+    bytes.push_back(static_cast<uint8_t>(value));
+}
+
+void putTag(std::vector<uint8_t>& bytes, int field, int wire) {
+    putVarint(bytes, (static_cast<uint64_t>(field) << 3) | wire);
+}
+
+void putVarintField(std::vector<uint8_t>& bytes, int field, uint64_t value) {
+    putTag(bytes, field, 0);
+    putVarint(bytes, value);
+}
+
+void putBytesField(std::vector<uint8_t>& bytes, int field,
+                   const std::vector<uint8_t>& value) {
+    putTag(bytes, field, 2);
+    putVarint(bytes, value.size());
+    bytes.insert(bytes.end(), value.begin(), value.end());
+}
+
+void putZigzag(std::vector<uint8_t>& bytes, int64_t value) {
+    const uint64_t u = static_cast<uint64_t>(value);
+    putVarint(bytes, (u << 1) ^ (0 - (u >> 63)));
+}
+
+std::vector<uint8_t> gzipCompress(const std::vector<uint8_t>& input) {
+    z_stream stream{};
+    EXPECT_EQ(Z_OK, deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                                 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY));
+    std::vector<uint8_t> out(deflateBound(&stream, input.size()));
+    stream.next_in = const_cast<uint8_t*>(input.data());
+    stream.avail_in = static_cast<uInt>(input.size());
+    stream.next_out = out.data();
+    stream.avail_out = static_cast<uInt>(out.size());
+    EXPECT_EQ(Z_STREAM_END, deflate(&stream, Z_FINISH));
+    out.resize(stream.total_out);
+    deflateEnd(&stream);
+    return out;
+}
+
+std::vector<uint8_t> makeSharedType1Tile() {
+    std::vector<uint8_t> regionRing;
+    for (const int64_t v : {0, 0, 40, 0, 0, 40, -40, 0}) {
+        putZigzag(regionRing, v);
+    }
+    std::vector<uint8_t> regionRings;
+    putBytesField(regionRings, 1, regionRing);
+    std::vector<uint8_t> regionFeature;
+    putBytesField(regionFeature, 6, regionRings);
+    std::vector<uint8_t> regionGroup;
+    putVarintField(regionGroup, 1, 30001);
+    putBytesField(regionGroup, 4, regionFeature);
+    std::vector<uint8_t> regionContent;
+    putBytesField(regionContent, 1, regionGroup);
+    std::vector<uint8_t> regionLayer;
+    putVarintField(regionLayer, 1, 14);
+    putVarintField(regionLayer, 2, 13038);
+    putVarintField(regionLayer, 3, 5505);
+    putVarintField(regionLayer, 4, 2);
+    putBytesField(regionLayer, 5, regionContent);
+
+    std::vector<uint8_t> lineBlob;
+    for (const int64_t v : {0, 0, 40, 0, 0, 40}) putZigzag(lineBlob, v);
+    std::vector<uint8_t> linePart;
+    putBytesField(linePart, 5, lineBlob);
+    std::vector<uint8_t> lineFeature;
+    putBytesField(lineFeature, 4, linePart);
+    std::vector<uint8_t> lineGroup;
+    putVarintField(lineGroup, 1, 20009);
+    putBytesField(lineGroup, 4, lineFeature);
+    std::vector<uint8_t> lineContent;
+    putBytesField(lineContent, 1, lineGroup);
+    std::vector<uint8_t> lineLayer;
+    putVarintField(lineLayer, 1, 14);
+    putVarintField(lineLayer, 2, 13038);
+    putVarintField(lineLayer, 3, 5505);
+    putVarintField(lineLayer, 4, 1);
+    putBytesField(lineLayer, 5, lineContent);
+
+    std::vector<uint8_t> tile;
+    putBytesField(tile, 4, regionLayer);
+    putBytesField(tile, 4, lineLayer);
+    std::vector<uint8_t> root;
+    putBytesField(root, 1, tile);
+    const std::vector<uint8_t> gzip = gzipCompress(root);
+    std::vector<uint8_t> container = {
+        static_cast<uint8_t>(gzip.size() >> 24),
+        static_cast<uint8_t>(gzip.size() >> 16),
+        static_cast<uint8_t>(gzip.size() >> 8),
+        static_cast<uint8_t>(gzip.size())};
+    container.insert(container.end(), gzip.begin(), gzip.end());
+    return container;
+}
 
 struct FakeSinks {
     int tessellateCalls = 0;
@@ -131,7 +224,7 @@ TEST(AmapVectorSource, PipelineDecodesAndCommitsRealSample) {
             opt.maxTileCommitsPerUpdate = 0;
             return opt;
         }(),
-        sinks.fn<AmapMainVectorSource>(), fetch.cache<false>());
+        sinks.fn<AmapMainVectorSource>(), fetch.cache());
 
     // 视口 = 样本瓦片附近(约 1 瓦,避免 z14 枚举海量 key)。
     const Rectangle view = rectDeg(106.47, 29.515, 106.49, 29.525);
@@ -173,7 +266,7 @@ TEST(AmapVectorSource, RegionsOnlyFiltersType2FromRealSample) {
             opt.maxTileCommitsPerUpdate = 0;
             return opt;
         }(),
-        sinks.fn<AmapRegionsVectorSource>(), fetch.cache<true>());
+        sinks.fn<AmapRegionsVectorSource>(), fetch.cache());
 
     const Rectangle view = rectDeg(106.47, 29.515, 106.49, 29.525);
     source.update(view, heightForZoom(14));
@@ -182,6 +275,43 @@ TEST(AmapVectorSource, RegionsOnlyFiltersType2FromRealSample) {
     // 网格 → 无 commit(粗源数据在 z10 组,这里验证过滤语义不炸)。
     EXPECT_GE(sinks.tessellateCalls, 0);
     // 不崩溃即可;过滤正确性由 AmapGeometry 单测覆盖。
+}
+
+TEST(AmapVectorSource, RegionsAndMainShareOneType1DecodeCache) {
+    FakeAmapFetch fetch;
+    fetch.body = makeSharedType1Tile();
+    auto sharedCache = fetch.cache();
+    FakeSinks regionSinks;
+    FakeSinks mainSinks;
+    auto options = [] {
+        AmapRegionsVectorSource::Options opt;
+        opt.tree.minZoom = 14;
+        opt.tree.maxZoom = 14;
+        opt.tree.scheme = TileScheme::createAmapGeographic();
+        opt.tree.maxTilesPerView = 64;
+        opt.maxTileCommitsPerUpdate = 0;
+        return opt;
+    }();
+    AmapRegionsVectorSource regions(
+        options, regionSinks.fn<AmapRegionsVectorSource>(), sharedCache);
+    AmapMainVectorSource::Options mainOptions;
+    mainOptions.tree = options.tree;
+    mainOptions.maxTileCommitsPerUpdate = 0;
+    AmapMainVectorSource main(
+        mainOptions, mainSinks.fn<AmapMainVectorSource>(), sharedCache);
+
+    const Rectangle view = rectDeg(106.47, 29.515, 106.49, 29.525);
+    regions.update(view, heightForZoom(14));
+    const size_t uniqueRequests = fetch.requested.size();
+    ASSERT_GT(uniqueRequests, 0u);
+    main.update(view, heightForZoom(14));
+    EXPECT_EQ(uniqueRequests, fetch.requested.size());
+    EXPECT_EQ(uniqueRequests, sharedCache->stats().fetches);
+
+    regions.update(view, heightForZoom(14));
+    main.update(view, heightForZoom(14));
+    EXPECT_GT(regionSinks.lastFeatureCount, 0u);
+    EXPECT_GT(mainSinks.lastFeatureCount, 0u);
 }
 
 }  // namespace

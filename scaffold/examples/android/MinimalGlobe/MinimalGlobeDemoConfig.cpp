@@ -4,7 +4,39 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+
 namespace earth_engine::minimal_globe_demo {
+
+MvtWorkerBudget chooseMvtWorkerBudget(int cpuCores,
+                                      int64_t totalMemoryBytes) {
+    const size_t cores = static_cast<size_t>(std::max(1, cpuCores));
+    const size_t usable = cores > 2 ? cores - 2 : 1;
+    const int64_t gib = 1024LL * 1024LL * 1024LL;
+    if (usable <= 2) return {1, 1, 1};
+
+    // Unknown memory is deliberately conservative: keep one decode lane and
+    // at most two tessellation lanes, while still separating the queues.
+    if (totalMemoryBytes <= 0 || totalMemoryBytes <= 6 * gib) {
+        const size_t tess =
+            std::min<size_t>(2, usable > 2 ? usable - 2 : 1);
+        return {1, 1, std::max<size_t>(1, tess)};
+    }
+
+    if (totalMemoryBytes <= 12 * gib) {
+        const size_t decode = std::min<size_t>(2, usable);
+        const size_t tessBudget =
+            usable > decode + 1 ? usable - decode - 1 : 1;
+        return {decode, 1,
+                std::max<size_t>(1, std::min<size_t>(3, tessBudget))};
+    }
+
+    const size_t decode = std::min<size_t>(2, usable);
+    const size_t tessBudget =
+        usable > decode + 1 ? usable - decode - 1 : 1;
+    return {decode, 1,
+            std::max<size_t>(1, std::min<size_t>(4, tessBudget))};
+}
 
 bool parseDemoSourceOverrides(const std::string& jsonText,
                               DemoSourceOverrides& out,

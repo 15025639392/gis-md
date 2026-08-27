@@ -111,20 +111,23 @@ std::vector<uint8_t> makeBuildingTile() {
     return makeContainer(root);
 }
 
-std::vector<uint8_t> makeBlobLayer(int layerType, const std::vector<uint8_t>& cg) {
+std::vector<uint8_t> makeBlobLayer(int layerType,
+                                   const std::vector<uint8_t>& cg,
+                                   int z = 14, int x = 13038,
+                                   int y = 6785) {
     std::vector<uint8_t> content;
     putBytesField(content, 1, cg);
     std::vector<uint8_t> layer;
-    putVarintField(layer, 1, 14);
-    putVarintField(layer, 2, 13038);
-    putVarintField(layer, 3, 6785);
+    putVarintField(layer, 1, z);
+    putVarintField(layer, 2, x);
+    putVarintField(layer, 3, y);
     putVarintField(layer, 4, layerType);
     putBytesField(layer, 5, content);
     putVarintField(layer, 8, 4);
     std::vector<uint8_t> tile;
-    putVarintField(tile, 1, 14);
-    putVarintField(tile, 2, 13038);
-    putVarintField(tile, 3, 6785);
+    putVarintField(tile, 1, z);
+    putVarintField(tile, 2, x);
+    putVarintField(tile, 3, y);
     putBytesField(tile, 4, layer);
     std::vector<uint8_t> root;
     putBytesField(root, 1, tile);
@@ -150,7 +153,8 @@ std::vector<uint8_t> makeLineTile() {
     return makeBlobLayer(1, cg);
 }
 
-std::vector<uint8_t> makeRegionTile(int classCode = 0) {
+std::vector<uint8_t> makeRegionTile(int classCode = 0, int z = 14,
+                                    int x = 13038, int y = 6785) {
     std::vector<uint8_t> feature;
     {
         std::vector<uint8_t> rings;
@@ -171,7 +175,7 @@ std::vector<uint8_t> makeRegionTile(int classCode = 0) {
     std::vector<uint8_t> cg;
     if (classCode != 0) putVarintField(cg, 1, classCode);
     putBytesField(cg, 4, feature);
-    return makeBlobLayer(2, cg);
+    return makeBlobLayer(2, cg, z, x, y);
 }
 
 std::vector<uint8_t> makeRegionWithBoundaryTile(int boundaryClass = 20014) {
@@ -602,6 +606,31 @@ TEST(AmapVectorTileTest, MainSourceFiltersWaterButKeepsBlockRegions) {
         ASSERT_TRUE(feature.properties.count("amap_class"));
         EXPECT_EQ("30002", feature.properties.at("amap_class"));
     }
+}
+
+TEST(AmapVectorTileTest, MainSourceLeavesLowZoomRegionsToCoarseSource) {
+    // 真实低档由 live smoke 覆盖；这里锁定 source 分工：main 在 z3/6/8/10
+    // 不得与 regions 重复输出 type2，z12+ 才接管非水系地块。
+    const auto low = makeRegionTile(30002, 10, 814, 343);
+    std::vector<Feature> mainLow;
+    std::string err;
+    ASSERT_TRUE(amapBytesToFeatures(low.data(), low.size(), false, mainLow,
+                                    &err))
+        << err;
+    EXPECT_TRUE(mainLow.empty());
+
+    std::vector<Feature> regionsLow;
+    ASSERT_TRUE(amapBytesToFeatures(low.data(), low.size(), true, regionsLow,
+                                    &err))
+        << err;
+    EXPECT_FALSE(regionsLow.empty());
+
+    const auto near = makeRegionTile(30002, 12, 3259, 1374);
+    std::vector<Feature> mainNear;
+    ASSERT_TRUE(amapBytesToFeatures(near.data(), near.size(), false, mainNear,
+                                    &err))
+        << err;
+    EXPECT_FALSE(mainNear.empty());
 }
 
 TEST(AmapVectorTileTest, RejectsBadLengthHeader) {

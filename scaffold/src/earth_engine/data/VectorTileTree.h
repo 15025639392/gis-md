@@ -98,6 +98,11 @@ public:
         int maxPendingRequests = 64;
         /// 目标 zoom 偏置(正 = 更细)。
         double zoomBias = 0.0;
+        /// 可选的 canonical view zoom → 数据 zoom 映射。普通 XYZ/MVT
+        /// 留空；高德 Nebula 用离散档位表 0-4→3、5-6→6、7-8→8、
+        /// 9-11→10、12-13→12、14+→14。映射后仍会经过
+        /// supportedZooms 与 maxTilesPerView 的合法档/降档保护。
+        std::function<int(int)> dataZoomForCanonicalZoom;
         /// 可选的数据档位白名单。非空时，目标 zoom 会向下吸附到
         /// 不超过目标的最近档位；若目标低于首个档位则选首个档位。
         /// 这用于数据源存在跳档(例如高德只有 z12/z14、没有 z13)
@@ -163,8 +168,14 @@ public:
             if (lower != std::numeric_limits<int>::min()) return lower;
             return first == std::numeric_limits<int>::max() ? candidate : first;
         };
+        const int canonicalZoom =
+            zoomForCameraHeight(cameraHeightMeters, options_);
+        const int mappedZoom = options_.dataZoomForCanonicalZoom
+                                   ? options_.dataZoomForCanonicalZoom(
+                                         canonicalZoom)
+                                   : canonicalZoom;
         int zoom = snapSupportedZoom(
-            zoomForCameraHeight(cameraHeightMeters, options_));
+            std::clamp(mappedZoom, options_.minZoom, options_.maxZoom));
         struct Range {
             int minX, minY, maxX, maxY;
         };

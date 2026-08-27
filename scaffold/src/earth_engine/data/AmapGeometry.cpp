@@ -13,6 +13,25 @@
 #include <unordered_set>
 
 namespace earth_engine {
+
+size_t AmapDecodedTileDecodeTraits::approxBytes(
+    const AmapDecodedTile& tile) {
+    constexpr size_t kVectorHeaderBytes = sizeof(std::vector<int>);
+    size_t bytes = sizeof(AmapDecodedTile) +
+                   tile.parts.capacity() * sizeof(AmapDecodedLayerPart);
+    for (const AmapDecodedLayerPart& part : tile.parts) {
+        bytes += part.features.capacity() * sizeof(AmapDecodedFeature);
+        for (const AmapDecodedFeature& feature : part.features) {
+            bytes += feature.name.capacity();
+            bytes += feature.rings.capacity() * kVectorHeaderBytes;
+            for (const auto& ring : feature.rings) {
+                bytes += ring.capacity() * sizeof(std::pair<double, double>);
+            }
+        }
+    }
+    return bytes;
+}
+
 namespace {
 
 constexpr double kPi = 3.14159265358979323846;
@@ -275,8 +294,9 @@ std::vector<std::vector<std::pair<double, double>>> amapNormalizeEvenOddWinding(
         parent[i] = best;
     }
 
-    // 无被包围环时保持参考解码器行为；独立负绕向环会在 Feature 分组
-    // 阶段被识别并反转为正向外环。
+    // 无被包围环时，每个环都是独立的外环。方向对 even-odd 掩膜本身
+    // 没有语义，但消费端会把负面积环误当成前一个外环的孔；统一为正向
+    // 可让后续分组保持一环一个 polygon，避免把互不相交的碎片合并填满。
     bool hasEnclosed = false;
     for (size_t i = 0; i < n; ++i) {
         if (depth[i] % 2 == 1) {
@@ -284,7 +304,20 @@ std::vector<std::vector<std::pair<double, double>>> amapNormalizeEvenOddWinding(
             break;
         }
     }
-    if (!hasEnclosed) return closed;
+    if (!hasEnclosed) {
+        std::vector<std::vector<std::pair<double, double>>> out;
+        out.reserve(n);
+        for (size_t i = 0; i < n; ++i) {
+            if (areas[i] >= 0.0) {
+                out.push_back(closed[i]);
+            } else {
+                auto ring = closed[i];
+                std::reverse(ring.begin(), ring.end());
+                out.push_back(std::move(ring));
+            }
+        }
+        return out;
+    }
 
     auto oriented = [&](size_t i, bool wantPositive)
         -> std::vector<std::pair<double, double>> {
@@ -506,26 +539,36 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 pt.second = kAmapExtentY - pt.second * scale;
             }
         }
-        const auto groups = amapNormalizeEvenOddWinding(flippedRings);
-        bool touchesTileBoundary = false;
-        bool hasOpenRing = false;
+        auto groups = amapNormalizeEvenOddWinding(flippedRings);
+        // normalizeEvenOddWinding deliberately keeps a lone ring byte-for-byte
+        // compatible with the decoded input. In the no-clip fast path, however,
+        // a negative lone ring is an independent outer ring, not a hole with a
+        // missing parent. Orient it here so the outer+holes grouping below does
+        // not silently drop a valid one-ring surface.
+        if (groups.size() == 1 && ringSignedArea(groups.front()) < 0.0) {
+            std::reverse(groups.front().begin(), groups.front().end());
+        }
+        constexpr double kClipMinX = -256.0;
+        constexpr double kClipMaxX = 8192.0 + 256.0;
+        constexpr double kClipMinY = -256.0;
+        constexpr double kClipMaxY = 4096.0 + 256.0;
+        bool outsideClipWindow = false;
         for (const auto& ring : flippedRings) {
-            if (ring.size() >= 2 && ring.front() != ring.back()) {
-                hasOpenRing = true;
-            }
             for (const auto& pt : ring) {
-                touchesTileBoundary =
-                    touchesTileBoundary || pt.first <= 0.0 ||
-                    pt.first >= 8192.0 || pt.second <= 0.0 ||
-                    pt.second >= 4096.0;
+                outsideClipWindow =
+                    outsideClipWindow || pt.first < kClipMinX ||
+                    pt.first > kClipMaxX || pt.second < kClipMinY ||
+                    pt.second > kClipMaxY;
             }
         }
 
-        // Small ordinary surfaces retain the compact outer+hole representation.
-        // Complex compound masks (multiple clipped components/strips) use the
-        // triangle-piece path below; it preserves even-odd coverage without
-        // inventing a bridge when clipping splits a concave ring.
-        if (isRegion && f.kind > 0 && f.rings.size() <= 2) {
+        // If every normalized point is already inside the buffered tile window,
+        // clipping is a no-op regardless of ring count/kind. Preserve the
+        // outer+hole groups directly. The old unconditional `rings>2` branch
+        // ran a full CDT here, emitted triangle pieces, then made the render
+        // tessellator run CDT over those pieces again; dense z3 region tiles
+        // spent seconds in each pass despite needing no clip at all.
+        if (isRegion && !outsideClipWindow) {
             // Kind surfaces already normalize into outer-followed-by-holes
             // groups. Preserve those groups directly; the tessellator's
             // modulo-two constraint handling resolves their shared seams
@@ -540,9 +583,7 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 feat.type = GeometryType::Polygon;
                 for (size_t ri = gi; ri < groups.size(); ++ri) {
                     if (ri > gi && ringSignedArea(groups[ri]) > 0.0) break;
-                    const auto clipped = amapClipPolygonRing(
-                        groups[ri], -256.0, 8192.0 + 256.0,
-                        -256.0, 4096.0 + 256.0);
+                    const auto& clipped = groups[ri];
                     if (clipped.size() < 3) continue;
                     std::vector<Cartographic> pts;
                     pts.reserve(clipped.size());
@@ -577,14 +618,11 @@ std::vector<Feature> amapDecodedPartToFeatures(
             continue;
         }
 
-        if (isRegion &&
-            (f.rings.size() > 2 ||
-             (f.kind == 0 && touchesTileBoundary && hasOpenRing))) {
+        if (isRegion && outsideClipWindow) {
             // 先对原始 even-odd 约束整体 CDT,再对每个凸三角形做窗口
             // 裁剪。这样凹面与窗口相交产生多个分量时不会生成隐式桥边。
             const auto clippedLoops = triangulateThenClipPolygon(
-                flippedRings, -256.0, 8192.0 + 256.0,
-                -256.0, 4096.0 + 256.0);
+                flippedRings, kClipMinX, kClipMaxX, kClipMinY, kClipMaxY);
             auto toCarto = [&](const std::vector<std::pair<double, double>>& ring) {
                 std::vector<Cartographic> pts;
                 pts.reserve(ring.size());
@@ -815,6 +853,11 @@ bool amapBytesToFeatures(const uint8_t* data, size_t size,
     for (const auto& p : parts) {
         if (p.type == 2) {
             if (!regionsOnly) {
+                // z3/6/8/10 远景的完整区域面由 regions source 提供。
+                // main 同档只承载线/建筑/轨道；若再保留 30002，两个
+                // source 会把同一地块重复画两次。z12+ regions 已让位，
+                // main 才接管 30002 等非水系地块。
+                if (p.z < 12) continue;
                 // 主源只保留 30002 等城市地块面；30001 水/绿地由
                 // z12 water source 唯一提供。即使样式把 30001 设透明，
                 // 在解码阶段过滤仍可避免 z14 错位水体进入 tessellation/

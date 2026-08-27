@@ -4,9 +4,23 @@
 
 #include "earth_engine/sdk/EarthSceneConfig.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <string>
 
 namespace earth_engine::minimal_globe_demo {
+
+struct MvtWorkerBudget {
+    size_t decodeThreads = 1;
+    size_t poiDecodeThreads = 1;
+    size_t tessellationThreads = 1;
+};
+
+/// 为手机保留渲染/系统核心，并按内存约束限制同时存活的解码/网格临时对象。
+/// 低内存机并发保守，但 type1/POI 解码仍有独立通道；
+/// 8 核高内存机使用 2+1+3，总后台线程不超过扣除前台保留后的预算。
+MvtWorkerBudget chooseMvtWorkerBudget(int cpuCores,
+                                      int64_t totalMemoryBytes);
 
 // 唯一地形源 = 规则栅格 raster-DEM 高度图地形（CPU 烘焙，TerrainSourceKind::Heightmap）。
 // 65×65 顶点对齐 Mapbox Terrain-RGB PNG（dem_test build_raster_dem_grid65.py 生成）。
@@ -139,13 +153,21 @@ constexpr int kMvtBasemapMaxZoom = 14;
 //            而这正是加 L1 容量买不起的那件事(同样覆盖要 ~115MB)。
 constexpr size_t kMvtTileCacheDecoded = 48;
 constexpr size_t kMvtTileCacheRaw = 256;
+// MVT/高德后台工作预算。解码和镶嵌使用独立池，避免前面的几何镶嵌
+// 把后续 POI/底图解码挡在 FIFO 后面。这里是无设备信息时的保守回退；
+// Android 真机按 cpu 核数/内存动态计算，并允许 debug.ee.mvtdecode /
+// debug.ee.mvttess 做冷启动 A/B 覆盖。两池合计有界，不减少可见瓦片。
+constexpr size_t kMvtDecodeThreadsFallback = 2;
+constexpr size_t kMvtTessellationThreadsFallback = 2;
 
 // 用户指示先隐藏卫星底图,避免卫星盖住矢量层造成的误导。
 // 地形暂保留(amap 复刻平面语义最终要关,但关地形会触发另一个
 // 启动即卡问题,单独排查后再切)。
 constexpr bool kEnableTerrainForDemo = false;
-constexpr bool kUseGaodeSatelliteForDemo = false;
-constexpr bool kEnableGaodeRoadNetOverlayForDemo = false;
+// 测试配置：启用完整高德底图组合。矢量四源仍由 kEnableAmapVectorDemo
+// 控制；这里补上公开 XYZ 卫星(style=6)与路网/注记(style=8)栅格层。
+constexpr bool kUseGaodeSatelliteForDemo = true;
+constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
 /// 仅用于诊断 fill 层级的临时 A/B 开关。生产默认显示建筑；隐藏仍保留
 /// 下载/解码成本，因此不能作为性能策略。
 constexpr bool kHideAmapBuildingsForCompare = false;
@@ -155,7 +177,7 @@ constexpr bool kEnableAmapVectorDemo = true;
 /// 高德 web key(dev;产品换 key 只改这里,referer 白名单见
 /// kAmapReferer)。
 constexpr const char* kAmapWebKey =
-    "2f282f369e388ef01bae260cbc35edce";
+    "14656ce3418e226459ecead9f67c7681";
 constexpr const char* kAmapReferer = "https://www.amap.com/";
 constexpr bool kEnableRobotExpressiveGltfDemo = false;
 // 开启后 config.gltf 指向 tree.i3dm(覆盖 RobotExpressive),用于实例化基线测量。

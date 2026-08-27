@@ -58,9 +58,10 @@ public:
 
     /// @param capacity        L1 解码瓦上限
     /// @param rawCapacity     L2 压缩字节上限(0 = 不启用 L2)
-    /// @param decodePool      L2 命中时的重解码线程池。**为空则就地解码**
-    ///                        —— host 测试用;真机必须传,否则 5-17ms 落在
-    ///                        调用线程(渲染线程)上。
+    /// @param decodePool      首次网络 miss 与 L2 命中的解码线程池。
+    ///                        **为空则就地解码**—— host 测试用；真机
+    ///                        必须传，否则 5-17ms 会落在渲染或 HTTP 回调
+    ///                        线程上，同时阻塞后续网络交付。
     MvtTileFetchCacheT(FetchFn fetch, size_t capacity, size_t rawCapacity = 0,
                        std::shared_ptr<ThreadPool> decodePool = nullptr,
                        std::shared_ptr<class MvtRawTileFetchCache> sharedRaw = nullptr);
@@ -534,61 +535,66 @@ void MvtTileFetchCacheT<Payload, DecodeTraits>::request(
     }
 
     std::shared_ptr<State> state = state_;
-    fetch_(key, [state, dk](int statusCode, std::vector<uint8_t> body) {
-        std::shared_ptr<const Payload> tile;
-        std::shared_ptr<const std::vector<uint8_t>> shared;
-        if (statusCode == 200 && !body.empty()) {
-            auto decoded = std::make_shared<Payload>();
-            if (DecodeTraits::decode(body.data(), body.size(), *decoded,
-                                     nullptr)) {
-                tile = std::move(decoded);
-                shared = std::make_shared<const std::vector<uint8_t>>(
-                    std::move(body));
+    std::shared_ptr<ThreadPool> decodePool = decodePool_;
+    fetch_(key, [state, dk, decodePool](int statusCode,
+                                        std::vector<uint8_t> body) {
+        auto bodyPtr = std::make_shared<const std::vector<uint8_t>>(
+            std::move(body));
+        auto work = [state, dk, statusCode, bodyPtr]() {
+            std::shared_ptr<const Payload> tile;
+            if (statusCode == 200 && !bodyPtr->empty()) {
+                auto decoded = std::make_shared<Payload>();
+                if (DecodeTraits::decode(bodyPtr->data(), bodyPtr->size(),
+                                         *decoded, nullptr)) {
+                    tile = std::move(decoded);
+                }
             }
-        }
-        std::vector<TileCallback> waiters;
-        {
-            std::lock_guard<std::mutex> lock(state->mutex);
-            auto it = state->inflight.find(dk);
-            if (it != state->inflight.end()) {
-                waiters = std::move(it->second);
-                state->inflight.erase(it);
-            }
-            if (tile) {
-                state->insertDecoded(dk, tile, std::move(shared));
-                // 成功:复位失败账本,后续直接命中缓存。
-                state->failures.erase(dk);
-            } else {
-                // 失败:记入账本 —— 第 1 次失败后 500ms 重试,第 2 次 1s,
-                // 超过 kMaxSourceRetries 用尽不再重试(有界,防死源风暴)。
-                auto& f = state->failures[dk];
-                f.failureCount =
-                    std::min(f.failureCount + 1,
-                             TileRetryBackoffPolicy::kMaxSourceRetries + 1);
-                if (f.failureCount >
-                    TileRetryBackoffPolicy::kMaxSourceRetries) {
-                    f.retryNotBeforeMs = std::numeric_limits<double>::max();
+            std::vector<TileCallback> waiters;
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                auto it = state->inflight.find(dk);
+                if (it != state->inflight.end()) {
+                    waiters = std::move(it->second);
+                    state->inflight.erase(it);
+                }
+                if (tile) {
+                    state->insertDecoded(dk, tile, bodyPtr);
+                    // 成功:复位失败账本,后续直接命中缓存。
+                    state->failures.erase(dk);
                 } else {
-                    f.retryNotBeforeMs =
-                        perf::nowMs() +
-                        TileRetryBackoffPolicy::backoffMs(f.failureCount);
-                }
-                f.seq = ++state->failureSeq;
-                if (state->failures.size() > state->maxFailures) {
-                    auto oldest = state->failures.begin();
-                    for (auto it = state->failures.begin();
-                         it != state->failures.end(); ++it) {
-                        if (it->second.seq < oldest->second.seq) {
-                            oldest = it;
-                        }
+                    // 失败:记入账本 —— 第 1 次失败后 500ms 重试,第 2 次 1s,
+                    // 超过 kMaxSourceRetries 用尽不再重试(有界,防死源风暴)。
+                    auto& f = state->failures[dk];
+                    f.failureCount = std::min(
+                        f.failureCount + 1,
+                        TileRetryBackoffPolicy::kMaxSourceRetries + 1);
+                    if (f.failureCount >
+                        TileRetryBackoffPolicy::kMaxSourceRetries) {
+                        f.retryNotBeforeMs =
+                            std::numeric_limits<double>::max();
+                    } else {
+                        f.retryNotBeforeMs =
+                            perf::nowMs() +
+                            TileRetryBackoffPolicy::backoffMs(
+                                f.failureCount);
                     }
-                    state->failures.erase(oldest);
+                    f.seq = ++state->failureSeq;
+                    if (state->failures.size() > state->maxFailures) {
+                        auto oldest = state->failures.begin();
+                        for (auto fit = state->failures.begin();
+                             fit != state->failures.end(); ++fit) {
+                            if (fit->second.seq < oldest->second.seq) {
+                                oldest = fit;
+                            }
+                        }
+                        state->failures.erase(oldest);
+                    }
                 }
             }
-        }
-        for (TileCallback& cb : waiters) {
-            cb(tile);
-        }
+            for (TileCallback& cb : waiters) cb(tile);
+        };
+        if (decodePool) decodePool->enqueue(std::move(work));
+        else work();
     });
 }
 

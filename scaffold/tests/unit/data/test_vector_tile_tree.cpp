@@ -1,4 +1,5 @@
 #include "earth_engine/data/VectorTileTree.h"
+#include "earth_engine/data/AmapTileManifest.h"
 
 #include <gtest/gtest.h>
 
@@ -64,6 +65,58 @@ TEST(VectorTileTree, SnapsToSupportedDataZoom) {
                            heightForZoom(14));
     ASSERT_FALSE(z14.requestTiles.empty());
     for (const TileKey& key : z14.requestTiles) EXPECT_EQ(key.z, 14);
+}
+
+TEST(VectorTileTree, AmapGlobalLodUsesCoarseTiersInsteadOfCenterIsland) {
+    VectorTileTree::Options opt;
+    opt.minZoom = 3;
+    opt.maxZoom = 14;
+    opt.maxTilesPerView = 256;
+    opt.supportedZooms = {3, 6, 8, 10, 12, 14};
+    opt.dataZoomForCanonicalZoom = [](int z) { return amapDataZoom(z); };
+    opt.scheme = TileScheme::createAmapGeographic();
+    VectorTileTree tree(opt);
+
+    // 整个可见世界在远景必须使用 z3（8×8=64），完整覆盖而不是
+    // 固定 z10/z12/z14 后只截中心最近 256 瓦形成“重庆孤岛”。
+    const auto world = tree.update(rectDeg(-179.9, -89.9, 179.9, 89.9),
+                                   4.0e7);
+    EXPECT_EQ(3, world.selectedZoom);
+    EXPECT_EQ(64, world.desiredTileCount);
+    EXPECT_EQ(64u, world.desiredTiles.size());
+    EXPECT_LE(world.desiredTiles.size(),
+              static_cast<size_t>(opt.maxTilesPerView));
+
+    bool hasWesternHemisphere = false;
+    bool hasEasternHemisphere = false;
+    for (const TileKey& key : world.desiredTiles) {
+        EXPECT_EQ(3, key.z);
+        hasWesternHemisphere = hasWesternHemisphere || key.x < 4;
+        hasEasternHemisphere = hasEasternHemisphere || key.x >= 4;
+    }
+    EXPECT_TRUE(hasWesternHemisphere);
+    EXPECT_TRUE(hasEasternHemisphere);
+
+    // 两个容易被简单 +1 bias 提前切细的边界必须严格遵守高德表。
+    VectorTileTree z11Tree(opt);
+    const auto z11 = z11Tree.update(rectDeg(106.0, 29.0, 106.1, 29.1),
+                                    heightForZoom(11));
+    EXPECT_EQ(10, z11.selectedZoom);
+    VectorTileTree z13Tree(opt);
+    const auto z13 = z13Tree.update(rectDeg(106.0, 29.0, 106.1, 29.1),
+                                    heightForZoom(13));
+    EXPECT_EQ(12, z13.selectedZoom);
+
+    // 中国全国级视野同样应自动选择能在预算内完整覆盖的粗档，而不是
+    // 在 z10 固定档截一块中心区域。
+    VectorTileTree china(opt);
+    const auto nationwide = china.update(rectDeg(73.0, 18.0, 135.0, 54.0),
+                                         heightForZoom(8));
+    EXPECT_LT(nationwide.selectedZoom, 10);
+    EXPECT_EQ(nationwide.desiredTiles.size(),
+              static_cast<size_t>(nationwide.desiredTileCount));
+    EXPECT_LE(nationwide.desiredTiles.size(),
+              static_cast<size_t>(opt.maxTilesPerView));
 }
 
 TEST(VectorTileTree, OverzoomClampsToMaxZoom) {

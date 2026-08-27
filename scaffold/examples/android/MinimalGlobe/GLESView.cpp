@@ -9,6 +9,7 @@
 #include <sched.h>
 #include <sys/system_properties.h>
 #include <cstdio>
+#include <cstdlib>
 #include <sstream>
 #include <algorithm>
 #include <atomic>
@@ -80,6 +81,16 @@ static bool startupBoolProperty(const char* name, bool fallback) {
     if (prop[0] == '0' && prop[1] == '\0') return false;
     if (prop[0] == '1' && prop[1] == '\0') return true;
     return fallback;
+}
+
+static size_t startupSizeProperty(const char* name, size_t fallback) {
+    char prop[PROP_VALUE_MAX] = {0};
+    __system_property_get(name, prop);
+    if (!prop[0]) return fallback;
+    char* end = nullptr;
+    const unsigned long parsed = std::strtoul(prop, &end, 10);
+    if (end == prop || *end != '\0' || parsed == 0) return fallback;
+    return static_cast<size_t>(parsed);
 }
 
 // ============================================================
@@ -227,22 +238,23 @@ static std::unique_ptr<MvtVectorSource> gMvtSource;     // 渲染线程访问
 // ---- C2/E3:高德矢量。type2 面:无地形时走 VectorFill(V30 地球网格);
 // drape overlay 仍注册,无页则不出。路网/建筑/POI 仍主源 FeatureRenderLayer。 ----
 static std::shared_ptr<AmapDrapeImageryProvider::RegionCache> gAmapRegionCache;
-static std::shared_ptr<MvtRawTileFetchCache> gAmapType1RawCache;
-static std::shared_ptr<MvtRawTileFetchCache> gAmapType2RawCache;
 static std::unique_ptr<AmapRegionsVectorSource> gAmapRegionsSource;
-static std::unique_ptr<AmapRegionsVectorSource> gAmapWater12Source;
+static std::unique_ptr<AmapWaterVectorSource> gAmapWater12Source;
 static std::unique_ptr<AmapMainVectorSource> gAmapMainSource;
 static std::unique_ptr<AmapPoiVectorSource> gAmapPoiSource;
 static FeatureRenderLayer* gAmapRegionsLayer = nullptr;  // Engine 持有
 static FeatureRenderLayer* gAmapWater12Layer = nullptr;  // Engine 持有
 static FeatureRenderLayer* gAmapMainLayer = nullptr;  // Engine 持有
 static FeatureRenderLayer* gAmapPoiLayer = nullptr;  // Engine 持有
-// E1:MVT 解码 + 镶嵌的 worker 池。独立于引擎的瓦片加载池 —— 底图镶嵌是
-// 突发型重负载(换 zoom 时整视口一起来),混进地形/影像池会挤掉它们的
-// 加载额度。2 线程:再多也只是把内存峰值抬高,commit 侧本就有帧预算。
-// shared_ptr:MvtVectorSource 的 HTTP 回调对 pool 持 weak(见其 ctor 注释),
-// 拆除后迟到的取消回调安全丢弃,不再 enqueue 已析构线程池。
-static std::shared_ptr<ThreadPool> gMvtWorkerPool;
+// E1:MVT/高德使用两条独立后台通道。decode 负责压缩字节→载荷，tess 负责
+// Feature→网格及 drape/road-field 合成。此前二者共用严格 FIFO 池，全球
+// z3 首批 regions/main 镶嵌会把后来的 POI decode 挡在队尾；网络 8 秒已
+// 完成，画面却要 20-38 秒才收敛。拆池消除队头阻塞，线程总数仍按设备
+// 内存/核心有界，不减少瓦片或可见细节。
+static std::shared_ptr<ThreadPool> gMvtDecodePool;
+static std::shared_ptr<ThreadPool> gAmapPoiDecodePool;
+static std::shared_ptr<ThreadPool> gMvtTessellationPool;
+static minimal_globe_demo::MvtWorkerBudget gMvtWorkerBudget;
 // 刀2:面 drape 与路网场共享的 MVT 瓦 fetch+decode 缓存(同一批 z14 祖先
 // 瓦零重复拉取)。shared_ptr:两消费者 + 迟到回调自持。
 static std::shared_ptr<MvtTileFetchCache> gMvtTileCache;
@@ -261,6 +273,40 @@ struct MvtFetchInflight {
     std::vector<uint64_t> completed;
 };
 static MvtFetchInflight gMvtFetch;
+
+static void ensureMvtWorkerPools() {
+    if (gMvtDecodePool && gAmapPoiDecodePool && gMvtTessellationPool) return;
+
+    minimal_globe_demo::MvtWorkerBudget budget{
+        minimal_globe_demo::kMvtDecodeThreadsFallback,
+        1,
+        minimal_globe_demo::kMvtTessellationThreadsFallback};
+    DeviceInfo device;
+    if (gPlatformBridge) {
+        device = gPlatformBridge->deviceInfo();
+        budget = minimal_globe_demo::chooseMvtWorkerBudget(
+            device.cpuCores, device.totalMemoryBytes);
+    }
+    budget.decodeThreads = std::clamp<size_t>(
+        startupSizeProperty("debug.ee.mvtdecode", budget.decodeThreads), 1, 4);
+    budget.poiDecodeThreads = std::clamp<size_t>(
+        startupSizeProperty("debug.ee.amapdecode", budget.poiDecodeThreads),
+        1, 4);
+    budget.tessellationThreads = std::clamp<size_t>(
+        startupSizeProperty("debug.ee.mvttess", budget.tessellationThreads),
+        1, 8);
+    gMvtWorkerBudget = budget;
+    gMvtDecodePool = std::make_shared<ThreadPool>(budget.decodeThreads);
+    gAmapPoiDecodePool = std::make_shared<ThreadPool>(budget.poiDecodeThreads);
+    gMvtTessellationPool =
+        std::make_shared<ThreadPool>(budget.tessellationThreads);
+    LOGI("MvtWorkers split type1Decode=%zu poiDecode=%zu tess=%zu cores=%d "
+         "memory=%lldMB model=%s",
+         budget.decodeThreads, budget.poiDecodeThreads,
+         budget.tessellationThreads, device.cpuCores,
+         static_cast<long long>(device.totalMemoryBytes / (1024 * 1024)),
+         device.model.empty() ? "unknown" : device.model.c_str());
+}
 
 // MVT 瓦片拉取(E1 几何通路与 E4 影像通路共用)。⚠️ HttpRequest 取消句柄
 // 必须持有至完成,且**不能在 curl 回调线程析构** —— 完成 id 攒批,下次发
@@ -563,13 +609,10 @@ static void clearDemoEngineObjects() {
     // 且在飞的 HttpRequest 句柄析构即取消。
     gMvtSource.reset();
     gAmapRegionCache.reset();
-    gAmapType1RawCache.reset();
-    gAmapType2RawCache.reset();
     gAmapRegionsSource.reset();
     gAmapWater12Source.reset();
     gAmapMainSource.reset();
     gAmapPoiSource.reset();
-    gMvtWorkerPool.reset();
     {
         std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
         gMvtFetch.requests.clear();
@@ -603,6 +646,10 @@ static void clearDemoEngineObjects() {
     gSdkFacade.reset();
     gEngine.reset();
     gRenderDevice.reset();
+    gMvtDecodePool.reset();
+    gAmapPoiDecodePool.reset();
+    gMvtTessellationPool.reset();
+    gMvtWorkerBudget = {};
     gPlatformBridge.reset();
     gEngineReady = false;
 }
@@ -747,9 +794,7 @@ static bool createEngine() {
         // 必须在 installScene **之前**注册:pendingCustomOverlays_ 在
         // installScene 里消费,排在配置 overlay(卫星影像)之后 = 叠其上。
         if (minimal_globe_demo::kEnableMvtDrapeBasemap) {
-            if (!gMvtWorkerPool) {
-                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
-            }
+            ensureMvtWorkerPools();
             if (!gMvtTileCache) {
                 gMvtTileCache = std::make_shared<MvtTileFetchCache>(
                     [](const TileKey& key,
@@ -757,7 +802,7 @@ static bool createEngine() {
                         mvtFetchTile(key, std::move(cb));
                     },
                     minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtDecodePool);
             }
             VectorDrapeImageryProvider::Options dopts;
             dopts.id = "mvt-drape";
@@ -776,7 +821,7 @@ static bool createEngine() {
             auto drapeProvider =
                 std::make_unique<VectorDrapeImageryProvider>(
                     std::move(dopts), gMvtTileCache,
-                    gMvtWorkerPool);  // shared:Assembly 内持 weak 防拆除竞态
+                    gMvtTessellationPool);  // Assembly 内持 weak 防拆除竞态
             RasterOverlay::Options oopts;
             oopts.role = RasterOverlayRole::AnnotationOverlay;
             oopts.priority = RasterOverlayPriority::Normal;
@@ -808,9 +853,7 @@ static bool createEngine() {
         // setRoadFieldSource 须在首帧渲染前调(页存储 lazy init 快照 Config)。
         if (minimal_globe_demo::kEnableMvtRoadField &&
             !minimal_globe_demo::kEnableEPlanRoadRibbon) {
-            if (!gMvtWorkerPool) {
-                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
-            }
+            ensureMvtWorkerPools();
             if (!gMvtTileCache) {
                 gMvtTileCache = std::make_shared<MvtTileFetchCache>(
                     [](const TileKey& key,
@@ -818,7 +861,7 @@ static bool createEngine() {
                         mvtFetchTile(key, std::move(cb));
                     },
                     minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtDecodePool);
             }
             RoadFieldSource::Options fopts;
             fopts.dataMaxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
@@ -827,7 +870,7 @@ static bool createEngine() {
             fopts.gcj02SourceGrid =
                 minimal_globe_demo::kUseGaodeSatelliteForDemo;
             auto roadField = std::make_shared<RoadFieldSource>(
-                std::move(fopts), gMvtTileCache, gMvtWorkerPool);
+                std::move(fopts), gMvtTileCache, gMvtTessellationPool);
             gRoadFieldSource = roadField;  // V26 换肤钩子
             gEngine->setRoadFieldSource(
                 [roadField](const TileKey& pageKey, CancellationToken token,
@@ -844,25 +887,7 @@ static bool createEngine() {
 
         // ---- 高德 type2 面 V1 drape:必须在 installScene 之前注册 overlay。
         if (amapVectorEnabled) {
-            if (!gMvtWorkerPool) {
-                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
-            }
-            if (!gAmapType1RawCache) {
-                gAmapType1RawCache = std::make_shared<MvtRawTileFetchCache>(
-                    [](const TileKey& k,
-                       MvtRawTileFetchCache::FetchCallback cb) {
-                        amapFetchTile(k, 1, std::move(cb));
-                    },
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
-            }
-            if (!gAmapType2RawCache) {
-                gAmapType2RawCache = std::make_shared<MvtRawTileFetchCache>(
-                    [](const TileKey& k,
-                       MvtRawTileFetchCache::FetchCallback cb) {
-                        amapFetchTile(k, 2, std::move(cb));
-                    },
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
-            }
+            ensureMvtWorkerPools();
             if (!gAmapRegionCache) {
                 gAmapRegionCache =
                     std::make_shared<AmapDrapeImageryProvider::RegionCache>(
@@ -873,7 +898,7 @@ static bool createEngine() {
                         },
                         minimal_globe_demo::kMvtTileCacheDecoded,
                         minimal_globe_demo::kMvtTileCacheRaw,
-                        gMvtWorkerPool, gAmapType1RawCache);
+                        gMvtDecodePool);
             }
             AmapDrapeImageryProvider::Options aopts;
             aopts.id = "amap-drape";
@@ -887,7 +912,7 @@ static bool createEngine() {
             aopts.gcj02SourceGrid =
                 minimal_globe_demo::kUseGaodeSatelliteForDemo;
             auto amapDrape = std::make_unique<AmapDrapeImageryProvider>(
-                std::move(aopts), gAmapRegionCache, gMvtWorkerPool);
+                std::move(aopts), gAmapRegionCache, gMvtTessellationPool);
             RasterOverlay::Options aoopts;
             aoopts.role = RasterOverlayRole::AnnotationOverlay;
             aoopts.priority = RasterOverlayPriority::Normal;
@@ -1031,11 +1056,7 @@ static bool createEngine() {
             // demo 侧不再设 —— 两处真相会在相机飞离本区时打架。
             gMvtBasemapLayer = basemapLayer.get();
 
-            // 与 drape 段共享同一个池:无条件重建会把 drape provider 里的
-            // weak_ptr 指向的旧池顶掉析构 → drape 恒 lock 失败退化就地跑。
-            if (!gMvtWorkerPool) {
-                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
-            }
+            ensureMvtWorkerPools();
             MvtVectorSource::Options mvtOpts;
             // E2:道路分级过滤从数据侧(tippecanoe -j)搬回样式侧。改分级
             // 策略不再需要重切整套瓦片,同一份数据也能给不同样式复用 ——
@@ -1118,7 +1139,7 @@ static bool createEngine() {
                         mvtFetchTile(key, std::move(cb));
                     },
                     minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool);
+                    minimal_globe_demo::kMvtTileCacheRaw, gMvtDecodePool);
             }
             // E1 接线:镶嵌钩子在 worker 上跑,持一份样式快照(图集置空,
             // 见 FeatureRenderLayer::workerTessellationContext 的线程契约);
@@ -1147,7 +1168,8 @@ static bool createEngine() {
                 layerPtr->dropTileMesh(key);
             };
             gMvtSource = std::make_unique<MvtVectorSource>(
-                mvtOpts, std::move(sinks), gMvtTileCache, gMvtWorkerPool);
+                mvtOpts, std::move(sinks), gMvtTileCache,
+                gMvtTessellationPool);
             gEngine->addFeatureRenderLayer(std::move(basemapLayer));
             // V26 三期:样式文档分发目标注册(drape/场在前面已建;任一为
             // 空 = 该路不分发)。teardown 与三个 g* 指针同点清。
@@ -1340,9 +1362,7 @@ static bool createEngine() {
                           {0.0f, 0.0f, 0.0f, 0.0f})}},
                     as.fillColorExpr);
             }
-            if (!gMvtWorkerPool) {
-                gMvtWorkerPool = std::make_shared<ThreadPool>(2);
-            }
+            ensureMvtWorkerPools();
             // 粗源 z10 type2 → VectorFill(V30 地球网格)。无地形时 drape
             // 不出画,这条才是水/绿地的上屏路。先挂垫底。
             FeatureRenderStyle rs;
@@ -1397,15 +1417,26 @@ static bool createEngine() {
                         },
                         minimal_globe_demo::kMvtTileCacheDecoded,
                         minimal_globe_demo::kMvtTileCacheRaw,
-                        gMvtWorkerPool);
+                        gMvtDecodePool);
             }
             AmapRegionsVectorSource::Options rOpts;
-            rOpts.tree.minZoom = 10;
+            rOpts.debugName = "amap-regions";
+            // 高德并不是只有 z10 区域档。canonical view zoom 经
+            // amapDataZoom 映射到服务端的 3/6/8/10/12/14 离散档位。
+            // 粗区域层只消费到 z10：高空用 z3/6/8
+            // 覆盖全球可见范围，不能把全国视野截成重庆中心最近 256 张
+            // z10 瓦片。
+            rOpts.tree.minZoom = 3;
             rOpts.tree.maxZoom = 10;
+            rOpts.tree.supportedZooms = {3, 6, 8, 10};
+            rOpts.tree.dataZoomForCanonicalZoom = [](int z) {
+                return amapDataZoom(z);
+            };
             rOpts.tree.scheme = TileScheme::createAmapGeographic();
             rOpts.tree.maxTilesPerView = 256;
             rOpts.tree.refinement =
                 VectorTileTree::RefinementPolicy::GeometryReplace;
+            rOpts.maxTessellationsInFlight = 8;
             AmapRegionsVectorSource::Sinks rSinks;
             FeatureRenderLayer* rLayer = gAmapRegionsLayer;
             rSinks.tessellate =
@@ -1424,8 +1455,9 @@ static bool createEngine() {
                 rLayer->dropTileMesh(key);
             };
             gAmapRegionsSource = std::make_unique<AmapRegionsVectorSource>(
-                rOpts, std::move(rSinks), gAmapRegionCache, gMvtWorkerPool);
-            LOGI("AmapE3: regions VectorFill installed (z10 type2, globeFill 400m)");
+                rOpts, std::move(rSinks), gAmapRegionCache,
+                gMvtTessellationPool);
+            LOGI("AmapE3: regions VectorFill installed (z3/6/8/10 type2, globeFill 400m)");
 
             // ---- 常显 z12 粗水层:复刻 amap.com 的「粗档水底 + 细档面」叠层。----
             // 引擎 tile-bucket 做 LOD 替换(z14 子瓦加载后 z12 父瓦被替换),
@@ -1459,27 +1491,23 @@ static bool createEngine() {
             w12s.buildingExtrusion = false;
             w12s.stencilFillEnabled = false;
             w12s.globeFillMaxEdgeMeters = 0.0;
+            // z12 是近景水系接缝底板，不是全球底图。远景由 regions
+            // 的 z3/6/8/10 档连续覆盖；否则固定 z12 + 256 瓦上限会再次
+            // 在相机中心形成一块孤立的“重庆水面岛”。
+            w12s.minZoom = 11.5;
             water12Layer->setStyle(w12s);
             gAmapWater12Layer = water12Layer.get();
             gEngine->addFeatureRenderLayer(std::move(water12Layer));
-            auto water12Cache =
-                std::make_shared<AmapDrapeImageryProvider::RegionCache>(
-                    [](const TileKey& k,
-                       AmapDrapeImageryProvider::RegionCache::
-                           FetchCallback cb) {
-                        amapFetchTile(k, 1, std::move(cb));
-                    },
-                    minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool,
-                    gAmapType1RawCache);
-            AmapRegionsVectorSource::Options w12Opts;
+            AmapWaterVectorSource::Options w12Opts;
+            w12Opts.debugName = "amap-water12";
             w12Opts.tree.minZoom = 12;
             w12Opts.tree.maxZoom = 12;
             w12Opts.tree.scheme = TileScheme::createAmapGeographic();
             w12Opts.tree.maxTilesPerView = 256;
             w12Opts.tree.refinement =
                 VectorTileTree::RefinementPolicy::GeometryReplace;
-            AmapRegionsVectorSource::Sinks w12Sinks;
+            w12Opts.maxTessellationsInFlight = 8;
+            AmapWaterVectorSource::Sinks w12Sinks;
             FeatureRenderLayer* w12Layer = gAmapWater12Layer;
             w12Sinks.tessellate =
                 [w12Layer](const TileKey& key,
@@ -1496,44 +1524,39 @@ static bool createEngine() {
             w12Sinks.drop = [w12Layer](const TileKey& key) {
                 w12Layer->dropTileMesh(key);
             };
-            gAmapWater12Source = std::make_unique<AmapRegionsVectorSource>(
-                w12Opts, std::move(w12Sinks), water12Cache, gMvtWorkerPool);
+            gAmapWater12Source = std::make_unique<AmapWaterVectorSource>(
+                w12Opts, std::move(w12Sinks), gAmapRegionCache,
+                gMvtTessellationPool);
             LOGI("AmapE3: water12 base installed (z12 type2, water/green only)");
 
-            // 主源:路网/建筑/轨道与 30002 地块 z12-14 网格。30001
-            // 水/绿地在 AmapDecodeTraits<false> 解码期过滤，由 water12
-            // 唯一提供，避免 z14 错位水体参与 tessellation。
+            // 主源:路网/建筑/轨道与 30002 地块 z12-14 网格。
+            // regions/main/water12 共享 gAmapRegionCache 的完整 type1
+            // 解码载荷，不再对同一 gzip/protobuf 做两次完整解码。
             auto mainLayer = std::make_unique<FeatureRenderLayer>(
                 "amap-vector", gRenderDevice.get(), Ellipsoid::WGS84());
             mainLayer->setStyle(as);
             gAmapMainLayer = mainLayer.get();  // Engine 将持有所有权
             gEngine->addFeatureRenderLayer(std::move(mainLayer));
-            auto mainCache =
-                std::make_shared<MvtTileFetchCacheT<
-                    std::vector<Feature>, AmapDecodeTraits<false>>>(
-                    [](const TileKey& k,
-                       MvtTileFetchCacheT<std::vector<Feature>,
-                                          AmapDecodeTraits<false>>::
-                           FetchCallback cb) {
-                        amapFetchTile(k, 1, std::move(cb));
-                    },
-                    minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool,
-                    gAmapType1RawCache);
             AmapMainVectorSource::Options mOpts;
-            mOpts.tree.minZoom = 12;
+            mOpts.debugName = "amap-main";
+            mOpts.tree.minZoom = 3;
             mOpts.tree.maxZoom = 14;
             mOpts.tree.scheme = TileScheme::createAmapGeographic();
-            // 高德矢量主档位是 z12/z14；z13 manifest 虽返回成功但载荷
-            // 为空。让树在 canonical z13 时稳定使用 z12，避免空档参与
-            // LOD 换代；达到 z14 的近景仍使用完整细档。
-            mOpts.tree.supportedZooms = {12, 14};
-            // 近景 z14 视口约 84 瓦(1.5km 高),默认 64 会把它压到 z13
-            // —— 而 z13 组是空瓦(81B),主源将永远无内容。抬高闸让 z14
-            // 进入;瓦数上界仍由相机视口矩形天然限制(见 horizonViewRect)。
+            // 高德数据是离散档位，不是只有重庆验证过的 z12/z14。
+            // amapDataZoom 负责 canonical → 服务端档位：全球视野 z3，
+            // 逐级进入 z6/8/10/12/14。这样扩大视野时降数据 LOD，而
+            // 不是提高 maxTilesPerView 硬拉全球细瓦。
+            mOpts.tree.supportedZooms = {3, 6, 8, 10, 12, 14};
+            mOpts.tree.dataZoomForCanonicalZoom = [](int z) {
+                return amapDataZoom(z);
+            };
+            // 近景 z14 视口约 84 瓦(1.5km 高)，默认 64 会继续降到
+            // z12；抬高闸让 z14 完整进入。远景不靠这个上限硬撑，前面的
+            // 离散档位会先降到 z10/8/6/3。
             mOpts.tree.maxTilesPerView = 256;
             mOpts.tree.refinement =
                 VectorTileTree::RefinementPolicy::GeometryReplace;
+            mOpts.maxTessellationsInFlight = 8;
             AmapMainVectorSource::Sinks mSinks;
             FeatureRenderLayer* mLayer = gAmapMainLayer;
             mSinks.tessellate =
@@ -1552,8 +1575,9 @@ static bool createEngine() {
                 mLayer->dropTileMesh(key);
             };
             gAmapMainSource = std::make_unique<AmapMainVectorSource>(
-                mOpts, std::move(mSinks), mainCache, gMvtWorkerPool);
-            LOGI("AmapE3: main source installed (z12-14, amap 4326 grid)");
+                mOpts, std::move(mSinks), gAmapRegionCache,
+                gMvtTessellationPool);
+            LOGI("AmapE3: main source installed (z3/6/8/10/12/14, amap 4326 grid)");
 
             // POI 源:type 0 通用 POI 点标签(z14)。点符号 + 名称文字。
             FeatureRenderStyle ps;
@@ -1576,21 +1600,27 @@ static bool createEngine() {
             gEngine->addFeatureRenderLayer(std::move(poiLayer));
             auto poiCache =
                 std::make_shared<MvtTileFetchCacheT<
-                    std::vector<Feature>, AmapPoiDecodeTraits>>(
+                    AmapDecodedTile, AmapPoiDecodedTileDecodeTraits>>(
                     [](const TileKey& k,
-                       MvtTileFetchCacheT<std::vector<Feature>,
-                                          AmapPoiDecodeTraits>::
+                       MvtTileFetchCacheT<AmapDecodedTile,
+                                          AmapPoiDecodedTileDecodeTraits>::
                            FetchCallback cb) {
                         amapFetchTile(k, 2, std::move(cb));
                     },
                     minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtWorkerPool,
-                    gAmapType2RawCache);
+                    minimal_globe_demo::kMvtTileCacheRaw,
+                    gAmapPoiDecodePool);
             AmapPoiVectorSource::Options pOpts;
-            pOpts.tree.minZoom = 14;
+            pOpts.debugName = "amap-poi";
+            pOpts.tree.minZoom = 3;
             pOpts.tree.maxZoom = 14;
             pOpts.tree.scheme = TileScheme::createAmapGeographic();
+            pOpts.tree.supportedZooms = {3, 6, 8, 10, 12, 14};
+            pOpts.tree.dataZoomForCanonicalZoom = [](int z) {
+                return amapDataZoom(z);
+            };
             pOpts.tree.maxTilesPerView = 256;
+            pOpts.maxTessellationsInFlight = 8;
             AmapPoiVectorSource::Sinks pSinks;
             FeatureRenderLayer* pLayer = gAmapPoiLayer;
             pSinks.tessellate =
@@ -1609,8 +1639,9 @@ static bool createEngine() {
                 pLayer->dropTileMesh(key);
             };
             gAmapPoiSource = std::make_unique<AmapPoiVectorSource>(
-                pOpts, std::move(pSinks), poiCache, gMvtWorkerPool);
-            LOGI("AmapE3: POI source installed (z14, type-0 labels)");
+                pOpts, std::move(pSinks), poiCache,
+                gMvtTessellationPool);
+            LOGI("AmapE3: POI source installed (z3/6/8/10/12/14, type-0 labels)");
         }
 
         // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。**不在任何
@@ -2247,24 +2278,26 @@ static void renderFrame() {
         const Rectangle viewRect =
             MvtVectorSource::horizonViewRectangle(camCarto, minRadius);
         const double camHeight = std::max(1.0, camCarto.height());
+        const double amapViewZoom = std::min(
+            24.0,
+            std::max(0.0, std::log2(4.0e7 / camHeight)));
         if (gAmapRegionsSource) {
             // z10 粗源 LOD 近景让位(与 regions 层 maxZoom=11.5 同口径):
             // zoom > 11.5 时不更新粗源树,不再拉取/镶嵌 z10 面,避免与
             // 主源 z12-14 细面叠加成「破破烂烂」的双层边,也省带宽。
-            const double regionsZoom = std::min(
-                24.0, std::max(0.0,
-                               std::log2(4.0e7 / camHeight)));
-            if (regionsZoom <= 11.5) {
+            if (amapViewZoom <= 11.5) {
                 gAmapRegionsSource->update(viewRect, camHeight);
             } else {
                 gAmapRegionsSource->suspend();
             }
         }
-        // 常显 z12 粗水层:与 regions 层不同,近景也拉取(它垫在细块下
-        // 盖住 z14 瓦缝空档,是 amap.com 同款叠层)。树恒 z12,不随
-        // 相机 zoom 门控。
-        if (gAmapWater12Source) {
+        // z12 粗水层只服务近景：垫在 z14 细块下盖住瓦缝空档。
+        // 远景由 regions 的 z3/6/8/10 多档面源承接；固定 z12 若在
+        // 全球视野常显，会再次被 256 瓦工作集截成中心孤岛。
+        if (gAmapWater12Source && amapViewZoom > 11.5) {
             gAmapWater12Source->update(viewRect, camHeight);
+        } else if (gAmapWater12Source) {
+            gAmapWater12Source->suspend();
         }
         if (gAmapMainSource) {
             gAmapMainSource->update(viewRect, camHeight);
@@ -2272,28 +2305,42 @@ static void renderFrame() {
         if (gAmapPoiSource) {
             gAmapPoiSource->update(viewRect, camHeight);
         }
-        // 问题3验收口径：fetch 是真实网络请求数，coalesced 是跨 source
-        // 合并掉的在途请求，hit 是压缩字节驻留命中。type1/type2 分开统计，
-        // 防止不同 Nebula 请求命名空间被误合并。
+        // 共享 type1 验收口径：regions/main/water12 必须命中同一
+        // typed cache。全球 z3 冷启 fetch 应约为 64，不再是两个
+        // profile 各解码一遍。POI(type2) 由独立 pool 统计。
         static uint64_t amapRawLogCounter = 0;
         if (++amapRawLogCounter % 120 == 1) {
-            const auto type1 = gAmapType1RawCache
-                                   ? gAmapType1RawCache->stats()
-                                   : MvtRawTileFetchCache::Stats{};
-            const auto type2 = gAmapType2RawCache
-                                   ? gAmapType2RawCache->stats()
-                                   : MvtRawTileFetchCache::Stats{};
-            LOGI("AmapRaw type1 fetch=%llu coalesced=%llu hit=%llu "
-                 "resident=%zu/%zuKB | type2 fetch=%llu coalesced=%llu "
-                 "hit=%llu resident=%zu/%zuKB",
+            const auto type1 = gAmapRegionCache
+                                   ? gAmapRegionCache->stats()
+                                   : AmapType1TileCache::Stats{};
+            LOGI("AmapType1Cache fetch=%llu refetch=%llu hit=%llu rawHit=%llu "
+                 "resident=%zu/%zuKB raw=%zu/%zuKB",
                  static_cast<unsigned long long>(type1.fetches),
-                 static_cast<unsigned long long>(type1.coalesced),
+                 static_cast<unsigned long long>(type1.refetches),
                  static_cast<unsigned long long>(type1.hits),
+                 static_cast<unsigned long long>(type1.rawHits),
                  type1.residentTiles, type1.residentBytes / 1024,
-                 static_cast<unsigned long long>(type2.fetches),
-                 static_cast<unsigned long long>(type2.coalesced),
-                 static_cast<unsigned long long>(type2.hits),
-                 type2.residentTiles, type2.residentBytes / 1024);
+                 type1.rawTiles, type1.rawBytes / 1024);
+            auto logPool = [](const char* name,
+                              const std::shared_ptr<ThreadPool>& pool) {
+                if (!pool) return;
+                const auto s = pool->stats();
+                const double avgQueue =
+                    s.started ? s.totalQueueWaitMs / s.started : 0.0;
+                const double avgWork =
+                    s.completed ? s.totalWorkMs / s.completed : 0.0;
+                LOGI("MvtPool %s threads=%zu queued=%llu active=%llu "
+                     "done=%llu queueAvg=%.2f queueMax=%.2f "
+                     "workAvg=%.2f workMax=%.2f",
+                     name, pool->threadCount(),
+                     static_cast<unsigned long long>(s.queued),
+                     static_cast<unsigned long long>(s.active),
+                     static_cast<unsigned long long>(s.completed), avgQueue,
+                     s.maxQueueWaitMs, avgWork, s.maxWorkMs);
+            };
+            logPool("type1Decode", gMvtDecodePool);
+            logPool("poiDecode", gAmapPoiDecodePool);
+            logPool("tess", gMvtTessellationPool);
             auto logSource = [](const char* name, const auto* source) {
                 if (!source) return;
                 const auto& s = source->lastUpdateStats();

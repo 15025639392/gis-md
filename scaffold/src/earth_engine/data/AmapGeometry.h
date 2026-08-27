@@ -8,6 +8,19 @@
 
 namespace earth_engine {
 
+struct AmapDecodedTile {
+    std::vector<AmapDecodedLayerPart> parts;
+};
+
+struct AmapDecodedTileDecodeTraits {
+    static bool decode(const uint8_t* data, size_t size,
+                       AmapDecodedTile& out, std::string* error) {
+        return decodeAmapTile(data, size, out.parts, error);
+    }
+
+    static size_t approxBytes(const AmapDecodedTile& tile);
+};
+
 /// 高德瓦片几何 → 引擎 Feature(lon/lat 弧度,WGS84)。
 ///
 /// 高德 4326 等距圆柱瓦片:2:1 地理比例(经度 360/2^z、纬度 180/2^z),

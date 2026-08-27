@@ -6,62 +6,106 @@
 #include "../tiling/TileKey.h"
 
 #include <memory>
+#include <iterator>
 #include <string>
 #include <vector>
 
 namespace earth_engine {
 
-/// 高德 Nebula 载荷 → 引擎 Feature 列表的恒等转换。
-///
-/// amap 的 DecodeTraits 在解码期已经完成「字节 → Feature 列表 + 按源过滤
-/// (regionsOnly)」,worker 直接拿这份列表镶嵌,无需再经层规则。includeLayers/
-/// layerRules 对 amap 语义为空(过滤在解码期按 type 做,不是 MVT 层名)。
-struct AmapToFeatures {
+inline void appendAmapPartFeatures(const AmapDecodedLayerPart& part,
+                                   std::vector<Feature>& out) {
+    auto features = amapDecodedPartToFeatures(part, false);
+    out.insert(out.end(), std::make_move_iterator(features.begin()),
+               std::make_move_iterator(features.end()));
+}
+
+/// type1 完整解码载荷 → 粗区域 source。筛选放到消费阶段，让 regions/main/
+/// water12 共享同一个 gzip/protobuf 解码结果。
+struct AmapRegionsToFeatures {
     std::vector<Feature> operator()(
-        const TileKey&, std::shared_ptr<const std::vector<Feature>> tile,
+        const TileKey&, std::shared_ptr<const AmapDecodedTile> tile,
         const std::vector<std::string>&,
         const std::vector<SourceLayerRule>&) const {
-        return *tile;
+        std::vector<Feature> out;
+        for (const AmapDecodedLayerPart& part : tile->parts) {
+            if (part.type == 2) appendAmapPartFeatures(part, out);
+        }
+        return out;
     }
 };
 
-/// amap POI 解码特质:字节流 → Feature 列表(点标签)。
-/// 用 decodeAmapPoiTile 解码(type 0 通用 POI 点),经
-/// amapDecodedPartToFeatures 转 Point Feature(name/rank/subKey)。
-struct AmapPoiDecodeTraits {
+/// type1 完整解码载荷 → main source。低档 type2 由 regions 唯一提供；
+/// z12+ 只接非 30001 地块，水/绿仍由 water12 提供。
+struct AmapMainToFeatures {
+    std::vector<Feature> operator()(
+        const TileKey&, std::shared_ptr<const AmapDecodedTile> tile,
+        const std::vector<std::string>&,
+        const std::vector<SourceLayerRule>&) const {
+        std::vector<Feature> out;
+        for (const AmapDecodedLayerPart& part : tile->parts) {
+            if (part.type == 2) {
+                if (part.z < 12) continue;
+                AmapDecodedLayerPart kept = part;
+                kept.features.clear();
+                for (const AmapDecodedFeature& feature : part.features) {
+                    if (feature.classCode != 30001) {
+                        kept.features.push_back(feature);
+                    }
+                }
+                appendAmapPartFeatures(kept, out);
+                continue;
+            }
+            appendAmapPartFeatures(part, out);
+        }
+        return out;
+    }
+};
+
+struct AmapWaterToFeatures {
+    std::vector<Feature> operator()(
+        const TileKey&, std::shared_ptr<const AmapDecodedTile> tile,
+        const std::vector<std::string>&,
+        const std::vector<SourceLayerRule>&) const {
+        std::vector<Feature> out;
+        for (const AmapDecodedLayerPart& part : tile->parts) {
+            if (part.type != 2) continue;
+            AmapDecodedLayerPart kept = part;
+            kept.features.clear();
+            for (const AmapDecodedFeature& feature : part.features) {
+                if (feature.classCode == 30001) {
+                    kept.features.push_back(feature);
+                }
+            }
+            appendAmapPartFeatures(kept, out);
+        }
+        return out;
+    }
+};
+
+/// POI 保留为轻量解码结构，进入 tessellation worker 后才转换 Feature。
+/// 旧通路在 decode 阶段先构造 Feature，派单时 `return *tile` 又深复制整份
+/// rings/properties；全球 64 瓦会产生一轮纯内存复制和分配抖动。
+struct AmapPoiDecodedTileDecodeTraits {
     static bool decode(const uint8_t* data, size_t size,
-                       std::vector<Feature>& out, std::string* error) {
-        std::vector<AmapDecodedLayerPart> parts;
-        if (!decodeAmapPoiTile(data, size, parts, error)) {
-            return false;
-        }
-        for (const auto& p : parts) {
-            if (p.type != 0) continue;  // 只取通用 POI 点层
-            // [1:1 坐标空间] 与区域/路网一致:保留 GCJ 原生坐标对齐 amap.com。
-            auto fs = amapDecodedPartToFeatures(p, false);
-            out.insert(out.end(), std::make_move_iterator(fs.begin()),
-                       std::make_move_iterator(fs.end()));
-        }
-        return true;
+                       AmapDecodedTile& out, std::string* error) {
+        return decodeAmapPoiTile(data, size, out.parts, error);
     }
 
-    static size_t approxBytes(const std::vector<Feature>& feats) {
-        constexpr size_t kMapNodeBytes = 56;
-        constexpr size_t kVecHeaderBytes = 24;
-        size_t bytes = sizeof(std::vector<Feature>) +
-                       feats.capacity() * sizeof(Feature);
-        for (const Feature& f : feats) {
-            bytes += f.rings.capacity() * kVecHeaderBytes;
-            for (const auto& ring : f.rings) {
-                bytes += ring.capacity() * sizeof(Cartographic);
-            }
-            bytes += f.properties.size() * kMapNodeBytes;
-            for (const auto& kv : f.properties) {
-                if (kv.first.size() > 15) bytes += kv.first.size();
-                if (kv.second.size() > 15) bytes += kv.second.size();
-            }
+    static size_t approxBytes(const AmapDecodedTile& tile) {
+        return AmapDecodedTileDecodeTraits::approxBytes(tile);
+    }
+};
+
+struct AmapPoiToFeatures {
+    std::vector<Feature> operator()(
+        const TileKey&, std::shared_ptr<const AmapDecodedTile> tile,
+        const std::vector<std::string>&,
+        const std::vector<SourceLayerRule>&) const {
+        std::vector<Feature> out;
+        for (const AmapDecodedLayerPart& part : tile->parts) {
+            if (part.type == 0) appendAmapPartFeatures(part, out);
         }
-        return bytes;
+        return out;
     }
 };
 
@@ -97,18 +141,25 @@ struct AmapDecodeTraits {
     }
 };
 
-/// amap 区域粗源(z10:水/绿地,type2)。
+/// amap 区域粗源(z3/6/8/10:水/绿地与地块,type2)。
+using AmapType1TileCache =
+    MvtTileFetchCacheT<AmapDecodedTile, AmapDecodedTileDecodeTraits>;
+
 using AmapRegionsVectorSource = VectorTileSourceT<
-    std::vector<Feature>, AmapDecodeTraits<true>, AmapToFeatures>;
+    AmapDecodedTile, AmapDecodedTileDecodeTraits, AmapRegionsToFeatures>;
 
-/// amap 主源(z12-14:路网/建筑/轨道与地块,type1/2/3/4；30001 水/绿地
-/// 由 z12 water source 唯一提供)。
+using AmapWaterVectorSource = VectorTileSourceT<
+    AmapDecodedTile, AmapDecodedTileDecodeTraits, AmapWaterToFeatures>;
+
+/// amap 主源(z3/6/8/10/12/14:路网/建筑/轨道；z12+ 另含地块
+/// type2。低档地块由 regions source 唯一提供，30001 水/绿地由粗区域/
+/// z12 water source 提供)。
 using AmapMainVectorSource = VectorTileSourceT<
-    std::vector<Feature>, AmapDecodeTraits<false>, AmapToFeatures>;
+    AmapDecodedTile, AmapDecodedTileDecodeTraits, AmapMainToFeatures>;
 
-/// amap POI 源(z14:type 0 通用 POI 点标签)。
+/// amap POI 源(z3/6/8/10/12/14:type 0 通用 POI 点标签)。
 using AmapPoiVectorSource = VectorTileSourceT<
-    std::vector<Feature>, AmapPoiDecodeTraits, AmapToFeatures>;
+    AmapDecodedTile, AmapPoiDecodedTileDecodeTraits, AmapPoiToFeatures>;
 
 /// 高德瓦片地理矩形(弧度,4326 等距圆柱 2:1)。
 /// 与 AmapGeographicScheme::tileToRectangle 同数学;GLESView 的
