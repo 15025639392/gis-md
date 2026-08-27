@@ -10,12 +10,17 @@
 状态时点:2026-08-18(V26 样式系统三期收官 + §1b 驱动切面/七态 dump 后订正;
 上一时点 2026-08-16 `e13de16f1`)。
 
+> ⚠️ **生命周期状态：MVT 道路线场即将废弃。** 范围仅限
+> `RoadFieldSource` → `LineFieldRasterizer`/D2 → `TerrainPageStore` 场平面。
+> 该链路暂时保留用于兼容、回归和历史数据对照；新功能、新图层不得继续依赖或扩展它。
+> MVT 面 drape、MVT 点/标注以及 `FeatureRenderLayer` 几何线不在本次标记范围内；替代实现和删除时间尚未确定。
+
 ---
 
 ## 0. 一句话
 
 一条 MVT 数据源,**一个获取层**扇出到**三条表示各异的渲染路**:
-面走栅格化进影像页合成、线走 SDF 距离场寄生地形 FS、点走 billboard 几何链。
+面走栅格化进影像页合成、线走 **（⚠️即将废弃的）SDF/D2 场路径**寄生地形 FS、点走 billboard 几何链。
 分工的判据不是"数据类型",是**这类要素的视觉本质对应哪个物理量**,
 以及该表示在 TBDR 上最便宜。
 
@@ -35,7 +40,7 @@
                                       │ shared_ptr<const MvtTile>
               ┌───────────────────────┼───────────────────────┐
               │                       │                       │
-        【面】drape              【线】SDF 场            【点】符号几何
+        【面】drape          【线，⚠️即将废弃】SDF/D2 场    【点】符号几何
               │                       │                       │
    VectorDrapeImageryProvider   RoadFieldSource      MvtVectorSource
    ├ 冒充 ImageryProvider       ├ 经 PageStore        ├ VectorTileTree(选择/LRU)
@@ -60,7 +65,7 @@
 **关键结构事实**:
 - 面与线**不产生独立 draw call**——都寄生在地形 pass 的片元着色器里合成(GPU ~0,见 V1/V2)。
 - 点是唯一有独立 draw 的矢量内容(每桶 1 point + 1 label draw)。
-- 场平面与影像平面**同页存储但不同生命周期**:场页有独立 zoom 封顶、独立 LRU、独立间接纹理(场专项步3)。
+- 场平面与影像平面**同页存储但不同生命周期**:场页有独立 zoom 封顶、独立 LRU、独立间接纹理(场专项步3)；该场平面属于**即将废弃的兼容路径**。
 
 ---
 
@@ -143,7 +148,7 @@ P1 几何上屏 → P3 贴地(方案A 高程采样) → P6a/d stencil 贴地(像
     → P4 MVT 底图接入 → E1 瓦片即桶 + worker 全链(16107→216ms)
     → E2 分级过滤从数据侧搬回样式侧 → E4 drape 探索
     → 刀1 面→drape(75ms→0) → 刀2 线→SDF 场(stencil 链退役)
-    → 场专项步1-3 + D2 线段纹素换代(线宽真像素恒定)
+    → 场专项步1-3 + D2 线段纹素换代(线宽真像素恒定；现为⚠️即将废弃的兼容路径)
     → 符号五刀(刀0/A/B/C/D/E)+ A.5 获取层单一化
     → R*/V24 换代闪根修 → 符号遮挡按视觉语义重做
 ```
@@ -155,12 +160,13 @@ P1 几何上屏 → P3 贴地(方案A 高程采样) → P6a/d stencil 贴地(像
 
 把 §2 的三行表扩成**可查的决策矩阵**:加新内容时先查「视觉本质 → 物理量 →
 表示路 → 扩展点」,再决定复用哪条路或是否开第四条路。判据仍是一句:
-**体验达标且最便宜**。
+**体验达标且最便宜**。但生命周期状态优先于矩阵复用规则：道路线场行只描述现状，
+**不得作为新 MVT 线能力的扩展入口**。
 
 | 内容类 | 视觉本质(物理量) | 选定表示 | 上屏机制 | 实测成本 | 能力边界(能/不能) | 扩展点 | 失效成本类 |
 |---|---|---|---|---|---|---|---|
 | 面(水/建筑/landuse) | 归属+颜色 | drape 栅格化冒充影像 | 影像页合成 | GPU ~0(刀1 75ms→0) | 能:多色/分级/overzoom 现画;不能:逐要素交互高亮(像素级) | `VectorRasterStyle`+StyleDocument fill | Re-bake |
-| 线(路网) | 到中心线距离 | D2 线段纹素 SDF 场 | 地形 FS 寄生 | GPU ~0(overlay 25-30ms→0) | 能:线宽像素恒定/多色(分类平面)/段内相位 dash;不能:沿折线弧长 dash(同语义=E 案)、逐要素渐变 | 分类平面/相位遮罩/通道 | Uniform/Re-bake |
+| 线(路网，⚠️即将废弃) | 到中心线距离 | D2 线段纹素 SDF 场（兼容） | 地形 FS 寄生 | GPU ~0(overlay 25-30ms→0) | 能:线宽像素恒定/多色(分类平面)/段内相位 dash;不能:沿折线弧长 dash(同语义=E 案)、逐要素渐变 | 分类平面/相位遮罩/通道 | Uniform/Re-bake |
 | 点(POI) | 屏幕注记(恒定像素) | billboard 符号 | 独立 draw(order 30/31,深度关) | 每桶 1-2 draw | 能:分类图形/颜色/交互态高亮/锚点遮挡;不能:逐像素深度语义 | `TileSymbolCpu`/interaction | Re-tess/Uniform |
 | 文本(标注) | 可读注记 | glyph quad+placement | 同 billboard | build p50 2.63→1.51ms | 能:CJK/避让/跨瓦 fade;不能:复杂 shaping/沿线文字 | GlyphAtlas/LabelPlacement | Re-tess |
 | 轨迹(海拔着色/逐要素渐变) | 沿线连续物理量(海拔/里程/速度) | E 案几何线条带(方案 A ribbon,**非** SDF 场) | 独立 line draw | CPU 每顶点打包色 O(n)(镶嵌期);GPU 同 ribbon | 能:逐顶点渐变(海拔/里程/速度)、弧长 dash(同语义);不能:贴地像素级贴合(stencil 体积 mesh 无顶点色,需后置) | `a_color` 逐顶点 + `lengthSoFar` + `lineColorGradientByHeight` | Re-tess |
@@ -168,7 +174,7 @@ P1 几何上屏 → P3 贴地(方案A 高程采样) → P6a/d stencil 贴地(像
 
 **决策五问**(加新内容时):
 1. 视觉本质是哪个物理量?(归属颜色 / 中心线距离 / 屏幕注记 / 体积 / 其它)
-2. 该物理量在矩阵里已有表示吗?有 → 复用,扩展点照表动;
+2. 该物理量在矩阵里已有表示吗?有 → 先检查生命周期；非废弃路径才复用并按扩展点接入。道路线场不得复用;
 3. 没有 → 第四条路候选;先过 northstar E 节「已判死」清单再立项;
 4. 立项时先量化性能预算(GPU/CPU/内存/上传),按「体验达标且最便宜」验收;
 5. 四条路并存后才值得抽 #1 统一抽象(现在抽是过早)。
@@ -275,11 +281,10 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 2. `makeMvtDrapeStyle()` 加一个 `VectorRasterLayerPaint`(layer 名 + filter + fillColor + minZoom)
 3. 完事——drape 通路自动栅格化进页合成,**无新 draw、无新上传路径**
 
-### 加一个新 MVT **线**图层(如 railway)
-1. `makeMvtRoadFieldStyle()` 的 grading filter 里放行该层
-2. ⚠️ 场编码只有"距离",**没有按图层分色的能力**——所有线共用 FS 里的一个颜色
-   uniform。要分色必须先扩通道(见 §7 不足-1)
-3. 检查场封顶 `kMvtRoadFieldMaxZoom` 是否 ≥ 该层样式的最后一个分级档
+### MVT **线**图层（如 railway）：仅兼容维护，不再新增依赖
+
+> ⚠️ 道路线场链路即将废弃。不要再把新图层加入 `makeMvtRoadFieldStyle()`，也不要为此路径扩展场编码、分色通道或 `kMvtRoadFieldMaxZoom`。
+> 现有配置只允许为兼容和回归而维护；替代表示需另立设计并通过独立评审。
 
 ### 加一个新 MVT **点**图层
 1. `mvtOpts.includeLayers` 加层名(⚠️ 见 4.3),`layerRules` 加分级 filter
@@ -345,7 +350,7 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
    **残余**:`style/OverlayStyle.h` 平行类型系(旧 `VectorLayer` GeoJSON
    编辑演示路)仍在 demo 上线且未并入 StyleDocument —— 判缓,唯一消费者
    是编辑演示层,正路是日后退役合并进 FeatureRenderLayer(归用户拍板)。
-3. **线的样式表达力被编码格式卡死**:D2 场编码只有"距离 + 方向 + 端点余量",
+3. **线的样式表达力被编码格式卡死（⚠️即将废弃路径）**:D2 场编码只有"距离 + 方向 + 端点余量",
    **没有图层/分类通道**,而且即便有位、颜色也在 uniform 侧(全局一个
    `u_roadFieldColor`,FS 里 `mix(base.rgb, roadFieldColor.rgb, roadCov)`),
    所以**全图线只能一个颜色**。多色路网必须扩通道或加平面 —— 这是
@@ -400,7 +405,7 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 | 获取层 | `data/MvtTileFetchCache.h/.cpp` |
 | 解码/转换 | `data/MvtDecoder.*`、`data/MvtFeatureConverter.*` |
 | 面 | `providers/VectorDrapeImageryProvider.*`、`data/VectorTileRasterizer.*` |
-| 线 | `providers/RoadFieldSource.*`、`data/LineFieldRasterizer.*` |
+| 线（⚠️即将废弃的道路线场） | `providers/RoadFieldSource.*`、`data/LineFieldRasterizer.*` |
 | 点/符号 | `data/MvtVectorSource.*`、`data/VectorTileTree.*`、`layers/FeatureRenderLayer.*` |
 | 标注避让 | `layers/LabelPlacement.*`、`renderer/GlyphAtlas.*`、`renderer/IconAtlas.*` |
 | 样式/过滤 | `data/VectorRasterStyle.h`、`data/StyleFilter.h`、`data/StyleExpression.h` |

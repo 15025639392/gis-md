@@ -3,6 +3,7 @@
 > 这是**架构/方案**文档——回答"这个子系统怎么搭的、关键决策为什么这么定、接新功能从哪切入"。
 > 质量标尺看 `docs/northstar/terrain.md`(T-V*/T-P* 判据);代码行号看 `AI_INDEX.md`;历史事故看 `docs/issues/*`。
 > 行号锚点会随重构漂移,以符号名为准。
+> 从相机、选择、加载、RenderPlan 一路到提交的跨模块执行顺序见 [terrain-runtime-pipeline.md](terrain-runtime-pipeline.md)。
 
 **规模**:`content/` 17k 行 + `tiling/` 里的高程服务与 GPU 位移基础设施。引擎重心三大件之一。
 

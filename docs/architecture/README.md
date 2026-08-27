@@ -38,15 +38,16 @@ core/ 地基 (数学/大地测量/异步/缓存/网络)                     → 
 ```
 ★ = 引擎重心三大件,写得最深。
 
-## 八份文档
+## 九份文档
 
 | 文档 | 覆盖 | 一句话定性 |
 |---|---|---|
 | [tiling.md](tiling.md) ★ | 瓦片选择/遍历/LOD/调度/GPU上传/缓存 | 逐算法对齐 cesium-native,极端小类分解;优先级在两处被架空 |
 | [terrain.md](terrain.md) ★ | 地形内容/网格/GPU位移/无缝/高程服务 | 共享模板+GPU纹理位移是亮点;几何密度钉死粗一个数量级 |
+| [terrain-runtime-pipeline.md](terrain-runtime-pipeline.md) ★ | Scene→选择→加载→RenderPlan→提交 | 统一四叉树上的渐进式地形流水线;目标LOD与实际绘制解耦 |
 | [renderer.md](renderer.md) ★ | RenderCommand/双后端/契约头/页存储 | 命令校验+编译期契约治理强;Metal 后端结构性缺口 |
 | [imagery.md](imagery.md) | 栅格叠加映射/多协议 provider/GCJ-02 | 对齐 cesium RasterOverlay + 自研 GCJ 偏移系;HttpCache 无重验 |
-| [vector.md](vector.md) | FeatureStore 编辑层 + MVT 三分工底图 | 表示随负载三分工是亮点;样式系统割裂四套且运行期改不了(V26) |
+| [vector.md](vector.md) | FeatureStore 编辑层 + MVT 三分工底图（道路线场即将废弃） | 表示随负载三分工是亮点;样式系统割裂四套且运行期改不了(V26) |
 | [camera-interaction.md](camera-interaction.md) | 控制器/约束求解/手势/拾取 | 真值按控制器分离 + 单一钳位出口;手势无外部对照系 |
 | [environment.md](environment.md) | 时间→太阳→天空/大气/日落着色/HDR | 天空↔雾单一治理点;两套天空模型 + HDR 半成品挂起 |
 | [core-scene.md](core-scene.md) | 数学/大地测量/异步/缓存 + 场景装配 | 大地测量有 cesium 对照测试守卫;WorkLedger 尚未接管 gating |
@@ -54,7 +55,7 @@ core/ 地基 (数学/大地测量/异步/缓存/网络)                     → 
 ## 贯穿全引擎的设计取向(读任何一份前先建立这层认知)
 
 1. **混血血统**:tiling/streaming/大地测量/数学**对齐 cesium-native**(对照实现的测试即行为规格);camera/interaction/environment**对齐 openglobus**。血统决定了"改这块该去翻哪个参考实现的测试"。
-2. **表示随负载,不是一套渲染打天下**:地形(GPU 位移网格)、矢量面(drape 栅格化)、矢量线(D2 场解析)、矢量点(billboard)各用完全不同的表示——判据是"体验达标且最便宜",不是架构统一。代价是这些路代码几乎不共享。
+2. **表示随负载,不是一套渲染打天下**:地形(GPU 位移网格)、矢量面(drape 栅格化)、矢量线(**D2 场解析，⚠️即将废弃**)、矢量点(billboard)各用完全不同的表示——判据是"体验达标且最便宜",不是架构统一。代价是这些路代码几乎不共享。
 3. **契约机器可查化**:跨子系统的调用顺序、深度/绕序约定、命令排序、在途账本这些"编译期类型系统表达不了"的约束,用运行期 `contracts::Id` 断言 + 编译期 `static_assert` + ctest 守卫补足。多份文档的"关键契约"节列的就是这些。
 4. **失败方向工程化**:反复出现的模式是"把默认失效方向从最坏(静默冻屏/静默采样 0/静默分叉)反转为需要故意为之才会坏"(WorkLedger、RenderCommand 校验、失败安全默认值)。
 5. **诚实的债文化**:northstar 的 P 编号债表 + "已判死/勿再提"节 + memory 的教训沉淀,共同防止重复踩坑与重复提议错方案。本目录的"诚实得失"节从这些来源提取,**不美化**。

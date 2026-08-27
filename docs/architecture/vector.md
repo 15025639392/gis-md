@@ -10,6 +10,11 @@
 >
 > 两者共享部分基础设施(`StyleExpression`/`StyleFilter`/`FeatureRenderLayer` 承载 MVT 瓦片桶路径),但数据流、贴地方案、样式表达都不同。
 
+> ⚠️ **生命周期状态：MVT 道路线场即将废弃。** 具体范围是
+> `RoadFieldSource` → `LineFieldRasterizer`/D2 → `TerrainPageStore` 场平面这条兼容链路。
+> 现有实现暂时保留，用于兼容、回归和历史性能对照；新功能、新图层不得继续依赖或扩展该路径。
+> 这不等同于废弃 MVT 面/点，也不等同于废弃 `FeatureRenderLayer` 的几何线渲染；替代实现和删除时间尚未在本文确定。
+
 ---
 
 ## 职责边界
@@ -19,7 +24,7 @@
 | **获取层** `MvtTileFetchCache` | MVT `.pbf` URL | fetch+解码+在途去重+两层 LRU(L1 解码瓦 48、L2 压缩字节 256) | 不做"要哪些瓦"的选择 |
 | **FeatureStore 编辑层** `FeatureStore`(90 行)+ `FeatureRenderLayer`(2192 行) | GeoJSON `Feature` | 增删改查、镶嵌、贴地、拾取、编辑预览、避让 | 引擎只暴露 pick/snap/preview 三接口,不做编辑器逻辑 |
 | **MVT 面(drape)** `VectorDrapeImageryProvider`+`VectorTileRasterizer` | MVT `fill` 层 | 冒充 `ImageryProvider`,栅格化进影像页存储 | 不产生独立 draw call |
-| **MVT 线(SDF/D2 场)** `RoadFieldSource`+`LineFieldRasterizer` | MVT `roads` 层 | 烘焙"线段纹素"场,寄生地形 FS 解算贴地线宽 | 场编码无图层/分色通道(V9 dash 未做直接原因) |
+| **MVT 线(SDF/D2 场，⚠️即将废弃)** `RoadFieldSource`+`LineFieldRasterizer` | MVT `roads` 层 | 兼容性保留：烘焙"线段纹素"场,寄生地形 FS 解算贴地线宽 | 不得新增依赖；场编码无图层/分色通道(V9 dash 未做直接原因) |
 | **MVT 点/标注** `MvtVectorSource`+`VectorTileTree`→`FeatureRenderLayer` 瓦片桶 | MVT `poi` 层 | 瓦片即桶、worker 全链镶嵌、billboard+SDF 标注、避让 | 不进场(会随距离缩到不可读) |
 | **样式** `StyleExpression`/`StyleFilter`、`VectorRasterStyle`、`FeatureRenderStyle` | 样式配置 | 表达式求值、层过滤、分级 | **三套样式模型互不统一** |
 | **GPU 合成治理点** `eePageStoreCompose` | 影像/场页存储 | 唯一实现,注入六个 shader,完成影像+场一次合成、线宽像素解算 | 不允许各 shader 各写一份 |
@@ -48,15 +53,15 @@ MVT 把"一张瓦片"直接当渲染桶,镶嵌在 worker 完成——峰值 1610
 ### 5. 样式表达式树(色烘顶点 / 宽走 uniform)
 `StyleExpression` 是表达式求值树(⚠️ `String` 必须用独立命名的 `literalString`,与数字重载会歧义)。颜色类表达式在镶嵌期求值后**烘进顶点属性**;线宽/点大小类**不烘顶点,走 FS/VS uniform 逐帧求值**(按相机高度换算 zoom 后 evaluate)——理由是宽度需连续响应相机变化(屏幕像素恒定语义),烘进顶点会在 LOD 切换/相机移动时不连续或需重镶。MVT 场路径更激进:场编码里完全没有颜色/分类通道,线色是 FS 里**一个全局 uniform**——"表示选得便宜"的对偶代价,直接卡死 V9(dash)与多色路网。
 
-### 6. MVT 底图三分工(面/线/点各换表示,不是各自优化)★
+### 6. MVT 底图三分工(面/线/点各换表示,不是各自优化；线场为⚠️即将废弃的兼容路径)★
 判据(用户认可):**矢量=数据模型,渲染表示是引擎内部自由;表示随负载,判据=体验达标且最便宜**。三条选择理由:
 - 面(水/landuse)视觉本质是**归属+颜色** → 栅格化进影像页合成(刀1)。距离场表达不了"归属";几何 stencil 实测 ~75ms GPU(发热真凶,已根除)。
-- 线(路网)视觉本质是**到中心线的距离** → SDF 距离场 + FS 解析解算(刀2)。几何 ribbon 掠视块状;独立 overlay pass 实测 25-30ms;RTT 位图线宽会在两次重烘之间漂。
+- 线(路网)视觉本质是**到中心线的距离** → **历史兼容选型**：SDF/D2 距离场 + FS 解析解算(刀2)。几何 ribbon 掠视块状;独立 overlay pass 实测 25-30ms;RTT 位图线宽会在两次重烘之间漂。
 - 点(POI/标注)视觉本质是**屏幕注记** → billboard + 锚点级遮挡。进场会缩到不可读;逐像素深度测试会把 quad 切一半。
 
 三条路**互相不可替代,也不该强行统一**——northstar E 节记录多次"统一"尝试被实测打回。代价是**三条路代码几乎不共享**。
 
-### 7. 场线宽像素一致的 D2 线段纹素方案(场专项定稿)
+### 7. 场线宽像素一致的 D2 线段纹素方案(场专项定稿；⚠️即将废弃)
 `LineFieldRasterizer.h` 注释即设计文档:**为什么不是距离场**——标量/向量距离场都靠双线性插值重建,插值本身是伪影之源(标量跨线心尖点必高估、真实路网实测漏画 63.1%;向量跨双线中轴必过零→幽灵)。D2 改为**每纹素存最近线段的局部参数**而非距离值:RGBA8 = 最近点偏移(ox,oy,±4 texel)+方向角 θ + fwd/back 端点剩余长度。FS 取 2×2 邻域 4 条线段各自解析算胶囊距离取 min——**全程无插值**。端点余量让胶囊在真实端点收口、拐角两胶囊圆帽相接成天然圆角。模拟对拍 texelPx=4:漏画 63.1%→0.28%,幽灵→0.000%,误差 0.025px。A==0 是空哨兵(failure-safe),FS 靠"像素可被线覆盖 ⇒ 所在纹素必有记录"做单 fetch 早退。
 > ⚠️ 已判死弯路:分母用 `fwidth(fieldV)`(线心是场脊,导数→0,沿线心挖洞)、用 `dFdx(sampleUv)`(span 边界回绕爆导数,白虚线)、宽度烘进场纹素(与"屏幕像素恒定"冲突)。
 
@@ -70,8 +75,8 @@ MVT URL → MvtTileFetchCache(唯一获取层,L1解码48/L2压缩256,失败不�
    → shared_ptr<const MvtTile> 扇出三路
    ├─【面】VectorDrapeImageryProvider → VectorTileRasterizer::rasterizeMvtRect
    │       → RGBA8 位图(失败回全透明图,非nullptr)→ TerrainPageStore 影像平面(512层×256²×4B=128MB上限)
-   ├─【线】RoadFieldSource → LineFieldRasterizer::rasterizeLineFieldRect
-   │       → D2 RGBA8 线段纹素 → TerrainPageStore **场平面**(独立生命周期:独立zoom封顶/独立LRU,64层16MB封顶)
+   ├─【线，⚠️即将废弃】RoadFieldSource → LineFieldRasterizer::rasterizeLineFieldRect
+   │       → D2 RGBA8 线段纹素 → TerrainPageStore **场平面**(兼容路径；独立zoom封顶/独立LRU,64层16MB封顶)
    └─【点】MvtVectorSource::update → VectorTileTree(R*选择/LRU)
            → worker 镶嵌 → commitTileMesh(渲染线程,采地面高+查图集展开quad)→ 整瓦原子替换 → RenderCommand(VectorPoint/Label)
    面/线 → 地形 FS 内一次合成 eePageStoreCompose()(唯一治理点,寄生地形 pass,GPU~0)
@@ -99,7 +104,7 @@ GeoJSON → GeoJsonParser → GeoJsonImporter::importInto → FeatureStore::addF
 5. **渲染固定状态按矢量类型分道校验**:`validateMvpRenderCommands` 对 Fill/Line 强制 `depthTest=true`,对 Point/Label 强制 `false`;违规直接 abort。
 6. **worker 边界**:可样式过滤/MVT→Feature/镶嵌/栅格化/场烘焙;**不可碰图集/GL/地形采样器**。锚点存经纬度不存 ECEF。
 7. **失败安全是系统性默认**:场纹素 A==0 空哨兵、drape 失败回全透明图、fetch 失败不入缓存、瓦片整瓦原子替换(宁留旧瓦不留半张)、图标名不命中回落 circle。
-8. **D2 场编码容量上限**:偏移范围 4.0 texel、端点余量 1.5 texel,已被模拟证明"调不出更好的解"(P7)。
+8. **D2 场编码容量上限（⚠️即将废弃路径）**:偏移范围 4.0 texel、端点余量 1.5 texel,已被模拟证明"调不出更好的解"(P7)；这些约束仅对现有兼容实现有效。
 9. **R\* 置换单元原子换手**(点/标注换代):`VectorTileTree::update` 递归置换细化,`renderTiles` 恒为精确覆盖。⚠️ 最初的"全有全无回退"已撤销(2026-08-15,曾致 POI 内容整支降一个数量级),现回到"允许重叠、不允许空洞"。
 
 ---
@@ -107,7 +112,7 @@ GeoJSON → GeoJsonParser → GeoJsonImporter::importInto → FeatureStore::addF
 ## 诚实得失
 
 ### ✅ 强项(有实测背书)
-- **表示随负载换掉真实开销**:面栅格化 75ms→~0 GPU(刀1);线 SDF/D2 场把独立 overlay pass 25-30ms 压到 ~0.01ms(刀2);镶嵌峰值 16107ms→216ms(E1)。
+- **表示随负载换掉真实开销（历史证据）**:面栅格化 75ms→~0 GPU(刀1);线 SDF/D2 场把独立 overlay pass 25-30ms 压到 ~0.01ms(刀2);镶嵌峰值 16107ms→216ms(E1)。线场数据保留用于解释为何曾采用该路径，不构成继续扩展承诺。
 - **线宽真屏幕像素恒定**,近景/远景/祖先页/页界跳档同级路一样粗(V3),超过 maplibre 平面模式与地形 RTT 模式两种水位(已用 `.ref` 源码核实非口号)。
 - **失败安全系统性覆盖**,不是零散补丁。
 - **机器可查契约多层并存,真的抓到过 bug**(采样链治理点守卫、MVP 固定状态校验、AI_INDEX 行号守卫、相位打包口径守卫)。
@@ -137,7 +142,7 @@ GeoJSON → GeoJsonParser → GeoJsonImporter::importInto → FeatureStore::addF
 
 ## 扩展点
 - **新 MVT 面图层**(landuse):`makeMvtDrapeStyle()` 加一个 `VectorRasterLayerPaint`,drape 通路自动栅格化进页合成,无新 draw、无新上传路径。
-- **新 MVT 线图层**(railway):`makeMvtRoadFieldStyle()` grading filter 放行;⚠️ 场编码没有按图层分色能力,要分色须先扩通道(与 P7 容量债一起算);检查场封顶 `kMvtRoadFieldMaxZoom` 是否 ≥ 该层样式最后一个分级档。
+- **新 MVT 线图层：不要再接入道路线场路径（⚠️即将废弃）**。现有 `railway` 等配置仅作兼容维护和回归对照；不得再通过 `makeMvtRoadFieldStyle()` 放行新层，也不要继续扩展场编码、分色通道或 `kMvtRoadFieldMaxZoom`。替代表示待另立设计。
 - **新 MVT 点图层**:`mvtOpts.includeLayers` 加层名(⚠️ 白名单契约);样式 `pointImageExpr`/`pointColorExpr` 用 `match("kind",…)` 分类;新图形需 `SymbolShape.h` 加枚举 + `kSymbolSdfBody` 加解析 SDF 分支(GLSL/MSL 共用同一份文本)。
 - **新表示类型**(3D 建筑挤出):先回答"它的视觉本质对应哪个物理量",再查 northstar E 节确认没被判死。3D 建筑走 glTF 类通路(V6 已定案为未来内容)。
 - **新平台后端(Metal)**:`eePageStoreCompose` MSL 变体已在治理点里但从未真机验证;补齐前不要假设 Metal 与 GLES 等价。

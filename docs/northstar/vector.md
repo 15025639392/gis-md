@@ -1,5 +1,7 @@
 # 矢量模块北极星 — 产品体验判据
 
+> ⚠️ **生命周期状态（2026-08-27）：MVT 道路线场即将废弃。** 本文中的 `RoadFieldSource`、D2 场和 `TerrainPageStore` 场平面性能/验收数据保留为历史证据与兼容回归依据；不再据此新增 MVT 线图层或扩展场编码。该标记不涉及 MVT 面、点/标注或 `FeatureRenderLayer` 几何线，替代路线和删除时间待另立决策。
+
 **这份文档回答「做到什么程度算好、现在到哪了」。**
 不回答「代码在哪」(那是 `AI_INDEX.md`),也不回答「当时怎么修的」(那是 `docs/issues/*`)。
 `docs/issues/` 是写完即冻结的历史档案;**本文是活的**,随每次专项收官更新。
@@ -129,7 +131,7 @@ fade 时序(即 V13 那条已知缺口:像素级录屏验收从未做)。
 
 查 `VectorTileTree` / `MvtVectorSource` / `RoadFieldSource` 后的**结构性发现**:
 
-| | 线(路网) | 点 / 标注(+ drape 面) |
+| | 线(路网，⚠️道路线场即将废弃) | 点 / 标注(+ drape 面) |
 |---|---|---|
 | 取瓦 | `RoadFieldSource` **直接问 `MvtTileFetchCache`** | `MvtVectorSource` → **`VectorTileTree`** |
 | 表示 | pageStore 场页(z 封顶) | 逐瓦网格 + 符号实例 |
@@ -335,7 +337,7 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
 | 资源 | 当前占用 | 备注 |
 |---|---|---|
 | 页存储显存 | 512 层 × 256² × 4B = **128MB 上限**,LRU 实驻 125-185 页 | 影像主体 |
-| 场平面显存 | **16MB 封顶**(64 层 RGBA8 D2;实驻 ~25 页 6.5MB) | z 封顶后可见场页远少于影像页 |
+| 场平面显存（⚠️即将废弃路径） | **16MB 封顶**(64 层 RGBA8 D2;实驻 ~25 页 6.5MB) | z 封顶后可见场页远少于影像页；数据保留作历史基线 |
 | 间接纹理 | 影像 4.2MB + 场 4.2MB(64²×4B×256 各一份) | 步3 新增场 indir 一份 |
 | 字形图集 | 2048² / 32px ≈ 4096 字形 | 重庆 POI 实测 1036 唯一字符 |
 | MVT 瓦缓存 | **48 瓦**(面/线/符号三方共享,A.5 单一化后) | 冷启动重复拉取 34→25,剩余=容量置换 |
@@ -434,7 +436,7 @@ building/roads/water,**无 poi**)与 `tmp/`(10.6MB,08-14,含 poi)。
    |---|---|---|
    | 点/符号 | ✅(原有) | `FeatureRenderLayer::setStyle` |
    | 面 drape | ✅ **一期新增** | `VectorDrapeImageryProvider::setStyle`(加锁快照,在途任务解耦)+ `Engine::invalidateComposedTerrainPages()`(Re-bake:全页重栅格化,与"源列表变了全作废"共用 `clearAllComposedPages` 同构) |
-   | 线/场 | ✅ **一期新增** | Uniform 类:`Engine::setRoadFieldStyleUniforms`(线色/ramp,零重烘下帧生效);Re-bake 类:`RoadFieldSource::setStyle` + `Engine::invalidateRoadFieldPages`(**含清跳烘门 `fieldLayerKey_`**——不清则同 key 重建复用旧样式层,静默失效;可同步改场页 zoom 封顶) |
+   | 线/场（⚠️即将废弃路径） | ✅ **一期新增** | 历史兼容通路：Uniform 类:`Engine::setRoadFieldStyleUniforms`(线色/ramp,零重烘下帧生效);Re-bake 类:`RoadFieldSource::setStyle` + `Engine::invalidateRoadFieldPages`(**含清跳烘门 `fieldLayerKey_`**——不清则同 key 重建复用旧样式层,静默失效;可同步改场页 zoom 封顶)。不再据此新增 MVT 线图层或扩展场编码。 |
 
    证据:host 新增 5 测(`SetStyleTakesEffectOnNextRequest`/`SetStyleTakesEffectOnNextBake`/`TerrainPageStoreRestyle.*`),189/189 全绿;端到端未纳 host(需 RealTerrain 全套测试台),靠 clearAllComposedPages 与已真机验证的源变清页路径同构兜底。**真机往返已验(2026-08-18,debug 变体,重庆默认视角)**:demo 加 `nativeDebugRestyle` 日/夜换肤钩子(夜版=日版改色,分级同源;Skin 按钮),logcat 双向 `V26Restyle applied: night/day`,截图三张,中央区均色 day→night 蓝通道 86→68、night→day2 往返闭合(差 ≤1);**路网琥珀/楼暖棕/水深蓝肉眼即判,重烘后路网完整 = 跳烘门清除后正确重建**。观感终判归你(截图已交)。已知瞬态:Re-bake 期间面/线短暂消失(§4.3 拍定);另记一观察:night 截图标注短暂缺席,换肤未碰符号链,疑为 placement 节流时相,未定性。
 
@@ -549,6 +551,9 @@ d=2 (92% 画面)
 ---
 
 ## F. 待你拍板的开放项
+
+> ⚠️ 本节保留当时的决策过程。表中关于“继续主攻 D2/扩展场能力”的建议已被
+> 2026-08-27 的“道路线场即将废弃”生命周期决策覆盖，不再是当前执行建议；其余非场事项仍按各自行状态理解。
 
 | 项 | 我的建议 | 影响的判据 |
 |---|---|---|

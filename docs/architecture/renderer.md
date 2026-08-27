@@ -4,6 +4,10 @@
 
 **规模**:`renderer/` 12k 行 + `platform/` 9.7k 行。
 
+> ⚠️ **兼容路径提示：MVT 道路线场即将废弃。** `TerrainPageStore` 中的路网 SDF/D2 场页及其
+> `kGltfRoadFieldTextureSlot`/`Indir` 绑定暂时保留，用于兼容和历史回归；渲染器新增页化平面或新线表示时不得把这组场槽位当作推荐扩展范例。
+> 本提示不涉及影像页、高度页、MVT 面/点或 `VectorLine` 几何命令。
+
 ---
 
 ## 职责边界
@@ -47,7 +51,7 @@ AI_INDEX §13 记录的 `RenderCommandStreamingSet`(stable-key 长期槽位 diff
 - 即:**命令列表本身每帧从零重建**(`context.commands.clear()` 在 render 开头);"稳定性"只体现在瓦片侧绘制资源(VBO/IBO/纹理句柄)跨帧复用,不体现在命令对象本身跨帧身份。
 
 ### 7. 地形页存储在渲染侧的角色
-`TerrainPageStore` 是地形表面影像的常驻纹理池:把地形瓦切成 `gridN²` cell,每 cell 独立按 LRU 拿 `texture2DArray` 一层,着色器经间接纹理查层号,取代"每瓦片一张合成影像"。渲染帧内 `updateVisiblePages` 每帧驱动(枚举可见 cell→缺页 fetch→写间接纹理),`applyToTerrainCommand` 把层号/页参数写进地形 `RenderCommand`——地形命令绑的不是"一张贴图",而是间接纹理 + array,shader 做一次 `texelFetch` 定位。槽位常量 `kGltfPageStoreArrayTextureSlot`/`Indir`(影像页)、`kGltfHeightTextureSlot`(高度页)、`kGltfRoadFieldTextureSlot`/`Indir`(路网 SDF 场页)是它在 `RenderCommand` 层的落点。
+`TerrainPageStore` 是地形表面影像的常驻纹理池:把地形瓦切成 `gridN²` cell,每 cell 独立按 LRU 拿 `texture2DArray` 一层,着色器经间接纹理查层号,取代"每瓦片一张合成影像"。渲染帧内 `updateVisiblePages` 每帧驱动(枚举可见 cell→缺页 fetch→写间接纹理),`applyToTerrainCommand` 把层号/页参数写进地形 `RenderCommand`——地形命令绑的不是"一张贴图",而是间接纹理 + array,shader 做一次 `texelFetch` 定位。槽位常量 `kGltfPageStoreArrayTextureSlot`/`Indir`(影像页)、`kGltfHeightTextureSlot`(高度页)、`kGltfRoadFieldTextureSlot`/`Indir`(**路网 SDF/D2 场页，⚠️即将废弃的兼容路径**)是它在 `RenderCommand` 层的落点。
 
 ---
 
@@ -114,7 +118,7 @@ GLES `submit`:program/VBO/IBO/texture 冗余缓存 + 按 `cmd.vertexStride` 分�
 - **加新 render pass**(如水面镜面反射):在 `SceneRenderPipeline::render()` 插入新 `buildXxxCommands`,给新 `RenderCommandKind` 分配 `mvpRenderOrder` 里一个整数区间(空档:15-20、20-29、31-100),并在 `validateMvpRenderCommands` 补 `case` 声明固定深度/混合/剔除状态。需独立 FBO 参照 `runTerrainDepthPrepass` 的 `beginPass(depthTarget)`→提交子命令→`beginPass(sceneTarget)` 收尾模式。
 - **加新后端**(如 Vulkan,`Backend` 枚举已预留值但无实现):实现 `RenderDevice` 全部纯虚方法;能力查询必须**如实反映**真实支持度而非全 true 占位,否则"显式拒绝并回报"设计被绕过退化为静默失败;深度/绕序必须从两份契约头派生,不重定义字面量。
 - **加新命令类型**(矢量近期 `VectorFill/Line/Point/Label/Stencil` 拆分是活样本):`RenderCommandKind` 加枚举 → `mvpRenderOrder` 加 case → `validateMvpRenderCommands` 加校验 → GLES/Metal `submit` 各加分派分支(两处必须同步,是双后端维护债的直接体现)。`VectorStencil` 额外引入 `StencilPhase`(ClassifyVolume/ClassifyColor)双阶段,是"一个 kind 内部再分子阶段"的参考。
-- **地形页存储扩展**:已支撑影像页/高度页/路网 SDF 场页三类。再加一类"页化平面"(如法线贴图页):紧挨现有最高槽位分配新常量、`TerrainPageStore` 加一组间接纹理+array、地形 shader 加一次 `texelFetch`——但注意"孪生同步点"警告,三处漏一处就是永久采样 0 且无任何报错。
+- **地形页存储扩展**:已支撑影像页/高度页/路网 SDF 场页三类；其中路网 SDF/D2 场页即将废弃，仅作兼容保留。新增"页化平面"(如法线贴图页)时不要复制该场路径的生命周期或把其槽位视为长期 API；仍需注意"孪生同步点"警告,三处漏一处就是永久采样 0 且无任何报错。
 
 ---
 
