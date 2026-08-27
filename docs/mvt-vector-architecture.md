@@ -7,6 +7,8 @@
 > 判据与债不在本文重复,只引编号(如 V3 / P3)。本文写完即随架构变更更新,
 > 不是冻结档案(那是 `docs/issues/*`)。
 
+> **高德专属北极星**：供应商协议、Amap 4326/离散 zoom、regions/main/water12/POI 分工、真实链路验收和高德未闭环债务见 [`docs/northstar/amap-vector.md`](northstar/amap-vector.md)。本文只保留 MVT 通用机制，不把高德细节复制成第二份真源。
+
 状态时点:2026-08-18(V26 样式系统三期收官 + §1b 驱动切面/七态 dump 后订正;
 上一时点 2026-08-16 `e13de16f1`)。
 
