@@ -155,6 +155,27 @@ WMTS 不能简单视为 XYZ。必须读取或配置：
 5. Renderer 只渲染已转换到统一空间的数据。
 6. Picking 输出通过目标 `CrsProfile` 反转换。
 
+## TerrainPageStore 的 mixed-scheme 边界
+
+PageStore 不是通用的 mixed-scheme 重投影器，而是一个**单 canonical 页域**的多源合成器。其兼容身份定义为：
+
+```text
+PageStoreCompatibilityKey = {
+  canonical page-facing TileScheme semantics,
+  effective RasterOverlayProjection
+}
+```
+
+规则如下：
+
+- `providers[0]` 定义 canonical 页网格与有效投影；真实地形 tile 必须使用同一 scheme。
+- 同一 compose group 的其他 source 必须共享该 scheme/projection 语义，并能消费同一逻辑 `PageKey`。内容类型、最大 zoom、tile size 可以不同，adapter 会通过祖先钳制与重采样接入。
+- XYZ/TMS、WebMercator/Geographic、WebMercator/GCJ 等异构 page-facing scheme 不得直接共页。原生异构源必须在 provider adapter 内完成选瓦、重投影和重采样后，再输出 canonical page image。
+- 不兼容 group 必须整组从 PageStore 退出并回到 `mappedRaster`；不能静默过滤单个 source，因为这会改变有序叠加结果。
+- `packKey(z/x/y)` 只在单一 canonical domain 内有效，不包含 scheme。domain/provider set 切换必须推进 generation，拒绝旧异步结果写入新页。
+
+这和 Cesium 的“geometry scheme 可与单个 overlay scheme 不同”是两层语义：Cesium 在每个 provider 自己的空间独立映射；PageStore 的 group 合成则要求所有 source 先归一到同一目标页空间。
+
 ## 控制点验收
 
 无偏移叠加必须用控制点验证。控制点可以来自：

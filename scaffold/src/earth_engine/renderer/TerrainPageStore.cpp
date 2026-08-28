@@ -259,6 +259,33 @@ namespace {
 // < 1/4 阈值的 cell(远景/掠射误戳)才真 miss 回落 mappedRaster,防 near-nadir 枚举爆量。
 constexpr double kCellSseMissFloorFraction = 0.25;
 
+bool samePageFacingScheme(const TileScheme& a, const TileScheme& b,
+                          TerrainPageStore::PageDomainCompatibility& reason) {
+    if (a.id() != b.id()) {
+        reason = TerrainPageStore::PageDomainCompatibility::ProviderSchemeMismatch;
+        return false;
+    }
+    if (a.crsProfile() != b.crsProfile()) {
+        reason = TerrainPageStore::PageDomainCompatibility::ProviderCrsMismatch;
+        return false;
+    }
+    if (a.yDirection() != b.yDirection()) {
+        reason = TerrainPageStore::PageDomainCompatibility::ProviderYDirectionMismatch;
+        return false;
+    }
+    // The scheme id is the declared semantic identity. Root dimensions are
+    // repeated here as a cheap structural guard against a custom TileScheme
+    // reusing an existing name with a different matrix shape.
+    for (int z = 0; z <= 1; ++z) {
+        if (a.tileCountX(z) != b.tileCountX(z) ||
+            a.tileCountY(z) != b.tileCountY(z)) {
+            reason = TerrainPageStore::PageDomainCompatibility::ProviderRootMatrixMismatch;
+            return false;
+        }
+    }
+    return true;
+}
+
 }  // namespace
 
 // worker 回调把解码影像投进本箱(shared_ptr 持有 → 即使 TerrainPageStore 已析构
@@ -267,6 +294,7 @@ constexpr double kCellSseMissFloorFraction = 0.25;
 struct TerrainPageStore::PendingInbox {
     struct Item {
         uint64_t key = 0;  // pageKey(packKey of 影像页 z/x/y)
+        uint64_t domainGeneration = 0;  // canonical page domain generation
         int layer = 0;     // 目标 array 层(kick 时 pool 分配的 layer)
         int source = 0;    // C-1:有序 provider 列表中的源号(决定合成次序)
         // C-1b:该源被钳到自己 maxZoom 后的祖先深度与页在祖先内的格位。
@@ -293,6 +321,7 @@ struct TerrainPageStore::PageComposeState {
     // ReadyUploadInbox,drain 的 epoch 闸靠它挡下旧代 straggler。kick 后不再变,
     // 无需锁(worker 只读)。
     uint64_t epoch = 0;
+    uint64_t domainGeneration = 0;
     // V28:true = 重烘期不许部分点亮(base 先到会把正显示的旧完整合成覆写成
     // 无矢量底图 = 那一跳),攒到 assembler.complete() 才发一次整页快照。
     // false = 保持增量点亮(新建页 / 失效时本就半成品的页)。
@@ -305,6 +334,7 @@ struct TerrainPageStore::PageComposeState {
 struct TerrainPageStore::ReadyUploadInbox {
     struct Item {
         uint64_t key = 0;
+        uint64_t domainGeneration = 0;
         int layer = 0;
         int composedSources = 0;           // 快照时的合成进度(源数)
         uint64_t epoch = 0;                // V28:产此快照的样式代(drain epoch 闸)
@@ -328,6 +358,7 @@ struct TerrainPageStore::ReadyUploadInbox {
 struct TerrainPageStore::RoadFieldInbox {
     struct Item {
         uint64_t key = 0;
+        uint64_t domainGeneration = 0;
         int layer = 0;
         uint64_t epoch = 0;        // V28:产此场 R8 的样式代(drain epoch 闸)
         std::vector<uint8_t> r8;   // side²×1
@@ -335,6 +366,69 @@ struct TerrainPageStore::RoadFieldInbox {
     std::mutex mutex;
     std::vector<Item> items;
 };
+
+TerrainPageStore::PageDomainCompatibility
+TerrainPageStore::providerStackCompatibility(
+    const std::vector<RasterOverlayTileProvider*>& providers) {
+    RasterOverlayTileProvider* canonical = nullptr;
+    for (RasterOverlayTileProvider* provider : providers) {
+        if (provider != nullptr) {
+            canonical = provider;
+            break;
+        }
+    }
+    if (canonical == nullptr) {
+        return PageDomainCompatibility::NoProvider;
+    }
+
+    const TileScheme& canonicalScheme = canonical->getTileScheme();
+    const RasterOverlayProjection canonicalProjection =
+        canonical->getProjection();
+    if (canonical->getImageryProvider().schemeId() != canonicalScheme.id()) {
+        return PageDomainCompatibility::ProviderContractMismatch;
+    }
+
+    for (RasterOverlayTileProvider* provider : providers) {
+        if (provider == nullptr) {
+            return PageDomainCompatibility::ProviderContractMismatch;
+        }
+        const TileScheme& scheme = provider->getTileScheme();
+        PageDomainCompatibility reason = PageDomainCompatibility::Compatible;
+        if (!samePageFacingScheme(canonicalScheme, scheme, reason)) {
+            return reason;
+        }
+        if (provider->getProjection() != canonicalProjection) {
+            return PageDomainCompatibility::ProviderProjectionMismatch;
+        }
+        if (provider->getImageryProvider().schemeId() != scheme.id()) {
+            return PageDomainCompatibility::ProviderContractMismatch;
+        }
+    }
+    return PageDomainCompatibility::Compatible;
+}
+
+const char* TerrainPageStore::pageDomainCompatibilityName(
+    PageDomainCompatibility compatibility) {
+    switch (compatibility) {
+        case PageDomainCompatibility::Compatible: return "compatible";
+        case PageDomainCompatibility::NoProvider: return "no-provider";
+        case PageDomainCompatibility::ProviderSchemeMismatch:
+            return "provider-scheme-mismatch";
+        case PageDomainCompatibility::ProviderCrsMismatch:
+            return "provider-crs-mismatch";
+        case PageDomainCompatibility::ProviderYDirectionMismatch:
+            return "provider-y-direction-mismatch";
+        case PageDomainCompatibility::ProviderRootMatrixMismatch:
+            return "provider-root-matrix-mismatch";
+        case PageDomainCompatibility::ProviderProjectionMismatch:
+            return "provider-projection-mismatch";
+        case PageDomainCompatibility::ProviderContractMismatch:
+            return "provider-contract-mismatch";
+        case PageDomainCompatibility::TerrainSchemeMismatch:
+            return "terrain-scheme-mismatch";
+    }
+    return "unknown";
+}
 
 void TerrainPageStore::resamplePageSource(const DecodedImage& image, int depth,
                                           int subX, int subY, int side,
@@ -663,8 +757,7 @@ void TerrainPageStore::updateVisiblePages(
     // 状态对账 —— 迟一帧只会多渲一帧(安全方向),而漏对账是永远停不下来。
     syncWorkTicket();
     lastIndirUploadMs_ = 0.0;  // [churn 归因] 本帧两个间接纹理上传累计,逐帧清零
-    if (!arrayTexture_ || providers.empty() || providers.front() == nullptr ||
-        visibleTiles.empty()) {
+    if (!arrayTexture_) {
         return;
     }
     // C-1:源列表变了(增删/换序)→ 已合成的页少一层或多一层都是错的,全部作废重来。
@@ -674,9 +767,59 @@ void TerrainPageStore::updateVisiblePages(
     for (RasterOverlayTileProvider* p : providers) {
         if (p != nullptr) detProvidersScratch_.push_back(p);
     }
-    if (providers_ != detProvidersScratch_) {
+    const PageDomainCompatibility compatibility =
+        providerStackCompatibility(detProvidersScratch_);
+    if (compatibility != PageDomainCompatibility::Compatible) {
+        rejectPageDomain(
+            compatibility,
+            compatibility == PageDomainCompatibility::NoProvider
+                ? "no active imagery provider"
+                : "provider stack is not one page grid");
+        return;
+    }
+
+    RasterOverlayTileProvider* canonicalProvider =
+        detProvidersScratch_.front();
+    const TileScheme& canonicalScheme = canonicalProvider->getTileScheme();
+    for (const TilesetTile* tile : visibleTiles) {
+        if (tile != nullptr &&
+            terrainSurfaceSourceForDraw(tile->content.renderContent) ==
+                TerrainSurfaceCommandSource::RealTerrain &&
+            tile->key.schemeId != canonicalScheme.id()) {
+            rejectPageDomain(
+                PageDomainCompatibility::TerrainSchemeMismatch,
+                "terrain z/x/y is not in the canonical page-facing scheme");
+            return;
+        }
+    }
+
+    const bool providerSetChanged = providers_ != detProvidersScratch_;
+    const bool domainChanged =
+        !pageDomainActive_ || pageDomainSchemeId_ != canonicalScheme.id() ||
+        pageDomainProjection_ != canonicalProvider->getProjection();
+    if (providerSetChanged || domainChanged) {
+        const PageDomainCompatibility previous = pageDomainCompatibility_;
+        resetPageDomainState();
         providers_ = detProvidersScratch_;
-        clearAllComposedPages();
+        pageDomainSchemeId_ = canonicalScheme.id();
+        pageDomainProjection_ = canonicalProvider->getProjection();
+        pageDomainActive_ = true;
+        pageDomainCompatibility_ = PageDomainCompatibility::Compatible;
+        if (previous != PageDomainCompatibility::Compatible) {
+            platformLog(LogLevel::Info, "PageStore",
+                        "canonical page domain active: scheme=%s projection=%s "
+                        "sources=%d generation=%llu",
+                        canonicalScheme.id().c_str(),
+                        rasterOverlayProjectionName(pageDomainProjection_),
+                        static_cast<int>(providers_.size()),
+                        static_cast<unsigned long long>(pageDomainGeneration_));
+        }
+    } else {
+        pageDomainCompatibility_ = PageDomainCompatibility::Compatible;
+    }
+
+    if (visibleTiles.empty()) {
+        return;
     }
 
     // ==== 静止帧跳过(2026-08-20:settle 期 psUvp 2.8-9ms 的构成是分类+驻留
@@ -704,7 +847,7 @@ void TerrainPageStore::updateVisiblePages(
     residencyCheckedTiles_ = 0;
     fullyResidentTiles_ = 0;
     worstResidentRatio_ = 1.0f;
-    RasterOverlayTileProvider* provider = providers.front();
+    RasterOverlayTileProvider* provider = providers_.front();
     const TileScheme& scheme = provider->getTileScheme();
     const int providerMaxLevel = provider->getMaximumLevel();
     auto hasReadyPageUpload = [&]() {
@@ -1500,7 +1643,11 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
     return true;
 }
 
-void TerrainPageStore::clearAllComposedPages() {
+void TerrainPageStore::resetPageDomainState() {
+    ++pageDomainGeneration_;
+    if (pageDomainGeneration_ == 0) {
+        ++pageDomainGeneration_;  // 0 is reserved for untagged/invalid work.
+    }
     for (auto& [key, entry] : pages_) {
         for (CancellationToken& token : entry.fetchTokens) {
             token.cancel();  // 在途 fetch 作废(到达经 drain 校验丢弃)
@@ -1511,9 +1658,72 @@ void TerrainPageStore::clearAllComposedPages() {
         }
     }
     pages_.clear();
-    // pool_ 的槽位不清:key 仍驻留 → 下次 acquire 返回同一 layer、try_emplace 报
-    // inserted → 重新 kick。槽位有界不泄漏,且省一轮 LRU 抖动。
-    ++determinationDirtyRevision_;  // 全部页作废 → 静止帧跳过立即失效
+    for (auto& [key, entry] : fieldPages_) {
+        (void)key;
+        entry.token.cancel();
+    }
+    fieldPages_.clear();
+    pendingComposeTasks_.clear();
+
+    // packKey deliberately omits schemeId inside one canonical domain. A
+    // domain/provider-set switch must therefore reset every map/pool keyed by
+    // that compact value; retaining slots would let the same z/x/y+layer pair
+    // impersonate a new tenant. Inbox vectors are intentionally retained so
+    // the generation gate, rather than queue timing, is the safety proof.
+    pool_.configure(config_.maxPages, /*blockLayers=*/1);
+    indirPool_.configure(kIndirArrayLayers, /*blockLayers=*/1);
+    if (fieldArrayTexture_) {
+        fieldPool_.configure(config_.maxFieldPages, /*blockLayers=*/1);
+        std::fill(fieldLayerKey_.begin(), fieldLayerKey_.end(),
+                  kInvalidFieldKey);
+    }
+    tileIndirs_.clear();
+    detTileCache_.clear();
+    visiblePagesScratch_.clear();
+    everCreatedPages_.clear();
+    providers_.clear();
+    pageDomainActive_ = false;
+    pageDomainCompatibility_ = PageDomainCompatibility::NoProvider;
+    pageDomainSchemeId_ = SchemeId{};
+    pageDomainProjection_ = RasterOverlayProjection::Geographic;
+    hasLastDeterminationSignature_ = false;
+    lastDeterminationDirtyRevision_ = 0;
+    lastVisiblePageCount_ = 0;
+    ++determinationDirtyRevision_;
+    syncWorkTicket();
+}
+
+void TerrainPageStore::rejectPageDomain(
+    PageDomainCompatibility compatibility, const char* detail) {
+    const PageDomainCompatibility previous = pageDomainCompatibility_;
+    if (pageDomainActive_ || !providers_.empty() || !pages_.empty() ||
+        !tileIndirs_.empty() || !fieldPages_.empty()) {
+        resetPageDomainState();
+    }
+    pageDomainCompatibility_ = compatibility;
+    if (compatibility != previous) {
+        platformLog(LogLevel::Warning, "PageStore",
+                    "canonical page domain rejected: reason=%s detail=%s; "
+                    "PageStore disabled for this provider group, mappedRaster "
+                    "remains authoritative",
+                    pageDomainCompatibilityName(compatibility),
+                    detail ? detail : "-");
+    }
+}
+
+void TerrainPageStore::clearAllComposedPages() {
+    for (auto& [key, entry] : pages_) {
+        for (CancellationToken& token : entry.fetchTokens) {
+            token.cancel();
+        }
+        if (entry.compose) {
+            entry.compose->cancelled.store(true, std::memory_order_release);
+        }
+    }
+    pages_.clear();
+    // Content/style invalidation within the same canonical domain keeps pool
+    // slots warm. Provider/domain changes must use resetPageDomainState().
+    ++determinationDirtyRevision_;
 }
 
 void TerrainPageStore::setRoadFieldStyleUniforms(
@@ -1596,7 +1806,8 @@ void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
 
 void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
                                              const TilesetTile& tile) {
-    if (!arrayTexture_ || !cmd.terrainRenderContent) {
+    if (!arrayTexture_ || !cmd.terrainRenderContent || !pageDomainActive_ ||
+        pageDomainCompatibility_ != PageDomainCompatibility::Compatible) {
         return;
     }
     // 只挂真实地形(fill/ellipsoid proxy 不是最终高清目标 → 留 mappedRaster)。
@@ -1768,6 +1979,7 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
     pe.compose->assembler.configure(static_cast<int>(providers_.size()),
                                     config_.pageSizeTexels);
     pe.compose->epoch = pe.targetEpoch;
+    pe.compose->domainGeneration = pageDomainGeneration_;
     pe.compose->holdUntilComplete = holdUntilComplete;
     pe.fetchTokens.clear();
     pe.fetchIssued.clear();
@@ -1804,6 +2016,7 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
         }
         entry.fetchIssued[s] = true;
         const int source = static_cast<int>(s);
+        const uint64_t domainGeneration = pageDomainGeneration_;
         // C-1b:**每个源各自钳到自己的 maxZoom**。页 zoom 由屏幕(与底图上限)驱动,
         // 常深于标注/矢量类源的上限;不钳则那些源恒 404 → 永不到达 → assembler 卡在
         // 前序、该源在页内彻底消失(真机踩过:矢量路网整片没了)。钳到祖先后按
@@ -1823,12 +2036,14 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
         ImageryProvider& imagery = providers_[s]->getImageryProvider();
         imagery.requestTile(
             fetchKey, entry.fetchTokens[s],
-            [inbox, pageKey, layer, source, depth, subX, subY](
+            [inbox, pageKey, layer, source, depth, subX, subY,
+             domainGeneration](
                 const TileKey&, std::unique_ptr<DecodedImage> image) {
                 if (!image) return;
                 std::lock_guard<std::mutex> lock(inbox->mutex);
                 inbox->pages.push_back(
-                    {pageKey, layer, source, depth, subX, subY, std::move(image)});
+                    {pageKey, domainGeneration, layer, source, depth, subX,
+                     subY, std::move(image)});
             });
     }
 
@@ -1860,15 +2075,18 @@ void TerrainPageStore::kickFieldFetch(const TileKey& fieldKey,
         entry.uploaded = false;
     }
     const uint64_t epoch = entry.targetEpoch;  // 快照本代号进回调
+    const uint64_t domainGeneration = pageDomainGeneration_;
     std::shared_ptr<RoadFieldInbox> fieldInbox = fieldInbox_;
     config_.roadFieldRequest(
         fieldKey, entry.token,
-        [fieldInbox, fieldPacked, layer, epoch](std::vector<uint8_t> r8) {
+        [fieldInbox, fieldPacked, domainGeneration, layer,
+         epoch](std::vector<uint8_t> r8) {
             // 回调只捕 inbox shared_ptr —— 页存储先亡不悬垂,迟到结果
             // 经账本校验丢弃。
             std::lock_guard<std::mutex> lock(fieldInbox->mutex);
             fieldInbox->items.push_back(
-                RoadFieldInbox::Item{fieldPacked, layer, epoch, std::move(r8)});
+                RoadFieldInbox::Item{fieldPacked, domainGeneration, layer, epoch,
+                                     std::move(r8)});
         });
 }
 
@@ -1926,8 +2144,10 @@ void TerrainPageStore::drainInbox() {
         // 校验页仍驻留且 layer 匹配(淘汰/换租后 layer 变或页消失 → 丢弃)。
         // 上传前 drainReadyUploads 会再验一次 —— 这里挡的是白干,那里挡的是写错层。
         const auto it = pages_.find(item.key);
-        if (it == pages_.end() || it->second.layer != item.layer ||
-            !it->second.compose) {
+        if (item.domainGeneration != pageDomainGeneration_ ||
+            it == pages_.end() || it->second.layer != item.layer ||
+            !it->second.compose ||
+            it->second.compose->domainGeneration != item.domainGeneration) {
             continue;
         }
         ++winInboxItems_;
@@ -1937,13 +2157,15 @@ void TerrainPageStore::drainInbox() {
         auto readyInbox = readyInbox_;
         std::shared_ptr<DecodedImage> sharedImage = std::move(item.image);
         const uint64_t pageKey = item.key;
+        const uint64_t domainGeneration = item.domainGeneration;
         const int layer = item.layer;
         const int source = item.source;
         const int depth = item.ancestorDepth;
         const int subX = item.subX;
         const int subY = item.subY;
-        auto task = [compose, readyInbox, sharedImage, pageKey, layer, source,
-                     depth, subX, subY, side]() {
+        auto task = [compose, readyInbox, sharedImage, pageKey,
+                     domainGeneration, layer, source, depth, subX, subY,
+                     side]() {
             if (compose->cancelled.load(std::memory_order_acquire)) {
                 return;  // 页已淘汰:省功(安全线在 drainReadyUploads 校验)
             }
@@ -2000,6 +2222,7 @@ void TerrainPageStore::drainInbox() {
                 return;
             }
             out.key = pageKey;
+            out.domainGeneration = domainGeneration;
             out.layer = layer;
             std::lock_guard<std::mutex> lock(readyInbox->mutex);
             readyInbox->items.push_back(std::move(out));
@@ -2043,13 +2266,21 @@ void TerrainPageStore::debugCreatePageForTest(uint64_t pageKey, int layer) {
 
 void TerrainPageStore::debugDeliverDecodedImage(
     uint64_t pageKey, int layer, int source, int depth, int subX, int subY,
-    std::unique_ptr<DecodedImage> image) {
+    std::unique_ptr<DecodedImage> image, uint64_t domainGeneration) {
     if (!inbox_ || !image) {
         return;
     }
+    if (domainGeneration == std::numeric_limits<uint64_t>::max()) {
+        domainGeneration = pageDomainGeneration_;
+    }
     std::lock_guard<std::mutex> lock(inbox_->mutex);
     inbox_->pages.push_back(
-        {pageKey, layer, source, depth, subX, subY, std::move(image)});
+        {pageKey, domainGeneration, layer, source, depth, subX, subY,
+         std::move(image)});
+}
+
+void TerrainPageStore::debugResetPageDomainForTest() {
+    resetPageDomainState();
 }
 
 void TerrainPageStore::drainReadyUploads() {
@@ -2077,7 +2308,8 @@ void TerrainPageStore::drainReadyUploads() {
             }
             auto& item = fieldReady[idx];
             const auto it = fieldPages_.find(item.key);
-            if (it == fieldPages_.end() || it->second.layer != item.layer) {
+            if (item.domainGeneration != pageDomainGeneration_ ||
+                it == fieldPages_.end() || it->second.layer != item.layer) {
                 continue;  // 淘汰/换租后的迟到场:丢弃
             }
             if (item.r8.size() != static_cast<size_t>(side) *
@@ -2146,7 +2378,8 @@ void TerrainPageStore::drainReadyUploads() {
         requeueFrom = idx + 1;
         // 安全线:页仍驻留且 layer 匹配才写(淘汰/换租后的迟到快照丢弃)。
         const auto it = pages_.find(item.key);
-        if (it == pages_.end()) {
+        if (item.domainGeneration != pageDomainGeneration_ ||
+            it == pages_.end()) {
             continue;
         }
         PageEntry& pe = it->second;

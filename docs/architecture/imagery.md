@@ -48,6 +48,30 @@
 ### 5. per-tile 纹理窗口
 `computeTranslationAndScale` 在 Step3/Step4 分别对"自己的真实瓦"和"祖先替身瓦"重算 offset/scale,`rasterUV = geometryUV * scale + offset`——祖先纹理不变,只是 UV 窗口收窄。
 
+### 6. mappedRaster 与 PageStore 的 mixed-scheme 分工
+
+`mappedRaster` 和 `TerrainPageStore` 不承担同一种 scheme 语义：
+
+- `mappedRaster` 以**单个 overlay provider**为单位，把 geometry rectangle 映射到该 provider 自己的 projection/tiling scheme；因此 geometry 与 overlay scheme 可以不同。这部分行为对齐 cesium-native。
+- `TerrainPageStore` 以**一个有序 provider compose group**为单位，只维护一份 page placement、UV、fetch key 和 scheme-less `packKey(z/x/y)`。因此 group 内必须共享：
+
+```text
+PageStoreCompatibilityKey = {
+  canonical page-facing TileScheme semantics,
+  effective RasterOverlayProjection
+}
+```
+
+具体规则：
+
+1. `providers[0]` 是 canonical page domain；当前真实地形 scheme 必须与它相同。
+2. 后续 provider 可有不同内容、最大 zoom 和源图尺寸，但必须能消费 canonical `PageKey` 并输出 canonical 页空间图像。
+3. XYZ/TMS、Mercator/Geographic、Standard/GCJ 等不兼容组合整组退出 PageStore，继续走 `mappedRaster`；不得只丢弃冲突 source。
+4. 原生 mixed-scheme 数据若要参与页合成，转换职责放在 adapter 内：adapter 自行枚举原生源瓦、重投影/重采样，再把结果伪装成 canonical imagery。`VectorDrapeImageryProvider` / `AmapDrapeImageryProvider` 是现有先例。
+5. domain 或 provider set 变化会推进 generation；所有晚到的 imagery/compose/field/upload item 必须同时匹配 generation、页 key 与 layer，不能仅凭相同 `z/x/y` 复用。
+
+因此，“Cesium 支持 geometry/overlay scheme 不同”不能推导出“PageStore 支持多个异构 overlay 共页”。前者是 provider 独立映射，后者需要 per-source placement 与 page namespace，当前没有实现。
+
 ---
 
 ## 数据流(关键路径)
@@ -85,6 +109,7 @@ ImageryProvider::requestTile (HTTP/bridge)
 | GCJ 单向变换 | 世界几何走 `fromWgs84`;源瓦矩形(本身已是 GCJ-02)不叠二次变换 |
 | 跨中国框矩形不可用单一偏移代表 | `crossesChinaBounds()`——~500m 阶跃,调用方须按此判据分流 |
 | mapping 失效靠 epoch | `mappedRasterTileEpoch_`/`mappingRevision_`,`isCurrentProviderTile` 据此清陈旧 handle |
+| PageStore 单域合成 | 同一 compose group 共享 canonical scheme/projection；异构组整组回退 `mappedRaster`，domain generation 隔离迟到结果 |
 
 ---
 

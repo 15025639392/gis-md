@@ -2652,18 +2652,20 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `initialize(device, Config)` | .cpp:1416-1502 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=3(涓流,勿在拖动期冻结)、`maxComposeDispatchesPerFrame`=8(每帧 compose 入队上限,2026-08-20 派发门) |
-| `updateVisiblePages(view, ...)` | .cpp:655-1393 | **核心**。遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1597-1690 | 把该瓦片的间接层号/页参数写进地形 RenderCommand |
-| `tick()` | .cpp:1691-1756 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:1885-2032 / :1786-1873 | 解码结果派发 worker 合成，异步生产路径消费 PageStore `ComposeDispatch` grant；无 worker 的测试/同步 fallback 就地执行。页 fetch 消费 PageStore `NetworkRequest` grant，拒绝后保留待重试 |
-| `drainReadyUploads` | .cpp:2055-2203 | worker 快照按本地预算与 PageStore `GpuUpload` grant 上传；`uploadedSources` 在此推进(determination 的 resident 判定跟已上传走,不跟已合成走)。grant 单位是逻辑事务，不等于底层写调用数 |
-| `erasePageEntry` | .cpp:1581-1596 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
-| `resamplePageSource` | .cpp:339-407 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
-| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:454-461 / :600-620 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
-| `placeTileInSourceGrid` (static) | .cpp:462-557 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
-| `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:408-423 / :424-429 / :430-433 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
-| `packKey` / `unpackKey` (static) | .cpp:442-453 / :434-441 | TileKey ↔ uint64 页键 |
+| `providerStackCompatibility` / `pageDomainCompatibilityName` | .cpp:371-432 | PageStore mixed-scheme 运行期契约:同一 compose group 必须共享 canonical page-facing scheme 与有效 projection；异构组整组 fail-closed |
+| `initialize(device, Config)` | .cpp:1559-1645 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=3(涓流,勿在拖动期冻结)、`maxComposeDispatchesPerFrame`=8(每帧 compose 入队上限,2026-08-20 派发门) |
+| `resetPageDomainState` / `rejectPageDomain` | .cpp:1646-1713 | canonical provider/scheme/projection 切换或拒绝时推进 generation，清空 scheme-less 页账本/层池/间接纹理；迟到异步结果由 generation 闸丢弃 |
+| `updateVisiblePages(view, ...)` | .cpp:749-1536 | **核心**。先做 provider/terrain page-domain 兼容性闸，再遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1807-1901 | 仅 active+compatible domain 把该瓦片的间接层号/页参数写进地形 RenderCommand；拒绝态保留 mappedRaster |
+| `tick()` | .cpp:1902-1967 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:2103-2255 / :1998-2052 | 解码结果派发 worker 合成，异步生产路径消费 PageStore `ComposeDispatch` grant；无 worker 的测试/同步 fallback 就地执行。页 fetch 消费 PageStore `NetworkRequest` grant，拒绝后保留待重试；两段均携带 page-domain generation |
+| `drainReadyUploads` | .cpp:2286-2436 | worker 快照按本地预算与 PageStore `GpuUpload` grant 上传；上传前校验 page-domain generation + key + layer；`uploadedSources` 在此推进。grant 单位是逻辑事务，不等于底层写调用数 |
+| `erasePageEntry` | .cpp:1791-1806 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `resamplePageSource` | .cpp:433-501 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
+| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:548-555 / :694-714 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
+| `placeTileInSourceGrid` (static) | .cpp:556-651 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
+| `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:502-517 / :518-523 / :524-527 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
+| `packKey` / `unpackKey` (static) | .cpp:536-547 / :528-535 | TileKey ↔ uint64 页键；只在单 canonical domain 内有效，跨 domain 由 generation 隔离 |
 
 **常量**:`kIndirSideTexels`=64、`kIndirArrayLayers`=256 (.h:72-73)。
 

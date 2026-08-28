@@ -9,9 +9,13 @@
 
 #include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
+#include "earth_engine/providers/ImageryProvider.h"
+#include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/TerrainPageStore.h"
+#include "earth_engine/scene/SelectorView.h"
 #include "earth_engine/tiling/RasterOverlayProjection.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "earth_engine/tiling/TilesetTile.h"
 #include "../../helpers/MockRenderDevice.h"
 
 using namespace earth_engine;
@@ -35,6 +39,38 @@ std::vector<uint8_t> solidPage(int side, uint8_t r, uint8_t g, uint8_t b,
     }
     return px;
 }
+
+class PageDomainImageryProvider final : public ImageryProvider {
+public:
+    PageDomainImageryProvider(std::string schemeId, int maxZoom = 18,
+                              int tileSize = 256)
+        : schemeId_(std::move(schemeId)),
+          maxZoom_(maxZoom),
+          tileSize_(tileSize) {}
+
+    std::string id() const override { return "page-domain-test"; }
+    std::string schemeId() const override { return schemeId_; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return maxZoom_; }
+    int tileWidth() const override { return tileSize_; }
+    int tileHeight() const override { return tileSize_; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key, CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority =
+                         HttpRequestPriority::Normal) override {
+        callback(key, nullptr);
+    }
+    std::unique_ptr<DecodedImage> decodeTile(const uint8_t*,
+                                             size_t) override {
+        return nullptr;
+    }
+
+private:
+    std::string schemeId_;
+    int maxZoom_ = 18;
+    int tileSize_ = 256;
+};
 
 }  // namespace
 
@@ -514,6 +550,162 @@ TEST(TerrainPageStore, InitializeCreatesSharedArrayTexture) {
               TerrainPageStore::kIndirSideTexels);
     EXPECT_EQ(store.residentPageCount(), 0);
     EXPECT_EQ(store.uploadedLayerTotal(), 0);
+}
+
+TEST(TerrainPageStoreDomain, EmptyProviderStackIsRejected) {
+    EXPECT_EQ(TerrainPageStore::providerStackCompatibility({}),
+              TerrainPageStore::PageDomainCompatibility::NoProvider);
+}
+
+TEST(TerrainPageStoreDomain,
+     SameSchemeAndProjectionAllowDifferentZoomAndTileSize) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider base(scheme->id(), 18, 256);
+    PageDomainImageryProvider overlay(scheme->id(), 14, 512);
+    RasterOverlayTileProvider baseTiles(base, *scheme);
+    RasterOverlayTileProvider overlayTiles(overlay, *scheme);
+
+    EXPECT_EQ(TerrainPageStore::providerStackCompatibility(
+                  {&baseTiles, &overlayTiles}),
+              TerrainPageStore::PageDomainCompatibility::Compatible);
+}
+
+TEST(TerrainPageStoreDomain, XyzAndTmsCannotShareOnePageDomain) {
+    auto xyz = TileScheme::createXYZWebMercator();
+    auto tms = TileScheme::createTMS();
+    PageDomainImageryProvider xyzImagery(xyz->id());
+    PageDomainImageryProvider tmsImagery(tms->id());
+    RasterOverlayTileProvider xyzTiles(xyzImagery, *xyz);
+    RasterOverlayTileProvider tmsTiles(tmsImagery, *tms);
+
+    EXPECT_EQ(TerrainPageStore::providerStackCompatibility(
+                  {&xyzTiles, &tmsTiles}),
+              TerrainPageStore::PageDomainCompatibility::ProviderSchemeMismatch);
+}
+
+TEST(TerrainPageStoreDomain, EffectiveProjectionMustMatch) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider standardImagery(scheme->id());
+    PageDomainImageryProvider gcjImagery(scheme->id());
+    RasterOverlayTileProvider standardTiles(standardImagery, *scheme);
+    RasterOverlayTileProvider gcjTiles(
+        gcjImagery, *scheme, nullptr,
+        RasterOverlayGeoreference::Gcj02WebMercator);
+
+    EXPECT_EQ(TerrainPageStore::providerStackCompatibility(
+                  {&standardTiles, &gcjTiles}),
+              TerrainPageStore::PageDomainCompatibility::ProviderProjectionMismatch);
+}
+
+TEST(TerrainPageStoreDomain, ProviderMustConsumeItsDeclaredPageScheme) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider wrongContract("TMS-WebMercator");
+    RasterOverlayTileProvider tiles(wrongContract, *scheme);
+
+    EXPECT_EQ(TerrainPageStore::providerStackCompatibility({&tiles}),
+              TerrainPageStore::PageDomainCompatibility::ProviderContractMismatch);
+}
+
+TEST(TerrainPageStoreDomain, EmptyProviderUpdateClearsActiveDomain) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    SelectorView view;
+    store.updateVisiblePages(view, {}, {&tiles}, 16.0);
+    ASSERT_EQ(store.pageDomainCompatibility(),
+              TerrainPageStore::PageDomainCompatibility::Compatible);
+    const uint64_t activeGeneration = store.pageDomainGeneration();
+
+    store.updateVisiblePages(view, {}, {}, 16.0);
+    EXPECT_EQ(store.pageDomainCompatibility(),
+              TerrainPageStore::PageDomainCompatibility::NoProvider);
+    EXPECT_GT(store.pageDomainGeneration(), activeGeneration);
+}
+
+TEST(TerrainPageStoreDomain, RealTerrainSchemeMustMatchCanonicalDomain) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    TilesetTile terrainTile(
+        TileKey{"Geographic-TMS", 2, 1, 1},
+        Rectangle::fromDegrees(-90.0, -45.0, 0.0, 0.0));
+    terrainTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    SelectorView view;
+    std::vector<TilesetTile*> visible{&terrainTile};
+
+    store.updateVisiblePages(view, visible, {&tiles}, 16.0);
+
+    EXPECT_EQ(store.pageDomainCompatibility(),
+              TerrainPageStore::PageDomainCompatibility::TerrainSchemeMismatch);
+    EXPECT_EQ(store.residentPageCount(), 0);
+}
+
+TEST(TerrainPageStoreDomain, ProviderSetChangeAdvancesGeneration) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider base(scheme->id());
+    PageDomainImageryProvider overlay(scheme->id());
+    RasterOverlayTileProvider baseTiles(base, *scheme);
+    RasterOverlayTileProvider overlayTiles(overlay, *scheme);
+    SelectorView view;
+    store.updateVisiblePages(view, {}, {&baseTiles}, 16.0);
+    const uint64_t oneSourceGeneration = store.pageDomainGeneration();
+
+    store.updateVisiblePages(view, {}, {&baseTiles, &overlayTiles}, 16.0);
+
+    EXPECT_GT(store.pageDomainGeneration(), oneSourceGeneration);
+    EXPECT_EQ(store.pageDomainCompatibility(),
+              TerrainPageStore::PageDomainCompatibility::Compatible);
+}
+
+TEST(TerrainPageStoreDomain, ResetAdvancesGenerationAndDropsOldInboxWork) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    cfg.pageSizeTexels = 4;
+    cfg.maxComposeDispatchesPerFrame = 4;
+    cfg.composeWorkers = &AsyncSystem::pool();
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    const uint64_t pageKey = TerrainPageStore::packKeyForTest(
+        TileKey{"XYZ-WebMercator", 3, 1, 2});
+    store.debugCreatePageForTest(pageKey, 0);
+    const uint64_t oldGeneration = store.pageDomainGeneration();
+    auto oldImage = std::make_unique<DecodedImage>();
+    oldImage->width = 4;
+    oldImage->height = 4;
+    oldImage->channels = 4;
+    oldImage->pixels.assign(4u * 4u * 4u, 255);
+    store.debugDeliverDecodedImage(pageKey, 0, 0, 0, 0, 0,
+                                   std::move(oldImage), oldGeneration);
+
+    store.debugResetPageDomainForTest();
+    EXPECT_NE(store.pageDomainGeneration(), oldGeneration);
+    store.debugCreatePageForTest(pageKey, 0);
+    store.tick();
+
+    EXPECT_EQ(store.composeDispatchedThisFrame(), 0)
+        << "旧 domain 的同 z/x/y+layer 到货不得进入新页 compose";
+    EXPECT_EQ(device.textureRegionUpdateCount, 0);
 }
 
 // packKey/unpackKey 必须 round-trip:叠画钩子拿到的 z/x/y 错了就会去取错误的

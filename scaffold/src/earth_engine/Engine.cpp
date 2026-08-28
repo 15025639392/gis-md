@@ -711,17 +711,15 @@ bool Engine::render(double deltaSeconds) {
                         pageProvidersScratch_.push_back(p);
                     }
                 }
-                if (!pageProvidersScratch_.empty()) {
-                    const double uvpStartMs = perf::nowMs();
-                    terrainPageStore_->updateVisiblePages(
-                        frameState.selectorViews.front(),
-                        tileset->tilePlan().tilesToRenderThisFrame,
-                        pageProvidersScratch_,
-                        tileset->maximumScreenSpaceError(),
-                        &scene_->frameResourceArbiter());
-                    pageStoreUvpMs = perf::nowMs() - uvpStartMs;
-                    pageStoreIndirMs = terrainPageStore_->lastIndirUploadMs();
-                }
+                const double uvpStartMs = perf::nowMs();
+                terrainPageStore_->updateVisiblePages(
+                    frameState.selectorViews.front(),
+                    tileset->tilePlan().tilesToRenderThisFrame,
+                    pageProvidersScratch_,
+                    tileset->maximumScreenSpaceError(),
+                    &scene_->frameResourceArbiter());
+                pageStoreUvpMs = perf::nowMs() - uvpStartMs;
+                pageStoreIndirMs = terrainPageStore_->lastIndirUploadMs();
             }
             const double tickStartMs = perf::nowMs();
             terrainPageStore_->tick(&scene_->frameResourceArbiter());

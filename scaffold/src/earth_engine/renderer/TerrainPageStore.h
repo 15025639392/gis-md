@@ -172,6 +172,22 @@ class ThreadPool;
 
 class TerrainPageStore {
 public:
+    /// PageStore is a single canonical page-grid compositor, not a generic
+    /// per-source reprojection engine. providers[0] defines the page-facing
+    /// TileScheme + effective projection. Every later provider must consume
+    /// the same logical PageKey and return pixels in that same page space.
+    enum class PageDomainCompatibility {
+        Compatible,
+        NoProvider,
+        ProviderSchemeMismatch,
+        ProviderCrsMismatch,
+        ProviderYDirectionMismatch,
+        ProviderRootMatrixMismatch,
+        ProviderProjectionMismatch,
+        ProviderContractMismatch,
+        TerrainSchemeMismatch,
+    };
+
     struct Config {
         int pageSizeTexels = 256;    // 每层边长(标准 XYZ 影像瓦片 256)
         // B2b 稀疏页存储:array 层数 = LRU 页容量(每页一层,blockLayers=1)。
@@ -235,6 +251,18 @@ public:
     bool initialize(RenderDevice* device, const Config& config);
 
     bool isReady() const { return arrayTexture_ != nullptr; }
+
+    /// Classify whether a provider stack can share one PageStore page domain.
+    /// Different max zoom, tile pixel size and source content are allowed;
+    /// different page-facing scheme/projection semantics are not.
+    static PageDomainCompatibility providerStackCompatibility(
+        const std::vector<RasterOverlayTileProvider*>& providers);
+    static const char* pageDomainCompatibilityName(
+        PageDomainCompatibility compatibility);
+    PageDomainCompatibility pageDomainCompatibility() const {
+        return pageDomainCompatibility_;
+    }
+    uint64_t pageDomainGeneration() const { return pageDomainGeneration_; }
 
     /// 每帧(渲染线程,determination 之后、render 之前):推进帧号、排空已到达影像
     /// (限 maxUploadsPerFrame)灌对应页 layer 并置 uploaded。fetch 由 determination
@@ -327,7 +355,13 @@ public:
     ///
     /// C-1:`providers` 是**有序** overlay 列表的 provider(与 mappedRaster 同序),
     /// 每页按该序 alphaOver 合成成一层。分块/zoom/最大级由 providers[0](底图)决定
-    /// —— 它是与几何对齐的那一个,靠后的源只是往同一 key 的页上叠。空表 → no-op。
+    /// —— 它是 canonical page domain；靠后的源只能往**同一 page-facing scheme +
+    /// projection** 的 key 上叠。不同 maxZoom/tileSize 允许(祖先钳制+重采样)，
+    /// XYZ/TMS、Mercator/Geographic、WebMercator/GCJ 等异构组合不允许直接共页；
+    /// 需要异构数据时必须由 provider adapter 内部转换成 canonical page 图像。
+    /// 不兼容时 PageStore 整组 fail-closed，本帧不绑定页纹理，保留 mappedRaster。
+    /// terrain tile scheme 也必须等于 canonical scheme；当前不接受仅 z/x/y 偶然
+    /// 同形的 scheme alias。空表 → 清理并停用当前 page domain。
     void updateVisiblePages(const SelectorView& view,
                             const std::vector<TilesetTile*>& visibleTiles,
                             const std::vector<RasterOverlayTileProvider*>& providers,
@@ -489,7 +523,9 @@ public:
     /// B 通道深度解码(镜像片元 floor(b*255+0.5))。供 host round-trip 单测。
     static int decodeDepthRGBA8(const uint8_t in[4]);
 
-    /// packKey 的逆(schemeId 不入 key,还原为缺省)。供叠画钩子拿页的 z/x/y。
+    /// packKey 的逆(schemeId 不入 key,还原为缺省)。这是**单 canonical domain 内**
+    /// 的紧凑局部 key，不是跨 scheme 全局身份；domain generation 负责隔离切换前
+    /// 后的异步结果。供叠画钩子拿页的 z/x/y。
     /// 与 packKey 必须 round-trip —— 还原错了会去取错误的源瓦片,画面表现是
     /// 「路网整体错位」而不是报错。
     static TileKey unpackKey(uint64_t packed);
@@ -529,7 +565,12 @@ public:
     /// 页/层/账本校验照常走,不做捷径)。
     void debugDeliverDecodedImage(uint64_t pageKey, int layer, int source,
                                   int depth, int subX, int subY,
-                                  std::unique_ptr<DecodedImage> image);
+                                  std::unique_ptr<DecodedImage> image,
+                                  uint64_t domainGeneration =
+                                      std::numeric_limits<uint64_t>::max());
+    /// 仅测试:模拟 canonical provider/domain 切换。旧 inbox item 不清空，必须
+    /// 依靠 generation 闸在 drain 时被拒绝。
+    void debugResetPageDomainForTest();
 
 private:
     struct PendingInbox;  // 定义在 .cpp:worker 回调安全投递解码影像
@@ -689,6 +730,12 @@ private:
     /// 取走 worker 已合成的页快照,按预算上传 + 叠画(渲染线程)。
     void drainReadyUploads();
     void erasePageEntry(uint64_t pageKey);
+    /// canonical provider set / scheme / projection 改变时的统一清理点。
+    /// generation 先推进，随后取消旧任务并清空所有 scheme-less 账本；投递箱
+    /// 故意不清，迟到结果由 generation 闸证明不会串入新 domain。
+    void resetPageDomainState();
+    void rejectPageDomain(PageDomainCompatibility compatibility,
+                          const char* detail);
     /// 全量作废合成页(cancel 在途 fetch/compose + pages_.clear;pool 槽位
     /// 不清)。两个调用点:源列表变更(updateVisiblePages)与运行期换样式
     /// (invalidateComposedPages)—— 同一形态收进一处,不许再抄。
@@ -751,10 +798,18 @@ private:
     int winFieldHoleCells_ = 0;
     int winFieldFallbackCells_ = 0;
 
-    // C-1:有序源列表(providers_[0] = 底图,定分块/zoom/最大级)。每帧由
-    // determination 刷新;变化时作废全部已合成页(旧页少一层或多一层都是错的)。
+    // C-1:有序源列表(providers_[0] = canonical 页网格)。同一 vector 内只允许
+    // page-facing scheme/projection 相同；变化时推进 pageDomainGeneration_ 并
+    // 清全部 scheme-less 账本，旧回调即使复用相同 z/x/y+layer 也过不了代次闸。
     std::vector<RasterOverlayTileProvider*> providers_;
     std::vector<RasterOverlayTileProvider*> detProvidersScratch_;  // 剔 null 复用
+    PageDomainCompatibility pageDomainCompatibility_ =
+        PageDomainCompatibility::NoProvider;
+    uint64_t pageDomainGeneration_ = 1;
+    bool pageDomainActive_ = false;
+    SchemeId pageDomainSchemeId_;
+    RasterOverlayProjection pageDomainProjection_ =
+        RasterOverlayProjection::Geographic;
     std::shared_ptr<PendingInbox> inbox_;            // 跨线程投递箱(存活于回调)
     struct ReadyUploadInbox;  // 定义在 .cpp:worker 合成完毕的快照投递箱
     std::shared_ptr<ReadyUploadInbox> readyInbox_;   // 同上,存活于 worker 任务

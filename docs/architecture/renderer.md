@@ -53,6 +53,26 @@ AI_INDEX §13 记录的 `RenderCommandStreamingSet`(stable-key 长期槽位 diff
 ### 7. 地形页存储在渲染侧的角色
 `TerrainPageStore` 是地形表面影像的常驻纹理池:把地形瓦切成 `gridN²` cell,每 cell 独立按 LRU 拿 `texture2DArray` 一层,着色器经间接纹理查层号,取代"每瓦片一张合成影像"。渲染帧内 `updateVisiblePages` 每帧驱动(枚举可见 cell→缺页 fetch→写间接纹理),`applyToTerrainCommand` 把层号/页参数写进地形 `RenderCommand`——地形命令绑的不是"一张贴图",而是间接纹理 + array,shader 做一次 `texelFetch` 定位。槽位常量 `kGltfPageStoreArrayTextureSlot`/`Indir`(影像页)、`kGltfHeightTextureSlot`(高度页)、`kGltfRoadFieldTextureSlot`/`Indir`(**路网 SDF/D2 场页，⚠️即将废弃的兼容路径**)是它在 `RenderCommand` 层的落点。
 
+#### PageStore mixed-scheme 规则
+
+`TerrainPageStore` 是**单 canonical page domain 的多内容合成器**，不是任意瓦片体系之间的重投影器。一个实例同一时刻只有一个兼容键：
+
+```text
+PageStoreCompatibilityKey = {
+  canonical page-facing TileScheme semantics,
+  effective RasterOverlayProjection
+}
+```
+
+- `providers[0]` 定义 canonical 页网格、投影、页 zoom、placement、UV 与几何仿射；同一 compose group 的后续 provider 必须消费相同逻辑 `PageKey`，并返回同一目标页空间的像素。
+- 允许 source 的内容、`maximumLevel` 和源图尺寸不同；祖先钳制与页内重采样负责吸收这些差异。
+- 不允许 XYZ/TMS、Mercator/Geographic、Standard/GCJ 等 page-facing 语义直接混在一个 group。异构原生 source 必须在 provider adapter 内完成选瓦、重投影和重采样，最终对外声明并输出 canonical page image；MVT drape provider 就属于这种 adapter，而不是 PageStore 自己理解 MVT 原生网格。
+- 当前真实地形 tile 的 scheme 必须与 canonical scheme 相同；一个 PageStore 也不允许多个 canonical domain 并存。
+- 不兼容时整组 PageStore fail-closed，清空 scheme-less 页账本和间接纹理绑定，继续以 `mappedRaster` 为权威回退；不能静默丢掉某个 overlay，因为有序 `alphaOver` 少一层就已改变画面语义。
+- `packKey(z/x/y)` 只是 canonical domain 内部的紧凑 key，不是跨 scheme 全局身份。provider/domain 变化会推进 `pageDomainGeneration`，影像 compose、场页与 GPU upload 的异步结果都必须匹配该 generation，防止旧回调在相同 `z/x/y + layer` 上串入新 domain。
+
+这条边界与 Cesium 的“geometry scheme 可和单个 overlay provider scheme 不同”不冲突：Cesium 是每个 provider 在自己的 tiling/projection 空间独立建立映射；它没有定义多个异构 provider 直接共用一个 PageStore 页键。本规则是 gis-md 自研 PageStore 的运行期契约。
+
 ---
 
 ## 数据流(关键路径)
