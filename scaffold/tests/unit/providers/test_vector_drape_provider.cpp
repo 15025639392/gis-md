@@ -374,7 +374,9 @@ TEST(VectorDrapeProviderTest, SetStyleTakesEffectOnNextRequest) {
     bluePaint.fillColor = {0, 0, 255, 255};
     VectorRasterStyle blue;
     blue.layers = {bluePaint};
+    const uint64_t revisionBefore = provider.contentRevision();
     provider.setStyle(blue);
+    EXPECT_GT(provider.contentRevision(), revisionBefore);
 
     auto after = request(provider, key);
     ASSERT_NE(after, nullptr);

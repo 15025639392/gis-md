@@ -26,6 +26,7 @@
 #include "TileSelectionCounters.h"
 #include "TileSelectionMetrics.h"
 #include "TileSelectionReuseState.h"
+#include "RasterOverlayRuntime.h"
 #include "TilesetTerrainProviders.h"
 #include "TilesetTileRegistry.h"
 #include "TerrainHeightService.h"
@@ -158,7 +159,13 @@ public:
     }
     // 北极星 SVT B2a:页面 determination 需读影像 provider(front()->getTileProvider())。
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays() const {
-        return rasterOverlays_;
+        return rasterOverlayRuntime_.overlays();
+    }
+    RasterOverlayRuntime& rasterOverlayRuntime() {
+        return rasterOverlayRuntime_;
+    }
+    const RasterOverlayRuntime& rasterOverlayRuntime() const {
+        return rasterOverlayRuntime_;
     }
     // Phase 2c:GPU 位移开关切换时,失效所有地形瓦片的缓存 draw 命令,强制下帧
     // 按新状态重建(开→改绑共享位移模板;关→回落 CPU baked VBO)。无此失效,已
@@ -355,7 +362,10 @@ private:
 
     TilesetTerrainProviders terrainProviders_;
     std::unique_ptr<TileScheme> tileScheme_;
-    std::vector<ActivatedRasterOverlay*> rasterOverlays_;
+    RasterOverlayRuntime rasterOverlayRuntime_;
+    // Compatibility view for existing frame facades/tests. This is not a
+    // second owner; overlay ordering is owned by rasterOverlayRuntime_.
+    std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
     RenderDevice* device_ = nullptr;
     TilesetOptions options_;
 

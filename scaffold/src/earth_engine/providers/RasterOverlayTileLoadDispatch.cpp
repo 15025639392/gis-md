@@ -81,8 +81,6 @@ bool hasRasterInflightCapacity(FrameResourceBudget* budget,
         estimatedFanout);
 }
 
-std::atomic<uint64_t> gNextRasterSourceWaiterOwnerToken{1};
-
 bool isTransientRasterSourceFailure(
     const std::vector<std::string>& diagnostics) {
     return std::any_of(
@@ -304,10 +302,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         requestSourceDepotEpoch = asyncState_->sourceTileDepotEpoch;
     }
-    const uint64_t sourceWaiterOwnerToken =
-        gNextRasterSourceWaiterOwnerToken.fetch_add(
-            1,
-            std::memory_order_relaxed);
+    const uint64_t sourceWaiterOwnerToken = nextSourceWaiterOwnerToken();
     const bool returnEmptyForAncestorOnly = true;
     auto sourceSet = std::make_shared<MappedSourceImageSet>(
         scheme_,

@@ -526,6 +526,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/RasterMappedToTilesetTile.cpp
     earth_engine/tiling/Tileset.h
     earth_engine/tiling/Tileset.cpp
+    earth_engine/tiling/RasterOverlayRuntime.h
+    earth_engine/tiling/RasterOverlayRuntime.cpp
 )
 
 # ============================================================
@@ -533,6 +535,9 @@ target_sources(earth_engine_core PRIVATE
 # ============================================================
 target_sources(earth_engine_core PRIVATE
     earth_engine/providers/ImageryProvider.h
+    earth_engine/providers/RasterAsset.h
+    earth_engine/providers/RasterAssetDepot.h
+    earth_engine/providers/RasterAssetDepot.cpp
     earth_engine/providers/DebugImageryProvider.h
     earth_engine/providers/DebugImageryProvider.cpp
     earth_engine/providers/BingMapsImageryProvider.h

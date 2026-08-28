@@ -58,6 +58,7 @@ bool uploadAllowedDuringInteraction(
 TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
     bool interactionActive,
     FrameResourceBudget* budget) {
+    syncProviderContentRevision();
     // cesium-native: process completed HTTP responses on main thread.
     // Create GPU textures and mark tiles as Loaded.
     FrameResourceBudget localBudget;

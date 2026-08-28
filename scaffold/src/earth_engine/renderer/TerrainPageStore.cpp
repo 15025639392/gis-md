@@ -1,4 +1,5 @@
 #include "TerrainPageStore.h"
+#include "../providers/RasterAssetDepot.h"
 
 #include <algorithm>
 #include <cmath>
@@ -303,7 +304,8 @@ struct TerrainPageStore::PendingInbox {
         int ancestorDepth = 0;
         int subX = 0;
         int subY = 0;
-        std::unique_ptr<DecodedImage> image;
+        std::shared_ptr<const DecodedImage> image;
+        bool terminalFailure = false;
     };
     std::mutex mutex;
     std::vector<Item> pages;
@@ -751,8 +753,10 @@ void TerrainPageStore::updateVisiblePages(
     const std::vector<TilesetTile*>& visibleTiles,
     const std::vector<RasterOverlayTileProvider*>& providers,
     double terrainMaxScreenSpaceError,
-    SceneFrameResourceArbiter* resourceArbiter) {
+    SceneFrameResourceArbiter* resourceArbiter,
+    std::shared_ptr<RasterAssetDepot> assetDepot) {
     resourceArbiter_ = resourceArbiter;
+    assetDepot_ = std::move(assetDepot);
     // 放在最前而不是最后:本函数有多处早退,放末尾会被跳过。用上一帧的在途
     // 状态对账 —— 迟一帧只会多渲一帧(安全方向),而漏对账是永远停不下来。
     syncWorkTicket();
@@ -797,10 +801,17 @@ void TerrainPageStore::updateVisiblePages(
     const bool domainChanged =
         !pageDomainActive_ || pageDomainSchemeId_ != canonicalScheme.id() ||
         pageDomainProjection_ != canonicalProvider->getProjection();
+    std::vector<uint64_t> contentRevisions;
+    contentRevisions.reserve(detProvidersScratch_.size());
+    for (RasterOverlayTileProvider* provider : detProvidersScratch_) {
+        contentRevisions.push_back(
+            provider->getImageryProvider().contentRevision());
+    }
     if (providerSetChanged || domainChanged) {
         const PageDomainCompatibility previous = pageDomainCompatibility_;
         resetPageDomainState();
         providers_ = detProvidersScratch_;
+        providerContentRevisions_ = std::move(contentRevisions);
         pageDomainSchemeId_ = canonicalScheme.id();
         pageDomainProjection_ = canonicalProvider->getProjection();
         pageDomainActive_ = true;
@@ -816,6 +827,19 @@ void TerrainPageStore::updateVisiblePages(
         }
     } else {
         pageDomainCompatibility_ = PageDomainCompatibility::Compatible;
+        if (providerContentRevisions_ != contentRevisions) {
+            const bool invalidationAlreadyPending = std::any_of(
+                pages_.begin(),
+                pages_.end(),
+                [](const auto& page) {
+                    return page.second.needsRebake;
+                });
+            providerContentRevisions_ = std::move(contentRevisions);
+            if (!invalidationAlreadyPending) {
+                ++providerContentInvalidations_;
+                invalidateComposedPages();
+            }
+        }
     }
 
     if (visibleTiles.empty()) {
@@ -1547,8 +1571,8 @@ void TerrainPageStore::syncWorkTicket() {
 
 TerrainPageStore::~TerrainPageStore() {
     for (auto& [pageKey, pe] : pages_) {
-        for (CancellationToken& token : pe.fetchTokens) {
-            token.cancel();  // 尽力取消在途(回调仍安全:只写 shared inbox)
+        for (RasterAssetRequestHandle& handle : pe.fetchHandles) {
+            handle.cancel();
         }
         if (pe.compose) {
             pe.compose->cancelled.store(true, std::memory_order_release);
@@ -1649,8 +1673,8 @@ void TerrainPageStore::resetPageDomainState() {
         ++pageDomainGeneration_;  // 0 is reserved for untagged/invalid work.
     }
     for (auto& [key, entry] : pages_) {
-        for (CancellationToken& token : entry.fetchTokens) {
-            token.cancel();  // 在途 fetch 作废(到达经 drain 校验丢弃)
+        for (RasterAssetRequestHandle& handle : entry.fetchHandles) {
+            handle.cancel();  // 只摘除本页 waiter，迟到经 generation 丢弃
         }
         if (entry.compose) {
             // 在途合成省功早退;迟到快照由 drainReadyUploads 账本校验丢弃。
@@ -1682,6 +1706,7 @@ void TerrainPageStore::resetPageDomainState() {
     visiblePagesScratch_.clear();
     everCreatedPages_.clear();
     providers_.clear();
+    providerContentRevisions_.clear();
     pageDomainActive_ = false;
     pageDomainCompatibility_ = PageDomainCompatibility::NoProvider;
     pageDomainSchemeId_ = SchemeId{};
@@ -1713,8 +1738,8 @@ void TerrainPageStore::rejectPageDomain(
 
 void TerrainPageStore::clearAllComposedPages() {
     for (auto& [key, entry] : pages_) {
-        for (CancellationToken& token : entry.fetchTokens) {
-            token.cancel();
+        for (RasterAssetRequestHandle& handle : entry.fetchHandles) {
+            handle.cancel();
         }
         if (entry.compose) {
             entry.compose->cancelled.store(true, std::memory_order_release);
@@ -1750,8 +1775,8 @@ void TerrainPageStore::invalidateComposedPages() {
         if (pe.compose) {
             pe.compose->cancelled.store(true, std::memory_order_release);
         }
-        for (CancellationToken& token : pe.fetchTokens) {
-            token.cancel();  // 旧代 fetch 作废(迟到经 drain epoch 闸丢弃)
+        for (RasterAssetRequestHandle& handle : pe.fetchHandles) {
+            handle.cancel();  // 旧代 waiter 作废(迟到经 drain epoch 闸丢弃)
         }
     }
     ++determinationDirtyRevision_;  // 换肤重烘在途 → 下帧必须重编码/重 kick
@@ -1793,8 +1818,8 @@ void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
     if (it == pages_.end()) {
         return;
     }
-    for (CancellationToken& token : it->second.fetchTokens) {
-        token.cancel();  // 在途 fetch 全部作废(到达也会被 drain 校验丢弃)
+    for (RasterAssetRequestHandle& handle : it->second.fetchHandles) {
+        handle.cancel();  // 在途 waiter 全部作废(到达也会被 drain 校验丢弃)
     }
     if (it->second.compose) {
         // 在途合成任务省功早退;迟到快照由 drainReadyUploads 账本校验丢弃。
@@ -1981,9 +2006,10 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
     pe.compose->epoch = pe.targetEpoch;
     pe.compose->domainGeneration = pageDomainGeneration_;
     pe.compose->holdUntilComplete = holdUntilComplete;
-    pe.fetchTokens.clear();
+    pe.fetchHandles.clear();
     pe.fetchIssued.clear();
     pe.totalSources = static_cast<int>(providers_.size());
+    pe.terminalFailure = false;
     pe.lastProgressFrame = frameId_;
     pe.needsRebake = false;
     kickPageFetches(fetchKey, pageKey, layer, pe);
@@ -1998,8 +2024,9 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
 void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
                                        uint64_t pageKey, int layer,
                                        PageEntry& entry) {
-    if (entry.fetchTokens.size() != providers_.size()) {
-        entry.fetchTokens.assign(providers_.size(), CancellationToken{});
+    if (entry.fetchHandles.size() != providers_.size()) {
+        entry.fetchHandles.clear();
+        entry.fetchHandles.resize(providers_.size());
         entry.fetchIssued.assign(providers_.size(), false);
     }
     std::shared_ptr<PendingInbox> inbox = inbox_;
@@ -2007,14 +2034,6 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
         if (providers_[s] == nullptr || entry.fetchIssued[s]) {
             continue;
         }
-        if (resourceArbiter_ &&
-            !resourceArbiter_->tryAcquire(
-                SceneFrameResourceProducer::PageStore,
-                SceneFrameResourceStage::NetworkRequest,
-                FrameResourcePriority::Normal)) {
-            continue;
-        }
-        entry.fetchIssued[s] = true;
         const int source = static_cast<int>(s);
         const uint64_t domainGeneration = pageDomainGeneration_;
         // C-1b:**每个源各自钳到自己的 maxZoom**。页 zoom 由屏幕(与底图上限)驱动,
@@ -2033,20 +2052,71 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
             fetchKey.x = pageTileKey.x >> depth;
             fetchKey.y = pageTileKey.y >> depth;
         }
-        ImageryProvider& imagery = providers_[s]->getImageryProvider();
-        imagery.requestTile(
-            fetchKey, entry.fetchTokens[s],
-            [inbox, pageKey, layer, source, depth, subX, subY,
-             domainGeneration](
-                const TileKey&, std::unique_ptr<DecodedImage> image) {
-                if (!image) return;
+
+        // Phase-1 shared Asset Depot read-through. Only a successful exact
+        // decoded source is reusable here: no transport, waiter, terminal
+        // failure, or ancestor fallback crosses the PageStore boundary.
+        auto tryAdmit = [this]() {
+            if (!resourceArbiter_) {
+                return true;
+            }
+            return resourceArbiter_->tryAcquire(
+                SceneFrameResourceProducer::PageStore,
+                SceneFrameResourceStage::NetworkRequest,
+                FrameResourcePriority::Normal);
+        };
+        auto onReady = [inbox, pageKey, layer, source, depth, subX, subY,
+                        domainGeneration](RasterAssetResponse response) {
+                PendingInbox::Item item;
+                item.key = pageKey;
+                item.domainGeneration = domainGeneration;
+                item.layer = layer;
+                item.source = source;
+                item.ancestorDepth = depth;
+                item.subX = subX;
+                item.subY = subY;
+                if (response.asset) {
+                    item.image = std::move(response.asset->image);
+                } else {
+                    item.terminalFailure = response.terminalFailure;
+                }
                 std::lock_guard<std::mutex> lock(inbox->mutex);
-                inbox->pages.push_back(
-                    {pageKey, domainGeneration, layer, source, depth, subX,
-                     subY, std::move(image)});
-            });
+                inbox->pages.push_back(std::move(item));
+            };
+        RasterAssetAcquireResult acquired = assetDepot_
+            ? assetDepot_->acquireExactSource(
+                  RasterAssetConsumer::PageStore,
+                  *providers_[s],
+                  fetchKey,
+                  std::move(tryAdmit),
+                  std::move(onReady))
+            : providers_[s]->acquireExactSource(
+                  fetchKey,
+                  std::move(tryAdmit),
+                  std::move(onReady));
+        if (acquired.status == RasterAssetAcquireStatus::CacheHit) {
+            ++sharedRasterAssetHits_;
+        } else {
+            ++sharedRasterAssetMisses_;
+        }
+        if (!acquired.accepted()) {
+            entry.fetchIssued[s] = false;
+            continue;
+        }
+        entry.fetchIssued[s] = true;
+        entry.fetchHandles[s] = std::move(acquired.handle);
     }
 
+}
+
+void TerrainPageStore::debugKickPageFetchesForTest(
+    const TileKey& pageTileKey,
+    const std::vector<RasterOverlayTileProvider*>& providers,
+    std::shared_ptr<RasterAssetDepot> assetDepot) {
+    providers_ = providers;
+    assetDepot_ = std::move(assetDepot);
+    PageEntry entry;
+    kickPageFetches(pageTileKey, packKey(pageTileKey), 0, entry);
 }
 
 // ==== 步3 场平面:独立于影像页的场页生产/淘汰 ====
@@ -2136,8 +2206,17 @@ void TerrainPageStore::drainInbox() {
         // 尺寸重采样,任意 tileSize 的 provider 都能进页。旧护栏「非 256² 跳过」
         // 是静默丢弃 —— 真机踩过:矢量源 tileSize=512,图非空(故不打 NULL 日志)
         // 却恒被丢,表现为该源在页内完全不存在,且没有任何一条错误日志。
-        DecodedImage* image = item.image.get();
+        if (item.terminalFailure) {
+            // A failed exact source must not leave a partially composed page
+            // overriding the complete Direct fallback. Drop the page so the
+            // next determination can retry it while mappedRaster remains
+            // visible for this frame.
+            erasePageEntry(item.key);
+            continue;
+        }
+        const DecodedImage* image = item.image.get();
         if (!image || image->width <= 0 || image->height <= 0 ||
+            image->channels <= 0 || image->bytesPerChannel <= 0 ||
             image->pixels.empty()) {
             continue;
         }
@@ -2155,7 +2234,8 @@ void TerrainPageStore::drainInbox() {
         // std::function 需可拷贝 → image 转 shared_ptr。
         auto compose = it->second.compose;
         auto readyInbox = readyInbox_;
-        std::shared_ptr<DecodedImage> sharedImage = std::move(item.image);
+        std::shared_ptr<const DecodedImage> sharedImage =
+            std::move(item.image);
         const uint64_t pageKey = item.key;
         const uint64_t domainGeneration = item.domainGeneration;
         const int layer = item.layer;
@@ -2276,7 +2356,7 @@ void TerrainPageStore::debugDeliverDecodedImage(
     std::lock_guard<std::mutex> lock(inbox_->mutex);
     inbox_->pages.push_back(
         {pageKey, domainGeneration, layer, source, depth, subX, subY,
-         std::move(image)});
+         std::move(image), false});
 }
 
 void TerrainPageStore::debugResetPageDomainForTest() {

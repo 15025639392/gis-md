@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -61,6 +62,9 @@ public:
     int maxZoom() const override { return options_.advertisedMaxZoom; }
     int tileWidth() const override { return options_.tileSize; }
     int tileHeight() const override { return options_.tileSize; }
+    uint64_t contentRevision() const override {
+        return contentRevision_.load(std::memory_order_acquire);
+    }
 
     std::string buildUrl(const TileKey& key) const override;
 
@@ -83,6 +87,7 @@ private:
 
     Options options_;
     mutable std::mutex styleMutex_;
+    std::atomic<uint64_t> contentRevision_{0};
     std::shared_ptr<RegionCache> tileCache_;
     std::shared_ptr<ThreadPool> rasterPool_;
 };

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ProviderRequestDiagnostics.h"
+#include "RasterAsset.h"
 #include "RasterOverlayTile.h"
 #include "RasterTextureUploader.h"
 #include "../tiling/TileRasterOverlayUploadResult.h"
@@ -31,6 +32,7 @@ namespace earth_engine {
 class ImageryProvider;
 class FrameResourceBudget;
 struct DecodedImage;
+class RasterAssetDepot;
 
 /// cesium-native RasterOverlayTileProvider equivalent.
 ///
@@ -170,6 +172,16 @@ public:
     const ImageryProvider& getImageryProvider() const { return provider_; }
     ProviderRequestDiagnostics requestDiagnostics() const;
 
+    /// Runtime-owned decoded-source coordinator. The provider retains this
+    /// shared handle so a provider can outlive its Tileset runtime safely;
+    /// source mapping remains provider-local until the next depot migration.
+    void setAssetDepot(std::shared_ptr<RasterAssetDepot> depot) {
+        assetDepot_ = std::move(depot);
+    }
+    std::shared_ptr<RasterAssetDepot> assetDepot() const {
+        return assetDepot_;
+    }
+
     /// Returns the tile scheme.
     const TileScheme& getTileScheme() const { return scheme_; }
 
@@ -177,6 +189,24 @@ public:
     RasterOverlayProjection getProjection() const {
         return projection_;
     }
+
+    /// Returns an immutable exact source image already decoded by the shared
+    /// provider depot. This is a read-through cache facade only: it never
+    /// starts or joins transport and never applies ancestor fallback.
+    std::optional<RasterAssetSnapshot> tryGetCachedExactSource(
+        const TileKey& sourceKey);
+
+    /// Acquire one exact source through the provider's shared decoded-asset
+    /// depot. Direct and PageStore callers join the same in-flight transport.
+    /// Only a newly started transport invokes tryAdmitTransport; cache hits
+    /// and joins consume no additional frame network grant.
+    RasterAssetAcquireResult acquireExactSource(
+        const TileKey& sourceKey,
+        std::function<bool()> tryAdmitTransport,
+        std::function<void(RasterAssetResponse)> onReady);
+
+    /// Current backend-neutral identity for a source key (diagnostics/tests).
+    RasterAssetKey rasterAssetKey(const TileKey& sourceKey);
 
     // ── Async loading ──
 
@@ -386,6 +416,8 @@ private:
                             const std::string& cacheKey,
                             FrameResourceBudget* budget);
     void refreshSourceAssetDepot();
+    void syncProviderContentRevision();
+    static uint64_t nextSourceWaiterOwnerToken();
 
     /// Internal: load a mapped raster tile by combining the provider's
     /// quadtree imagery tiles that overlap its geometry rectangle.
@@ -474,6 +506,10 @@ private:
         std::vector<std::string> diagnostics;
         std::vector<std::string> credits;
         bool terminalFailure = false;
+        // A failed exact transport is cacheable for ExactOnly consumers, but
+        // Direct must treat it as the start of its ancestor-resolution policy
+        // rather than as an already exhausted fallback chain.
+        bool exactTransportFailure = false;
         int64_t sizeBytes = 0;
         uint64_t generation = 0;
     };
@@ -482,6 +518,13 @@ private:
         struct WaiterEntry {
             uint64_t ownerToken = 0;
             std::function<void(Result)> callback;
+            bool usesAncestorFallback = false;
+            // Fallback is a consumer policy, not a property of the shared
+            // exact transport. Exact-only consumers are completed as soon as
+            // that transport fails; Direct consumers remain attached to the
+            // original key while this continuation starts/join the parent
+            // chain.
+            std::function<void()> continueWithParentFallback;
         };
         std::vector<WaiterEntry> waiters;
     };
@@ -643,6 +686,7 @@ private:
         RetiredAsyncResources& retired);
     std::shared_ptr<ProviderAsyncState> asyncState_ =
         std::make_shared<ProviderAsyncState>();
+    std::shared_ptr<RasterAssetDepot> assetDepot_;
     std::shared_ptr<QuadtreeSourceAssetDepot> sourceAssetDepot_;
 
     /// Monotonic frame counter, updated by trimUnusedTiles.
@@ -651,6 +695,7 @@ private:
 
     uint64_t mappedRasterTileEpoch_ = 0;
     uint64_t mappingRevision_ = 0;
+    uint64_t observedProviderContentRevision_ = 0;
     double maximumScreenSpaceError_ = 2.0;
     int maximumTextureSize_ = 2048;
     int minimumLevel_ = 0;

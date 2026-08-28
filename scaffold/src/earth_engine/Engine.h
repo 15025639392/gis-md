@@ -456,7 +456,6 @@ private:
     bool terrainPageStoreEnabled_ = false;
     bool terrainPageStoreInitFailed_ = false;
     // C-1:每帧交给页存储的有序源列表(剔 null 后复用,免逐帧分配)。
-    std::vector<RasterOverlayTileProvider*> pageProvidersScratch_;
     // 北极星 Phase 2c 地形 GPU 位移开关(P5 默认开;仍保留 flag 供运行时 A/B 关闭)。
     bool terrainGpuDisplacementEnabled_ = true;
     // B:GPU 高度烘焙开关(默认关,CPU 烘焙路径;真机 A/B 用)。

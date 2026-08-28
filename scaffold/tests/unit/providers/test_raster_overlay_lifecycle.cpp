@@ -3,6 +3,7 @@
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/ImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
+#include "earth_engine/providers/RasterAsset.h"
 #include "earth_engine/providers/RasterTextureUploader.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
@@ -18,6 +19,7 @@
 #include "earth_engine/renderer/RenderCommand.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/RasterOverlayRuntime.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
 #include "earth_engine/tiling/TileContentCacheManager.h"
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
@@ -43,6 +45,7 @@
 #include <optional>
 #include <stdexcept>
 #include <thread>
+#include <unordered_set>
 #include <vector>
 
 using namespace earth_engine;
@@ -217,6 +220,9 @@ public:
     int maxZoom() const override { return 18; }
     int tileWidth() const override { return 2; }
     int tileHeight() const override { return 2; }
+    uint64_t contentRevision() const override {
+        return contentRevisionValue;
+    }
     std::string buildUrl(const TileKey&) const override { return {}; }
     std::string attribution() const override { return attributionValue; }
     void requestTile(const TileKey& key,
@@ -232,6 +238,7 @@ public:
     }
 
     int requestCount = 0;
+    uint64_t contentRevisionValue = 0;
     std::string attributionValue;
 };
 
@@ -3063,6 +3070,652 @@ TEST(RasterOverlayLifecycleTest,
     EXPECT_EQ(RasterOverlayTile::LoadState::Loaded, eastTile->getState());
     ASSERT_EQ(1u, eastTile->credits().size());
     EXPECT_EQ("Imagery credit", eastTile->credits().front());
+}
+
+TEST(RasterAssetKeyTest, IdentityIncludesProviderRevisionSchemeProjectionEpoch) {
+    RasterAssetKey base;
+    base.providerInstance = 7;
+    base.providerContentRevision = 3;
+    base.depotEpoch = 11;
+    base.schemeId = "XYZ-WebMercator";
+    base.projection = RasterOverlayProjection::WebMercator;
+    base.sourceKey = TileKey{"XYZ-WebMercator", 4, 2, 1};
+
+    EXPECT_EQ(base, base);
+    std::unordered_set<RasterAssetKey> keys;
+    keys.insert(base);
+    EXPECT_EQ(keys.count(base), 1u);
+
+    RasterAssetKey changed = base;
+    changed.providerInstance++;
+    EXPECT_NE(base, changed);
+    changed = base;
+    changed.providerContentRevision++;
+    EXPECT_NE(base, changed);
+    changed = base;
+    changed.depotEpoch++;
+    EXPECT_NE(base, changed);
+    changed = base;
+    changed.schemeId = "TMS-WebMercator";
+    EXPECT_NE(base, changed);
+    changed = base;
+    changed.projection = RasterOverlayProjection::Geographic;
+    EXPECT_NE(base, changed);
+    changed = base;
+    changed.sourceKey.x++;
+    EXPECT_NE(base, changed);
+
+    ImmediateImageryProvider firstImagery;
+    ImmediateImageryProvider secondImagery;
+    auto firstScheme = TileScheme::createXYZWebMercator();
+    auto secondScheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider firstProvider(firstImagery, *firstScheme);
+    RasterOverlayTileProvider secondProvider(secondImagery, *secondScheme);
+    EXPECT_NE(
+        firstProvider.rasterAssetKey(base.sourceKey),
+        secondProvider.rasterAssetKey(base.sourceKey))
+        << "equal provider id must not alias distinct provider instances";
+}
+
+TEST(RasterOverlayLifecycleTest, ExactCachedSourceFacadeReturnsImmutableSnapshot) {
+    ImmediateImageryProvider imagery;
+    imagery.attributionValue = "shared-credit";
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+    const TileKey key{scheme->id(), 3, 2, 3};
+    auto tile = provider.getTile(key);
+    ASSERT_NE(tile, nullptr);
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(processPendingUploadsUntil(provider, 1), 1);
+
+    const auto snapshot = provider.tryGetCachedExactSource(key);
+    ASSERT_TRUE(snapshot.has_value());
+    EXPECT_EQ(snapshot->key.sourceKey, key);
+    EXPECT_EQ(snapshot->resolvedKey, key);
+    EXPECT_EQ(snapshot->credits, std::vector<std::string>{"shared-credit"});
+    ASSERT_NE(snapshot->image, nullptr);
+    EXPECT_EQ(snapshot->image->width, 2);
+    EXPECT_EQ(imagery.requestCount, 1);
+    EXPECT_FALSE(provider.tryGetCachedExactSource(
+        TileKey{scheme->id(), 3, 3, 3}).has_value());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     BackendAssetAcquireSharesInflightAndCancelsOnlyOneLease) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(3, 3);
+    const TileKey key{scheme->id(), 3, 2, 3};
+    int admissions = 0;
+    int firstReady = 0;
+    int secondReady = 0;
+
+    auto first = provider.acquireExactSource(
+        key,
+        [&admissions]() {
+            ++admissions;
+            return true;
+        },
+        [&firstReady](RasterAssetResponse response) {
+            ASSERT_TRUE(response.asset.has_value());
+            ++firstReady;
+        });
+    auto second = provider.acquireExactSource(
+        key,
+        [&admissions]() {
+            ++admissions;
+            return true;
+        },
+        [&secondReady](RasterAssetResponse) {
+            ++secondReady;
+        });
+
+    EXPECT_EQ(first.status, RasterAssetAcquireStatus::StartedTransport);
+    EXPECT_EQ(second.status, RasterAssetAcquireStatus::JoinedInFlight);
+    EXPECT_EQ(admissions, 1);
+    ASSERT_EQ(imagery.requestedKeys.size(), 1u);
+    EXPECT_EQ(provider.getInFlightSourceWaiterCount(), 2);
+
+    second.handle.cancel();
+    EXPECT_EQ(provider.getInFlightSourceWaiterCount(), 1);
+    imagery.completeNext();
+
+    EXPECT_EQ(firstReady, 1);
+    EXPECT_EQ(secondReady, 0);
+    EXPECT_EQ(provider.getInFlightSourceTileCount(), 0);
+
+    auto cached = provider.acquireExactSource(
+        key,
+        [&admissions]() {
+            ++admissions;
+            return true;
+        },
+        [](RasterAssetResponse response) {
+            ASSERT_TRUE(response.asset.has_value());
+        });
+    EXPECT_EQ(cached.status, RasterAssetAcquireStatus::CacheHit);
+    EXPECT_EQ(admissions, 1);
+    EXPECT_EQ(imagery.requestedKeys.size(), 1u);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     BackendExactAssetAcquireDoesNotApplyDirectAncestorFallback) {
+    ParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(0, 3);
+    const TileKey key{scheme->id(), 3, 2, 3};
+    imagery.failingKey = key;
+    int callbackCount = 0;
+    bool terminalFailure = false;
+
+    auto acquired = provider.acquireExactSource(
+        key,
+        []() { return true; },
+        [&callbackCount, &terminalFailure](RasterAssetResponse response) {
+            ++callbackCount;
+            terminalFailure = response.terminalFailure;
+            EXPECT_FALSE(response.asset.has_value());
+        });
+
+    EXPECT_EQ(acquired.status, RasterAssetAcquireStatus::StartedTransport);
+    EXPECT_EQ(callbackCount, 1);
+    EXPECT_TRUE(terminalFailure);
+    ASSERT_EQ(imagery.requestedKeys.size(), 1u);
+    EXPECT_EQ(imagery.requestedKeys.front(), key);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     DirectTileLoadStartsTransportAndBackendAcquireJoinsIt) {
+    DeferredImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(3, 3);
+    const TileKey key{scheme->id(), 3, 2, 3};
+    auto tile = provider.getTile(key);
+    ASSERT_NE(tile, nullptr);
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(imagery.requestedKeys.size(), 1u);
+
+    int admissions = 0;
+    int ready = 0;
+    auto pageStoreLike = provider.acquireExactSource(
+        key,
+        [&admissions]() {
+            ++admissions;
+            return true;
+        },
+        [&ready](RasterAssetResponse response) {
+            ASSERT_TRUE(response.asset.has_value());
+            ++ready;
+        });
+    EXPECT_EQ(pageStoreLike.status,
+              RasterAssetAcquireStatus::JoinedInFlight);
+    EXPECT_EQ(admissions, 0);
+    EXPECT_EQ(imagery.requestedKeys.size(), 1u);
+
+    imagery.completeNext();
+    EXPECT_EQ(ready, 1);
+}
+
+TEST(RasterOverlayLifecycleTest,
+     PageStoreFirstFailureStillLetsJoinedDirectResolveParent) {
+    DeferredParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(0, 3);
+    const TileKey child{scheme->id(), 3, 2, 3};
+    const TileKey parent{scheme->id(), 2, 1, 1};
+    imagery.failingKeys = {child};
+
+    int exactCallbacks = 0;
+    auto exact = provider.acquireExactSource(
+        child,
+        []() { return true; },
+        [&exactCallbacks](RasterAssetResponse response) {
+            ++exactCallbacks;
+            EXPECT_TRUE(response.terminalFailure);
+            EXPECT_FALSE(response.asset.has_value());
+        });
+    EXPECT_EQ(exact.status, RasterAssetAcquireStatus::StartedTransport);
+
+    auto directTile = provider.getTile(child);
+    ASSERT_NE(directTile, nullptr);
+    ASSERT_TRUE(provider.loadTile(*directTile));
+    EXPECT_EQ(provider.getInFlightSourceWaiterCount(), 2);
+    ASSERT_EQ(imagery.requestedKeys, std::vector<TileKey>{child});
+
+    imagery.completeNext();
+    EXPECT_EQ(exactCallbacks, 1)
+        << "ExactOnly resolves at child failure instead of waiting for Direct";
+    EXPECT_EQ(provider.getPendingSourceFallbackCount(), 1);
+    EXPECT_EQ(provider.getInFlightSourceTileCount(), 1);
+    FrameResourceBudgetConfig fallbackConfig;
+    fallbackConfig.maxRasterNetworkRequestsPerFrame = 4;
+    fallbackConfig.maxRasterNetworkInflight = 4;
+    FrameResourceBudget fallbackBudget;
+    fallbackBudget.beginFrame(1, fallbackConfig);
+    EXPECT_EQ(0,
+              provider.processPendingUploads(false, &fallbackBudget)
+                  .processedUploads);
+    EXPECT_EQ(provider.getPendingSourceFallbackCount(), 0);
+    EXPECT_EQ(fallbackBudget.rasterNetworkRequestsIssued(), 1u);
+    ASSERT_EQ(imagery.requestedKeys,
+              (std::vector<TileKey>{child, parent}));
+
+    imagery.completeNext();
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              directTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     DirectFirstFailureCompletesJoinedExactBeforeParentResolution) {
+    DeferredParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(0, 3);
+    const TileKey child{scheme->id(), 3, 2, 3};
+    const TileKey parent{scheme->id(), 2, 1, 1};
+    imagery.failingKeys = {child};
+
+    auto directTile = provider.getTile(child);
+    ASSERT_NE(directTile, nullptr);
+    ASSERT_TRUE(provider.loadTile(*directTile));
+    int exactCallbacks = 0;
+    auto exact = provider.acquireExactSource(
+        child,
+        []() { return true; },
+        [&exactCallbacks](RasterAssetResponse response) {
+            ++exactCallbacks;
+            EXPECT_TRUE(response.terminalFailure);
+            EXPECT_FALSE(response.asset.has_value());
+        });
+    EXPECT_EQ(exact.status, RasterAssetAcquireStatus::JoinedInFlight);
+    EXPECT_EQ(provider.getInFlightSourceWaiterCount(), 2);
+
+    imagery.completeNext();
+    EXPECT_EQ(exactCallbacks, 1);
+    EXPECT_EQ(provider.getPendingSourceFallbackCount(), 1);
+    EXPECT_EQ(provider.getInFlightSourceTileCount(), 1);
+    FrameResourceBudgetConfig fallbackConfig;
+    fallbackConfig.maxRasterNetworkRequestsPerFrame = 4;
+    fallbackConfig.maxRasterNetworkInflight = 4;
+    FrameResourceBudget fallbackBudget;
+    fallbackBudget.beginFrame(1, fallbackConfig);
+    EXPECT_EQ(0,
+              provider.processPendingUploads(false, &fallbackBudget)
+                  .processedUploads);
+    EXPECT_EQ(provider.getPendingSourceFallbackCount(), 0);
+    EXPECT_EQ(fallbackBudget.rasterNetworkRequestsIssued(), 1u);
+    ASSERT_EQ(imagery.requestedKeys,
+              (std::vector<TileKey>{child, parent}));
+
+    imagery.completeNext();
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              directTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     CancelledPageStoreFirstWaiterDoesNotStopJoinedDirectFallback) {
+    DeferredParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(0, 3);
+    const TileKey child{scheme->id(), 3, 2, 3};
+    const TileKey parent{scheme->id(), 2, 1, 1};
+    imagery.failingKeys = {child};
+
+    int exactCallbacks = 0;
+    auto exact = provider.acquireExactSource(
+        child,
+        []() { return true; },
+        [&exactCallbacks](RasterAssetResponse) { ++exactCallbacks; });
+    EXPECT_EQ(exact.status, RasterAssetAcquireStatus::StartedTransport);
+
+    auto directTile = provider.getTile(child);
+    ASSERT_NE(directTile, nullptr);
+    ASSERT_TRUE(provider.loadTile(*directTile));
+    EXPECT_EQ(provider.getInFlightSourceWaiterCount(), 2);
+
+    exact.handle.cancel();
+    EXPECT_EQ(provider.getInFlightSourceWaiterCount(), 1);
+    imagery.completeNext();
+    EXPECT_EQ(exactCallbacks, 0);
+    EXPECT_EQ(provider.getPendingSourceFallbackCount(), 1);
+
+    FrameResourceBudgetConfig fallbackConfig;
+    fallbackConfig.maxRasterNetworkRequestsPerFrame = 4;
+    fallbackConfig.maxRasterNetworkInflight = 4;
+    FrameResourceBudget fallbackBudget;
+    fallbackBudget.beginFrame(1, fallbackConfig);
+    EXPECT_EQ(0,
+              provider.processPendingUploads(false, &fallbackBudget)
+                  .processedUploads);
+    ASSERT_EQ(imagery.requestedKeys,
+              (std::vector<TileKey>{child, parent}));
+
+    imagery.completeNext();
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              directTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest,
+     CachedExactFailureDoesNotSuppressLaterDirectParentResolution) {
+    DeferredParentFallbackImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(0, 3);
+    const TileKey child{scheme->id(), 3, 2, 3};
+    const TileKey parent{scheme->id(), 2, 1, 1};
+    imagery.failingKeys = {child};
+
+    int exactCallbacks = 0;
+    auto exact = provider.acquireExactSource(
+        child,
+        []() { return true; },
+        [&exactCallbacks](RasterAssetResponse response) {
+            ++exactCallbacks;
+            EXPECT_TRUE(response.terminalFailure);
+        });
+    EXPECT_EQ(exact.status, RasterAssetAcquireStatus::StartedTransport);
+    imagery.completeNext();
+    EXPECT_EQ(exactCallbacks, 1);
+    ASSERT_EQ(imagery.requestedKeys, std::vector<TileKey>{child});
+
+    auto directTile = provider.getTile(child);
+    ASSERT_NE(directTile, nullptr);
+    ASSERT_TRUE(provider.loadTile(*directTile));
+    EXPECT_EQ(provider.getPendingSourceFallbackCount(), 1);
+    FrameResourceBudgetConfig fallbackConfig;
+    fallbackConfig.maxRasterNetworkRequestsPerFrame = 4;
+    fallbackConfig.maxRasterNetworkInflight = 4;
+    FrameResourceBudget fallbackBudget;
+    fallbackBudget.beginFrame(1, fallbackConfig);
+    EXPECT_EQ(0,
+              provider.processPendingUploads(false, &fallbackBudget)
+                  .processedUploads);
+    ASSERT_EQ(imagery.requestedKeys,
+              (std::vector<TileKey>{child, parent}));
+
+    imagery.completeNext();
+    EXPECT_EQ(1, processPendingUploadsUntil(provider, 1));
+    EXPECT_EQ(RasterOverlayTile::LoadState::Loaded,
+              directTile->getState());
+}
+
+TEST(RasterOverlayLifecycleTest, ContentRevisionInvalidatesExactSourceFacade) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+    const TileKey key{scheme->id(), 3, 2, 3};
+    auto tile = provider.getTile(key);
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(processPendingUploadsUntil(provider, 1), 1);
+    ASSERT_TRUE(provider.tryGetCachedExactSource(key).has_value());
+
+    imagery.contentRevisionValue = 1;
+    EXPECT_FALSE(provider.tryGetCachedExactSource(key).has_value());
+}
+
+TEST(RasterOverlayLifecycleTest, TerminalSourceFailureIsNotAnAssetHit) {
+    NullImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(0, 0);
+    const TileKey key{scheme->id(), 0, 0, 0};
+    auto tile = provider.getTile(key);
+    ASSERT_NE(tile, nullptr);
+    ASSERT_TRUE(provider.loadTile(*tile));
+    processPendingUploadsUntil(provider, 1);
+    EXPECT_FALSE(provider.tryGetCachedExactSource(key).has_value());
+}
+
+TEST(RasterOverlayRuntimeTest, PreservesConfiguredOverlayOrder) {
+    RasterOverlay::Options options;
+    RasterOverlay firstOverlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    RasterOverlay secondOverlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    ActivatedRasterOverlay first(firstOverlay);
+    ActivatedRasterOverlay second(secondOverlay);
+    RasterOverlayRuntime runtime({&first, &second});
+    ASSERT_EQ(runtime.overlays().size(), 2u);
+    EXPECT_EQ(runtime.overlays()[0], &first);
+    EXPECT_EQ(runtime.overlays()[1], &second);
+    const auto& direct = runtime.providersForBackend(
+        RasterOverlayBackendKind::Direct, nullptr);
+    ASSERT_EQ(direct.size(), 2u);
+    EXPECT_EQ(direct[0], first.getTileProvider());
+    EXPECT_EQ(direct[1], second.getTileProvider());
+    const auto& pageStore = runtime.providersForBackend(
+        RasterOverlayBackendKind::PageStore, nullptr);
+    ASSERT_EQ(pageStore.size(), 2u);
+    EXPECT_EQ(pageStore[0], first.getTileProvider());
+    EXPECT_EQ(pageStore[1], second.getTileProvider());
+}
+
+TEST(RasterOverlayRuntimeTest, BackendEnablementSelectsFailClosedView) {
+    RasterOverlay::Options options;
+    RasterOverlay overlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    ActivatedRasterOverlay activated(overlay);
+    RasterOverlayRuntime runtime({&activated});
+
+    ASSERT_EQ(runtime.providersForBackend(
+                  RasterOverlayBackendKind::PageStore, nullptr)
+                  .size(),
+              1u);
+    runtime.setBackendEnabled(RasterOverlayBackendKind::PageStore, false);
+    EXPECT_FALSE(runtime.backendEnabled(RasterOverlayBackendKind::PageStore));
+    EXPECT_TRUE(runtime.providersForBackend(
+                    RasterOverlayBackendKind::PageStore, nullptr)
+                    .empty());
+    EXPECT_TRUE(runtime.backendEnabled(RasterOverlayBackendKind::Direct));
+    EXPECT_EQ(runtime.providersForBackend(
+                  RasterOverlayBackendKind::Direct, nullptr)
+                  .size(),
+              1u);
+}
+
+namespace {
+class TestRasterOverlayBackend final : public RasterOverlayBackend {
+public:
+    explicit TestRasterOverlayBackend(RasterOverlayBackendKind kind,
+                                      RasterOverlayTileProvider* provider)
+        : kind_(kind), provider_(provider) {}
+
+    RasterOverlayBackendKind kind() const override { return kind_; }
+
+    const std::vector<RasterOverlayTileProvider*>& providers(
+        const std::vector<ActivatedRasterOverlay*>&,
+        RenderDevice*) override {
+        ++calls;
+        providers_.clear();
+        if (enabled_ && provider_) {
+            providers_.push_back(provider_);
+        }
+        return providers_;
+    }
+
+    void setEnabled(bool enabled) override { enabled_ = enabled; }
+    bool enabled() const override { return enabled_; }
+
+    int calls = 0;
+
+private:
+    RasterOverlayBackendKind kind_;
+    RasterOverlayTileProvider* provider_ = nullptr;
+    bool enabled_ = true;
+    std::vector<RasterOverlayTileProvider*> providers_;
+};
+} // namespace
+
+TEST(RasterOverlayRuntimeTest, BackendReplacementIsBehaviorallySelected) {
+    RasterOverlay::Options options;
+    RasterOverlay overlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    ActivatedRasterOverlay activated(overlay);
+    RasterOverlayRuntime runtime({&activated});
+    RasterOverlayTileProvider* provider = activated.ensureTileProvider(nullptr);
+
+    auto replacement = std::make_unique<TestRasterOverlayBackend>(
+        RasterOverlayBackendKind::PageStore, provider);
+    TestRasterOverlayBackend* replacementPtr = replacement.get();
+    ASSERT_TRUE(runtime.setBackend(RasterOverlayBackendKind::PageStore,
+                                   std::move(replacement)));
+
+    const auto& selected = runtime.providersForBackend(
+        RasterOverlayBackendKind::PageStore, nullptr);
+    ASSERT_EQ(selected.size(), 1u);
+    EXPECT_EQ(selected.front(), provider);
+    EXPECT_EQ(replacementPtr->calls, 1);
+    ASSERT_NE(runtime.backend(RasterOverlayBackendKind::PageStore), nullptr);
+    EXPECT_EQ(runtime.backend(RasterOverlayBackendKind::PageStore)->kind(),
+              RasterOverlayBackendKind::PageStore);
+    EXPECT_EQ(provider->assetDepot().get(), runtime.assetDepotHandle().get());
+
+    auto wrongKind = std::make_unique<TestRasterOverlayBackend>(
+        RasterOverlayBackendKind::Direct, provider);
+    EXPECT_FALSE(runtime.setBackend(
+        RasterOverlayBackendKind::PageStore, std::move(wrongKind)));
+    EXPECT_EQ(runtime.backend(RasterOverlayBackendKind::PageStore),
+              replacementPtr);
+
+    ASSERT_TRUE(runtime.setBackend(
+        RasterOverlayBackendKind::PageStore, nullptr));
+    EXPECT_EQ(runtime.providersForBackend(
+                  RasterOverlayBackendKind::PageStore, nullptr)
+                  .size(),
+              1u);
+}
+
+TEST(RasterOverlayRuntimeTest, BackendProviderViewIsNormalizedToRuntimeOrder) {
+    RasterOverlay::Options options;
+    RasterOverlay firstOverlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    RasterOverlay secondOverlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    RasterOverlay foreignOverlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    ActivatedRasterOverlay first(firstOverlay);
+    ActivatedRasterOverlay second(secondOverlay);
+    ActivatedRasterOverlay foreign(foreignOverlay);
+    RasterOverlayRuntime runtime({&first, &second});
+    RasterOverlayTileProvider* firstProvider =
+        first.ensureTileProvider(nullptr);
+    RasterOverlayTileProvider* secondProvider =
+        second.ensureTileProvider(nullptr);
+    RasterOverlayTileProvider* foreignProvider =
+        foreign.ensureTileProvider(nullptr);
+
+    class ReorderingBackend final : public RasterOverlayBackend {
+    public:
+        ReorderingBackend(RasterOverlayTileProvider* firstProvider,
+                          RasterOverlayTileProvider* secondProvider,
+                          RasterOverlayTileProvider* foreignProvider)
+            : firstProvider_(firstProvider),
+              secondProvider_(secondProvider),
+              foreignProvider_(foreignProvider) {}
+        RasterOverlayBackendKind kind() const override {
+            return RasterOverlayBackendKind::PageStore;
+        }
+        const std::vector<RasterOverlayTileProvider*>& providers(
+            const std::vector<ActivatedRasterOverlay*>&,
+            RenderDevice*) override {
+            providers_ = {
+                secondProvider_,
+                foreignProvider_,
+                firstProvider_,
+                secondProvider_};
+            return providers_;
+        }
+        void setEnabled(bool enabled) override { enabled_ = enabled; }
+        bool enabled() const override { return enabled_; }
+
+    private:
+        RasterOverlayTileProvider* firstProvider_ = nullptr;
+        RasterOverlayTileProvider* secondProvider_ = nullptr;
+        RasterOverlayTileProvider* foreignProvider_ = nullptr;
+        bool enabled_ = true;
+        std::vector<RasterOverlayTileProvider*> providers_;
+    };
+
+    ASSERT_TRUE(runtime.setBackend(
+        RasterOverlayBackendKind::PageStore,
+        std::make_unique<ReorderingBackend>(
+            firstProvider, secondProvider, foreignProvider)));
+    const auto& providers = runtime.providersForBackend(
+        RasterOverlayBackendKind::PageStore, nullptr);
+    ASSERT_EQ(providers.size(), 2u);
+    EXPECT_EQ(providers[0], firstProvider);
+    EXPECT_EQ(providers[1], secondProvider);
+
+    runtime.setBackendEnabled(RasterOverlayBackendKind::PageStore, false);
+    EXPECT_TRUE(runtime.providersForBackend(
+                    RasterOverlayBackendKind::PageStore, nullptr)
+                    .empty());
+}
+
+TEST(RasterOverlayRuntimeTest,
+     FilteredBackendDoesNotInstantiateExcludedOverlayProviders) {
+    RasterOverlay::Options options;
+    RasterOverlay firstOverlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    RasterOverlay secondOverlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    ActivatedRasterOverlay first(firstOverlay);
+    ActivatedRasterOverlay second(secondOverlay);
+    RasterOverlayRuntime runtime({&first, &second});
+    RasterOverlayTileProvider* secondProvider =
+        second.ensureTileProvider(nullptr);
+
+    class SingleProviderBackend final : public RasterOverlayBackend {
+    public:
+        explicit SingleProviderBackend(RasterOverlayTileProvider* provider)
+            : provider_(provider) {}
+        RasterOverlayBackendKind kind() const override {
+            return RasterOverlayBackendKind::PageStore;
+        }
+        const std::vector<RasterOverlayTileProvider*>& providers(
+            const std::vector<ActivatedRasterOverlay*>&,
+            RenderDevice*) override {
+            providers_ = {provider_};
+            return providers_;
+        }
+        void setEnabled(bool enabled) override { enabled_ = enabled; }
+        bool enabled() const override { return enabled_; }
+
+    private:
+        RasterOverlayTileProvider* provider_ = nullptr;
+        bool enabled_ = true;
+        std::vector<RasterOverlayTileProvider*> providers_;
+    };
+
+    ASSERT_TRUE(runtime.setBackend(
+        RasterOverlayBackendKind::PageStore,
+        std::make_unique<SingleProviderBackend>(secondProvider)));
+    const auto& providers = runtime.providersForBackend(
+        RasterOverlayBackendKind::PageStore, nullptr);
+    ASSERT_EQ(providers.size(), 1u);
+    EXPECT_EQ(providers.front(), secondProvider);
+    EXPECT_EQ(first.getTileProvider(), nullptr);
 }
 
 TEST(RasterOverlayLifecycleTest, LevelRangeChangeInvalidatesSourceDepotLikeCesiumNative) {

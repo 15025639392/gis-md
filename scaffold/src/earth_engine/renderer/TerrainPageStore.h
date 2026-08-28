@@ -17,6 +17,7 @@
 #include "../core/math/OrientedBoundingBox.h"
 #include "../core/math/Rectangle.h"
 #include "../threading/CancellationToken.h"
+#include "../providers/RasterAsset.h"
 #include "../tiling/RasterOverlayProjection.h"
 #include "../tiling/TileKey.h"
 
@@ -26,6 +27,7 @@ class RenderDevice;
 class Texture;
 class ActivatedRasterOverlay;
 class RasterOverlayTileProvider;
+class RasterAssetDepot;
 class TileScheme;
 struct DecodedImage;
 struct RenderCommand;
@@ -366,7 +368,8 @@ public:
                             const std::vector<TilesetTile*>& visibleTiles,
                             const std::vector<RasterOverlayTileProvider*>& providers,
                             double terrainMaxScreenSpaceError,
-                            SceneFrameResourceArbiter* resourceArbiter = nullptr);
+                            SceneFrameResourceArbiter* resourceArbiter = nullptr,
+                            std::shared_ptr<RasterAssetDepot> assetDepot = {});
 
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
     int lastVisiblePageCount() const { return lastVisiblePageCount_; }
@@ -557,6 +560,11 @@ public:
     int composeDispatchedThisFrame() const { return composeDispatchedThisFrame_; }
     /// 静止帧跳过计数(诊断:determination 因视图与状态均未变而整段跳过)。
     int determinationSkippedFrames() const { return determinationSkippedFrames_; }
+    uint64_t sharedRasterAssetHits() const { return sharedRasterAssetHits_; }
+    uint64_t sharedRasterAssetMisses() const { return sharedRasterAssetMisses_; }
+    uint64_t providerContentInvalidations() const {
+        return providerContentInvalidations_;
+    }
 
     /// 仅测试:为 pageKey 建一个最小页账本(providers_ 为空 → 不 kick fetch,
     /// assembler 源数=0;供 compose 派发预算/待派队列的 host 测试用)。
@@ -571,6 +579,12 @@ public:
     /// 仅测试:模拟 canonical provider/domain 切换。旧 inbox item 不清空，必须
     /// 依靠 generation 闸在 drain 时被拒绝。
     void debugResetPageDomainForTest();
+    /// 仅测试:跳过 determination 几何阶段，直接验证单页源请求
+    /// 是否命中共享 decoded asset，或在 miss 时保留原 transport。
+    void debugKickPageFetchesForTest(
+        const TileKey& pageTileKey,
+        const std::vector<RasterOverlayTileProvider*>& providers,
+        std::shared_ptr<RasterAssetDepot> assetDepot = {});
 
 private:
     struct PendingInbox;  // 定义在 .cpp:worker 回调安全投递解码影像
@@ -614,7 +628,9 @@ private:
         /// 合成状态归 worker 侧(shared_ptr:worker 任务可比页存储活得久;
         /// 淘汰置 cancelled,迟到结果经 drain 校验丢弃)。
         std::shared_ptr<PageComposeState> compose;
-        std::vector<CancellationToken> fetchTokens;  // 每源一个
+        // 每源一个 shared Asset Depot consumer lease。取消只摘除此页 waiter，
+        // 不会误杀仍被 Direct/mappedRaster 或其他页共享的 transport。
+        std::vector<RasterAssetRequestHandle> fetchHandles;
         std::vector<bool> fetchIssued;  // Scene 网络 grant 不足时跨帧续发
         /// **已上传**的合成进度镜像(渲染线程独占,drainReadyUploads 推进)。
         /// determination 判 resident 必须跟"已上传"走 —— 合成下 worker 后
@@ -635,13 +651,18 @@ private:
         /// schemeId 不入 packKey,只有 determination 手里的 kc.fetchKey 带正确
         /// schemeId(unpackKey 会还原成缺省 → 取错源)。
         bool needsRebake = false;
+        /// Any required source failed or decoded malformed. The page stays a
+        /// miss so mappedRaster remains visible, but it is no longer counted
+        /// as frame-pumped work until LRU eviction or explicit invalidation.
+        bool terminalFailure = false;
         /// V28:重烘要不要 hold 到 assembler.complete() 才发快照(= 失效时本页
         /// 是否正显示完整合成)。true → 旧完整合成顶到新合成整页就绪一次换手;
         /// false → 半成品无旧画面可顶,直接重定向、保持增量点亮(见点3分析)。
         bool holdUntilComplete = false;
         bool uploadedTexels() const { return uploadedSources > 0; }
         bool uploadComplete() const {
-            return totalSources > 0 && uploadedSources >= totalSources;
+            return terminalFailure ||
+                   (totalSources > 0 && uploadedSources >= totalSources);
         }
     };
 
@@ -802,10 +823,15 @@ private:
     // page-facing scheme/projection 相同；变化时推进 pageDomainGeneration_ 并
     // 清全部 scheme-less 账本，旧回调即使复用相同 z/x/y+layer 也过不了代次闸。
     std::vector<RasterOverlayTileProvider*> providers_;
+    std::shared_ptr<RasterAssetDepot> assetDepot_;
     std::vector<RasterOverlayTileProvider*> detProvidersScratch_;  // 剔 null 复用
     PageDomainCompatibility pageDomainCompatibility_ =
         PageDomainCompatibility::NoProvider;
     uint64_t pageDomainGeneration_ = 1;
+    uint64_t sharedRasterAssetHits_ = 0;
+    uint64_t sharedRasterAssetMisses_ = 0;
+    uint64_t providerContentInvalidations_ = 0;
+    std::vector<uint64_t> providerContentRevisions_;
     bool pageDomainActive_ = false;
     SchemeId pageDomainSchemeId_;
     RasterOverlayProjection pageDomainProjection_ =

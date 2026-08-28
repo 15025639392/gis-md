@@ -48,7 +48,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         , minimumLevel(minimumSourceLevel)
         , maximumLevel(maximumSourceLevel) {}
 
-    void requestSource(
+    RasterAssetAcquireStatus requestSource(
         const TileKey& requestedKey,
         const TileKey& originalKey,
         bool ancestorFallback,
@@ -60,12 +60,13 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         SourceReady onReady,
         std::vector<TileKey> fallbackInFlightKeys = {},
         std::function<bool()> tryAdmitSource = {},
-        std::function<void()> onSourceAdmissionDenied = {}) {
+        std::function<void()> onSourceAdmissionDenied = {},
+        bool allowParentFallback = true) {
         if (waiterOwnerToken != 0) {
             std::lock_guard<std::mutex> lock(cacheMutex);
             if (state->activeMappedSourceOwnerTokens.count(waiterOwnerToken) ==
                 0) {
-                return;
+                return RasterAssetAcquireStatus::AdmissionDenied;
             }
         }
         // 值捕获(teardown 竞态根修,tombstone_21):worker 侧回调可能在
@@ -79,16 +80,78 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         const Rectangle requestedBounds =
             scheme.tileToRectangle(requestedKey);
         const std::string attributionSnapshot = provider.attribution();
+        auto self = shared_from_this();
+        const auto continueWithParentFallback =
+            [self,
+             requestedKey,
+             originalKey,
+             originalBounds,
+             waiterOwnerToken,
+             onSourceIssued,
+             onSourceFinished,
+             onSourceFailed,
+             onReady,
+             fallbackInFlightKeys]() {
+                self->queueParentFallback(
+                    requestedKey,
+                    originalKey,
+                    originalBounds,
+                    waiterOwnerToken,
+                    onSourceIssued,
+                    onSourceFinished,
+                    onSourceFailed,
+                    onReady,
+                    fallbackInFlightKeys);
+            };
+        const auto makeExactWaiter =
+            [self,
+             originalKey,
+             originalBounds,
+             ancestorFallback,
+             waiterOwnerToken,
+             onReady,
+             allowParentFallback,
+             continueWithParentFallback]() {
+                InFlightSourceTileAsset::WaiterEntry waiter;
+                waiter.ownerToken = waiterOwnerToken;
+                waiter.usesAncestorFallback = allowParentFallback;
+                waiter.callback =
+                    [self, originalKey, originalBounds, ancestorFallback,
+                     onReady](InFlightSourceTileAsset::Result cached) mutable {
+                        if (onReady) {
+                            onReady(self->rasterSourceResultFromAsset(
+                                cached,
+                                originalKey,
+                                originalBounds,
+                                ancestorFallback));
+                        }
+                    };
+                if (allowParentFallback &&
+                    originalKey.z > self->minimumLevel) {
+                    waiter.continueWithParentFallback =
+                        continueWithParentFallback;
+                }
+                return waiter;
+            };
         std::optional<RasterSourceResult> cachedSource;
+        bool cachedExactTransportFailure = false;
         {
             std::lock_guard<std::mutex> lock(cacheMutex);
             const std::string originalCacheKey = depotCacheKey(originalKey);
             auto it = cache.find(originalCacheKey);
-            if (it == cache.end() && ancestorFallback) {
+            if (ancestorFallback && it != cache.end() &&
+                it->second.exactTransportFailure) {
+                // The original exact child failed, which is precisely why
+                // this resolver is now probing requestedKey's parent chain.
+                // Do not let the child's negative cache skip that parent.
+                it = cache.find(depotCacheKey(requestedKey));
+            } else if (it == cache.end() && ancestorFallback) {
                 it = cache.find(depotCacheKey(requestedKey));
             }
             if (it != cache.end() &&
-                (it->second.image || it->second.terminalFailure)) {
+                ((it->second.image &&
+                  isDecodedImageUploadable(*it->second.image)) ||
+                 it->second.terminalFailure)) {
                 touchCachedSource(it->first, it->second);
                 RasterSourceResult source;
                 source.key = it->second.key;
@@ -101,24 +164,50 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 source.diagnostics = it->second.diagnostics;
                 source.credits = it->second.credits;
                 source.terminalFailure = it->second.terminalFailure;
+                cachedExactTransportFailure =
+                    it->second.exactTransportFailure;
                 cachedSource = std::move(source);
             }
         }
         if (cachedSource) {
+            if (cachedSource->terminalFailure &&
+                cachedExactTransportFailure &&
+                !ancestorFallback &&
+                allowParentFallback &&
+                requestedKey.z > minimumLevel) {
+                bool inserted = false;
+                {
+                    std::lock_guard<std::mutex> lock(cacheMutex);
+                    if (waiterOwnerToken != 0 &&
+                        state->activeMappedSourceOwnerTokens.count(
+                            waiterOwnerToken) == 0) {
+                        return RasterAssetAcquireStatus::AdmissionDenied;
+                    }
+                    auto [it, wasInserted] = inFlight.try_emplace(
+                        depotCacheKey(originalKey),
+                        InFlightSourceTileAsset{});
+                    inserted = wasInserted;
+                    it->second.waiters.push_back(makeExactWaiter());
+                }
+                if (inserted) {
+                    continueWithParentFallback();
+                    return RasterAssetAcquireStatus::CacheHit;
+                }
+                return RasterAssetAcquireStatus::JoinedInFlight;
+            }
             if (ancestorFallback) {
                 auto completed = std::make_shared<SourceTileAsset>(
                     sourceAssetFromResult(*cachedSource));
                 if (finishInFlightSource(originalKey, completed) > 0) {
-                    return;
+                    return RasterAssetAcquireStatus::CacheHit;
                 }
             }
             if (onReady) {
                 onReady(std::move(*cachedSource));
             }
-            return;
+            return RasterAssetAcquireStatus::CacheHit;
         }
 
-        auto self = shared_from_this();
         bool freshTransportAdmitted = false;
         const auto admitFreshTransport = [&]() {
             if (!tryAdmitSource) {
@@ -132,38 +221,25 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         };
         if (shareInFlight) {
             const std::string inFlightKey = depotCacheKey(originalKey);
-            auto waiter =
-                [self, originalKey, originalBounds, ancestorFallback,
-                 onReady](InFlightSourceTileAsset::Result cached) mutable {
-                    if (onReady) {
-                        onReady(self->rasterSourceResultFromAsset(
-                            cached,
-                            originalKey,
-                            originalBounds,
-                            ancestorFallback));
-                    }
-                };
             {
                 std::lock_guard<std::mutex> lock(cacheMutex);
                 if (waiterOwnerToken != 0 &&
                     state->activeMappedSourceOwnerTokens.count(
                         waiterOwnerToken) == 0) {
-                    return;
+                    return RasterAssetAcquireStatus::AdmissionDenied;
                 }
                 auto [it, inserted] =
                     inFlight.try_emplace(inFlightKey, InFlightSourceTileAsset{});
-                it->second.waiters.push_back(InFlightSourceTileAsset::WaiterEntry{
-                    waiterOwnerToken,
-                    std::move(waiter)});
+                it->second.waiters.push_back(makeExactWaiter());
                 if (!inserted) {
-                    return;
+                    return RasterAssetAcquireStatus::JoinedInFlight;
                 }
                 if (!admitFreshTransport()) {
                     inFlight.erase(it);
                     if (onSourceAdmissionDenied) {
                         onSourceAdmissionDenied();
                     }
-                    return;
+                    return RasterAssetAcquireStatus::AdmissionDenied;
                 }
                 freshTransportAdmitted = true;
             }
@@ -205,7 +281,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 if (waiterOwnerToken != 0 &&
                     state->activeMappedSourceOwnerTokens.count(
                         waiterOwnerToken) == 0) {
-                    return;
+                    return RasterAssetAcquireStatus::AdmissionDenied;
                 }
                 auto [it, inserted] =
                     inFlight.try_emplace(
@@ -224,8 +300,10 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     it->second.waiters.push_back(
                         InFlightSourceTileAsset::WaiterEntry{
                             waiterOwnerToken,
-                            std::move(waiter)});
-                    return;
+                            std::move(waiter),
+                            ancestorFallback,
+                            {}});
+                    return RasterAssetAcquireStatus::JoinedInFlight;
                 }
                 if (!freshTransportAdmitted && !admitFreshTransport()) {
                     inFlight.erase(it);
@@ -249,7 +327,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                     if (onSourceAdmissionDenied) {
                         onSourceAdmissionDenied();
                     }
-                    return;
+                    return RasterAssetAcquireStatus::AdmissionDenied;
                 }
                 freshTransportAdmitted = true;
             }
@@ -273,6 +351,8 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
              requestedBounds,
              attributionSnapshot,
              ancestorFallback,
+             shareInFlight,
+             allowParentFallback,
              waiterOwnerToken,
              onSourceIssued,
              onSourceFinished,
@@ -347,7 +427,21 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 if (onSourceFailed) {
                     onSourceFailed();
                 }
-                if (requestedKey.z > self->minimumLevel) {
+                if (shareInFlight && !ancestorFallback &&
+                    !allowParentFallback) {
+                    if (onSourceFinished) {
+                        onSourceFinished();
+                    }
+                    auto failed = self->cacheTerminalFailure(
+                        originalKey, originalBounds, true);
+                    self->finishExactTransportFailure(
+                        originalKey, failed);
+                    return;
+                }
+                if (allowParentFallback &&
+                    requestedKey.z > self->minimumLevel) {
+                    self->finishExactOnlyWaiters(
+                        originalKey, originalBounds);
                     const TileKey parentKey = parentTileKey(requestedKey);
                     if (onSourceFinished) {
                         onSourceFinished();
@@ -412,7 +506,8 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                                         onReady,
                                         fallbackInFlightKeys,
                                         std::move(tryAdmitSource),
-                                        std::move(onSourceAdmissionDenied));
+                                        std::move(onSourceAdmissionDenied),
+                                        true);
                                     return admissionDenied->load(
                                                std::memory_order_acquire)
                                         ? -1
@@ -462,11 +557,17 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             failed.terminalFailure = true;
             auto transientFailure =
                 std::make_shared<SourceTileAsset>(std::move(failed));
-            finishInFlightSource(originalKey, transientFailure);
+            if (shareInFlight && !ancestorFallback &&
+                !allowParentFallback) {
+                finishExactTransportFailure(originalKey, transientFailure);
+            } else {
+                finishInFlightSource(originalKey, transientFailure);
+            }
             for (const TileKey& key : exceptionInFlightKeys) {
                 finishInFlightSource(key, transientFailure);
             }
         }
+        return RasterAssetAcquireStatus::StartedTransport;
     }
 
     bool wouldIssueNewRequest(const TileKey& originalKey) const {
@@ -515,6 +616,156 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
     }
 
 private:
+    void queueParentFallback(
+        const TileKey& requestedKey,
+        const TileKey& originalKey,
+        const Rectangle& originalBounds,
+        uint64_t waiterOwnerToken,
+        const std::function<void()>& onSourceIssued,
+        const std::function<void()>& onSourceFinished,
+        const std::function<void()>& onSourceFailed,
+        const SourceReady& onReady,
+        std::vector<TileKey> fallbackInFlightKeys) {
+        if (requestedKey.z <= minimumLevel) {
+            auto failed = cacheTerminalFailure(originalKey, originalBounds);
+            finishInFlightSource(originalKey, failed);
+            return;
+        }
+        const TileKey parentKey = parentTileKey(requestedKey);
+        auto self = shared_from_this();
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->pendingSourceFallbacks.push_back(
+                PendingSourceFallback{
+                    originalKey,
+                    parentKey,
+                    waiterOwnerToken,
+                    [self,
+                     parentKey,
+                     originalKey,
+                     onSourceIssued,
+                     onSourceFinished,
+                     onSourceFailed,
+                     onReady,
+                     fallbackInFlightKeys,
+                     waiterOwnerToken](
+                        std::function<bool()> tryAdmitSource) mutable {
+                        auto issued = std::make_shared<int>(0);
+                        auto admissionDenied =
+                            std::make_shared<std::atomic<bool>>(false);
+                        std::function<void()> onSourceAdmissionDenied =
+                            [admissionDenied]() {
+                                admissionDenied->store(
+                                    true, std::memory_order_release);
+                            };
+                        self->requestSource(
+                            parentKey,
+                            originalKey,
+                            true,
+                            false,
+                            waiterOwnerToken,
+                            [issued, onSourceIssued]() {
+                                ++(*issued);
+                                if (onSourceIssued) {
+                                    onSourceIssued();
+                                }
+                            },
+                            onSourceFinished,
+                            onSourceFailed,
+                            onReady,
+                            fallbackInFlightKeys,
+                            std::move(tryAdmitSource),
+                            std::move(onSourceAdmissionDenied),
+                            true);
+                        return admissionDenied->load(
+                                   std::memory_order_acquire)
+                            ? -1
+                            : *issued;
+                    }});
+            state->pendingSourceFallbackCount.store(
+                static_cast<uint32_t>(state->pendingSourceFallbacks.size()),
+                std::memory_order_release);
+        }
+        RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(state);
+    }
+
+    void finishExactTransportFailure(
+        const TileKey& originalKey,
+        InFlightSourceTileAsset::Result source) {
+        std::vector<InFlightSourceTileAsset::WaiterEntry> exactOnlyWaiters;
+        std::vector<std::function<void()>> fallbackContinuations;
+        {
+            std::unique_lock<std::mutex> lock(cacheMutex);
+            auto it = inFlight.find(depotCacheKey(originalKey));
+            if (it == inFlight.end()) {
+                return;
+            }
+            std::vector<InFlightSourceTileAsset::WaiterEntry> retained;
+            retained.reserve(it->second.waiters.size());
+            for (auto& waiter : it->second.waiters) {
+                if (waiter.continueWithParentFallback) {
+                    fallbackContinuations.push_back(
+                        waiter.continueWithParentFallback);
+                    retained.push_back(std::move(waiter));
+                } else {
+                    exactOnlyWaiters.push_back(std::move(waiter));
+                }
+            }
+            if (retained.empty()) {
+                inFlight.erase(it);
+            } else {
+                it->second.waiters = std::move(retained);
+            }
+        }
+        RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(state);
+        for (auto& waiter : exactOnlyWaiters) {
+            if (waiter.callback) {
+                waiter.callback(source);
+            }
+        }
+        for (auto& continuation : fallbackContinuations) {
+            if (continuation) {
+                continuation();
+            }
+        }
+    }
+
+    void finishExactOnlyWaiters(
+        const TileKey& originalKey,
+        const Rectangle& originalBounds) {
+        std::vector<InFlightSourceTileAsset::WaiterEntry> exactOnlyWaiters;
+        {
+            std::unique_lock<std::mutex> lock(cacheMutex);
+            auto it = inFlight.find(depotCacheKey(originalKey));
+            if (it == inFlight.end()) {
+                return;
+            }
+            std::vector<InFlightSourceTileAsset::WaiterEntry> retained;
+            retained.reserve(it->second.waiters.size());
+            for (auto& waiter : it->second.waiters) {
+                if (waiter.usesAncestorFallback) {
+                    retained.push_back(std::move(waiter));
+                } else {
+                    exactOnlyWaiters.push_back(std::move(waiter));
+                }
+            }
+            it->second.waiters = std::move(retained);
+            if (it->second.waiters.empty()) {
+                inFlight.erase(it);
+            }
+        }
+        if (exactOnlyWaiters.empty()) {
+            return;
+        }
+        InFlightSourceTileAsset::Result source = cacheTerminalFailure(
+            originalKey, originalBounds, true);
+        for (auto& waiter : exactOnlyWaiters) {
+            if (waiter.callback) {
+                waiter.callback(source);
+            }
+        }
+    }
+
     // ⚠️ 以下三个 helper 可能在 worker 回调里、provider/scheme 析构后运行:
     // 只准消费调用方传入的值参,不得触碰 scheme/provider 成员。
     RasterSourceResult rasterSourceResultFromAsset(
@@ -573,15 +824,18 @@ private:
 
     InFlightSourceTileAsset::Result cacheTerminalFailure(
         const TileKey& requestedKey,
-        const Rectangle& requestedBounds) {
+        const Rectangle& requestedBounds,
+        bool exactTransportFailure = false) {
         SourceTileAsset failed;
         failed.key = requestedKey;
         failed.bounds = requestedBounds;
         failed.moreDetailAvailable =
             RasterOverlayTile::MoreDetailAvailable::No;
-        failed.diagnostics.push_back(
-            "Raster source tile failed after exhausting parent fallback");
+        failed.diagnostics.push_back(exactTransportFailure
+                ? "Raster exact source transport failed"
+                : "Raster source tile failed after exhausting parent fallback");
         failed.terminalFailure = true;
+        failed.exactTransportFailure = exactTransportFailure;
         failed.sizeBytes = 1;
 
         auto cached = std::make_shared<SourceTileAsset>(failed);
@@ -646,7 +900,7 @@ private:
 
     void cacheSource(const TileKey& requestedKey,
                      const RasterSourceResult& source) {
-        if (!source.image) return;
+        if (!source.image || !isDecodedImageUploadable(*source.image)) return;
         SourceTileAsset cached = sourceAssetFromResult(source);
         RetiredAsyncResources retired;
         std::unique_lock<std::mutex> lock(cacheMutex);

@@ -91,8 +91,11 @@ VectorDrapeImageryProvider::VectorDrapeImageryProvider(
       rasterPool_(std::move(rasterPool)) {}
 
 void VectorDrapeImageryProvider::setStyle(VectorRasterStyle style) {
-    std::lock_guard<std::mutex> lock(styleMutex_);
-    options_.style = std::move(style);
+    {
+        std::lock_guard<std::mutex> lock(styleMutex_);
+        options_.style = std::move(style);
+    }
+    contentRevision_.fetch_add(1, std::memory_order_release);
 }
 
 VectorRasterStyle VectorDrapeImageryProvider::styleSnapshot() const {

@@ -18,6 +18,28 @@
 
 **不含**矢量渲染——但 `VectorDrapeImageryProvider` 是例外:它把矢量面数据**伪装成影像 provider**接入这同一条通路(见扩展点)。
 
+### Overlay Runtime 迁移边界（2026-08-28，第一阶段）
+
+每个 `Tileset` 现在持有一个 `RasterOverlayRuntime`，由它统一托管：
+
+```text
+RasterOverlay 配置 / ActivatedRasterOverlay 顺序
+  → RasterOverlayRuntime
+       ├─ Direct backend（现 mappedRaster 映射、祖先回退、逐瓦绑定）
+       ├─ PageStore backend（canonical page domain、合成页、间接纹理）
+       └─ RasterAssetDepot（backend-neutral decoded source acquire）
+             → RasterOverlayTileProvider source depot
+                  cache + in-flight + waiter lease + transport + decoded image
+```
+
+- `RasterOverlayBackend` 是第一阶段可替换的 provider-view 策略接口；Runtime 按 `Direct` / `PageStore` 槽位持有实现，启停和替换不改变 Scene/SDK 的 overlay 配置所有权与顺序。Runtime 会把 backend 返回的 provider 重新规范为配置顺序的子集，禁止重复、乱序或外部 provider 改变 runtime slot。
+- `RasterAssetDepot` 是 Tileset Runtime 持有的统一访问边界。PageStore 不再直接调用 `ImageryProvider::requestTile()`，而是通过 exact-only acquire 加入 provider source depot；Direct mappedRaster 仍使用同一个 provider source depot，因此同 key 只产生一次 transport / decode。
+- cache hit 和 join in-flight 不消耗新的 Scene network grant；consumer lease 取消只摘自己的 waiter，不取消其他 backend 正在共享的请求。
+- `RasterAssetKey` 包含 provider instance、content revision、depot epoch、scheme、projection 和 source key，防止换源、换样式、mixed-scheme 或 provider 重建后串图。
+- PageStore 只接 exact source，不继承 Direct 的祖先回退；source 失败或 malformed 时 PageStore 保持 miss，继续显示 mappedRaster fallback。共享在途请求只代表一次 exact transport，失败后的 resolution policy 按 waiter 独立执行：ExactOnly 在子瓦失败处结束，Direct waiter 仍可进入父级链；因此两者的结果不再依赖谁先发起请求。
+
+第一阶段仍保留两层边界：decoded cache/in-flight 的物理状态仍按 provider endpoint 分区，Runtime depot 负责统一访问和生命周期持有；Direct 的 geometry mapping / fallback / shader binding 也仍分布在既有 tiling/render 链。因此当前 backend replacement 是稳定 seam，不是完整 executor 替换：要让自定义 Direct backend 接管 selection、mapping、upload、projection details 和 render binding，下一阶段需要帧级 `RasterOverlayFrameContext` / `RasterBindingSet`。当前不能据此删除 `mappedRaster`。
+
 ---
 
 ## 核心设计决策 + 理由
@@ -110,6 +132,8 @@ ImageryProvider::requestTile (HTTP/bridge)
 | 跨中国框矩形不可用单一偏移代表 | `crossesChinaBounds()`——~500m 阶跃,调用方须按此判据分流 |
 | mapping 失效靠 epoch | `mappedRasterTileEpoch_`/`mappingRevision_`,`isCurrentProviderTile` 据此清陈旧 handle |
 | PageStore 单域合成 | 同一 compose group 共享 canonical scheme/projection；异构组整组回退 `mappedRaster`，domain generation 隔离迟到结果 |
+| backend 替换不改配置所有权 | `RasterOverlayRuntime` 永远持有唯一有序 overlay 栈；backend 只能选择/消费 provider view，不得复制或重排 SDK 配置 |
+| source 请求只发一次 | Direct/PageStore 对同 provider/source key 共享 source depot；cache hit / join 不重复占用网络 grant |
 
 ---
 

@@ -109,3 +109,11 @@ TEST(AmapDrapeProviderTest, CancelledRequestStillInvokesCallback) {
     EXPECT_TRUE(called);
     EXPECT_EQ(got, nullptr);
 }
+
+TEST(AmapDrapeProviderTest, SetStyleAdvancesContentRevision) {
+    AmapDrapeImageryProvider provider(defaultOptions(), emptyCache());
+    const uint64_t before = provider.contentRevision();
+    VectorRasterStyle style;
+    provider.setStyle(std::move(style));
+    EXPECT_GT(provider.contentRevision(), before);
+}

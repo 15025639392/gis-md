@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -83,6 +84,9 @@ public:
     int maxZoom() const override { return options_.advertisedMaxZoom; }
     int tileWidth() const override { return options_.tileSize; }
     int tileHeight() const override { return options_.tileSize; }
+    uint64_t contentRevision() const override {
+        return contentRevision_.load(std::memory_order_acquire);
+    }
 
     /// 没有真实 URL 概念(拉取由注入的 cache/FetchFn 负责)。仅诊断/日志。
     std::string buildUrl(const TileKey& key) const override;
@@ -116,6 +120,7 @@ private:
 
     Options options_;
     mutable std::mutex styleMutex_;  // 只护 options_.style,其余字段构造后只读
+    std::atomic<uint64_t> contentRevision_{0};
     std::shared_ptr<MvtTileFetchCache> tileCache_;
     std::shared_ptr<ThreadPool> rasterPool_;
 };

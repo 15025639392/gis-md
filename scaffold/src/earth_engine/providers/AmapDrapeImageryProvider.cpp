@@ -97,8 +97,11 @@ AmapDrapeImageryProvider::AmapDrapeImageryProvider(
       rasterPool_(std::move(rasterPool)) {}
 
 void AmapDrapeImageryProvider::setStyle(VectorRasterStyle style) {
-    std::lock_guard<std::mutex> lock(styleMutex_);
-    options_.style = std::move(style);
+    {
+        std::lock_guard<std::mutex> lock(styleMutex_);
+        options_.style = std::move(style);
+    }
+    contentRevision_.fetch_add(1, std::memory_order_release);
 }
 
 VectorRasterStyle AmapDrapeImageryProvider::styleSnapshot() const {

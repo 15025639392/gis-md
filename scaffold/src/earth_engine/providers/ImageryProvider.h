@@ -10,6 +10,7 @@
 #include <vector>
 #include <functional>
 #include <cstdint>
+#include <atomic>
 
 namespace earth_engine {
 
@@ -17,7 +18,19 @@ namespace earth_engine {
 /// 负责 URL 构建、网络请求和图片解码。不持有 GPU 资源。
 class ImageryProvider {
 public:
+    ImageryProvider()
+        : instanceId_(nextInstanceId_.fetch_add(
+              1, std::memory_order_relaxed)) {}
     virtual ~ImageryProvider() = default;
+
+    /// Process-unique provider instance identity. Unlike id(), this never
+    /// aliases two live provider objects with different configuration/state.
+    uint64_t instanceId() const { return instanceId_; }
+
+    /// Monotonic revision of pixels produced for the same logical TileKey.
+    /// Immutable imagery providers keep the default 0. Dynamic rasterizers
+    /// advance it when style/content changes.
+    virtual uint64_t contentRevision() const { return 0; }
 
     /// 唯一标识
     virtual std::string id() const = 0;
@@ -76,6 +89,10 @@ public:
     /// 同步解码瓦片数据（用于测试/调试 Provider）
     virtual std::unique_ptr<DecodedImage> decodeTile(
         const uint8_t* data, size_t len) = 0;
+
+private:
+    inline static std::atomic<uint64_t> nextInstanceId_{1};
+    uint64_t instanceId_ = 0;
 };
 
 } // namespace earth_engine

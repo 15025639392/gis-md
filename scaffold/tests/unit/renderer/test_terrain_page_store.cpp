@@ -3,6 +3,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <deque>
 #include <functional>
 #include <mutex>
 #include <thread>
@@ -10,6 +11,7 @@
 #include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/platform/bridge/PlatformBridge.h"
 #include "earth_engine/providers/ImageryProvider.h"
+#include "earth_engine/providers/RasterAssetDepot.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/TerrainPageStore.h"
 #include "earth_engine/scene/SelectorView.h"
@@ -55,11 +57,23 @@ public:
     int tileWidth() const override { return tileSize_; }
     int tileHeight() const override { return tileSize_; }
     std::string buildUrl(const TileKey&) const override { return {}; }
+    uint64_t contentRevision() const override { return revision; }
     void requestTile(const TileKey& key, CancellationToken,
                      TileCallback callback,
                      HttpRequestPriority =
                          HttpRequestPriority::Normal) override {
-        callback(key, nullptr);
+        ++requestCount;
+        if (!returnImage) {
+            callback(key, nullptr);
+            return;
+        }
+        auto image = std::make_unique<DecodedImage>();
+        image->width = tileSize_;
+        image->height = tileSize_;
+        image->channels = 4;
+        image->pixels.assign(
+            static_cast<size_t>(tileSize_) * tileSize_ * 4u, 255u);
+        callback(key, std::move(image));
     }
     std::unique_ptr<DecodedImage> decodeTile(const uint8_t*,
                                              size_t) override {
@@ -70,6 +84,53 @@ private:
     std::string schemeId_;
     int maxZoom_ = 18;
     int tileSize_ = 256;
+
+public:
+    int requestCount = 0;
+    bool returnImage = false;
+    uint64_t revision = 0;
+};
+
+class DeferredPageDomainImageryProvider final : public ImageryProvider {
+public:
+    explicit DeferredPageDomainImageryProvider(std::string schemeId)
+        : schemeId_(std::move(schemeId)) {}
+
+    std::string id() const override { return "deferred-page-domain"; }
+    std::string schemeId() const override { return schemeId_; }
+    int minZoom() const override { return 0; }
+    int maxZoom() const override { return 18; }
+    int tileWidth() const override { return 2; }
+    int tileHeight() const override { return 2; }
+    std::string buildUrl(const TileKey&) const override { return {}; }
+    void requestTile(const TileKey& key, CancellationToken,
+                     TileCallback callback,
+                     HttpRequestPriority =
+                         HttpRequestPriority::Normal) override {
+        ++requestCount;
+        pending.emplace_back(key, std::move(callback));
+    }
+    std::unique_ptr<DecodedImage> decodeTile(const uint8_t*, size_t) override {
+        return nullptr;
+    }
+
+    void completeNext() {
+        ASSERT_FALSE(pending.empty());
+        auto item = std::move(pending.front());
+        pending.pop_front();
+        auto image = std::make_unique<DecodedImage>();
+        image->width = 2;
+        image->height = 2;
+        image->channels = 4;
+        image->pixels.assign(16u, 255u);
+        item.second(item.first, std::move(image));
+    }
+
+    int requestCount = 0;
+    std::deque<std::pair<TileKey, TileCallback>> pending;
+
+private:
+    std::string schemeId_;
 };
 
 }  // namespace
@@ -570,6 +631,126 @@ TEST(TerrainPageStoreDomain,
               TerrainPageStore::PageDomainCompatibility::Compatible);
 }
 
+TEST(TerrainPageStoreAssetDepot, ExactCacheHitSkipsPageStoreTransport) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config config;
+    config.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, config));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id(), 18, 2);
+    imagery.returnImage = true;
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    tiles.setLevelRange(3, 3);
+    const TileKey cachedKey{scheme->id(), 3, 2, 3};
+    auto tile = tiles.getTile(cachedKey);
+    ASSERT_NE(tile, nullptr);
+    ASSERT_TRUE(tiles.loadTile(*tile));
+    ASSERT_TRUE(tiles.tryGetCachedExactSource(cachedKey).has_value());
+    ASSERT_EQ(imagery.requestCount, 1);
+
+    SceneFrameResourceArbiter arbiter;
+    SceneFrameResourceArbiterConfig arbiterConfig;
+    arbiterConfig.networkRequest.maxUnitsPerFrame = 1;
+    arbiter.beginFrame(1, arbiterConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::PageStore,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal,
+        1));
+    ASSERT_TRUE(arbiter.sealAllocations());
+    store.tick(&arbiter);
+
+    auto depot = std::make_shared<RasterAssetDepot>();
+    store.debugKickPageFetchesForTest(cachedKey, {&tiles}, depot);
+    EXPECT_EQ(imagery.requestCount, 1)
+        << "PageStore should reuse the decoded exact source";
+    EXPECT_EQ(store.sharedRasterAssetHits(), 1u);
+    EXPECT_EQ(arbiter.used(
+                  SceneFrameResourceProducer::PageStore,
+                  SceneFrameResourceStage::NetworkRequest,
+                  FrameResourcePriority::Normal),
+              0u)
+        << "decoded asset reuse must not consume a network grant";
+
+    store.debugKickPageFetchesForTest(
+        TileKey{scheme->id(), 3, 3, 3}, {&tiles}, depot);
+    EXPECT_EQ(imagery.requestCount, 2)
+        << "cache miss must retain the original provider request path";
+    EXPECT_EQ(store.sharedRasterAssetMisses(), 1u);
+    EXPECT_EQ(arbiter.used(
+                  SceneFrameResourceProducer::PageStore,
+                  SceneFrameResourceStage::NetworkRequest,
+                  FrameResourcePriority::Normal),
+              1u);
+    const RasterAssetDepotStats stats =
+        depot->stats(RasterAssetConsumer::PageStore);
+    EXPECT_EQ(stats.cacheHits, 1u);
+    EXPECT_EQ(stats.startedTransports, 1u);
+}
+
+TEST(TerrainPageStoreAssetDepot,
+     PageStoreStartsTransportAndDirectJoinsWithoutSecondGrant) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config config;
+    config.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, config));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    DeferredPageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    tiles.setLevelRange(3, 3);
+    const TileKey key{scheme->id(), 3, 2, 3};
+
+    SceneFrameResourceArbiter arbiter;
+    SceneFrameResourceArbiterConfig arbiterConfig;
+    arbiterConfig.networkRequest.maxUnitsPerFrame = 1;
+    arbiter.beginFrame(1, arbiterConfig);
+    ASSERT_TRUE(arbiter.declareDemand(
+        SceneFrameResourceProducer::PageStore,
+        SceneFrameResourceStage::NetworkRequest,
+        FrameResourcePriority::Normal,
+        1));
+    ASSERT_TRUE(arbiter.sealAllocations());
+    store.tick(&arbiter);
+
+    auto depot = std::make_shared<RasterAssetDepot>();
+    store.debugKickPageFetchesForTest(key, {&tiles}, depot);
+    ASSERT_EQ(imagery.requestCount, 1);
+    EXPECT_EQ(arbiter.used(
+                  SceneFrameResourceProducer::PageStore,
+                  SceneFrameResourceStage::NetworkRequest,
+                  FrameResourcePriority::Normal),
+              1u);
+    ASSERT_EQ(tiles.getInFlightSourceTileCount(), 1);
+
+    int directAdmissions = 0;
+    int directReady = 0;
+    auto direct = tiles.acquireExactSource(
+        key,
+        [&directAdmissions]() {
+            ++directAdmissions;
+            return true;
+        },
+        [&directReady](RasterAssetResponse response) {
+            ASSERT_TRUE(response.asset.has_value());
+            ++directReady;
+        });
+    EXPECT_EQ(direct.status, RasterAssetAcquireStatus::JoinedInFlight);
+    EXPECT_EQ(directAdmissions, 0);
+    EXPECT_EQ(imagery.requestCount, 1);
+
+    imagery.completeNext();
+    EXPECT_EQ(directReady, 1);
+    EXPECT_EQ(tiles.getInFlightSourceTileCount(), 0);
+    const RasterAssetDepotStats stats =
+        depot->stats(RasterAssetConsumer::PageStore);
+    EXPECT_EQ(stats.startedTransports, 1u);
+    EXPECT_EQ(stats.joinedInFlight, 0u);
+}
+
 TEST(TerrainPageStoreDomain, XyzAndTmsCannotShareOnePageDomain) {
     auto xyz = TileScheme::createXYZWebMercator();
     auto tms = TileScheme::createTMS();
@@ -674,6 +855,24 @@ TEST(TerrainPageStoreDomain, ProviderSetChangeAdvancesGeneration) {
     EXPECT_GT(store.pageDomainGeneration(), oneSourceGeneration);
     EXPECT_EQ(store.pageDomainCompatibility(),
               TerrainPageStore::PageDomainCompatibility::Compatible);
+}
+
+TEST(TerrainPageStoreDomain,
+     ProviderContentRevisionInvalidatesComposedDomain) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config config;
+    ASSERT_TRUE(store.initialize(&device, config));
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+
+    SelectorView view;
+    store.updateVisiblePages(view, {}, {&tiles}, 16.0, nullptr);
+    EXPECT_EQ(store.providerContentInvalidations(), 0u);
+    imagery.revision = 1;
+    store.updateVisiblePages(view, {}, {&tiles}, 16.0, nullptr);
+    EXPECT_EQ(store.providerContentInvalidations(), 1u);
 }
 
 TEST(TerrainPageStoreDomain, ResetAdvancesGenerationAndDropsOldInboxWork) {

@@ -41,6 +41,7 @@ constexpr int kMaximumCombinedTextureSizeFallback = 2048;
 constexpr int64_t kMaximumSourcePlanReserve = 1'000'000;
 constexpr double kPi = 3.14159265358979323846264338327950288;
 constexpr double kTwoPi = 2.0 * kPi;
+std::atomic<uint64_t> gNextRasterSourceWaiterOwnerToken{1};
 
 
 int maximumCombinedTextureSize(const RasterTextureUploader* uploader,
@@ -503,6 +504,11 @@ bool isEpochMappedRasterCacheKey(const std::string& cacheKey) {
 
 } // namespace
 
+uint64_t RasterOverlayTileProvider::nextSourceWaiterOwnerToken() {
+    return gNextRasterSourceWaiterOwnerToken.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
 RasterOverlayTileProvider::QuadtreeSourcePlan
 RasterOverlayTileProvider::buildQuadtreeSourcePlan(
     const TileScheme& scheme,
@@ -636,7 +642,8 @@ RasterOverlayTileProvider::RasterOverlayTileProvider(ImageryProvider& provider,
     : provider_(provider)
     , scheme_(scheme)
     , projection_(projectionForScheme(scheme, georeference))
-    , textureUploader_(std::move(textureUploader)) {
+    , textureUploader_(std::move(textureUploader))
+    , observedProviderContentRevision_(provider.contentRevision()) {
     sourceCoverageRectangle_ =
         worldRectangleToRasterSource(coverageRectangle_, projection_);
     refreshSourceAssetDepot();
@@ -750,6 +757,7 @@ void RasterOverlayTileProvider::setOwner(RasterOverlay* owner) {
 }
 
 void RasterOverlayTileProvider::applyOwnerOptions() {
+    syncProviderContentRevision();
     if (!owner_) {
         return;
     }
@@ -877,6 +885,193 @@ void RasterOverlayTileProvider::refreshSourceAssetDepot() {
         asyncState_,
         getMinimumLevel(),
         getMaximumLevel());
+}
+
+void RasterOverlayTileProvider::syncProviderContentRevision() {
+    const uint64_t revision = provider_.contentRevision();
+    if (revision == observedProviderContentRevision_) {
+        return;
+    }
+    observedProviderContentRevision_ = revision;
+    invalidateMappedRasterTileCache();
+    invalidateSourceAssetDepotCache();
+}
+
+RasterAssetKey RasterOverlayTileProvider::rasterAssetKey(
+    const TileKey& sourceKey) {
+    syncProviderContentRevision();
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    return RasterAssetKey{
+        provider_.instanceId(),
+        observedProviderContentRevision_,
+        asyncState_->sourceTileDepotEpoch,
+        scheme_.id(),
+        projection_,
+        sourceKey};
+}
+
+std::optional<RasterAssetSnapshot>
+RasterOverlayTileProvider::tryGetCachedExactSource(
+    const TileKey& sourceKey) {
+    syncProviderContentRevision();
+    std::lock_guard<std::mutex> lock(asyncState_->mutex);
+    const uint64_t depotEpoch = asyncState_->sourceTileDepotEpoch;
+    auto it = asyncState_->sourceTileDepotCache.find(
+        sourceCacheKey(depotEpoch, sourceKey));
+    if (it == asyncState_->sourceTileDepotCache.end() ||
+        !it->second.image ||
+        !isDecodedImageUploadable(*it->second.image) ||
+        it->second.terminalFailure ||
+        it->second.sourceSubset.has_value() ||
+        it->second.key != sourceKey) {
+        return std::nullopt;
+    }
+
+    SourceTileAsset& source = it->second;
+    source.generation = ++asyncState_->sourceTileDepotGeneration;
+    asyncState_->sourceTileDepotCacheLru.emplace_back(
+        sourceCacheKey(depotEpoch, sourceKey), source.generation);
+    compactSourceDepotCacheLruLocked(*asyncState_);
+
+    RasterAssetSnapshot snapshot;
+    snapshot.key = RasterAssetKey{
+        provider_.instanceId(),
+        observedProviderContentRevision_,
+        depotEpoch,
+        scheme_.id(),
+        projection_,
+        sourceKey};
+    snapshot.resolvedKey = source.key;
+    snapshot.bounds = source.bounds;
+    snapshot.image = source.image;
+    snapshot.credits = source.credits;
+    snapshot.moreDetailAvailable = source.moreDetailAvailable;
+    return snapshot;
+}
+
+RasterAssetAcquireResult RasterOverlayTileProvider::acquireExactSource(
+    const TileKey& sourceKey,
+    std::function<bool()> tryAdmitTransport,
+    std::function<void(RasterAssetResponse)> onReady) {
+    syncProviderContentRevision();
+    if (!sourceAssetDepot_) {
+        refreshSourceAssetDepot();
+    }
+
+    const RasterAssetKey assetKey = rasterAssetKey(sourceKey);
+    const uint64_t ownerToken = nextSourceWaiterOwnerToken();
+    auto handleState =
+        std::make_shared<RasterAssetRequestHandle::State>();
+    std::shared_ptr<ProviderAsyncState> state = asyncState_;
+    std::shared_ptr<QuadtreeSourceAssetDepot> depot = sourceAssetDepot_;
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        state->activeMappedSourceOwnerTokens.insert(ownerToken);
+    }
+    handleState->detach = [state, depot, sourceKey, ownerToken]() {
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->activeMappedSourceOwnerTokens.erase(ownerToken);
+        }
+        depot->detachInFlightWaiters({sourceKey}, ownerToken);
+    };
+
+    auto sourceIssued = [state]() {
+        state->rasterSourceRequestsStarted.fetch_add(
+            1, std::memory_order_relaxed);
+        state->activeRasterSourceRequests.fetch_add(
+            1, std::memory_order_relaxed);
+        RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(
+            state);
+    };
+    auto sourceFinished = [state]() {
+        state->rasterSourceRequestsCompleted.fetch_add(
+            1, std::memory_order_relaxed);
+        uint32_t current = state->activeRasterSourceRequests.load(
+            std::memory_order_relaxed);
+        while (current > 0 &&
+               !state->activeRasterSourceRequests.compare_exchange_weak(
+                   current,
+                   current - 1,
+                   std::memory_order_relaxed,
+                   std::memory_order_relaxed)) {
+        }
+        state->resolveDestructionIfComplete();
+        RasterOverlayTileProvider::syncRasterLandingTicketFromAnyThread(
+            state);
+    };
+    auto sourceFailed = [state]() {
+        state->rasterSourceRequestsFailed.fetch_add(
+            1, std::memory_order_relaxed);
+    };
+
+    const RasterAssetAcquireStatus status = depot->requestSource(
+        sourceKey,
+        sourceKey,
+        false,
+        true,
+        ownerToken,
+        sourceIssued,
+        sourceFinished,
+        sourceFailed,
+        [state, handleState, ownerToken, assetKey, sourceKey,
+         onReady = std::move(onReady)](RasterSourceResult&& source) mutable {
+            {
+                std::lock_guard<std::mutex> lock(state->mutex);
+                state->activeMappedSourceOwnerTokens.erase(ownerToken);
+            }
+            if (!handleState->active.exchange(
+                    false, std::memory_order_acq_rel)) {
+                return;
+            }
+
+            RasterAssetResponse response;
+            response.diagnostics = std::move(source.diagnostics);
+            const bool exactImage =
+                source.image &&
+                isDecodedImageUploadable(*source.image) &&
+                !source.terminalFailure &&
+                !source.sourceSubset.has_value() &&
+                source.key == sourceKey;
+            if (exactImage) {
+                RasterAssetSnapshot snapshot;
+                snapshot.key = assetKey;
+                snapshot.resolvedKey = source.key;
+                snapshot.bounds = source.bounds;
+                snapshot.image = std::move(source.image);
+                snapshot.credits = std::move(source.credits);
+                snapshot.moreDetailAvailable =
+                    source.moreDetailAvailable;
+                response.asset = std::move(snapshot);
+            } else {
+                response.terminalFailure = source.terminalFailure ||
+                    (source.image != nullptr);
+                if (source.image && !isDecodedImageUploadable(*source.image)) {
+                    response.diagnostics.push_back(
+                        "Raster source decoded an invalid image");
+                }
+            }
+            if (onReady) {
+                onReady(std::move(response));
+            }
+        },
+        {},
+        std::move(tryAdmitTransport),
+        {},
+        false);
+
+    RasterAssetAcquireResult result;
+    result.status = status;
+    if (status == RasterAssetAcquireStatus::AdmissionDenied) {
+        {
+            std::lock_guard<std::mutex> lock(state->mutex);
+            state->activeMappedSourceOwnerTokens.erase(ownerToken);
+        }
+        handleState->active.store(false, std::memory_order_release);
+        return result;
+    }
+    result.handle = RasterAssetRequestHandle(std::move(handleState));
+    return result;
 }
 
 void RasterOverlayTileProvider::eraseCachedTilesMatching(
@@ -1168,6 +1363,7 @@ RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getPlaceholderTile
 
 RasterOverlayTileProvider::TilePtr RasterOverlayTileProvider::getTile(
     const TileKey& key) {
+    syncProviderContentRevision();
     // cesium-native: return placeholder if provider is not yet ready
     if (!ready_) {
         return getPlaceholderTile();
@@ -1205,6 +1401,7 @@ RasterOverlayTileProvider::mapRasterTilesToGeometryTile(
     const Rectangle& providerGeometryBounds,
     double targetScreenPixelsX,
     double targetScreenPixelsY) {
+    syncProviderContentRevision();
     if (!ready_) {
         return {getPlaceholderTile(), false, {}};
     }
@@ -1409,6 +1606,7 @@ bool RasterOverlayTileProvider::pendingUploadBackpressureActive() const {
 
 bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
                                          FrameResourceBudget* budget) {
+    syncProviderContentRevision();
     if (budget && budget->sceneArbiter() != nullptr) {
         asyncState_->sceneResourceManaged.store(
             true,
@@ -1454,6 +1652,7 @@ bool RasterOverlayTileProvider::loadTile(RasterOverlayTile& tile,
 
 bool RasterOverlayTileProvider::loadTileThrottled(RasterOverlayTile& tile,
                                                   FrameResourceBudget* budget) {
+    syncProviderContentRevision();
     if (budget && budget->sceneArbiter() != nullptr) {
         asyncState_->sceneResourceManaged.store(
             true,
