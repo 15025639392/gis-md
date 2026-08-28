@@ -1,10 +1,8 @@
 #pragma once
 
-#include <vector>
-
 namespace earth_engine {
 
-class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 struct TilesetTile;
 
 class TileSelectionStateResetter {
@@ -14,8 +12,7 @@ public:
     // recompute renderability). Applied incrementally to only the tiles in
     // the active-set, replacing the old per-frame full-registry sweep.
     static void resetOne(TilesetTile& tile,
-                         const std::vector<ActivatedRasterOverlay*>&
-                             rasterOverlays);
+                         const RasterOverlayFrameContext& frame);
 };
 
 } // namespace earth_engine

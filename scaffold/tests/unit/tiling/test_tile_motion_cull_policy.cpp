@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/math/Vec3.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileMotionCullPolicy.h"
 #include "earth_engine/tiling/TilesetTile.h"

@@ -18,7 +18,9 @@
 #include "../core/math/Rectangle.h"
 #include "../threading/CancellationToken.h"
 #include "../providers/RasterAsset.h"
+#include "../tiling/RasterOverlayRuntime.h"
 #include "../tiling/RasterOverlayProjection.h"
+#include "../tiling/RasterResolution.h"
 #include "../tiling/TileKey.h"
 
 namespace earth_engine {
@@ -70,8 +72,26 @@ public:
     ///  - 已驻留:touch 到 frameId,返回其 slot(generation 不变,*outEvicted=0)。
     ///  - 有空块:占用,返回 slot(generation 自增,*outEvicted=0)。
     ///  - 无空块:淘汰 lastFrame < frameId 的最久块(*outEvicted=被淘汰 key),返回其 slot(generation 自增)。
-    ///  - 所有块本帧都被 touch(lastFrame==frameId)→ 返回 Handle{slot=-1}(调用方回落 mappedRaster)。
+    ///  - 所有块本帧都被 touch(lastFrame==frameId)→ 返回 Handle{slot=-1}(调用方回落 directComposite)。
     Handle acquire(uint64_t key, uint64_t frameId, uint64_t* outEvicted);
+
+    /// Allocate a different physical block for an already-resident key. The
+    /// old block becomes an unmapped retired allocation and cannot be reused
+    /// until its pending/submitted GPU use completes. Used for COW rebakes.
+    Handle acquireReplacement(uint64_t key, uint64_t frameId,
+                              uint64_t* outEvicted,
+                              int* outRetiredSlot = nullptr);
+    /// Allocate an unpublished staging key while protecting `publishedKey`
+    /// from eviction. The caller uploads into this handle, then replaceKey().
+    Handle acquireStaging(uint64_t stagingKey, uint64_t publishedKey,
+                          uint64_t frameId, uint64_t* outEvicted);
+    /// Publish an already-allocated staging key as `key`, retiring the old
+    /// physical mapping for `key` without moving the staging pixels.
+    bool replaceKey(uint64_t stagingKey, uint64_t key,
+                    int* outRetiredSlot = nullptr);
+    /// True when the published block has neither pending writes/reads nor a
+    /// submitted GPU use beyond the observed completion frontier.
+    bool canWriteInPlace(uint64_t key) const;
 
     /// 句柄是否仍指向其分配时的块(generation 匹配且未被 release)。release 后
     /// 即使 generation 巧合匹配也返回 false(资源已释放)。
@@ -88,6 +108,17 @@ public:
     /// (模板 VBO 池);slot 不驻留/越界则 no-op。
     void touchSlot(int slot, uint64_t frameId);
 
+    /// Mark a physical block as referenced by commands or asynchronous GPU
+    /// uploads being assembled for the current frame.
+    void markSlotPendingUse(int slot);
+    /// Associate every pending reference with the serial issued by endFrame.
+    void publishPendingUses(uint64_t submittedSerial);
+    /// Advance the non-blocking GPU completion frontier and reclaim retired
+    /// blocks whose last use has completed.
+    void setCompletedSerial(uint64_t completedSerial);
+    /// Drop every key mapping without reusing in-flight physical blocks.
+    void retireAll(uint64_t completedSerial);
+
     /// 显式移除 key(析构/失效)。key 不在则 no-op。
     void release(uint64_t key);
 
@@ -98,26 +129,32 @@ public:
 private:
     struct Slot {
         bool used = false;
+        bool mapped = false;
+        bool pendingUse = false;
         uint64_t key = 0;
         uint64_t lastFrame = 0;
+        uint64_t lastUseSerial = 0;
         uint32_t generation = 0;  // 该槽位当前分配的代(全局单调序号)
     };
+    void reclaimCompletedRetirements();
     std::vector<Slot> slots_;
     int blockLayers_ = 1;
     std::unordered_map<uint64_t, int> keyToSlot_;  // key → slot index
     uint32_t nextGeneration_ = 1;  // 全局单调分配代(configure 重置)
+    uint64_t completedSerial_ = 0;
 };
 
 /// 单页的多源合成状态机(C-1,纯 CPU、可 host 单测,与 RenderDevice/provider 解耦)。
 ///
 /// 页存储的一层承载「**有序** overlay 列表按序 alphaOver 后的合成结果」——与
-/// mappedRaster 那条路径的多 overlay 语义对齐。C-1 之前页存储只认 `overlays.front()`,
+/// directComposite 那条路径的多 overlay 语义对齐。C-1 之前页存储只认 `overlays.front()`,
 /// 靠后的 overlay 被静默丢弃,这正是「注册成功 + 瓦片 200 + 绑进 draw + 屏幕全无」
 /// 那类问题的根(两条合成路径语义不一致)。
 ///
 /// **严格按源序合成**:alphaOver 不可交换,源 i 必须等 0..i-1 全部合成后才能进 accum,
-/// 乱序早到的源暂存 stash。每推进一步允许上传一次 → 部分到达先点亮(底图先亮,不必
-/// 等最慢的源),避免「页到达时间 = 最慢那个源」。
+/// 乱序早到的源暂存 stash。每推进一步允许上传一次，但 PageStore 只有在整栈完成
+/// 后才把该 layer 编入间接纹理；此前继续显示完整 Direct fallback，避免 opaque base
+/// 把尚未到达的 Direct annotations 遮掉。
 ///
 /// 未完成页的常驻内存上界 = (1 + 乱序源数) × side²×4;`releaseBuffers()` 在全部到齐
 /// 并上传后释放 —— 故稳态零额外内存。单源(sourceCount==1)时逐字节等价于 C-1 之前
@@ -125,7 +162,8 @@ private:
 class PageSourceAssembler {
 public:
     /// sourceCount ≤ 0 或 side ≤ 0 → 停用(accept 恒 false)。重配清空已有进度。
-    void configure(int sourceCount, int sideTexels);
+    void configure(const std::vector<float>& sourceOpacities,
+                   int sideTexels);
 
     /// 收下第 sourceIndex 源的 side²×4 RGBA8(非预乘直通 alpha)。
     /// 返回 true = accum 有新内容需上传。重复源 / 越界 / 空指针 → false(幂等,
@@ -148,6 +186,7 @@ private:
     int sourceCount_ = 0;
     int side_ = 0;
     int composited_ = 0;  // 已按序合成的源数 = 下一个待合成的源号
+    std::vector<float> sourceOpacities_;
     std::vector<uint8_t> accum_;
     std::vector<std::vector<uint8_t>> stash_;  // 乱序早到的源(按源号索引)
 };
@@ -163,9 +202,9 @@ private:
 /// 单次 NEAREST fetch 定位 layer + 用 A 作 alphaOver factor → capped z12 瓦片显示屏幕界定
 /// 的 z17 高清真实影像(crisp),内存有界(只驻留可见页)。
 ///
-/// **决策② 共存/分层 override**:mappedRaster 对所有瓦片继续算(祖先影像 fallback);
+/// **决策② 共存/分层 override**:directComposite 对所有瓦片继续算(祖先影像 fallback);
 /// 页存储按 **cell 粒度** 接管——resident cell A=1 覆盖,未 fetch/未到/视锥外 cell A=0
-/// 保留 mappedRaster。page-in 延迟期该 cell 显祖先(糊但有)不出洞 = 优雅降级(§12.5#4)。
+/// 保留 directComposite。page-in 延迟期该 cell 显祖先(糊但有)不出洞 = 优雅降级(§12.5#4)。
 /// 非真实地形瓦片逐字节走现状,零回归。
 ///
 /// **LRU 自愈无悬垂**:间接纹理每帧重建 → 淘汰页的 cell 自动因 pages_ 查不到而变 miss;
@@ -174,6 +213,42 @@ class ThreadPool;
 
 class TerrainPageStore {
 public:
+    /// CPU submission lease: freezes page/domain/layer mutation from command
+    /// construction through Renderer::submit. This is intentionally separate
+    /// from GPU completion; the latter still requires a device serial before
+    /// a layer may be overwritten.
+    class SubmissionLease {
+    public:
+        SubmissionLease() = default;
+        SubmissionLease(const SubmissionLease&) = delete;
+        SubmissionLease& operator=(const SubmissionLease&) = delete;
+        SubmissionLease(SubmissionLease&& other) noexcept
+            : owner_(other.owner_), frameId_(other.frameId_) {
+            other.owner_ = nullptr;
+        }
+        SubmissionLease& operator=(SubmissionLease&& other) noexcept {
+            if (this != &other) {
+                release();
+                owner_ = other.owner_;
+                frameId_ = other.frameId_;
+                other.owner_ = nullptr;
+            }
+            return *this;
+        }
+        ~SubmissionLease() { release(); }
+
+        explicit operator bool() const { return owner_ != nullptr; }
+        uint64_t frameId() const { return frameId_; }
+
+    private:
+        friend class TerrainPageStore;
+        SubmissionLease(TerrainPageStore* owner, uint64_t frameId)
+            : owner_(owner), frameId_(frameId) {}
+        void release();
+        TerrainPageStore* owner_ = nullptr;
+        uint64_t frameId_ = 0;
+    };
+
     /// PageStore is a single canonical page-grid compositor, not a generic
     /// per-source reprojection engine. providers[0] defines the page-facing
     /// TileScheme + effective projection. Every later provider must consume
@@ -188,6 +263,10 @@ public:
         ProviderProjectionMismatch,
         ProviderContractMismatch,
         TerrainSchemeMismatch,
+        CanonicalSourceRoleMismatch,
+        CanonicalBaseOpacityMismatch,
+        TooManySourcesForDirectFallback,
+        DirectFallbackStackMismatch,
     };
 
     struct Config {
@@ -259,12 +338,27 @@ public:
     /// different page-facing scheme/projection semantics are not.
     static PageDomainCompatibility providerStackCompatibility(
         const std::vector<RasterOverlayTileProvider*>& providers);
+    /// PageStore composes a complete raster stack over the Direct result. The
+    /// first active source therefore has to be the opaque canonical base;
+    /// annotation-only stacks and a translucent base would otherwise either
+    /// have no deterministic background or alpha-composite the same Direct
+    /// layers twice in the shader.
+    static PageDomainCompatibility pageSourceStackCompatibility(
+        const std::vector<RasterOverlayPageSource>& sources,
+        bool directFallbackStackParity = true);
     static const char* pageDomainCompatibilityName(
         PageDomainCompatibility compatibility);
     PageDomainCompatibility pageDomainCompatibility() const {
         return pageDomainCompatibility_;
     }
     uint64_t pageDomainGeneration() const { return pageDomainGeneration_; }
+
+    SubmissionLease beginSubmission(uint64_t frameId);
+    bool submissionLeaseActive() const { return submissionLeaseDepth_ != 0; }
+    uint64_t submissionLeaseFrameId() const { return submissionFrameId_; }
+    uint64_t rejectedSubmissionMutationCount() const {
+        return rejectedSubmissionMutationCount_;
+    }
 
     /// 每帧(渲染线程,determination 之后、render 之前):推进帧号、排空已到达影像
     /// (限 maxUploadsPerFrame)灌对应页 layer 并置 uploaded。fetch 由 determination
@@ -352,24 +446,52 @@ public:
         int baseY,
         float out[6]);
 
+    /// PageStore-specific sampling attachment. It intentionally exposes the
+    /// array + indirection + placement shape instead of imitating Direct's
+    /// single Texture + affine UV descriptor.
+    struct RasterStackSampleDescriptor {
+        Texture* imageArray = nullptr;
+        Texture* imageIndirectionArray = nullptr;
+        Texture* fieldArray = nullptr;
+        Texture* fieldIndirectionArray = nullptr;
+        int indirectionLayer = -1;
+        int texCoordSet = 0;
+        int cellZoom = 0;
+        SourceTilePlacement placement;
+        std::array<float, 6> geomAffine{
+            0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+    };
+
+    struct RasterStackBinding {
+        RasterStackResolution resolution;
+        RasterStackSampleDescriptor sample;
+    };
+
+    /// Resolve the current immutable presentation attachment for one terrain
+    /// tile. This performs no uploads, allocation, or lifetime publication.
+    RasterStackBinding resolveTerrainBinding(const TilesetTile& tile) const;
+
     /// 对本帧可见瓦片跑门② determination + 插桩(见类顶注释)。overlay 为空 /
     /// provider 为空 / 无可见瓦片 → no-op。在 Engine tick() 之前、每帧调一次。
     ///
-    /// C-1:`providers` 是**有序** overlay 列表的 provider(与 mappedRaster 同序),
-    /// 每页按该序 alphaOver 合成成一层。分块/zoom/最大级由 providers[0](底图)决定
+    /// `sources` 是 Overlay Runtime 发布的**有序、帧冻结** source 列表。
+    /// visible=false 或 opacity=0 的 slot 已被 Runtime 剔除；PageStore 不得重读
+    /// mutable RasterOverlay。每页按 source 顺序和快照 opacity alphaOver 成一层。
+    /// 分块/zoom/最大级由 sources[0](底图)决定
     /// —— 它是 canonical page domain；靠后的源只能往**同一 page-facing scheme +
     /// projection** 的 key 上叠。不同 maxZoom/tileSize 允许(祖先钳制+重采样)，
     /// XYZ/TMS、Mercator/Geographic、WebMercator/GCJ 等异构组合不允许直接共页；
     /// 需要异构数据时必须由 provider adapter 内部转换成 canonical page 图像。
-    /// 不兼容时 PageStore 整组 fail-closed，本帧不绑定页纹理，保留 mappedRaster。
+    /// 不兼容时 PageStore 整组 fail-closed，本帧不绑定页纹理，保留 directComposite。
     /// terrain tile scheme 也必须等于 canonical scheme；当前不接受仅 z/x/y 偶然
     /// 同形的 scheme alias。空表 → 清理并停用当前 page domain。
     void updateVisiblePages(const SelectorView& view,
                             const std::vector<TilesetTile*>& visibleTiles,
-                            const std::vector<RasterOverlayTileProvider*>& providers,
+                            const std::vector<RasterOverlayPageSource>& sources,
                             double terrainMaxScreenSpaceError,
                             SceneFrameResourceArbiter* resourceArbiter = nullptr,
-                            std::shared_ptr<RasterAssetDepot> assetDepot = {});
+                            std::shared_ptr<RasterAssetDepot> assetDepot = {},
+                            bool directFallbackStackParity = true);
 
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
     int lastVisiblePageCount() const { return lastVisiblePageCount_; }
@@ -496,10 +618,18 @@ public:
 
     /// 在 applyPerFrameCommandState 里对每个 terrain 命令调用(**无相机,只 bind**):
     /// 若该瓦片本帧 determination 建了间接纹理(TileIndir)→ 绑 array slot20 + 间接纹理
-    /// slot21 + 写 pageStoreParams(enabled=1,gridN);否则不动(mappedRaster fallback)。
+    /// slot21 + 写 pageStoreParams(enabled=1,gridN);否则不动(directComposite fallback)。
     /// determination 已按 cell 粒度编好 resident/miss,此处仅 bind。
     /// C-1:源列表只由 determination 刷新(单一事实源),此处不再兜底捕获 provider。
     void applyToTerrainCommand(RenderCommand& cmd, const TilesetTile& tile);
+
+    /// Pull the backend's non-blocking GPU completion frontier into all
+    /// physical layer pools. Call before this frame's determination/uploads.
+    void synchronizeGpuCompletion();
+    /// Publish every PageStore layer referenced by uploads or draw commands
+    /// since the previous real submission. Held presentation frames do not
+    /// call this, so their pending references remain conservatively pinned.
+    void onFrameSubmitted(uint64_t submittedSerial);
 
     Texture* arrayTexture() const { return arrayTexture_.get(); }
 
@@ -513,7 +643,7 @@ public:
     /// 故用 RGBA8 承载 16 位 layer 索引(容 ≤ 65535 页)+ 深度 d(≤ kMaxDetDepthLevels,
     /// 单 fetch 无需第二张 RG16 纹理)。**depth = Z-Za**:该 cell 采样的粗祖先页相对本瓦片
     /// 屏幕界定 max zoom Z 下降的级数(0=精页/现状,>0=粗页,片元用 span=2^d 定位子区)。
-    /// **A 通道**:0=miss(保留 mappedRaster)、255=影像 ready。历史三态的
+    /// **A 通道**:0=miss(保留 directComposite)、255=影像 ready。历史三态的
     /// 128(影像在/场 pending)自步3 场解耦后不再产出——场 ready 归独立的
     /// 场间接纹理(fieldIndirArrayTexture_),两平面门控互不牵连;fieldReady
     /// 形参保留兼容编码函数签名(调用点恒 true)。
@@ -539,7 +669,7 @@ public:
     ///
     /// 页 zoom 由屏幕(与底图上限)驱动,常深于标注/矢量类源自己的 maxZoom;那些源
     /// 的 fetch key 被钳到各自上限的祖先页,`depth`/`subX`/`subY` 记下页在祖先内
-    /// 的格位,此处按 scale-bias 取该子矩形双线性放大 —— 与 mappedRaster 那条路
+    /// 的格位,此处按 scale-bias 取该子矩形双线性放大 —— 与 directComposite 那条路
     /// 逐瓦片挑祖先同语义。**不钳会让这些源恒 404 → 永不到达 → 卡住 assembler 的
     /// 按序游标 → 该源在页内彻底消失**(真机踩过:矢量路网整片没了)。
     ///
@@ -566,7 +696,7 @@ public:
         return providerContentInvalidations_;
     }
 
-    /// 仅测试:为 pageKey 建一个最小页账本(providers_ 为空 → 不 kick fetch,
+    /// 仅测试:为 pageKey 建一个最小页账本(sources_ 为空 → 不 kick fetch,
     /// assembler 源数=0;供 compose 派发预算/待派队列的 host 测试用)。
     void debugCreatePageForTest(uint64_t pageKey, int layer);
     /// 仅测试:向 inbox 投递一张解码影像(模拟 provider 回调;drainInbox 的
@@ -576,6 +706,10 @@ public:
                                   std::unique_ptr<DecodedImage> image,
                                   uint64_t domainGeneration =
                                       std::numeric_limits<uint64_t>::max());
+    void debugDeliverPageFailureForTest(
+        uint64_t pageKey, int layer,
+        uint64_t domainGeneration =
+            std::numeric_limits<uint64_t>::max());
     /// 仅测试:模拟 canonical provider/domain 切换。旧 inbox item 不清空，必须
     /// 依靠 generation 闸在 drain 时被拒绝。
     void debugResetPageDomainForTest();
@@ -585,8 +719,15 @@ public:
         const TileKey& pageTileKey,
         const std::vector<RasterOverlayTileProvider*>& providers,
         std::shared_ptr<RasterAssetDepot> assetDepot = {});
+    bool debugPageNeedsRebakeForTest(uint64_t pageKey) const;
+    bool debugPageDisplayReadyForTest(uint64_t pageKey) const;
+    int debugPageLayerForTest(uint64_t pageKey) const;
+    int debugIndirectionLayerForTest(uint64_t tileKey) const;
+    int debugFieldLayerForTest(uint64_t fieldKey) const;
 
 private:
+    bool rejectMutationDuringSubmission(const char* operation);
+
     struct PendingInbox;  // 定义在 .cpp:worker 回调安全投递解码影像
 
     /// 静止帧跳过用的视图签名:determination 分类只依赖 position/direction/
@@ -599,7 +740,7 @@ private:
         double sseThreshold = 0.0;
         // 可见瓦片指纹:选择/细化可能不随相机变化(地形加载完成 → LOD 换代),
         // 但可见瓦片列表变了就必须重跑 determination —— 新瓦片的间接纹理
-        // 条目不存在,跳过会让他们永久回落 mappedRaster。
+        // 条目不存在,跳过会让他们永久回落 directComposite。
         uint64_t visibleTilesHash = 0;
         bool operator==(const DeterminationSignature& o) const {
             return position == o.position && direction == o.direction &&
@@ -629,12 +770,12 @@ private:
         /// 淘汰置 cancelled,迟到结果经 drain 校验丢弃)。
         std::shared_ptr<PageComposeState> compose;
         // 每源一个 shared Asset Depot consumer lease。取消只摘除此页 waiter，
-        // 不会误杀仍被 Direct/mappedRaster 或其他页共享的 transport。
+        // 不会误杀仍被 Direct/directComposite 或其他页共享的 transport。
         std::vector<RasterAssetRequestHandle> fetchHandles;
         std::vector<bool> fetchIssued;  // Scene 网络 grant 不足时跨帧续发
         /// **已上传**的合成进度镜像(渲染线程独占,drainReadyUploads 推进)。
-        /// determination 判 resident 必须跟"已上传"走 —— 合成下 worker 后
-        /// "已合成"与"已上传"分离,跟合成走会让间接纹理采到未写入的层。
+        /// determination 仅在全部 source 已上传后判 display-ready：合成下 worker 后
+        /// "已合成"与"已上传"分离，而 partial page 也不能覆盖完整 Direct stack。
         int uploadedSources = 0;
         int totalSources = 0;
         /// 最近一次"上传进度前进"的帧号(建页时初始化为当帧)。
@@ -652,14 +793,21 @@ private:
         /// schemeId(unpackKey 会还原成缺省 → 取错源)。
         bool needsRebake = false;
         /// Any required source failed or decoded malformed. The page stays a
-        /// miss so mappedRaster remains visible, but it is no longer counted
+        /// miss so directComposite remains visible, but it is no longer counted
         /// as frame-pumped work until LRU eviction or explicit invalidation.
         bool terminalFailure = false;
         /// V28:重烘要不要 hold 到 assembler.complete() 才发快照(= 失效时本页
         /// 是否正显示完整合成)。true → 旧完整合成顶到新合成整页就绪一次换手;
-        /// false → 半成品无旧画面可顶,直接重定向、保持增量点亮(见点3分析)。
+        /// false → 半成品无旧画面可顶；上传仍可增量推进，但间接纹理必须保持
+        /// miss，直到完整 source stack 到齐后一次发布。
         bool holdUntilComplete = false;
         bool uploadedTexels() const { return uploadedSources > 0; }
+        /// A PageStore page replaces the complete Direct stack. Exposing a
+        /// partial multi-source composition would let the opaque base hide
+        /// Direct annotations that have not reached this page yet.
+        bool displayReady() const {
+            return totalSources > 0 && uploadedSources >= totalSources;
+        }
         bool uploadComplete() const {
             return terminalFailure ||
                    (totalSources > 0 && uploadedSources >= totalSources);
@@ -695,7 +843,7 @@ private:
     /// 每层,texel 写左上 gridN² 区,片元 texelFetch 整数寻址不受空余区影响)。
     /// 层由 indirPool_ LRU 认领;可见瓦片每帧重建即 touch,当帧层不被淘汰;层
     /// 被夺走(离屏久驻)→ layer 置 -1 → applyToTerrainCommand 跳过 → 回落
-    /// mappedRaster(优雅降级,无 stale 采样——绑定每帧从本表读,无常驻引用)。
+    /// directComposite(优雅降级,无 stale 采样——绑定每帧从本表读,无常驻引用)。
     /// tile 不再可见 → sweep 清除 + 释放层。
     struct TileIndir {
         int layer = -1;
@@ -708,7 +856,15 @@ private:
         // cell 网格 zoom(determination 的 p.zoom 快照)——FS 分级宽度的局部
         // zoom 基准,经 roadFieldParams.y / 合批 pageCellDesc 下发。
         int cellZoom = 0;
-        bool fullyResident = false;  // 全 cell 高清页驻留 = 合批资格(丢 mappedRaster)
+        bool fullyResident = false;  // 全 cell 高清页驻留 = 合批资格(丢 directComposite)
+        // This indirection snapshot embeds physical image/field layer ids.
+        // Retain the exact referenced slices until the GPU serial sampling
+        // this snapshot completes; array texture ownership alone is not a
+        // per-layer lifetime proof.
+        std::vector<int> imageLayers;
+        std::vector<int> fieldLayers;
+        std::vector<uint8_t> imageTexels;
+        std::vector<uint8_t> fieldTexels;
         uint64_t lastFrame = 0;  // determination 里 touch;sweep 清非本帧可见瓦片
         // [瓦界对齐] 几何 UV → 源格的逐瓦仿射 {c0.x,c0.y,dU.x,dU.y,dV.x,dV.y}
         // (单位=源瓦片,相对 placement.x0/y0;c0=NW 角)。instanced 管线的 psUv
@@ -789,6 +945,9 @@ private:
     std::unique_ptr<Texture> indirArrayTexture_;  // 合批 Step 2:间接纹理共享 array
     TerrainPageLayerPool indirPool_;              // 间接纹理层 LRU(blockLayers=1)
     uint64_t frameId_ = 0;
+    uint32_t submissionLeaseDepth_ = 0;
+    uint64_t submissionFrameId_ = 0;
+    uint64_t rejectedSubmissionMutationCount_ = 0;
     SceneFrameResourceArbiter* resourceArbiter_ = nullptr;
     int uploadedLayerTotal_ = 0;
 
@@ -819,11 +978,13 @@ private:
     int winFieldHoleCells_ = 0;
     int winFieldFallbackCells_ = 0;
 
-    // C-1:有序源列表(providers_[0] = canonical 页网格)。同一 vector 内只允许
+    // 有序帧快照源(sources_[0] = canonical 页网格)。同一 vector 内只允许
     // page-facing scheme/projection 相同；变化时推进 pageDomainGeneration_ 并
     // 清全部 scheme-less 账本，旧回调即使复用相同 z/x/y+layer 也过不了代次闸。
-    std::vector<RasterOverlayTileProvider*> providers_;
+    std::vector<RasterOverlayPageSource> sources_;
+    std::vector<float> sourceOpacities_;
     std::shared_ptr<RasterAssetDepot> assetDepot_;
+    std::vector<RasterOverlayPageSource> detSourcesScratch_;
     std::vector<RasterOverlayTileProvider*> detProvidersScratch_;  // 剔 null 复用
     PageDomainCompatibility pageDomainCompatibility_ =
         PageDomainCompatibility::NoProvider;
@@ -910,8 +1071,8 @@ private:
         // 本瓦片落在 SSE 地板以下、被降级到**最粗祖先页**兜底的远 cell 数(纯诊断)。
         //
         // 历史:此计数曾名 sseFloorCulled —— 那时地板以下的 cell 被直接剔除(A=0 回落
-        // mappedRaster),故要参与合批资格判定。刀1/刀2 后 drape 面与 SDF 路网场只寄生在
-        // 页上、mappedRaster 无矢量等价物,剔除 = 远景高俯角整片没水面/没路网;改为让这些
+        // directComposite),故要参与合批资格判定。刀1/刀2 后 drape 面与 SDF 路网场只寄生在
+        // 页上、directComposite 无矢量等价物,剔除 = 远景高俯角整片没水面/没路网;改为让这些
         // cell 照常走渐变路径取粗页(za 恒钳 tileZ,与本瓦近地板 cell 同页,零新增页)。
         // 现在它们进 kept、有页、参与 residentCells → 合批资格由 residentCells==kept.size()
         // 统一覆盖,**本计数不再进合批闸**,仅供真机验收判「远景补覆盖是否生效(应 >0)」。
@@ -948,7 +1109,7 @@ private:
         //
         // 误剔本身不是新问题,但它在这里会**击穿合批资格闸**:闸放行"视锥外"的 cell
         // 是因为它们不产生片元(见 fullyResident 处的三类论证),而这里的"视锥外"
-        // 是假的 —— 那些 cell 会产生片元,合批后没有 mappedRaster 回落,渲成纯白面。
+        // 是假的 —— 那些 cell 会产生片元,合批后没有 directComposite 回落,渲成纯白面。
         //
         // 故跨界瓦片放弃视锥剔除(保守全收),让资格闸按 kept 全驻留正常挡住合批。
         // 代价是那一列瓦片多取几张页;它们只出现在中国框四条边上(帕米尔/俄远东/

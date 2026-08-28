@@ -7,7 +7,7 @@
 #include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
 #include "earth_engine/tiling/GpuUploadQueue.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -201,7 +201,7 @@ TEST(GpuUploadQueueTest, InvalidPayloadReleasesLifecycleUploadClaim) {
     ASSERT_NE(nullptr, provider);
     RecordingPrepareRendererResources prepRenderer;
     std::vector<RasterOverlayProjection> missingProjections;
-    RasterMappedToTilesetTile& mapping =
+    DirectRasterMapping& mapping =
         tile.rasterOverlayState.ensureMapping(0);
     mapping.update(
         tile.key,

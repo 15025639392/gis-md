@@ -10,7 +10,7 @@
 
 namespace earth_engine {
 
-class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 class Renderer;
 class TileRenderContentState;
 struct TilesetTile;
@@ -22,6 +22,7 @@ TerrainSurfaceCommandSource terrainSurfaceSourceForDraw(
     const TileRenderContentState& renderContent);
 
 struct GltfDrawCommandBuildContext {
+    const RasterOverlayFrameContext& rasterFrame;
     uint64_t frameNumber = 0;
     uint64_t generation = 0;
     float transitionOpacity = 1.0f;
@@ -49,7 +50,6 @@ struct GltfDrawCommandBuildTimings {
 struct GltfDrawCommandBuilder {
     static void build(Renderer& renderer,
                       TilesetTile& tile,
-                      const std::vector<ActivatedRasterOverlay*>& overlays,
                       RenderCommandList& commands,
                       const GltfDrawCommandBuildContext& context,
                       GltfDrawCommandBuildTimings* timings = nullptr);

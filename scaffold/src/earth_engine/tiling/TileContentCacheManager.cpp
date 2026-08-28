@@ -1,4 +1,4 @@
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileBaseCoveragePin.h"
 #include "TileContentCacheManager.h"
 

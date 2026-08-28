@@ -7,18 +7,19 @@
 namespace earth_engine {
 
 class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 struct TilesetTile;
 
 class TileSelectionTraversalDetailsBuilder {
 public:
     static TileTraversalDetails forSingleTile(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+        const RasterOverlayFrameContext& frame);
 
     static TileTraversalDetails forCulledTile(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        bool forbidHoles);
+        bool forbidHoles,
+        const RasterOverlayFrameContext& frame);
 };
 
 } // namespace earth_engine

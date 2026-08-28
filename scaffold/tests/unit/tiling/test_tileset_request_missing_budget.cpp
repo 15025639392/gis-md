@@ -17,7 +17,7 @@
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
 #include "earth_engine/scene/SceneTilesetDiagnostics.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileSelectionRasterOverlayPreparer.h"
 #include "earth_engine/tiling/TileSelectionPlanAppender.h"
@@ -373,7 +373,7 @@ struct TilesetTestAccess {
     static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
         return TileSelectionRasterOverlayPreparer::isRenderable(
             tile,
-            tileset.directRasterOverlays());
+            tileset.rasterOverlayRuntime().frameContext());
     }
 
     static void clearChildrenRecursively(Tileset& tileset, TilesetTile& tile) {
@@ -1144,11 +1144,11 @@ TEST(
     DebugImageryProvider imagery;
     auto rasterScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider rasterProvider(imagery, *rasterScheme, nullptr);
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         tile->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     ASSERT_EQ(
-        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        DirectRasterMapping::MoreDetail::Unknown,
         mapped.update(
             key,
             tile->content.renderContent.rasterOverlayDetails(),
@@ -1227,11 +1227,11 @@ TEST(
     DebugImageryProvider imagery;
     auto rasterScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider rasterProvider(imagery, *rasterScheme, nullptr);
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         tile->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     ASSERT_EQ(
-        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        DirectRasterMapping::MoreDetail::Unknown,
         mapped.update(
             key,
             tile->content.renderContent.rasterOverlayDetails(),
@@ -1336,7 +1336,7 @@ TEST(
         &device,
         16.0,
         budget);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         tile->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
@@ -1377,7 +1377,7 @@ TEST(
         RasterOverlayTile::LoadState::Done,
         loadingTile->getState());
     EXPECT_EQ(
-        RasterMappedToTilesetTile::State::Attached,
+        DirectRasterMapping::State::Attached,
         mapped->getState());
     EXPECT_EQ(nullptr, mapped->getLoadingTile());
     EXPECT_EQ(loadingTile, mapped->getReadyTile());
@@ -1396,7 +1396,7 @@ TEST(
         updatesBeforeDraw,
         tile->rasterOverlayState.authoritativeUpdateCount());
     EXPECT_EQ(
-        RasterMappedToTilesetTile::State::Attached,
+        DirectRasterMapping::State::Attached,
         mapped->getState());
     tileset.discardPendingRenderReferences();
 }

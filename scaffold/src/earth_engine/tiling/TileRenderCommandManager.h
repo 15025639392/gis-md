@@ -10,6 +10,7 @@
 namespace earth_engine {
 
 class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 class RenderDevice;
 class Renderer;
 class TileContentResourceInvalidator;
@@ -22,7 +23,7 @@ public:
     TileRenderCommandManager(
         TileMeshPreparationManager& meshPreparation,
         TileContentResourceInvalidator& resourceInvalidator,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        const RasterOverlayFrameContext& rasterFrame,
         RenderDevice* device);
 
     void beginFrame(uint64_t frameNumber,
@@ -47,7 +48,7 @@ public:
 private:
     TileMeshPreparationManager& meshPreparation_;
     TileContentResourceInvalidator& resourceInvalidator_;
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
+    const RasterOverlayFrameContext& rasterFrame_;
     RenderDevice* device_ = nullptr;
     uint64_t frameNumber_ = 0;
     uint64_t generation_ = 0;

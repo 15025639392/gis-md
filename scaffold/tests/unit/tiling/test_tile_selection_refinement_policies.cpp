@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileSelectionKickPolicy.h"
 #include "earth_engine/tiling/TileSelectionPostTraversalCommitter.h"
 #include "earth_engine/tiling/TileSelectionPostTraversalPolicy.h"

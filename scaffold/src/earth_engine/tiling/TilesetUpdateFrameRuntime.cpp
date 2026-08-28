@@ -110,7 +110,8 @@ void TilesetUpdateFrameRuntime::runBaseCoveragePreload(
                 }
                 if (TileRasterOverlayReadinessPolicy::
                         requiredBaseImageryDrawableReady(
-                            *tile, directOverlays)) {
+                            *tile,
+                            tileset.rasterOverlayRuntime_.frameContext())) {
                     continue;
                 }
                 TileRasterOverlayPrefetcher::prefetch(
@@ -189,7 +190,8 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.hasTerrainQuadtree(),
             pPrepRenderer,
             // P5b:hold 期间禁 reuse——见 TileSelectionReuseInput::presentationHeld。
-            tileset.shouldHoldPresentationFrame()},
+            tileset.shouldHoldPresentationFrame(),
+            tileset.rasterOverlayRuntime_.frameContext()},
         TileFrameWorkState{
             tileset.cameraMoving_,
             tileset.interactionActiveForFrame_,
@@ -212,15 +214,18 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
         [&tileset]() {
             return tileset.contentLifecycle_.hasPendingWork();
         },
-        [&tileset, &directOverlays]() {
+        [&tileset, &configuredOverlays]() {
             TileRenderPlanFrameRefresher::refresh(
                 tileset.tilePlan_,
                 tileset.contentAccess_,
-                directOverlays,
+                configuredOverlays,
                 TileRenderPlanFrameRefreshOptions{
                     tileset.interactionActiveForFrame_,
                     tileset.resourceSmoothingActiveForFrame_,
-                    tileset.options_.maximumScreenSpaceError});
+                    tileset.options_.maximumScreenSpaceError,
+                    false,
+                    -1,
+                    tileset.rasterOverlayRuntime_.frameContext()});
         },
         [&tileset, pPrepRenderer](
             const FrameState& selectionFrameState,
@@ -328,7 +333,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
                 .requestState()
                 .totalRequestCount(),
             rasterDiagnostics.rasterSourceRequestsInFlight,
-            rasterDiagnostics.rasterActiveMappedSourceSets,
+            rasterDiagnostics.rasterActiveDirectCompositeSourceSets,
             rasterDiagnostics.rasterPendingSourceFallbacks,
             rasterDiagnostics.rasterInFlightSourceTiles,
             rasterDiagnostics.rasterInFlightSourceWaiters,
@@ -346,7 +351,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             selectionWork.prefetchLoadQueueEarlyMapCount,
             selectionWork.prefetchEarlyMapBudgetExhausted,
             uploadWork.rasterUploadsProcessed,
-            uploadWork.rasterMappedUploadsProcessed,
+            uploadWork.rasterDirectCompositeUploadsProcessed,
             uploadWork.rasterUploadMaxMs,
             uploadWork.rasterUploadMaxWidth,
             uploadWork.rasterUploadMaxHeight,

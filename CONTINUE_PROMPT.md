@@ -94,7 +94,7 @@ FPS: ~15
 **问题 2：瓦片选择器在相机移动时 11-14ms（应该是 <1ms）**
 - 根因：`visitTile` 中调用 `TileSelectionRasterOverlayPreparer::prepare()`
 - 每个瓦片 0.58ms 来自 `TileRasterOverlayPrefetcher::prefetch()`
-- prefetch 内部调用 `overlay->ensureTileProvider()` + `mapped.update()`
+- prefetch 内部调用 `overlay->ensureTileProvider()` 并推进 Direct raster attachment 状态
 - **需要优化**：将栅格叠加预取从选择遍历中移出
 
 **问题 3：prefetch 在 Strict reuse 时仍然 3-10ms**

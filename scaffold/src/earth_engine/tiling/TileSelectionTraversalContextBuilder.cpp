@@ -1,6 +1,6 @@
 #include "TileSelectionTraversalContextBuilder.h"
 
-// TileContentAccess.h completes RasterMappedToTilesetTile, which the context's
+// TileContentAccess.h completes DirectRasterMapping, which the context's
 // value type transitively needs instantiated; keep it even though no symbol is
 // named directly here.
 #include "TileContentAccess.h"
@@ -21,7 +21,6 @@ TileSelectionTraversalContext TileSelectionTraversalContextBuilder::build(
         input.loadQueue,
         input.counters,
         input.options,
-        input.rasterOverlays,
         input.device,
         input.pPrepRenderer,
         input.frameResourceBudget,
@@ -33,7 +32,9 @@ TileSelectionTraversalContext TileSelectionTraversalContextBuilder::build(
         binding.occlusionUserData,
         binding.checkOcclusion,
         binding.onVisitTile,
-        binding.onVisitTileUserData};
+        binding.onVisitTileUserData,
+        {},
+        input.rasterFrame};
 }
 
 } // namespace earth_engine

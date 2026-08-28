@@ -22,7 +22,7 @@ namespace earth_engine {
 //   geomA=(origin.xy, span.x, 0)、geomB=(0, span.y) → g = origin + uv·span,
 //   与旧式逐位等价(+0 项被 IEEE 吸收)。
 // - 间接纹理单次整数 fetch 定位 array 层;RGBA8 解码 R+G·256;A 通道三态
-//   (0=miss 回落 mappedRaster / 128=影像驻留场 pending / 255=双就绪)。
+//   (0=miss 回落 directComposite / 128=影像驻留场 pending / 255=双就绪)。
 // - per-cell 渐变 LOD(§16.3):d>0 采粗祖先页;祖先子区原点必须在**全局**
 //   源瓦片下标上算(gGlobal = g + phase),否则 d>0 采错子区(块状棋盘格)。
 // - 影像 factor = step(0.3, A):128/255 都显影像(面走快路)。
@@ -54,7 +54,7 @@ namespace earth_engine {
 // vs per-instance 顶点属性流)与本函数解耦;某管线漏配某输入会在编译期
 // (缺实参)或对照测试(test_pipeline_feature_contracts)现形,而非上屏后
 // 时隐时现。
-//   base            : 已合成 mappedRaster 的底色
+//   base            : 已合成 directComposite 的底色
 //   uvIn            : 几何/texcoord UV(已完成 clip-remap,未 clamp)
 //   geomA/geomB     : 仿射系数 (c0.xy, dU.xy) / (dV.xy)
 //   phase           : 祖先寻址相位(x0/y0 mod 2^kMaxDetDepthLevels)

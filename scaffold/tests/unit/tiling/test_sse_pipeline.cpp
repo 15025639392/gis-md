@@ -73,6 +73,7 @@
 #include "earth_engine/tiling/TileSelectionFrameBuilder.h"
 #include "earth_engine/tiling/TileSelectionHistory.h"
 #include "earth_engine/tiling/TileSelectionInputMetrics.h"
+#include "../../helpers/RasterOverlayTestFrame.h"
 #include "earth_engine/tiling/TileSelectionKickPolicy.h"
 #include "earth_engine/tiling/TileSelectionMetrics.h"
 #include "earth_engine/tiling/TileSelectionPlanAppender.h"
@@ -302,7 +303,7 @@ struct TilesetTestAccess {
     static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
         return TileSelectionRasterOverlayPreparer::isRenderable(
             tile,
-            tileset.directRasterOverlays());
+            tileset.rasterOverlayRuntime().frameContext());
     }
     static void addTileToCurrentPlan(Tileset& tileset, TilesetTile& tile) {
         TileSelectionPlanAppender::addTileToCurrentPlan(
@@ -320,8 +321,8 @@ struct TilesetTestAccess {
         auto details =
             TileSelectionTraversalDetailsBuilder::forCulledTile(
                 tile,
-                tileset.directRasterOverlays(),
-                tileset.options_.forbidHoles);
+                tileset.options_.forbidHoles,
+                tileset.rasterOverlayRuntime().frameContext());
         return !details.allAreRenderable &&
                !details.anyWereRenderedLastFrame &&
                details.notYetRenderableCount == 1;
@@ -332,8 +333,8 @@ struct TilesetTestAccess {
         auto details =
             TileSelectionTraversalDetailsBuilder::forCulledTile(
                 tile,
-                tileset.directRasterOverlays(),
-                tileset.options_.forbidHoles);
+                tileset.options_.forbidHoles,
+                tileset.rasterOverlayRuntime().frameContext());
         return details.allAreRenderable &&
                !details.anyWereRenderedLastFrame &&
                details.notYetRenderableCount == 0;
@@ -343,7 +344,7 @@ struct TilesetTestAccess {
         const TilesetTile& tile) {
         return TileSelectionTraversalDetailsBuilder::forSingleTile(
             tile,
-            tileset.directRasterOverlays())
+            tileset.rasterOverlayRuntime().frameContext())
             .anyWereRenderedLastFrame;
     }
     // clip worker 化后上采样 clip 走 AsyncSystem::pool 异步:beginTerrainRequest
@@ -457,7 +458,7 @@ struct TilesetTestAccess {
                 tileset.directRasterOverlays());
         TileRasterOverlayPrefetcher::prefetch(
             tile,
-            tileset.directRasterOverlays(),
+            tileset.rasterOverlays(),
             overlayOrder,
             tileset.device_,
             tileset.options_.maximumScreenSpaceError,
@@ -772,7 +773,11 @@ struct TilesetTestAccess {
             tileset.directRasterOverlays(),
             TileRenderPlanFrameRefreshOptions{
                 tileset.interactionActiveForFrame_,
-                tileset.resourceSmoothingActiveForFrame_});
+                tileset.resourceSmoothingActiveForFrame_,
+                0.0,
+                false,
+                -1,
+                tileset.rasterOverlayRuntime().frameContext()});
     }
     static void setLastCamera(Tileset& tileset,
                               const Vec3& position,
@@ -2323,7 +2328,7 @@ void testBoundingSpherePlaneBoundaryMatchesCesiumNative() {
     check(sphere.intersectPlane(Plane(Vec3::unitX(), 1.0)) == 1,
           "BoundingSphere: positive tangent plane is inside like cesium-native");
 }
-void testRasterOverlayProviderMappedRasterTile() {
+void testRasterOverlayProviderDirectCompositeTile() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     auto geometryScheme = TileScheme::createGeographicTMS();
@@ -2331,19 +2336,19 @@ void testRasterOverlayProviderMappedRasterTile() {
     TileKey geometryKey{"Geographic-TMS", 2, 4, 2};
     Rectangle geometryBounds = geometryScheme->tileToRectangle(geometryKey);
     provider.setFrameNumber(1);
-    auto mappedRasterTile = provider.mapRasterTilesToGeometryTile(
+    auto directCompositeTile = provider.mapRasterTilesToGeometryTile(
         projectForProvider(provider, geometryBounds), 512.0, 512.0).tile;
-    check(mappedRasterTile != nullptr,
-          "RasterOverlayTileProvider: mapped raster tile is created");
-    check(mappedRasterTile && mappedRasterTile->isMappedRasterTile(),
-          "RasterOverlayTileProvider: mapped raster tile uses mapped source path");
-    check(mappedRasterTile &&
-              mappedRasterTile->getRectangle() ==
+    check(directCompositeTile != nullptr,
+          "RasterOverlayTileProvider: Direct raster mapping tile is created");
+    check(directCompositeTile && directCompositeTile->isDirectCompositeTile(),
+          "RasterOverlayTileProvider: Direct raster mapping tile uses Direct composite source path");
+    check(directCompositeTile &&
+              directCompositeTile->getRectangle() ==
                   projectForProvider(provider, geometryBounds),
-          "RasterOverlayTileProvider: mapped raster tile keeps geometry bounds");
-    check(mappedRasterTile && !mappedRasterTile->getCacheKey().empty() &&
-              mappedRasterTile->getCacheKey().find("mapped-raster/") == 0,
-          "RasterOverlayTileProvider: mapped raster tile uses mapped cache key");
+          "RasterOverlayTileProvider: Direct raster mapping tile keeps geometry bounds");
+    check(directCompositeTile && !directCompositeTile->getCacheKey().empty() &&
+              directCompositeTile->getCacheKey().find("direct-composite/") == 0,
+          "RasterOverlayTileProvider: Direct raster mapping tile uses Direct cache key");
     // cesium-native QuadtreeRasterOverlayTileProvider::computeLevelFromTargetScreenPixels:
     //   rasterPixels = screenPixels / MSE (= 512 / 2 = 256)
     //   rasterTiles = rasterPixels / tileSize (= 256 / 256 = 1.0)
@@ -2353,18 +2358,18 @@ void testRasterOverlayProviderMappedRasterTile() {
     //   level = log2(twoToTheLevelPower) = log2(2π / (45° in radians))
     //         = log2(6.283 / 0.785) = log2(8.0) = 3.0
     constexpr double kCesiumNativeLevel = 3.0;
-    check(mappedRasterTile &&
-              static_cast<double>(mappedRasterTile->getMappedSourceZoom()) ==
+    check(directCompositeTile &&
+              static_cast<double>(directCompositeTile->getDirectCompositeSourceZoom()) ==
                   kCesiumNativeLevel,
           "RasterOverlayTileProvider: source zoom matches cesium-native computeLevelFromTargetScreenPixels");
-    check(mappedRasterTile && mappedRasterTile->getTargetScreenPixelsX() == 512.0 &&
-              mappedRasterTile->getTargetScreenPixelsY() == 512.0,
+    check(directCompositeTile && directCompositeTile->getTargetScreenPixelsX() == 512.0 &&
+              directCompositeTile->getTargetScreenPixelsY() == 512.0,
           "RasterOverlayTileProvider: target screen pixels are retained");
     provider.setFrameNumber(122);
-    provider.markUsed(*mappedRasterTile);
+    provider.markUsed(*directCompositeTile);
     provider.trimUnusedTiles();
     check(provider.getCachedTileCount() == 1,
-          "RasterOverlayTileProvider: markUsed(tile) retains mapped raster tile");
+          "RasterOverlayTileProvider: markUsed(tile) retains Direct raster mapping tile");
 }
 void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
     DebugImageryProvider imagery;
@@ -2377,7 +2382,7 @@ void testRasterOverlayProviderDirectTileForExactProviderRectangle() {
     auto mappedTile = provider.mapRasterTilesToGeometryTile(projectForProvider(provider, bounds), 512.0, 512.0).tile;
     check(mappedTile != nullptr,
           "RasterOverlayTileProvider: exact provider rectangle creates a tile");
-    check(mappedTile && !mappedTile->isMappedRasterTile(),
+    check(mappedTile && !mappedTile->isDirectCompositeTile(),
           "RasterOverlayTileProvider: exact provider rectangle uses direct quadtree tile");
     check(mappedTile && mappedTile->getTileID() == key,
           "RasterOverlayTileProvider: direct fast path preserves quadtree key");
@@ -2476,7 +2481,7 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     const Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
@@ -2488,9 +2493,9 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
     config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget firstFrameBudget;
     firstFrameBudget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &firstFrameBudget) &&
-              mappedRasterTile->getState() ==
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &firstFrameBudget) &&
+              directCompositeTile->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
               firstFrameBudget.rasterNetworkRequestsIssued() > 2 &&
               imagery.pendingRequests.size() ==
@@ -2509,11 +2514,11 @@ void testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch() {
     FrameResourceBudget secondFrameBudget;
     secondFrameBudget.beginFrame(2, config);
     const size_t firstBatchSize = imagery.pendingRequests.size();
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &secondFrameBudget) &&
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &secondFrameBudget) &&
               imagery.pendingRequests.size() == firstBatchSize &&
               secondFrameBudget.rasterNetworkRequestsIssued() == 0,
-          "RasterOverlayTileProvider: loading mapped raster tiles skip redundant source requests once fanout is issued");
+          "RasterOverlayTileProvider: loading Direct raster mapping tiles skip redundant source requests once fanout is issued");
     const auto pendingRequests = imagery.pendingRequests;
     for (const auto& request : pendingRequests) {
         request.callback(request.key, makeDecodedRgbaImage(64, 64));
@@ -2535,7 +2540,7 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     const Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
@@ -2547,14 +2552,14 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
-              mappedRasterTile->getState() ==
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &budget) &&
+              directCompositeTile->getState() ==
                   RasterOverlayTile::LoadState::Loading &&
               imagery.pendingRequests.size() == 4,
           "RasterOverlayTileProvider: oversized quadtree source batch starts with budgeted fanout like cesium-native");
     check(budget.rasterNetworkRequestsIssued() == 4,
-          "RasterOverlayTileProvider: oversized mapped raster fanout is split by frame request budget");
+          "RasterOverlayTileProvider: oversized Direct raster mapping fanout is split by frame request budget");
     FrameResourceBudgetConfig secondConfig = config;
     secondConfig.maxNetworkInflight = 4;
     secondConfig.maxRasterNetworkInflight = 4;
@@ -2562,14 +2567,14 @@ void testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative() 
     secondBudget.beginFrame(2, secondConfig);
     const Rectangle independentSourceBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 3, 5, 3});
-    RasterOverlayTileProvider::TilePtr secondMappedRaster =
+    RasterOverlayTileProvider::TilePtr secondDirectComposite =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, independentSourceBounds),
             512.0,
             512.0).tile;
     const size_t firstBatchSize = imagery.pendingRequests.size();
-    check(secondMappedRaster &&
-              !provider.loadTileThrottled(*secondMappedRaster, &secondBudget) &&
+    check(secondDirectComposite &&
+              !provider.loadTileThrottled(*secondDirectComposite, &secondBudget) &&
               imagery.pendingRequests.size() == firstBatchSize,
           "RasterOverlayTileProvider: oversized raster batch still respects inflight pressure for later loads");
 }
@@ -2579,16 +2584,16 @@ void testRasterOverlayQuadtreeSourceRangeTrimsTileEdgeTouches() {
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 1024;
     config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              mappedRasterTile->getMappedSourceZoom() == 5 &&
-              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+    check(directCompositeTile &&
+              directCompositeTile->getDirectCompositeSourceZoom() == 5 &&
+              provider.loadTileThrottled(*directCompositeTile, &budget) &&
               imagery.pendingRequests.size() == 16,
           "RasterOverlayTileProvider: quadtree source range trims Cesium-native tile-edge touches");
     bool allInsideTrimmedRange = true;
@@ -2611,17 +2616,17 @@ void testRasterOverlayBaseQuadtreeSourceClampsCoverageEdgeMiss() {
     const Rectangle outsideCoverageBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 5});
     provider.setCoverageRectangle(coverageBounds);
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, outsideCoverageBounds), 512.0, 512.0).tile;
-    check(mappedRasterTile && mappedRasterTile->isMappedRasterTile(),
-          "RasterOverlayTileProvider: base imagery outside coverage creates a clamped mapped raster tile like cesium-native");
+    check(directCompositeTile && directCompositeTile->isDirectCompositeTile(),
+          "RasterOverlayTileProvider: base imagery outside coverage creates a clamped Direct raster mapping tile like cesium-native");
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 1024;
     config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: clamped coverage miss issues edge source requests");
     bool allRequestsTouchCoverage = true;
@@ -2640,15 +2645,15 @@ void testRasterOverlayCoverageIsConstrainedToTilingSchemeLikeCesiumNative() {
     provider.setCoverageRectangle(Rectangle::MAXIMUM);
     const Rectangle schemeBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 0, 0, 0});
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, Rectangle::MAXIMUM),
             512.0,
             512.0).tile;
-    check(mappedRasterTile && mappedRasterTile->isMappedRasterTile(),
-          "RasterOverlayTileProvider: maximum coverage creates mapped WebMercator raster");
-    check(mappedRasterTile &&
-              mappedRasterTile->getMappedSourceBounds().equalsEpsilon(
+    check(directCompositeTile && directCompositeTile->isDirectCompositeTile(),
+          "RasterOverlayTileProvider: maximum coverage creates Direct WebMercator raster");
+    check(directCompositeTile &&
+              directCompositeTile->getDirectCompositeSourceBounds().equalsEpsilon(
                   schemeBounds,
                   1e-12),
           "RasterOverlayTileProvider: provider coverage is constrained by tiling scheme like cesium-native");
@@ -2657,7 +2662,7 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(
                 provider,
@@ -2669,15 +2674,15 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
     config.maxRasterNetworkInflight = 1024;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &budget) &&
               !imagery.pendingRequests.empty(),
-          "RasterOverlayTileProvider: antimeridian mapped raster starts source requests");
-    if (!mappedRasterTile || imagery.pendingRequests.empty()) {
+          "RasterOverlayTileProvider: antimeridian Direct raster mapping starts source requests");
+    if (!directCompositeTile || imagery.pendingRequests.empty()) {
         return;
     }
     const int tileCountX =
-        imageryScheme->tileCountX(mappedRasterTile->getMappedSourceZoom());
+        imageryScheme->tileCountX(directCompositeTile->getDirectCompositeSourceZoom());
     bool onlyDatelineEdgeColumns = true;
     bool hasWesternEdge = false;
     bool hasEasternEdge = false;
@@ -2689,7 +2694,7 @@ void testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian() {
         hasEasternEdge = hasEasternEdge || easternEdge;
         onlyDatelineEdgeColumns =
             onlyDatelineEdgeColumns &&
-            request.key.z == mappedRasterTile->getMappedSourceZoom() &&
+            request.key.z == directCompositeTile->getDirectCompositeSourceZoom() &&
             (westernEdge || easternEdge);
     }
     check(onlyDatelineEdgeColumns && hasWesternEdge && hasEasternEdge,
@@ -2701,15 +2706,15 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
     config.maxRasterNetworkInflight = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &budget) &&
               imagery.pendingRequests.size() == 16,
           "RasterOverlayTileProvider: parent-fallback fixture starts with source tile requests");
     if (imagery.pendingRequests.empty()) return;
@@ -2736,14 +2741,14 @@ void testRasterOverlayQuadtreeSourceFailureRequestsParentSource() {
     check(requestedParent,
           "RasterOverlayTileProvider: failed source tile requests parent source like cesium-native");
 }
-void testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative() {
+void testRasterOverlayDirectCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setLevelRange(1, 1);
     const Rectangle geometryBounds =
         Rectangle::fromDegrees(-180.0, -60.0, 180.0, 60.0);
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, geometryBounds),
             512.0,
@@ -2754,11 +2759,11 @@ void testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative() 
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile && mappedRasterTile->isMappedRasterTile() &&
-              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+    check(directCompositeTile && directCompositeTile->isDirectCompositeTile() &&
+              provider.loadTileThrottled(*directCompositeTile, &budget) &&
               !imagery.pendingRequests.empty(),
-          "RasterOverlayTileProvider: failed-source fixture starts mapped source requests");
-    if (!mappedRasterTile || imagery.pendingRequests.empty()) {
+          "RasterOverlayTileProvider: failed-source fixture starts Direct composite source requests");
+    if (!directCompositeTile || imagery.pendingRequests.empty()) {
         return;
     }
     const auto pendingRequests = imagery.pendingRequests;
@@ -2775,17 +2780,17 @@ void testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative() 
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(2, config);
     processPendingRasterUploadsUntil(provider, 1, &uploadBudget);
-    check(mappedRasterTile->getState() == RasterOverlayTile::LoadState::Loaded &&
-              mappedRasterTile->getTexture() == nullptr &&
-              mappedRasterTile->isMoreDetailAvailable() ==
+    check(directCompositeTile->getState() == RasterOverlayTile::LoadState::Loaded &&
+              directCompositeTile->getTexture() == nullptr &&
+              directCompositeTile->isMoreDetailAvailable() ==
                   RasterOverlayTile::MoreDetailAvailable::No,
-          "RasterOverlayTileProvider: all-failed mapped sources load empty imagery like cesium-native");
-    check(provider.loadTileThrottled(*mappedRasterTile, &uploadBudget) &&
+          "RasterOverlayTileProvider: all-failed Direct composite sources load empty imagery like cesium-native");
+    check(provider.loadTileThrottled(*directCompositeTile, &uploadBudget) &&
               provider.requestDiagnostics().externalResourceRequestsFailed ==
                   failedDiag.externalResourceRequestsFailed &&
               provider.requestDiagnostics().externalResourceRequestsCompleted ==
                   failedDiag.externalResourceRequestsCompleted,
-          "RasterOverlayTileProvider: loaded failed-source mapped raster does not replay terminal source requests");
+          "RasterOverlayTileProvider: loaded failed-source Direct raster mapping does not replay terminal source requests");
 }
 void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
     PendingRectangleImageryProvider imagery;
@@ -2797,7 +2802,7 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
         std::move(uploader));
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, sourceAlignedBounds), 512.0, 512.0).tile;
     FrameResourceBudgetConfig config;
     config.maxRasterNetworkRequestsPerFrame = 64;
@@ -2805,8 +2810,8 @@ void testRasterOverlayFallbackParentInFlightSharesDirectAsset() {
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: fallback-share fixture starts child source requests");
     if (imagery.pendingRequests.empty()) return;
@@ -2853,7 +2858,7 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
         std::move(uploader));
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
@@ -2864,11 +2869,11 @@ void testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache() {
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: child-cache retry fixture starts child source requests");
-    if (!mappedRasterTile || imagery.pendingRequests.empty()) return;
+    if (!directCompositeTile || imagery.pendingRequests.empty()) return;
     const TileKey failedSource = imagery.pendingRequests.front().key;
     imagery.pendingRequests.front().callback(failedSource, nullptr);
     const TileKey parentKey{
@@ -3046,7 +3051,7 @@ void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
         std::move(uploader));
     Rectangle sourceAlignedBounds = imageryScheme->tileToRectangle(
         TileKey{"XYZ-WebMercator", 3, 2, 3});
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, sourceAlignedBounds),
             512.0,
@@ -3057,11 +3062,11 @@ void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &budget) &&
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: abandoned-fallback fixture starts child source requests");
-    if (!mappedRasterTile || imagery.pendingRequests.empty()) return;
+    if (!directCompositeTile || imagery.pendingRequests.empty()) return;
     const TileKey failedSource = imagery.pendingRequests.front().key;
     imagery.pendingRequests.front().callback(failedSource, nullptr);
     const int matchingSourceRequestsBefore =
@@ -3077,7 +3082,7 @@ void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
     FrameResourceBudget directBudget;
     directBudget.beginFrame(2, config);
     check(directTile && provider.loadTileThrottled(*directTile, &directBudget),
-          "RasterOverlayTileProvider: direct source load starts after mapped fallback abandonment");
+          "RasterOverlayTileProvider: direct source load starts after Direct composite fallback abandonment");
     const int matchingSourceRequestsAfter =
         static_cast<int>(std::count_if(
             imagery.pendingRequests.begin(),
@@ -3086,9 +3091,9 @@ void testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight() {
                 return request.key == failedSource;
             }));
     check(matchingSourceRequestsAfter == matchingSourceRequestsBefore + 1,
-          "RasterOverlayTileProvider: abandoned mapped fallback clears stale shared source in-flight");
+          "RasterOverlayTileProvider: abandoned Direct composite fallback clears stale shared source in-flight");
 }
-void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
+void testRasterOverlayDirectTileJoinsDirectCompositeSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<SlowRasterTextureUploader>();
@@ -3098,7 +3103,7 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
         std::move(uploader));
     Rectangle broadBounds =
         Rectangle::fromDegrees(-170.0, -70.0, 170.0, 70.0);
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, broadBounds),
             1024.0,
@@ -3107,12 +3112,12 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
     config.maxRasterNetworkRequestsPerFrame = 1024;
     config.maxRasterNetworkInflight = 1024;
     config.maxRasterUploadsPerFrame = 1024;
-    FrameResourceBudget mappedRasterBudget;
-    mappedRasterBudget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &mappedRasterBudget) &&
+    FrameResourceBudget directCompositeBudget;
+    directCompositeBudget.beginFrame(1, config);
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &directCompositeBudget) &&
               !imagery.pendingRequests.empty(),
-          "RasterOverlayTileProvider: mapped source sharing fixture starts source requests");
+          "RasterOverlayTileProvider: Direct composite source sharing fixture starts source requests");
     if (imagery.pendingRequests.empty()) return;
     const TileKey sharedSourceKey = imagery.pendingRequests.front().key;
     RasterOverlayTileProvider::TilePtr directTile =
@@ -3121,9 +3126,9 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
     directBudget.beginFrame(2, config);
     check(directTile &&
               provider.loadTileThrottled(*directTile, &directBudget),
-          "RasterOverlayTileProvider: direct tile joins mapped source in-flight");
+          "RasterOverlayTileProvider: direct tile joins Direct composite source in-flight");
     check(directBudget.rasterNetworkRequestsIssued() == 0,
-          "RasterOverlayTileProvider: direct tile joining mapped source in-flight does not consume raster request budget");
+          "RasterOverlayTileProvider: direct tile joining Direct composite source in-flight does not consume raster request budget");
     const int matchingRequests =
         static_cast<int>(std::count_if(
             imagery.pendingRequests.begin(),
@@ -3132,7 +3137,7 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
                 return request.key == sharedSourceKey;
             }));
     check(matchingRequests == 1,
-          "RasterOverlayTileProvider: mapped raster and direct tile share one imagery request like cesium-native SharedAssetDepot");
+          "RasterOverlayTileProvider: Direct raster mapping and direct tile share one imagery request like cesium-native SharedAssetDepot");
     imagery.pendingRequests.front().callback(
         sharedSourceKey,
         makeDecodedRgbaImage(64, 64));
@@ -3140,7 +3145,7 @@ void testRasterOverlayDirectTileJoinsMappedSourceInFlight() {
     uploadBudget.beginFrame(3, config);
     provider.processPendingUploads(false, &uploadBudget);
     check(directTile->getState() == RasterOverlayTile::LoadState::Loaded,
-          "RasterOverlayTileProvider: direct tile loads from shared mapped source");
+          "RasterOverlayTileProvider: direct tile loads from shared Direct composite source");
     check(directTile->getTexture() != nullptr,
           "RasterOverlayTileProvider: direct tile receives texture from shared source upload");
 }
@@ -3160,7 +3165,7 @@ void testRasterOverlaySourceCallbackSurvivesProviderDestruction() {
         nullptr);
     Rectangle broadBounds =
         Rectangle::fromDegrees(-170.0, -70.0, 170.0, 70.0);
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider->mapRasterTilesToGeometryTile(
             projectForProvider(*provider, broadBounds),
             1024.0,
@@ -3171,14 +3176,14 @@ void testRasterOverlaySourceCallbackSurvivesProviderDestruction() {
     config.maxRasterUploadsPerFrame = 1024;
     FrameResourceBudget budget;
     budget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider->loadTileThrottled(*mappedRasterTile, &budget) &&
+    check(directCompositeTile &&
+              provider->loadTileThrottled(*directCompositeTile, &budget) &&
               !imagery.pendingRequests.empty(),
           "RasterOverlayTileProvider: teardown-race fixture starts source request");
     if (imagery.pendingRequests.empty()) return;
     PendingRectangleImageryProvider::PendingRequest held =
         imagery.pendingRequests.front();
-    mappedRasterTile.reset();
+    directCompositeTile.reset();
     provider.reset();
     imageryScheme.reset();
     // 失败送达 → alive==false 分支 → abandoned 结果(修前在此摸死 scheme)。
@@ -3188,7 +3193,7 @@ void testRasterOverlaySourceCallbackSurvivesProviderDestruction() {
     check(true,
           "RasterOverlayTileProvider: source callback delivered after provider+scheme destruction lands safely");
 }
-void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
+void testRasterOverlayDirectTileUsesCachedDirectCompositeSourceWithoutRequestBudget() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<SlowRasterTextureUploader>();
@@ -3198,7 +3203,7 @@ void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
         std::move(uploader));
     const TileKey geometryKey{imageryScheme->id(), 3, 2, 3};
     const Rectangle sourceBounds = imageryScheme->tileToRectangle(geometryKey);
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, sourceBounds),
             512.0,
@@ -3209,11 +3214,11 @@ void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
     config.maxRasterUploadsPerFrame = 64;
     FrameResourceBudget mappedBudget;
     mappedBudget.beginFrame(1, config);
-    check(mappedRasterTile &&
-              provider.loadTileThrottled(*mappedRasterTile, &mappedBudget) &&
+    check(directCompositeTile &&
+              provider.loadTileThrottled(*directCompositeTile, &mappedBudget) &&
               !imagery.pendingRequests.empty(),
-          "RasterOverlayTileProvider: cached-source fixture starts mapped source request");
-    if (!mappedRasterTile || imagery.pendingRequests.empty()) {
+          "RasterOverlayTileProvider: cached-source fixture starts Direct composite source request");
+    if (!directCompositeTile || imagery.pendingRequests.empty()) {
         return;
     }
     const TileKey sourceKey = imagery.pendingRequests.front().key;
@@ -3224,26 +3229,26 @@ void testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget() {
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(2, config);
     processPendingRasterUploadsUntil(provider, 1, &uploadBudget);
-    check(mappedRasterTile->getState() == RasterOverlayTile::LoadState::Loaded,
-          "RasterOverlayTileProvider: cached-source fixture loads mapped raster tile");
+    check(directCompositeTile->getState() == RasterOverlayTile::LoadState::Loaded,
+          "RasterOverlayTileProvider: cached-source fixture loads Direct raster mapping tile");
     RasterOverlayTileProvider::TilePtr directTile = provider.getTile(sourceKey);
     FrameResourceBudget directBudget;
     directBudget.beginFrame(3, config);
     check(directTile &&
               provider.loadTileThrottled(*directTile, &directBudget),
-          "RasterOverlayTileProvider: direct tile reuses cached mapped source asset");
+          "RasterOverlayTileProvider: direct tile reuses cached Direct composite source asset");
     check(directBudget.rasterNetworkRequestsIssued() == 0,
-          "RasterOverlayTileProvider: cached mapped source asset does not consume raster request budget");
+          "RasterOverlayTileProvider: cached Direct composite source asset does not consume raster request budget");
     check(imagery.pendingRequests.size() == pendingRequests.size(),
-          "RasterOverlayTileProvider: cached mapped source asset does not start another imagery request");
+          "RasterOverlayTileProvider: cached Direct composite source asset does not start another imagery request");
     FrameResourceBudget directUploadBudget;
     directUploadBudget.beginFrame(4, config);
     provider.processPendingUploads(false, &directUploadBudget);
     check(directTile->getState() == RasterOverlayTile::LoadState::Loaded &&
               directTile->getTexture() != nullptr,
-          "RasterOverlayTileProvider: direct tile uploads from cached mapped source asset");
+          "RasterOverlayTileProvider: direct tile uploads from cached Direct composite source asset");
 }
-void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
+void testRasterOverlayDirectCompositeTilesShareSourceInFlight() {
     PendingRectangleImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     auto uploader = std::make_unique<SlowRasterTextureUploader>();
@@ -3265,12 +3270,12 @@ void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
             sharedSourceBounds.south(),
             sharedSourceBounds.east(),
             sharedSourceBounds.north());
-    RasterOverlayTileProvider::TilePtr westMappedRaster =
+    RasterOverlayTileProvider::TilePtr westDirectComposite =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, westHalf),
             512.0,
             512.0).tile;
-    RasterOverlayTileProvider::TilePtr eastMappedRaster =
+    RasterOverlayTileProvider::TilePtr eastDirectComposite =
         provider.mapRasterTilesToGeometryTile(
             projectForProvider(provider, eastHalf),
             512.0,
@@ -3283,25 +3288,25 @@ void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
     westBudget.beginFrame(1, config);
     FrameResourceBudget eastBudget;
     eastBudget.beginFrame(2, config);
-    check(westMappedRaster && westMappedRaster->isMappedRasterTile() &&
-              eastMappedRaster && eastMappedRaster->isMappedRasterTile() &&
-              provider.loadTileThrottled(*westMappedRaster, &westBudget) &&
-              provider.loadTileThrottled(*eastMappedRaster, &eastBudget),
-          "RasterOverlayTileProvider: overlapping mapped raster fixtures start loading");
-    if (!westMappedRaster || !eastMappedRaster || imagery.pendingRequests.empty()) {
+    check(westDirectComposite && westDirectComposite->isDirectCompositeTile() &&
+              eastDirectComposite && eastDirectComposite->isDirectCompositeTile() &&
+              provider.loadTileThrottled(*westDirectComposite, &westBudget) &&
+              provider.loadTileThrottled(*eastDirectComposite, &eastBudget),
+          "RasterOverlayTileProvider: overlapping Direct raster mapping fixtures start loading");
+    if (!westDirectComposite || !eastDirectComposite || imagery.pendingRequests.empty()) {
         return;
     }
-    check(westMappedRaster->getMappedSourceZoom() == eastMappedRaster->getMappedSourceZoom() &&
+    check(westDirectComposite->getDirectCompositeSourceZoom() == eastDirectComposite->getDirectCompositeSourceZoom() &&
               westBudget.rasterNetworkRequestsIssued() == 12 &&
               eastBudget.rasterNetworkRequestsIssued() == 4 &&
               imagery.pendingRequests.size() == 16,
-          "RasterOverlayTileProvider: mapped raster geometry tiles share one source imagery request");
+          "RasterOverlayTileProvider: Direct raster mapping geometry tiles share one source imagery request");
     check(provider.requestDiagnostics().externalResourceRequestsStarted ==
               static_cast<int>(imagery.pendingRequests.size()),
-          "RasterOverlayTileProvider: diagnostics count shared mapped source requests once");
+          "RasterOverlayTileProvider: diagnostics count shared Direct composite source requests once");
     check(provider.requestDiagnostics().peakExternalResourceBlockingRequests ==
               static_cast<int>(imagery.pendingRequests.size()),
-          "RasterOverlayTileProvider: diagnostics keep mapped source fanout peak");
+          "RasterOverlayTileProvider: diagnostics keep Direct composite source fanout peak");
     const auto pendingRequests = imagery.pendingRequests;
     for (const auto& request : pendingRequests) {
         request.callback(request.key, makeDecodedRgbaImage(64, 64));
@@ -3309,9 +3314,9 @@ void testRasterOverlayMappedRasterTilesShareSourceInFlight() {
     FrameResourceBudget uploadBudget;
     uploadBudget.beginFrame(3, config);
     processPendingRasterUploadsUntil(provider, 2, &uploadBudget);
-    check(westMappedRaster->getState() == RasterOverlayTile::LoadState::Loaded &&
-              eastMappedRaster->getState() == RasterOverlayTile::LoadState::Loaded,
-          "RasterOverlayTileProvider: both mapped raster tiles resolve from shared source assets");
+    check(westDirectComposite->getState() == RasterOverlayTile::LoadState::Loaded &&
+              eastDirectComposite->getState() == RasterOverlayTile::LoadState::Loaded,
+          "RasterOverlayTileProvider: both Direct raster mapping tiles resolve from shared source assets");
 }
 void testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize() {
     PendingRectangleImageryProvider imagery;
@@ -3319,9 +3324,9 @@ void testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize() {
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     const Rectangle rootBounds = imageryScheme->tileToRectangle(
         TileKey{imageryScheme->id(), 0, 0, 0});
-    RasterOverlayTileProvider::TilePtr mappedRasterTile =
+    RasterOverlayTileProvider::TilePtr directCompositeTile =
         provider.mapRasterTilesToGeometryTile(projectForProvider(provider, rootBounds), 131072.0, 131072.0).tile;
-    check(mappedRasterTile && mappedRasterTile->getMappedSourceZoom() == 5,
+    check(directCompositeTile && directCompositeTile->getDirectCompositeSourceZoom() == 5,
           "RasterOverlayTileProvider: quadtree source zoom is reduced until combined texture fits like cesium-native");
 }
 void testRasterOverlayUploadsStopAfterElapsedBudgetExpires() {
@@ -3411,7 +3416,7 @@ void testRasterOverlayPendingUploadSurvivesSourceCacheEviction() {
               provider.getPendingUploadCount() == 0,
           "RasterOverlayTileProvider: pending upload keeps source image alive after cache eviction");
 }
-void testRasterMappedUsesRenderContentDetailsRectangle() {
+void testRasterDirectCompositeUsesRenderContentDetailsRectangle() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -3420,10 +3425,10 @@ void testRasterMappedUsesRenderContentDetailsRectangle() {
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
     RasterOverlayDetails details =
         makeProviderDetails(*imageryScheme, preciseRectangle);
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
-    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+    const DirectRasterMapping::MoreDetail moreDetail = mapped.update(
         geometryKey,
         details,
         512.0,
@@ -3433,25 +3438,25 @@ void testRasterMappedUsesRenderContentDetailsRectangle() {
         missingProjections,
         nullptr,
         0);
-    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: unloaded details tile reports unknown detail");
+    check(moreDetail == DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: unloaded details tile reports unknown detail");
     check(mapped.getLoadingTile() != nullptr &&
               mapped.getLoadingTile()->getRectangle() ==
                   projectForProvider(provider, preciseRectangle),
-          "RasterMappedToTilesetTile: mapOverlayToTile uses render-content rectangle");
+          "DirectRasterMapping: mapOverlayToTile uses render-content rectangle");
     check(missingProjections.empty(),
-          "RasterMappedToTilesetTile: existing projection is not reported missing");
+          "DirectRasterMapping: existing projection is not reported missing");
 }
-void testRasterMappedMissingProjectionUsesPlaceholder() {
+void testRasterDirectCompositeMissingProjectionUsesPlaceholder() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setFrameNumber(1);
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     RasterOverlayDetails emptyDetails;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
-    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+    const DirectRasterMapping::MoreDetail moreDetail = mapped.update(
         geometryKey,
         emptyDetails,
         512.0,
@@ -3461,19 +3466,19 @@ void testRasterMappedMissingProjectionUsesPlaceholder() {
         missingProjections,
         nullptr,
         0);
-    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
-          "RasterMappedToTilesetTile: missing projection placeholder does not request detail");
+    check(moreDetail == DirectRasterMapping::MoreDetail::No,
+          "DirectRasterMapping: missing projection placeholder does not request detail");
     check(mapped.getLoadingTile() != nullptr &&
               mapped.getLoadingTile()->getState() ==
                   RasterOverlayTile::LoadState::Placeholder,
-          "RasterMappedToTilesetTile: missing projection maps to placeholder");
+          "DirectRasterMapping: missing projection maps to placeholder");
     check(missingProjections.size() == 1 &&
               missingProjections.front() == RasterOverlayProjection::WebMercator,
-          "RasterMappedToTilesetTile: missing projection is recorded");
+          "DirectRasterMapping: missing projection is recorded");
     check(provider.getCachedTileCount() == 0,
-          "RasterMappedToTilesetTile: missing projection does not create synthetic tile");
+          "DirectRasterMapping: missing projection does not create synthetic tile");
 }
-void testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection() {
+void testRasterDirectCompositeProviderNotReadyUsesPlaceholderWithoutMissingProjection() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -3482,10 +3487,10 @@ void testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection() {
     RasterOverlayDetails details = makeProviderDetails(
         *imageryScheme,
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0));
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
-    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+    const DirectRasterMapping::MoreDetail moreDetail = mapped.update(
         geometryKey,
         details,
         512.0,
@@ -3495,22 +3500,22 @@ void testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection() {
         missingProjections,
         nullptr,
         0);
-    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
-          "RasterMappedToTilesetTile: provider-not-ready placeholder does not request detail");
+    check(moreDetail == DirectRasterMapping::MoreDetail::No,
+          "DirectRasterMapping: provider-not-ready placeholder does not request detail");
     check(mapped.getLoadingTile() != nullptr &&
               mapped.getLoadingTile()->getState() ==
                   RasterOverlayTile::LoadState::Placeholder,
-          "RasterMappedToTilesetTile: provider-not-ready maps to placeholder");
+          "DirectRasterMapping: provider-not-ready maps to placeholder");
     check(mapped.getTextureCoordinateID() == -1,
-          "RasterMappedToTilesetTile: provider-not-ready placeholder has no texture coordinate ID");
+          "DirectRasterMapping: provider-not-ready placeholder has no texture coordinate ID");
     check(mapped.loadThrottled(provider),
-          "RasterMappedToTilesetTile: provider-not-ready placeholder load is a no-op success");
+          "DirectRasterMapping: provider-not-ready placeholder load is a no-op success");
     check(missingProjections.empty(),
-          "RasterMappedToTilesetTile: provider-not-ready does not report missing projection");
+          "DirectRasterMapping: provider-not-ready does not report missing projection");
     check(provider.getCachedTileCount() == 0,
-          "RasterMappedToTilesetTile: provider-not-ready does not create a cache tile");
+          "DirectRasterMapping: provider-not-ready does not create a cache tile");
 }
-void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
+void testRasterDirectCompositePlaceholderRemapsWhenProviderBecomesReady() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -3520,7 +3525,7 @@ void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
     RasterOverlayDetails details =
         makeProviderDetails(*imageryScheme, preciseRectangle);
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
     mapped.update(
@@ -3545,21 +3550,21 @@ void testRasterMappedPlaceholderRemapsWhenProviderBecomesReady() {
         missingProjections,
         nullptr,
         0);
-    check(remapped == RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: provider-ready placeholder remaps to loading real tile");
+    check(remapped == DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: provider-ready placeholder remaps to loading real tile");
     check(mapped.getLoadingTile() != nullptr &&
-              mapped.getLoadingTile()->isMappedRasterTile() &&
+              mapped.getLoadingTile()->isDirectCompositeTile() &&
               mapped.getLoadingTile()->getRectangle() ==
                   projectForProvider(provider, preciseRectangle),
-          "RasterMappedToTilesetTile: remapped placeholder requests precise rectangle");
+          "DirectRasterMapping: remapped placeholder requests precise rectangle");
     check(mapped.getTextureCoordinateID() == 0,
-          "RasterMappedToTilesetTile: remapped placeholder restores texture coordinate ID");
+          "DirectRasterMapping: remapped placeholder restores texture coordinate ID");
     check(missingProjections.empty(),
-          "RasterMappedToTilesetTile: remapped placeholder does not report missing projection");
+          "DirectRasterMapping: remapped placeholder does not report missing projection");
     check(provider.getCachedTileCount() == 1,
-          "RasterMappedToTilesetTile: remapped placeholder creates one real cache tile");
+          "DirectRasterMapping: remapped placeholder creates one real cache tile");
 }
-void testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID() {
+void testRasterDirectCompositeLoadedContentMissingProjectionOffsetsTextureCoordinateID() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -3567,10 +3572,10 @@ void testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID() 
     RasterOverlayDetails staleDetails;
     staleDetails.rasterOverlayProjections.push_back(
         RasterOverlayProjection::Geographic);
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
-    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+    const DirectRasterMapping::MoreDetail moreDetail = mapped.update(
         geometryKey,
         staleDetails,
         512.0,
@@ -3580,28 +3585,28 @@ void testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID() 
         missingProjections,
         nullptr,
         0);
-    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::No,
-          "RasterMappedToTilesetTile: stale render details use placeholder");
+    check(moreDetail == DirectRasterMapping::MoreDetail::No,
+          "DirectRasterMapping: stale render details use placeholder");
     check(mapped.getLoadingTile() != nullptr &&
               mapped.getLoadingTile()->getState() ==
                   RasterOverlayTile::LoadState::Placeholder,
-          "RasterMappedToTilesetTile: stale render details do not request wrong imagery");
+          "DirectRasterMapping: stale render details do not request wrong imagery");
     check(mapped.getTextureCoordinateID() == 1,
-          "RasterMappedToTilesetTile: missing projection texture coordinate ID follows existing details");
+          "DirectRasterMapping: missing projection texture coordinate ID follows existing details");
     check(mapped.loadThrottled(provider),
-          "RasterMappedToTilesetTile: missing-projection placeholder load is a no-op success");
+          "DirectRasterMapping: missing-projection placeholder load is a no-op success");
     check(missingProjections.size() == 1 &&
               missingProjections.front() == RasterOverlayProjection::WebMercator,
-          "RasterMappedToTilesetTile: stale render details record missing projection");
+          "DirectRasterMapping: stale render details record missing projection");
     check(provider.getCachedTileCount() == 0,
-          "RasterMappedToTilesetTile: stale render details do not create a cache tile");
+          "DirectRasterMapping: stale render details do not create a cache tile");
 }
-void testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle() {
+void testRasterDirectCompositeBoundingRegionWithoutRenderContentUsesPreciseRectangle() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
     provider.setFrameNumber(1);
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     RasterOverlayDetails emptyDetails;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 4, 8, 8};
@@ -3610,7 +3615,7 @@ void testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle() {
     const Rectangle projectedRectangle = projectRectangleSimple(
         WebMercatorProjection(Ellipsoid::WGS84()),
         regionRectangle);
-    const RasterMappedToTilesetTile::MoreDetail moreDetail = mapped.update(
+    const DirectRasterMapping::MoreDetail moreDetail = mapped.update(
         geometryKey,
         emptyDetails,
         512.0,
@@ -3622,19 +3627,19 @@ void testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle() {
         0,
         false,
         projectedRectangle);
-    check(moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: bounding region without render details maps first detail");
+    check(moreDetail == DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: bounding region without render details maps first detail");
     check(mapped.getLoadingTile() != nullptr &&
               mapped.getLoadingTile()->getState() ==
                   RasterOverlayTile::LoadState::Unloaded,
-          "RasterMappedToTilesetTile: bounding region without render details maps to a real tile");
+          "DirectRasterMapping: bounding region without render details maps to a real tile");
     check(mapped.getTextureCoordinateID() == 0,
-          "RasterMappedToTilesetTile: bounding region missing projection gets first texture coordinate ID");
+          "DirectRasterMapping: bounding region missing projection gets first texture coordinate ID");
     check(missingProjections.size() == 1 &&
               missingProjections.front() == RasterOverlayProjection::WebMercator,
-          "RasterMappedToTilesetTile: bounding region records projection needed by later render content");
+          "DirectRasterMapping: bounding region records projection needed by later render content");
     check(provider.getCachedTileCount() == 1,
-          "RasterMappedToTilesetTile: bounding region without render details creates one cache tile");
+          "DirectRasterMapping: bounding region without render details creates one cache tile");
     check(mapped.getLoadingTile() &&
               std::abs(mapped.getLoadingTile()->getRectangle().west() -
                        projectedRectangle.west()) < 1e-12 &&
@@ -3644,9 +3649,9 @@ void testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle() {
                        projectedRectangle.east()) < 1e-12 &&
               std::abs(mapped.getLoadingTile()->getRectangle().north() -
                        projectedRectangle.north()) < 1e-12,
-          "RasterMappedToTilesetTile: bounding region request uses projected precise rectangle");
+          "DirectRasterMapping: bounding region request uses projected precise rectangle");
 }
-void testRasterMappedAttachedUnknownReportsMoreDetail() {
+void testRasterDirectCompositeAttachedUnknownReportsMoreDetail() {
     DebugImageryProvider imagery;
     auto imageryScheme = TileScheme::createXYZWebMercator();
     RasterOverlayTileProvider provider(imagery, *imageryScheme, nullptr);
@@ -3654,7 +3659,7 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
     RasterOverlayDetails details = makeProviderDetails(
         *imageryScheme,
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
     const auto firstUpdate = mapped.update(
@@ -3667,9 +3672,9 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
         missingProjections,
         nullptr,
         0);
-    check(firstUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown &&
+    check(firstUpdate == DirectRasterMapping::MoreDetail::Unknown &&
               mapped.getLoadingTile() != nullptr,
-          "RasterMappedToTilesetTile: unloaded tile reports unknown detail");
+          "DirectRasterMapping: unloaded tile reports unknown detail");
     RasterOverlayTile* loadingTile = mapped.getLoadingTile();
     loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
     const auto promotedUpdate = mapped.update(
@@ -3682,10 +3687,10 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
         missingProjections,
         nullptr,
         0);
-    check(promotedUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown &&
-              mapped.getState() == RasterMappedToTilesetTile::State::Unattached &&
+    check(promotedUpdate == DirectRasterMapping::MoreDetail::Unknown &&
+              mapped.getState() == DirectRasterMapping::State::Unattached &&
               mapped.getReadyTile() == loadingTile,
-          "RasterMappedToTilesetTile: no-renderer promotion is cover-ready but not attached");
+          "DirectRasterMapping: no-renderer promotion is cover-ready but not attached");
     RecordingPrepareRendererResources prepResources;
     const auto rendererUpdate = mapped.update(
         geometryKey,
@@ -3697,12 +3702,12 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
         missingProjections,
         nullptr,
         0);
-    check(rendererUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown &&
-              mapped.getState() == RasterMappedToTilesetTile::State::Attached &&
+    check(rendererUpdate == DirectRasterMapping::MoreDetail::Unknown &&
+              mapped.getState() == DirectRasterMapping::State::Attached &&
               prepResources.attachCount == 1 &&
               prepResources.lastRasterTile.get() == loadingTile &&
               prepResources.lastTexture == loadingTile->getTexture(),
-          "RasterMappedToTilesetTile: resource prep is notified for promoted ready raster");
+          "DirectRasterMapping: resource prep is notified for promoted ready raster");
     const auto attachedUpdate = mapped.update(
         geometryKey,
         details,
@@ -3713,12 +3718,12 @@ void testRasterMappedAttachedUnknownReportsMoreDetail() {
         missingProjections,
         nullptr,
         0);
-    check(attachedUpdate == RasterMappedToTilesetTile::MoreDetail::Yes,
-          "RasterMappedToTilesetTile: Attached fast path treats Unknown as more detail like cesium-native");
+    check(attachedUpdate == DirectRasterMapping::MoreDetail::Yes,
+          "DirectRasterMapping: Attached fast path treats Unknown as more detail like cesium-native");
     check(!mapped.isMoreDetailAvailable(),
-          "RasterMappedToTilesetTile: bool upsample query still requires explicit Yes");
+          "DirectRasterMapping: bool upsample query still requires explicit Yes");
 }
-void testRasterMappedFailureFallbackMatchesOverlayOwner() {
+void testRasterDirectCompositeFailureFallbackMatchesOverlayOwner() {
     auto overlayA = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -3753,7 +3758,7 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
         &parent);
     parent.rasterOverlayState.mappings().resize(2);
-    auto wrongOwner = std::make_unique<RasterMappedToTilesetTile>();
+    auto wrongOwner = std::make_unique<DirectRasterMapping>();
     std::vector<RasterOverlayProjection> wrongMissing;
     wrongOwner->update(
         parent.key,
@@ -3780,7 +3785,7 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         0);
     RasterOverlayTile* wrongReady = wrongOwner->getReadyTile();
     parent.rasterOverlayState.mappings()[0] = std::move(wrongOwner);
-    auto matchingOwner = std::make_unique<RasterMappedToTilesetTile>();
+    auto matchingOwner = std::make_unique<DirectRasterMapping>();
     std::vector<RasterOverlayProjection> matchingMissing;
     matchingOwner->update(
         parent.key,
@@ -3808,7 +3813,7 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         1);
     RasterOverlayTile* matchingReady = matchingOwner->getReadyTile();
     parent.rasterOverlayState.mappings()[1] = std::move(matchingOwner);
-    RasterMappedToTilesetTile childMapped;
+    DirectRasterMapping childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
         child.key,
@@ -3833,23 +3838,23 @@ void testRasterMappedFailureFallbackMatchesOverlayOwner() {
         childMissing,
         &parent,
         0);
-    check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::No,
-          "RasterMappedToTilesetTile: original failed tile suppresses more-detail subdivision");
+    check(fallbackUpdate == DirectRasterMapping::MoreDetail::No,
+          "DirectRasterMapping: original failed tile suppresses more-detail subdivision");
     check(childMapped.getReadyTile() == matchingReady &&
               childMapped.getReadyTile() != wrongReady,
-          "RasterMappedToTilesetTile: failure fallback selects ancestor raster by owner, not slot index");
+          "DirectRasterMapping: failure fallback selects ancestor raster by owner, not slot index");
     check(childMapped.getLoadingTile() == nullptr,
-          "RasterMappedToTilesetTile: owner-matched loaded ancestor is promoted to ready");
+          "DirectRasterMapping: owner-matched loaded ancestor is promoted to ready");
     check(std::abs(childMapped.getTranslationU() - 0.0f) < 1e-6f &&
               std::abs(childMapped.getTranslationV() - 0.0f) < 1e-6f &&
               std::abs(childMapped.getScaleU() - 0.5f) < 1e-6f &&
               std::abs(childMapped.getScaleV() - 0.5f) < 1e-6f,
-          "RasterMappedToTilesetTile: ancestor imagery UV window covers child geometry");
+          "DirectRasterMapping: ancestor imagery UV window covers child geometry");
 }
-void testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking() {
+void testRasterDirectCompositeFailedTileWithoutAncestorBecomesReadyNonBlocking() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
-        TileScheme::createXYZWebMercator(),
+        TileScheme::createGeographicTMS(),
         makeRasterOverlayOptions());
     RasterOverlayTileProvider provider(
         overlay->getProvider(),
@@ -3860,7 +3865,7 @@ void testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking() {
     RasterOverlayDetails details;
     details.setGeographicRectangle(
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
     mapped.update(
@@ -3887,16 +3892,16 @@ void testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking() {
         missingProjections,
         nullptr,
         0);
-    check(failedUpdate == RasterMappedToTilesetTile::MoreDetail::No,
-          "RasterMappedToTilesetTile: failed tile with no ancestor suppresses more detail like cesium-native");
+    check(failedUpdate == DirectRasterMapping::MoreDetail::No,
+          "DirectRasterMapping: failed tile with no ancestor suppresses more detail like cesium-native");
     check(mapped.getReadyTile() == failedTile &&
               mapped.getLoadingTile() == nullptr &&
-              mapped.getState() == RasterMappedToTilesetTile::State::Attached,
-          "RasterMappedToTilesetTile: failed tile with no ancestor becomes ready so geometry is non-blocking");
+              mapped.getState() == DirectRasterMapping::State::Attached,
+          "DirectRasterMapping: failed tile with no ancestor becomes ready so geometry is non-blocking");
     check(!mapped.isMoreDetailAvailable(),
-          "RasterMappedToTilesetTile: failed ready tile never reports more detail available");
+          "DirectRasterMapping: failed ready tile never reports more detail available");
 }
-void testRasterMappedFailedReadyTileDetachSkipsRendererCallback() {
+void testRasterDirectCompositeFailedReadyTileDetachSkipsRendererCallback() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -3910,7 +3915,7 @@ void testRasterMappedFailedReadyTileDetachSkipsRendererCallback() {
     RasterOverlayDetails details;
     details.setGeographicRectangle(
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
     mapped.update(
@@ -3936,16 +3941,16 @@ void testRasterMappedFailedReadyTileDetachSkipsRendererCallback() {
         nullptr,
         0);
     check(mapped.getReadyTile() == failedTile &&
-              mapped.getState() == RasterMappedToTilesetTile::State::Attached,
-          "RasterMappedToTilesetTile: failed tile is marked attached without renderer resources like cesium-native");
+              mapped.getState() == DirectRasterMapping::State::Attached,
+          "DirectRasterMapping: failed tile is marked attached without renderer resources like cesium-native");
     RecordingPrepareRendererResources prep;
     mapped.detachFromTile(&prep);
     check(prep.detachCount == 0,
-          "RasterMappedToTilesetTile: detach skips renderer callback for failed ready tiles like cesium-native");
-    check(mapped.getState() == RasterMappedToTilesetTile::State::Unattached,
-          "RasterMappedToTilesetTile: failed ready detach still resets attachment state");
+          "DirectRasterMapping: detach skips renderer callback for failed ready tiles like cesium-native");
+    check(mapped.getState() == DirectRasterMapping::State::Unattached,
+          "DirectRasterMapping: failed ready detach still resets attachment state");
 }
-void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
+void testRasterDirectCompositeTemporaryAncestorDoesNotReportMoreDetail() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -3970,7 +3975,7 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
         &parent);
     parent.rasterOverlayState.mappings().resize(1);
-    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    auto parentMapped = std::make_unique<DirectRasterMapping>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
         parent.key,
@@ -3997,10 +4002,10 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         0);
     RasterOverlayTile* parentReady = parentMapped->getReadyTile();
     check(parentReady != nullptr &&
-              parentMapped->getState() == RasterMappedToTilesetTile::State::Unattached,
-          "RasterMappedToTilesetTile: parent fallback is cover-ready before resource prep");
+              parentMapped->getState() == DirectRasterMapping::State::Unattached,
+          "DirectRasterMapping: parent fallback is cover-ready before resource prep");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-    RasterMappedToTilesetTile childMapped;
+    DirectRasterMapping childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
         child.key,
@@ -4022,13 +4027,13 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         childMissing,
         &parent,
         0);
-    check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: loading child with ancestor raster reports unknown detail");
+    check(fallbackUpdate == DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: loading child with ancestor raster reports unknown detail");
     check(childMapped.getReadyTile() == parentReady &&
-              childMapped.getState() == RasterMappedToTilesetTile::State::Unattached,
-          "RasterMappedToTilesetTile: ancestor raster is cover-ready before resource prep");
+              childMapped.getState() == DirectRasterMapping::State::Unattached,
+          "DirectRasterMapping: ancestor raster is cover-ready before resource prep");
     check(!childMapped.isMoreDetailAvailable(),
-          "RasterMappedToTilesetTile: temporary ancestor raster does not trigger upsample children");
+          "DirectRasterMapping: temporary ancestor raster does not trigger upsample children");
     RecordingPrepareRendererResources prepResources;
     const auto prepFallbackUpdate = childMapped.update(
         child.key,
@@ -4040,18 +4045,18 @@ void testRasterMappedTemporaryAncestorDoesNotReportMoreDetail() {
         childMissing,
         &parent,
         0);
-    check(prepFallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: ancestor fallback keeps loading-child detail unknown");
+    check(prepFallbackUpdate == DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: ancestor fallback keeps loading-child detail unknown");
     check(childMapped.getState() ==
-              RasterMappedToTilesetTile::State::TemporarilyAttached &&
+              DirectRasterMapping::State::TemporarilyAttached &&
               prepResources.attachCount == 1 &&
               prepResources.lastRasterTile.get() == parentReady &&
               prepResources.lastTexture == parentReady->getTexture(),
-          "RasterMappedToTilesetTile: resource prep sees ancestor raster as temporary fallback");
+          "DirectRasterMapping: resource prep sees ancestor raster as temporary fallback");
     check(!childMapped.isMoreDetailAvailable(),
-          "RasterMappedToTilesetTile: attached temporary ancestor still does not trigger upsample children");
+          "DirectRasterMapping: attached temporary ancestor still does not trigger upsample children");
 }
-void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
+void testRasterDirectCompositeStaleLoadingTileWithReadyFallbackBecomesAttached() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -4085,7 +4090,7 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
         childRectangle,
         &parent);
     parent.rasterOverlayState.mappings().resize(1);
-    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    auto parentMapped = std::make_unique<DirectRasterMapping>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
         parent.key,
@@ -4112,10 +4117,10 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
         nullptr,
         0);
     RasterOverlayTile* parentReady = parentMapped->getReadyTile();
-    check(parentReady && !parentReady->isMappedRasterTile(),
-          "RasterMappedToTilesetTile: fixture parent fallback uses current direct raster tile");
+    check(parentReady && !parentReady->isDirectCompositeTile(),
+          "DirectRasterMapping: fixture parent fallback uses current direct raster tile");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-    RasterMappedToTilesetTile childMapped;
+    DirectRasterMapping childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
         child.key,
@@ -4152,13 +4157,13 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
     check(childMapped.getReadyTile() == parentReady &&
               childMapped.getLoadingTile() == childLoading &&
               childMapped.getState() ==
-                  RasterMappedToTilesetTile::State::TemporarilyAttached,
-          "RasterMappedToTilesetTile: fixture starts with attached ancestor fallback and own loading tile");
+                  DirectRasterMapping::State::TemporarilyAttached,
+          "DirectRasterMapping: fixture starts with attached ancestor fallback and own loading tile");
     provider.setMaximumScreenSpaceError(1.0);
     check(provider.ownsCurrentTile(*parentReady),
-          "RasterMappedToTilesetTile: direct ready fallback remains current after mapped invalidation");
+          "DirectRasterMapping: direct ready fallback remains current after Direct composite invalidation");
     check(!provider.ownsCurrentTile(*childLoading),
-          "RasterMappedToTilesetTile: mapped loading tile is stale after provider epoch invalidation");
+          "DirectRasterMapping: Direct loading tile is stale after provider epoch invalidation");
     const auto updateAfterInvalidation = childMapped.update(
         child.key,
         childDetails,
@@ -4170,15 +4175,15 @@ void testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached() {
         &parent,
         0);
     check(updateAfterInvalidation ==
-              RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: stale loading tile removal keeps pending detail state");
+              DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: stale loading tile removal keeps pending detail state");
     check(childMapped.getReadyTile() == parentReady &&
               childMapped.getLoadingTile() != nullptr &&
               childMapped.getState() ==
-                  RasterMappedToTilesetTile::State::TemporarilyAttached,
-          "RasterMappedToTilesetTile: stale loading tile with ready fallback stays TemporarilyAttached");
+                  DirectRasterMapping::State::TemporarilyAttached,
+          "DirectRasterMapping: stale loading tile with ready fallback stays TemporarilyAttached");
 }
-void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
+void testRasterDirectCompositeStaleReadyTileDetachesAndRemapsCurrentEpoch() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -4195,7 +4200,7 @@ void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
         overlay->getTileScheme(),
         rectangle);
     const TileKey geometryKey{"Geographic-TMS", 3, 4, 2};
-    RasterMappedToTilesetTile mapped;
+    DirectRasterMapping mapped;
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
         geometryKey,
@@ -4208,8 +4213,8 @@ void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
         nullptr,
         0);
     RasterOverlayTile* firstLoading = mapped.getLoadingTile();
-    check(firstLoading != nullptr && firstLoading->isMappedRasterTile(),
-          "RasterMappedToTilesetTile: stale-ready fixture creates mapped raster tile");
+    check(firstLoading != nullptr && firstLoading->isDirectCompositeTile(),
+          "DirectRasterMapping: stale-ready fixture creates Direct raster mapping tile");
     if (!firstLoading) return;
     firstLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
     mapped.update(
@@ -4235,12 +4240,12 @@ void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
         0);
     RasterOverlayTile* firstReady = mapped.getReadyTile();
     check(firstReady == firstLoading &&
-              mapped.getState() == RasterMappedToTilesetTile::State::Attached &&
+              mapped.getState() == DirectRasterMapping::State::Attached &&
               prepResources.attachCount == 1,
-          "RasterMappedToTilesetTile: stale-ready fixture attaches first epoch raster");
+          "DirectRasterMapping: stale-ready fixture attaches first epoch raster");
     provider.setMaximumScreenSpaceError(1.0);
     check(!provider.ownsCurrentTile(*firstReady),
-          "RasterMappedToTilesetTile: ready mapped tile is stale after provider epoch invalidation");
+          "DirectRasterMapping: ready Direct mapping tile is stale after provider epoch invalidation");
     const auto updateAfterInvalidation = mapped.update(
         geometryKey,
         details,
@@ -4252,18 +4257,18 @@ void testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch() {
         nullptr,
         0);
     check(updateAfterInvalidation ==
-              RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: stale ready remap reports pending detail");
+              DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: stale ready remap reports pending detail");
     check(prepResources.detachCount == 1,
-          "RasterMappedToTilesetTile: stale ready raster detaches renderer resources");
+          "DirectRasterMapping: stale ready raster detaches renderer resources");
     check(mapped.getReadyTile() == nullptr &&
               mapped.getLoadingTile() != nullptr &&
               mapped.getLoadingTile() != firstReady &&
               provider.ownsCurrentTile(*mapped.getLoadingTile()) &&
-              mapped.getState() == RasterMappedToTilesetTile::State::Unattached,
-          "RasterMappedToTilesetTile: stale ready raster is replaced by current epoch loading tile");
+              mapped.getState() == DirectRasterMapping::State::Unattached,
+          "DirectRasterMapping: stale ready raster is replaced by current epoch loading tile");
 }
-void testRasterMappedFailedChildFollowsParentLoadingTile() {
+void testRasterDirectCompositeFailedChildFollowsParentLoadingTile() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -4296,7 +4301,7 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
         &parent);
     grandparent.rasterOverlayState.mappings().resize(1);
     parent.rasterOverlayState.mappings().resize(1);
-    auto grandparentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    auto grandparentMapped = std::make_unique<DirectRasterMapping>();
     std::vector<RasterOverlayProjection> grandparentMissing;
     grandparentMapped->update(
         grandparent.key,
@@ -4325,7 +4330,7 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
     RasterOverlayTile* grandparentReady = grandparentMapped->getReadyTile();
     grandparent.rasterOverlayState.mappings()[0] =
         std::move(grandparentMapped);
-    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    auto parentMapped = std::make_unique<DirectRasterMapping>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
         parent.key,
@@ -4350,9 +4355,9 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
         0);
     check(parentMapped->getLoadingTile() == parentLoading &&
               parentMapped->getReadyTile() == grandparentReady,
-          "RasterMappedToTilesetTile: parent fixture has loading raster plus temporary ancestor");
+          "DirectRasterMapping: parent fixture has loading raster plus temporary ancestor");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-    RasterMappedToTilesetTile childMapped;
+    DirectRasterMapping childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
         child.key,
@@ -4378,14 +4383,14 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
         childMissing,
         &parent,
         0);
-    check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: failed child follows parent loading raster like cesium-native");
+    check(fallbackUpdate == DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: failed child follows parent loading raster like cesium-native");
     check(childMapped.getLoadingTile() == parentLoading,
-          "RasterMappedToTilesetTile: failed child keeps parent loading tile as desired raster");
+          "DirectRasterMapping: failed child keeps parent loading tile as desired raster");
     check(childMapped.getReadyTile() == grandparentReady,
-          "RasterMappedToTilesetTile: failed child still draws closest available ancestor raster");
+          "DirectRasterMapping: failed child still draws closest available ancestor raster");
     check(!childMapped.isMoreDetailAvailable(),
-          "RasterMappedToTilesetTile: original failed child does not trigger raster upsample children");
+          "DirectRasterMapping: original failed child does not trigger raster upsample children");
     parentLoading->setTexture(std::make_unique<DummyTexture>(4, 4));
     parentLoading->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
@@ -4401,16 +4406,16 @@ void testRasterMappedFailedChildFollowsParentLoadingTile() {
         0);
     const SurfaceRasterBinding promotedBinding =
         chooseSurfaceRasterBinding(&childMapped);
-    check(promotedParentUpdate == RasterMappedToTilesetTile::MoreDetail::No,
-          "RasterMappedToTilesetTile: promoted parent raster keeps original failure terminal");
+    check(promotedParentUpdate == DirectRasterMapping::MoreDetail::No,
+          "DirectRasterMapping: promoted parent raster keeps original failure terminal");
     check(childMapped.getReadyTile() == parentLoading &&
               childMapped.getLoadingTile() == nullptr,
-          "RasterMappedToTilesetTile: failed child promotes loaded parent raster");
+          "DirectRasterMapping: failed child promotes loaded parent raster");
     check(promotedBinding.kind == SurfaceRasterBindingKind::AncestorTile &&
               promotedBinding.tile == parentLoading,
-          "RasterMappedToTilesetTile: promoted parent loading raster remains an ancestor binding");
+          "DirectRasterMapping: promoted parent loading raster remains an ancestor binding");
 }
-void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
+void testRasterDirectCompositeChildUsesLoadedAncestorBeforeTextureUpload() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -4435,7 +4440,7 @@ void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
         &parent);
     parent.rasterOverlayState.mappings().resize(1);
-    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    auto parentMapped = std::make_unique<DirectRasterMapping>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
         parent.key,
@@ -4463,11 +4468,11 @@ void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
         0);
     check(parentMapped->getReadyTile() == parentRaster &&
               parentMapped->getState() ==
-                  RasterMappedToTilesetTile::State::Unattached &&
+                  DirectRasterMapping::State::Unattached &&
               parentRaster->getTexture() == nullptr,
-          "RasterMappedToTilesetTile: parent loaded raster can be lifecycle-ready before texture upload");
+          "DirectRasterMapping: parent loaded raster can be lifecycle-ready before texture upload");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-    RasterMappedToTilesetTile childMapped;
+    DirectRasterMapping childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
         child.key,
@@ -4489,16 +4494,16 @@ void testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload() {
         childMissing,
         &parent,
         0);
-    check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: loaded ancestor without texture keeps child detail unknown");
+    check(fallbackUpdate == DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: loaded ancestor without texture keeps child detail unknown");
     check(childMapped.getReadyTile() == parentRaster,
-          "RasterMappedToTilesetTile: child accepts loaded ancestor raster before GPU upload like cesium-native");
+          "DirectRasterMapping: child accepts loaded ancestor raster before GPU upload like cesium-native");
     check(childMapped.getLoadingTile() != nullptr,
-          "RasterMappedToTilesetTile: child still keeps its desired raster loading");
+          "DirectRasterMapping: child still keeps its desired raster loading");
     check(childMapped.texture() == nullptr,
-          "RasterMappedToTilesetTile: lifecycle-ready ancestor does not create drawable texture binding");
+          "DirectRasterMapping: lifecycle-ready ancestor does not create drawable texture binding");
 }
-void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
+void testRasterDirectCompositeChildUsesLoadedAncestorLoadingTileBeforePromotion() {
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
         TileScheme::createXYZWebMercator(),
@@ -4523,7 +4528,7 @@ void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
         Rectangle::fromDegrees(-20.0, 0.0, -10.0, 10.0),
         &parent);
     parent.rasterOverlayState.mappings().resize(1);
-    auto parentMapped = std::make_unique<RasterMappedToTilesetTile>();
+    auto parentMapped = std::make_unique<DirectRasterMapping>();
     std::vector<RasterOverlayProjection> parentMissing;
     parentMapped->update(
         parent.key,
@@ -4541,9 +4546,9 @@ void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
         RasterOverlayTile::MoreDetailAvailable::No);
     check(parentMapped->getReadyTile() == nullptr &&
               parentMapped->getLoadingTile() == parentLoading,
-          "RasterMappedToTilesetTile: test fixture keeps ancestor raster loaded but not promoted");
+          "DirectRasterMapping: test fixture keeps ancestor raster loaded but not promoted");
     parent.rasterOverlayState.mappings()[0] = std::move(parentMapped);
-    RasterMappedToTilesetTile childMapped;
+    DirectRasterMapping childMapped;
     std::vector<RasterOverlayProjection> childMissing;
     childMapped.update(
         child.key,
@@ -4566,15 +4571,15 @@ void testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion() {
         childMissing,
         &parent,
         0);
-    check(fallbackUpdate == RasterMappedToTilesetTile::MoreDetail::Unknown,
-          "RasterMappedToTilesetTile: loaded ancestor loading raster keeps child detail unknown");
+    check(fallbackUpdate == DirectRasterMapping::MoreDetail::Unknown,
+          "DirectRasterMapping: loaded ancestor loading raster keeps child detail unknown");
     check(childMapped.getReadyTile() == parentLoading,
-          "RasterMappedToTilesetTile: child uses ancestor loading tile once it is loaded like cesium-native");
+          "DirectRasterMapping: child uses ancestor loading tile once it is loaded like cesium-native");
     check(childMapped.getLoadingTile() == childDesired,
-          "RasterMappedToTilesetTile: child keeps its own desired raster while borrowing loaded ancestor loading tile");
+          "DirectRasterMapping: child keeps its own desired raster while borrowing loaded ancestor loading tile");
     check(childMapped.getReadyTileSource() ==
-              RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
-          "RasterMappedToTilesetTile: borrowed loaded ancestor loading tile is marked as ancestor source");
+              DirectRasterMapping::ReadyTileSource::Ancestor,
+          "DirectRasterMapping: borrowed loaded ancestor loading tile is marked as ancestor source");
 }
 void testRasterOverlayNativeTranslationAndRendererWindow() {
     auto scheme = TileScheme::createGeographicTMS();
@@ -5232,7 +5237,7 @@ void testTilesetMissingRasterProjectionRequestsReload() {
     const Rectangle* webMercatorDetails =
         generatedDetails.findRectangleForOverlayProjection(
             RasterOverlayProjection::WebMercator);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(webMercatorDetails == nullptr,
@@ -5289,7 +5294,7 @@ void testTilesetRasterTargetPixelsUseRenderContentRectangle() {
         *root,
         commands,
         1.0f);
-    RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
+    DirectRasterMapping* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr &&
               loadingTile->getRectangle() ==
@@ -5344,7 +5349,7 @@ void testTilesetEnsuresOverlayProviderBeforeMapping() {
         *root,
         commands,
         1.0f);
-    RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
+    DirectRasterMapping* mapped = root->rasterOverlayState.mappings()[0].get();
     check(activated.getTileProvider() != nullptr &&
               activated.getTileProvider()->getOwner() == overlay.get(),
           "Tileset: lazy activated overlay owns a provider before mapping");
@@ -5389,7 +5394,7 @@ void testTilesetPrefetchWaitsForRenderDetailsBeforeRequestingRaster() {
     budgetConfig.maxRasterNetworkInflight = 64;
     TilesetTestAccess::beginFrameResourceBudget(tileset, budgetConfig);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
+    DirectRasterMapping* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTileProvider* provider = activated.getTileProvider();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     const Rectangle expectedWebMercator = projectRectangleSimple(
@@ -5456,7 +5461,7 @@ void testTilesetPrefetchUsesContentBoundingVolumeFallback() {
     budgetConfig.maxRasterNetworkInflight = 64;
     TilesetTestAccess::beginFrameResourceBudget(tileset, budgetConfig);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     const Rectangle expectedContentWebMercator = projectRectangleSimple(
@@ -5518,7 +5523,7 @@ void testTilesetPrefetchGeneratesRenderContentDetailsFromRegion() {
               details.boundingRegion.minimumHeight >
                   details.boundingRegion.maximumHeight,
           "Tileset: prefetch leaves missing render-content raster details for reload");
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr &&
@@ -5596,7 +5601,7 @@ void testTileRasterOverlayFrameProcessorPrefetchesByPriority() {
             TileLoadRequest{centerKey, TileLoadPriorityGroup::Normal, 1.0},
         },
         budget);
-    RasterMappedToTilesetTile* centerMapping =
+    DirectRasterMapping* centerMapping =
         center->rasterOverlayState.mappingCount() > 0
             ? center->rasterOverlayState.mappings()[0].get()
             : nullptr;
@@ -5668,7 +5673,7 @@ void testTileRasterOverlayFrameProcessorEarlyMapsVisibleNotDoneByPriority() {
             firstBudget,
             ensureTile);
 
-    RasterMappedToTilesetTile* centerMapping =
+    DirectRasterMapping* centerMapping =
         center.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* centerLoading =
         centerMapping ? centerMapping->getLoadingTile() : nullptr;
@@ -5889,7 +5894,7 @@ void testTileRasterOverlayFrameProcessorEarlyMapsScreenRelevantLoadQueueByPriori
                 if (requestedKey == urgentKey) return &urgent;
                 return nullptr;
             });
-    RasterMappedToTilesetTile* centerMapping =
+    DirectRasterMapping* centerMapping =
         center.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* centerLoading =
         centerMapping ? centerMapping->getLoadingTile() : nullptr;
@@ -6247,7 +6252,7 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
+    DirectRasterMapping* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
           "Tileset: prebuild raster promotion creates loading raster");
@@ -6257,7 +6262,7 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
         RasterOverlayTile::MoreDetailAvailable::No);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
     check(mapped->getReadyTile() == loadingTile &&
-              mapped->getState() == RasterMappedToTilesetTile::State::Unattached,
+              mapped->getState() == DirectRasterMapping::State::Unattached,
           "Tileset: prebuild raster promotion makes tile ready before resource prep");
     check(TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: selector renderability sees promoted raster before build");
@@ -6274,7 +6279,7 @@ void testTilesetPrefetchPromotesRenderContentRasterBeforeBuildAttach() {
         commands,
         1.0f);
     check(!commands.empty() &&
-              mapped->getState() == RasterMappedToTilesetTile::State::Attached &&
+              mapped->getState() == DirectRasterMapping::State::Attached &&
               commands.front().kind == RenderCommandKind::GltfPrimitive &&
               commands.front().gltfRasterOverlayTextureCount == 1 &&
               commands.front().textures.size() >
@@ -6318,7 +6323,7 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(1);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
@@ -6333,13 +6338,13 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
           "Tileset: ready-raster prefetch skip has a ready mapping");
     check(TileSelectionRasterOverlayPreparer::canSkipReadyOverlayPrefetch(
               *root,
-              std::vector<ActivatedRasterOverlay*>{&activated}),
+              tileset.rasterOverlayRuntime().frameContext()),
           "Tileset: ready raster with no more detail skips traversal prefetch");
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     check(!TileSelectionRasterOverlayPreparer::canSkipReadyOverlayPrefetch(
               *root,
-              std::vector<ActivatedRasterOverlay*>{&activated}),
+              tileset.rasterOverlayRuntime().frameContext()),
           "Tileset: ready raster with more detail keeps traversal prefetch active");
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
@@ -6357,7 +6362,7 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
     RasterOverlayDetails childDetails =
         makeProviderDetails(activated.getOverlay().getTileScheme(),
                             childRectangle);
-    RasterMappedToTilesetTile& childMapped =
+    DirectRasterMapping& childMapped =
         child.rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> childMissingProjections;
     childMapped.update(
@@ -6375,11 +6380,11 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
           "Tileset: child raster can render ancestor while own raster is pending");
     check(!TileSelectionRasterOverlayPreparer::canSkipReadyOverlayPrefetch(
               child,
-              std::vector<ActivatedRasterOverlay*>{&activated}),
+              tileset.rasterOverlayRuntime().frameContext()),
           "Tileset: pending child raster prevents traversal prefetch skip");
     RasterOverlayTile* failedChildRaster = childMapped.getLoadingTile();
     failedChildRaster->setState(RasterOverlayTile::LoadState::Failed);
-    const RasterMappedToTilesetTile::MoreDetail converged =
+    const DirectRasterMapping::MoreDetail converged =
         childMapped.update(
             child.key,
             childDetails,
@@ -6390,7 +6395,7 @@ void testRasterSelectionPrefetchSkipHonorsMoreDetail() {
             childMissingProjections,
             root,
             0);
-    check(converged == RasterMappedToTilesetTile::MoreDetail::No &&
+    check(converged == DirectRasterMapping::MoreDetail::No &&
               childMapped.getLoadingTile() == nullptr &&
               childMapped.getReadyTile() == loadingTile &&
               !childMapped.isMoreDetailAvailable(),
@@ -6490,7 +6495,7 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
     makeRenderableSurface(*parent);
     makeRenderableSurface(*child);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *parent);
-    RasterMappedToTilesetTile* parentMapped =
+    DirectRasterMapping* parentMapped =
         parent->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* parentLoading =
         parentMapped ? parentMapped->getLoadingTile() : nullptr;
@@ -6505,7 +6510,7 @@ void testTilesetFailedChildBaseImageryUsesAncestorCommandTexture() {
     check(parentMapped->getReadyTile() == parentLoading,
           "Tileset: failed-child base imagery setup promotes parent raster");
     TilesetTestAccess::prefetchRasterOverlays(tileset, *child);
-    RasterMappedToTilesetTile* childMapped = child->rasterOverlayState.mappings()[0].get();
+    DirectRasterMapping* childMapped = child->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* childLoading =
         childMapped ? childMapped->getLoadingTile() : nullptr;
     check(childLoading != nullptr,
@@ -6585,8 +6590,8 @@ void testTilesetAnnotationOverlayDoesNotBlockCompleteOrBaseDraw() {
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(2);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* baseMapped = root->rasterOverlayState.mappings()[0].get();
-    RasterMappedToTilesetTile* roadMapped = root->rasterOverlayState.mappings()[1].get();
+    DirectRasterMapping* baseMapped = root->rasterOverlayState.mappings()[0].get();
+    DirectRasterMapping* roadMapped = root->rasterOverlayState.mappings()[1].get();
     RasterOverlayTile* baseLoading =
         baseMapped ? baseMapped->getLoadingTile() : nullptr;
     check(baseLoading != nullptr && roadMapped != nullptr,
@@ -6662,8 +6667,8 @@ void testTilesetSurfaceOverlaysCompositeIntoSingleCommand() {
     root->content.contentKind = TileContentKind::Render;
     root->rasterOverlayState.mappings().resize(2);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* baseMapped = root->rasterOverlayState.mappings()[0].get();
-    RasterMappedToTilesetTile* roadMapped = root->rasterOverlayState.mappings()[1].get();
+    DirectRasterMapping* baseMapped = root->rasterOverlayState.mappings()[0].get();
+    DirectRasterMapping* roadMapped = root->rasterOverlayState.mappings()[1].get();
     RasterOverlayTile* baseLoading =
         baseMapped ? baseMapped->getLoadingTile() : nullptr;
     RasterOverlayTile* roadLoading =
@@ -6753,7 +6758,7 @@ void testTilesetRasterMoreDetailCreatesUpsampledChildren() {
         tileset,
         *root,
         &renderer);
-    RasterMappedToTilesetTile* mapped = root->rasterOverlayState.mappings()[0].get();
+    DirectRasterMapping* mapped = root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loadingTile = mapped ? mapped->getLoadingTile() : nullptr;
     check(loadingTile != nullptr,
           "Tileset: raster-more-detail loading tile is mapped");
@@ -6952,7 +6957,7 @@ void testTilesetGltfRenderContentBuildsPrimitiveCommands() {
               std::abs(cmd.worldSortCenter[2]) < 1e-9,
           "Tileset: glTF draw command carries primitive world center for transparent sorting");
 }
-void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
+void testTilesetGltfDrawCommandBindsDirectCompositeOverlays() {
     auto overlayOptions = makeRasterOverlayOptions();
     overlayOptions.opacity = 0.42f;
     auto overlay = std::make_unique<RasterOverlay>(
@@ -6976,7 +6981,7 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
     check(root != nullptr,
-          "Tileset: glTF mapped raster root tile is created");
+          "Tileset: glTF Direct raster mapping root tile is created");
     if (!root) return;
     const Rectangle geometryRectangle =
         Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
@@ -7011,11 +7016,11 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
         tileset,
         *root,
         &renderer);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loading = mapped ? mapped->getLoadingTile() : nullptr;
     check(mapped != nullptr && loading != nullptr,
-          "Tileset: glTF mapped raster draw path creates a loading mapping");
+          "Tileset: glTF Direct raster mapping draw path creates a loading mapping");
     if (!mapped || !loading) return;
     loading->setTexture(std::make_unique<DummyTexture>(4, 4));
     loading->setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
@@ -7031,7 +7036,7 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
         commands,
         1.0f);
     check(commands.size() == 1,
-          "Tileset: glTF mapped raster emits one primitive command");
+          "Tileset: glTF Direct raster mapping emits one primitive command");
     if (commands.empty()) return;
     const RenderCommand& cmd = commands.front();
     check(cmd.kind == RenderCommandKind::GltfPrimitive &&
@@ -7042,11 +7047,11 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
               cmd.textures[0] != nullptr &&
               cmd.textures[kGltfRasterOverlayTextureBase] ==
                   loading->getTexture(),
-          "Tileset: glTF mapped raster uses glTF model and texture slot 15 without replacing material slot 0");
+          "Tileset: glTF Direct raster mapping uses glTF model and texture slot 15 without replacing material slot 0");
     check(cmd.gltfRasterOverlayTexCoordSets[0] == 1.0f &&
-              hasGltfUniform(cmd, "u_mappedRasterTexCoordSet0") &&
-              gltfUniform(cmd, "u_mappedRasterTexCoordSet0").front() == 1.0f,
-          "Tileset: glTF mapped raster uses the matching _CESIUMOVERLAY texture coordinate ID");
+              hasGltfUniform(cmd, "u_directRasterTexCoordSet0") &&
+              gltfUniform(cmd, "u_directRasterTexCoordSet0").front() == 1.0f,
+          "Tileset: glTF Direct raster mapping uses the matching _CESIUMOVERLAY texture coordinate ID");
     check(std::abs(cmd.gltfRasterOverlayTileUvs[0][0] -
                    mapped->getTranslationU()) < 1e-6f &&
               std::abs(cmd.gltfRasterOverlayTileUvs[0][1] -
@@ -7055,19 +7060,19 @@ void testTilesetGltfDrawCommandBindsMappedRasterOverlays() {
                        mapped->getScaleU()) < 1e-6f &&
               std::abs(cmd.gltfRasterOverlayTileUvs[0][3] -
                        mapped->getScaleV()) < 1e-6f &&
-              hasGltfUniform(cmd, "u_mappedRasterTileUV0") &&
-              gltfUniform(cmd, "u_mappedRasterTileUV0").size() == 4,
-          "Tileset: glTF mapped raster uploads translation and scale");
+              hasGltfUniform(cmd, "u_directRasterTileUV0") &&
+              gltfUniform(cmd, "u_directRasterTileUV0").size() == 4,
+          "Tileset: glTF Direct raster mapping uploads translation and scale");
     check(std::abs(cmd.gltfRasterOverlayOpacities[0] - overlayOptions.opacity) <
               1e-6f &&
-              hasGltfUniform(cmd, "u_mappedRasterOpacity0") &&
-              std::abs(gltfUniform(cmd, "u_mappedRasterOpacity0").front() -
+              hasGltfUniform(cmd, "u_directRasterOpacity0") &&
+              std::abs(gltfUniform(cmd, "u_directRasterOpacity0").front() -
                        overlayOptions.opacity) < 1e-6f,
-          "Tileset: glTF mapped raster preserves overlay opacity");
+          "Tileset: glTF Direct raster mapping preserves overlay opacity");
     // 资源保活已从逐命令 resourceKeepAlive 迁到 Renderer 帧级集(去冗余分配/原子);
     // 绑定 raster tile 时经 keepAliveThisFrame 锚定,故帧级集非空。
     check(renderer.frameKeepAliveCount() > 0,
-          "Tileset: glTF mapped raster command retains raster tile resources");
+          "Tileset: glTF Direct raster mapping command retains raster tile resources");
 }
 void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     auto overlayOptions = makeRasterOverlayOptions();
@@ -7139,11 +7144,11 @@ void testTilesetGltfDrawCommandBindsTerrainWaterMask() {
     root->content.loadState = TileLoadState::ContentLoaded;
     root->rasterOverlayState.mappings().resize(1);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* loading = mapped ? mapped->getLoadingTile() : nullptr;
     check(mapped != nullptr && loading != nullptr,
-          "Tileset: glTF terrain water mask creates mapped raster");
+          "Tileset: glTF terrain water mask creates Direct raster mapping");
     if (!mapped || !loading) return;
     loading->setTexture(std::make_unique<DummyTexture>(4, 4));
     loading->setMoreDetailAvailable(RasterOverlayTile::MoreDetailAvailable::No);
@@ -10850,7 +10855,7 @@ void testTilesetRenderContentRequiresDoneState() {
               TilesetTestAccess::isTileRenderable(tileset, *root),
           "Tileset: Done render content is renderable after main-thread finish");
 }
-void testTilesetMappedRasterMustBeReadyForRenderability() {
+void testTilesetDirectCompositeMustBeReadyForRenderability() {
     const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
     {
         auto provider = std::make_unique<SparseTerrainProvider>();
@@ -10862,11 +10867,11 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
             TilesetOptions{});
         TilesetTile* root = TilesetTestAccess::ensureTile(tileset, rootKey);
         check(root != nullptr,
-              "Tileset: mapped-raster renderability root tile is created");
+              "Tileset: direct-composite renderability root tile is created");
         if (!root) return;
             TilesetTestAccess::ensureTileMesh(tileset, *root);
         check(TilesetTestAccess::isTileRenderable(tileset, *root),
-              "Tileset: Done render content without mapped rasters is renderable");
+              "Tileset: Done render content without Direct raster mappings is renderable");
     }
     auto overlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -10886,9 +10891,9 @@ void testTilesetMappedRasterMustBeReadyForRenderability() {
     if (!root) return;
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     root->rasterOverlayState.mappings().resize(1);
-    root->rasterOverlayState.mappings()[0] = std::make_unique<RasterMappedToTilesetTile>();
+    root->rasterOverlayState.mappings()[0] = std::make_unique<DirectRasterMapping>();
     check(!TilesetTestAccess::isTileRenderable(tileset, *root),
-          "Tileset: mapped raster without ready tile blocks renderability like cesium-native");
+          "Tileset: Direct raster mapping without ready tile blocks renderability like cesium-native");
 }
 void testCesiumNativeReplaceTilesetSelectionMatchesCesiumNative() {
     // Directly replicates cesium-native "Test replace refinement for render"
@@ -12898,7 +12903,7 @@ void testTileTerminalLoadPolicyMapsContentTerminalStates() {
 void testTileTerminalLoadPolicyClearsRasterMappingsForNonRenderTerminalStates() {
     auto addRasterMapping = [](TilesetTile& tile) {
         tile.rasterOverlayState.mappings().push_back(
-            std::make_unique<RasterMappedToTilesetTile>());
+            std::make_unique<DirectRasterMapping>());
     };
     TilesetTile emptyContent(TileKey{"test", 0, 0, 0}, Rectangle{});
     addRasterMapping(emptyContent);
@@ -13801,7 +13806,10 @@ void testTileRenderPlanFinalizerResolvesAncestorFallbackEntries() {
             false,
             true,
             0,
-            1},
+            1,
+            4,
+            8,
+            earth_engine::testing::emptyRasterOverlayFrame()},
             [&tiles](const TileKey& key) -> TilesetTile* {
                 const std::string cacheKey = key.schemeId.str() + ":" +
                     std::to_string(key.z) + ":" +
@@ -13868,7 +13876,10 @@ void testTileRenderPlanFinalizerPrefersAncestorFallbackDuringRecovery() {
             false,
             false,
             0,
-            1},
+            1,
+            4,
+            8,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         [&tiles](const TileKey& key) -> TilesetTile* {
             auto it = tiles.find(TileCacheKey::forTile(key));
             return it == tiles.end() ? nullptr : it->second;
@@ -13924,7 +13935,10 @@ void testTileRenderPlanFinalizerSkipsUnrenderableAncestorFallback() {
             false,
             false,
             0,
-            1},
+            1,
+            4,
+            8,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         [&tiles](const TileKey& key) -> TilesetTile* {
             auto it = tiles.find(TileCacheKey::forTile(key));
             return it == tiles.end() ? nullptr : it->second;
@@ -13963,7 +13977,10 @@ void testTileRenderPlanFinalizerKeepsSurfaceEntryWithoutCommandBinding() {
             false,
             false,
             0,
-            1},
+            1,
+            4,
+            8,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         [&root](const TileKey& key) -> TilesetTile* {
             return key == root.key ? &root : nullptr;
         },
@@ -13999,7 +14016,10 @@ void testTileRenderPlanFinalizerKeepsGltfRenderContentDirect() {
             false,
             true,
             0,
-            1},
+            1,
+            4,
+            8,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         [&root](const TileKey& key) -> TilesetTile* {
             return key == root.key ? &root : nullptr;
         },
@@ -14039,7 +14059,10 @@ void testTileRenderPlanFinalizerPrefersFullGeometryOverEarlierClip() {
             false,
             false,
             0,
-            1},
+            1,
+            4,
+            8,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         [&tiles](const TileKey& key) -> TilesetTile* {
             auto it = tiles.find(TileCacheKey::forTile(key));
             return it == tiles.end() ? nullptr : it->second;
@@ -14072,7 +14095,10 @@ void testTileRenderPlanFinalizerCountsRootPrepOnce() {
             false,
             true,
             0,
-            1},
+            1,
+            4,
+            8,
+            earth_engine::testing::emptyRasterOverlayFrame()},
             [&root](const TileKey& key) -> TilesetTile* {
                 return key == root.key ? &root : nullptr;
             },
@@ -14112,7 +14138,10 @@ void testTileRenderPlanFinalizerDefersFallbackPrepDuringInteraction() {
             false,
             true,
             0,
-            1},
+            1,
+            4,
+            8,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         [&tiles](const TileKey& key) -> TilesetTile* {
             auto it = tiles.find(TileCacheKey::forTile(key));
             return it == tiles.end() ? nullptr : it->second;
@@ -14566,7 +14595,7 @@ void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep()
     RasterOverlayDetails details = makeProviderDetails(*scheme, parent.bounds);
     std::vector<RasterOverlayProjection> missingProjections;
     RecordingPrepareRendererResources prep;
-    RasterMappedToTilesetTile& mapping =
+    DirectRasterMapping& mapping =
         parent.rasterOverlayState.ensureMapping(0);
     mapping.update(
         parent.key,
@@ -14592,7 +14621,7 @@ void testTileContentUnloadCoordinatorReleasesRasterMappingsBeforeProtectedKeep()
         missingProjections,
         nullptr,
         0);
-    check(mapping.getState() == RasterMappedToTilesetTile::State::Attached &&
+    check(mapping.getState() == DirectRasterMapping::State::Attached &&
               prep.attachCount == 1 &&
               TileCacheMetrics::estimateTileBytes(parent) > 0,
           "TileContentUnloadCoordinator: protected unload setup attaches raster mapping");
@@ -14933,7 +14962,7 @@ void testTileRasterOverlayStateOwnsMappingsAndMissingProjections() {
               tile.rasterOverlayState.mappingAt(0) == nullptr &&
               !tile.rasterOverlayState.hasReadyMapping(0),
           "TileRasterOverlayState: exposes empty mapping slots without leaking storage");
-    RasterMappedToTilesetTile& mapping =
+    DirectRasterMapping& mapping =
         tile.rasterOverlayState.ensureMapping(0);
     check(tile.rasterOverlayState.mappings()[0].get() == &mapping &&
               tile.rasterOverlayState.mappingAt(0) == &mapping,
@@ -14963,7 +14992,7 @@ void testTileRasterOverlayStateResizeReleasesRemovedMappings() {
     RasterOverlayDetails details = makeProviderDetails(*scheme, tile.bounds);
     std::vector<RasterOverlayProjection> missingProjections;
     RecordingPrepareRendererResources prep;
-    RasterMappedToTilesetTile& removedMapping =
+    DirectRasterMapping& removedMapping =
         tile.rasterOverlayState.ensureMapping(1);
     removedMapping.update(
         tile.key,
@@ -14990,7 +15019,7 @@ void testTileRasterOverlayStateResizeReleasesRemovedMappings() {
         nullptr,
         1);
     check(removedMapping.getState() ==
-              RasterMappedToTilesetTile::State::Attached &&
+              DirectRasterMapping::State::Attached &&
               prep.attachCount == 1,
           "TileRasterOverlayState: setup mapping is attached before resize");
     check(TileCacheMetrics::estimateTileBytes(tile) == 8 * 4 * 4,
@@ -15046,7 +15075,7 @@ void testSurfaceRasterUpdaterReleasesInvisibleOverlayMapping() {
         16.0,
         budget,
         &renderer);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
@@ -15115,7 +15144,7 @@ void testSurfaceRasterUpdaterUsesContentBoundingVolumeFallback() {
             16.0,
             budget,
             &renderer);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
@@ -15174,7 +15203,7 @@ void testSurfaceRasterUpdaterUsesReadyRasterForUpsampleAction() {
         16.0,
         budget,
         &renderer);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
@@ -15257,7 +15286,7 @@ void testSurfaceRasterUpdaterRunsOncePerTilePerFrame() {
         nullptr,
         16.0,
         budget);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
@@ -15282,7 +15311,7 @@ void testSurfaceRasterUpdaterRunsOncePerTilePerFrame() {
             beforeFrame + 1,
         "Raster once-per-frame: selector performs one authoritative update");
     check(mapped->getState() ==
-              RasterMappedToTilesetTile::State::Unattached,
+              DirectRasterMapping::State::Unattached,
           "Raster once-per-frame: null-renderer selector leaves ready raster unattached");
 
     Renderer renderer(nullptr);
@@ -15300,7 +15329,7 @@ void testSurfaceRasterUpdaterRunsOncePerTilePerFrame() {
             beforeFrame + 1,
         "Raster once-per-frame: main-thread materialization reuses selector state instead of rerunning mapping update");
     check(mapped->getState() ==
-              RasterMappedToTilesetTile::State::Attached,
+              DirectRasterMapping::State::Attached,
         "Raster once-per-frame: update cache hit still materializes the raster attachment");
 
     TileRasterOverlayPrefetcher::prefetch(
@@ -15349,7 +15378,7 @@ void testSurfaceRasterUpdaterRunsOncePerTilePerFrame() {
 }
 void testSurfaceRasterUpdaterUpsampleUsesNaturalOverlayOrderNotPriority() {
     // Regression for the raster-overlay audit S5-01: doSubdivide must compare the
-    // FIRST (minimum) mapped-raster index in overlay ADD order (cesium
+    // FIRST (minimum) direct-composite index in overlay ADD order (cesium
     // RasterOverlayCollection.cpp:234-242), not the priority-sorted traversal
     // position. Overlay A (added first, natural index 0) stays loading (Unknown);
     // overlay B (added second, index 1) becomes ready with more detail (Yes).
@@ -15413,8 +15442,8 @@ void testSurfaceRasterUpdaterUpsampleUsesNaturalOverlayOrderNotPriority() {
         16.0,
         budget,
         &renderer);
-    RasterMappedToTilesetTile* mappedA = tile.rasterOverlayState.mappingAt(0);
-    RasterMappedToTilesetTile* mappedB = tile.rasterOverlayState.mappingAt(1);
+    DirectRasterMapping* mappedA = tile.rasterOverlayState.mappingAt(0);
+    DirectRasterMapping* mappedB = tile.rasterOverlayState.mappingAt(1);
     RasterOverlayTile* loadingB = mappedB ? mappedB->getLoadingTile() : nullptr;
     check(mappedA && mappedA->getLoadingTile() != nullptr,
           "S5-01 fixture: overlay A maps a loading raster");
@@ -15483,7 +15512,7 @@ void testSurfaceRasterUpdaterCreatesUpsampleChildrenOnlyAfterDoneLikeCesiumNativ
         16.0,
         budget,
         &renderer);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         tile.rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
@@ -15578,9 +15607,9 @@ void testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder() {
         16.0,
         budget,
         &renderer);
-    RasterMappedToTilesetTile* firstMapped =
+    DirectRasterMapping* firstMapped =
         tile.rasterOverlayState.mappingAt(0);
-    RasterMappedToTilesetTile* secondMapped =
+    DirectRasterMapping* secondMapped =
         tile.rasterOverlayState.mappingAt(1);
     RasterOverlayTile* firstTile =
         firstMapped ? firstMapped->getLoadingTile() : nullptr;
@@ -15596,7 +15625,7 @@ void testSurfaceRasterUpdaterComparesMoreDetailByAddOrderNotProcessingOrder() {
     secondTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Unknown);
     // cesium RasterOverlayCollection.cpp:193-242 compares the first more-detail
-    // and first-unknown mapped rasters by their ADD-order (natural) index; the
+    // and first-unknown Direct raster mappings by their ADD-order (natural) index; the
     // decision is independent of the order overlays are traversed. Overlay 0 (Yes)
     // precedes overlay 1 (Unknown) in add order, so upsample children are created
     // for BOTH traversal orders. Before the S5-01 fix, the reversed order wrongly
@@ -15673,7 +15702,7 @@ void testRasterUpsampledChildrenMaterializeFromGltfRenderContent() {
         16.0,
         budget,
         &renderer);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
@@ -15765,7 +15794,7 @@ void testRasterUpsampledChildrenDecoupleGateSuppressesFabrication() {
         16.0,
         budget,
         &renderer);
-    RasterMappedToTilesetTile* mapped =
+    DirectRasterMapping* mapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* loadingTile =
         mapped ? mapped->getLoadingTile() : nullptr;
@@ -16255,7 +16284,7 @@ void testTileUnloadPolicyReleasesRenderContentAndMarksUnloaded() {
 }
 void testTileUnloadPolicyReleasesRasterOverlayReferencesWithExplicitClear() {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    tile.rasterOverlayState.mappings().push_back(std::make_unique<RasterMappedToTilesetTile>());
+    tile.rasterOverlayState.mappings().push_back(std::make_unique<DirectRasterMapping>());
     tile.rasterOverlayState.mappings().push_back(nullptr);
     TileUnloadPolicy::releaseRasterOverlayReferences(tile, nullptr);
     check(tile.rasterOverlayState.mappings().size() == 2,
@@ -18076,7 +18105,12 @@ void testTileUpdateSelectionWorkRunnerPumpsResourcesDuringReuse() {
                 TileSelectionReuseMode::Strict,
                 TileSelectionReuseRejectReason::None,
                 true,
-                16.0},
+                16.0,
+                false,
+                16,
+                false,
+                nullptr,
+                earth_engine::testing::emptyRasterOverlayFrame()},
             [&]() { refreshCalled = true; },
             [&](const FrameState&, TileSelectionPerformanceTimings&) {
                 selectCalled = true;
@@ -18111,6 +18145,8 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
         makeRasterOverlayOptions());
     ActivatedRasterOverlay activated(*overlay);
     std::vector<ActivatedRasterOverlay*> overlays{&activated};
+    RasterOverlayRuntime rasterRuntime(overlays);
+    rasterRuntime.beginFrame(43, nullptr);
     const TileKey key{"Geographic-TMS", 0, 0, 0};
     TilesetTile tile(
         key,
@@ -18173,7 +18209,12 @@ void testTileUpdateSelectionWorkRunnerQueuesReloadAfterPrefetchUnload() {
             TileSelectionReuseMode::Strict,
             TileSelectionReuseRejectReason::None,
             true,
-            16.0},
+            16.0,
+            false,
+            16,
+            false,
+            nullptr,
+            rasterRuntime.frameContext()},
         [&]() { refreshCalled = true; },
         [](const FrameState&, TileSelectionPerformanceTimings&) {},
         [&tile](const TileKey& requestedTile) -> TilesetTile* {
@@ -18263,7 +18304,15 @@ void testTileFrameWorkCoordinatorReselectsDuringActiveInteraction() {
             20,
             0.0,
             1.25,
-            16.0},
+            16.0,
+            false,
+            60.0,
+            false,
+            16,
+            false,
+            nullptr,
+            false,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         TileFrameWorkState{
             cameraMoving,
             interactionActive,
@@ -23525,7 +23574,7 @@ void testSceneDiagnosticsExposeTerrainRenderEntryReasons() {
     if (!root || !child) return;
     TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty()
             ? nullptr
             : root->rasterOverlayState.mappings()[0].get();
@@ -23583,7 +23632,7 @@ void testSceneDiagnosticsExposeLegacyTerrainAncestorFallbackReason() {
           "Scene: synchronous-prep diagnostics create root tile");
     if (!root) return;
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty()
             ? nullptr
             : root->rasterOverlayState.mappings()[0].get();
@@ -23645,7 +23694,7 @@ void testSceneDiagnosticsDrawImageryOnlyAncestorSurface() {
     if (!root || !child) return;
     TilesetTestAccess::ensureTileMesh(*terrainRaw, *child);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty()
             ? nullptr
             : root->rasterOverlayState.mappings()[0].get();
@@ -23742,7 +23791,7 @@ void testScenePresentationHoldsWhenPlannedTerrainMixesDrawableAndMissingBaseImag
     TilesetTestAccess::ensureTileMesh(*terrainRaw, *root);
     TilesetTestAccess::ensureTileMesh(*terrainRaw, *child);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* rootRaster =
         rootMapped ? rootMapped->getLoadingTile() : nullptr;
@@ -23812,7 +23861,7 @@ void testScenePresentationHoldsTerrainTakeoverUntilCoverageRecovers() {
     TilesetTestAccess::ensureTileMesh(*oldRaw, *oldRoot);
     TilesetTestAccess::ensureTileMesh(*oldRaw, *oldChild);
     TilesetTestAccess::prefetchRasterOverlays(*oldRaw, *oldRoot);
-    RasterMappedToTilesetTile* oldRootMapped =
+    DirectRasterMapping* oldRootMapped =
         oldRoot->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* oldRootRaster =
         oldRootMapped ? oldRootMapped->getLoadingTile() : nullptr;
@@ -23874,7 +23923,7 @@ void testScenePresentationHoldsTerrainTakeoverUntilCoverageRecovers() {
     if (!newRoot) return;
     TilesetTestAccess::ensureTileMesh(*newRaw, *newRoot);
     TilesetTestAccess::prefetchRasterOverlays(*newRaw, *newRoot);
-    RasterMappedToTilesetTile* newRootMapped =
+    DirectRasterMapping* newRootMapped =
         newRoot->rasterOverlayState.mappingAt(0);
     RasterOverlayTile* newRootRaster =
         newRootMapped ? newRootMapped->getLoadingTile() : nullptr;
@@ -24750,7 +24799,7 @@ void testTilesetAncestorFallbackIsClippedToMissingChild() {
     check(!child->content.renderContent.hasGltfContent(),
           "Tileset: clipped fallback child starts without drawable GPU geometry");
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty() ? nullptr : root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* rootRaster =
         rootMapped ? rootMapped->getLoadingTile() : nullptr;
@@ -24827,7 +24876,7 @@ void testTileRenderPlanFrameRefresherPlansSurfaceBeforeBaseRaster() {
               tileset.tilePlan().renderEntries.size() == 1,
           "TileRenderPlanFrameRefresher: never-drop keeps surface geometry in the render plan as a base-color entry");
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty()
             ? nullptr
             : root->rasterOverlayState.mappings()[0].get();
@@ -24868,7 +24917,7 @@ void testTileRenderPlanFrameRefresherCollectsReadyRasterCredits() {
     if (!root) return;
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty()
             ? nullptr
             : root->rasterOverlayState.mappings()[0].get();
@@ -24889,7 +24938,7 @@ void testTileRenderPlanFrameRefresherCollectsReadyRasterCredits() {
           "TileRenderPlanFrameRefresher: credit fixture has one render entry");
     check(plan.frameCredits.size() == 1 &&
               plan.frameCredits.front() == "Imagery credit",
-          "TileRenderPlanFrameRefresher: ready mapped raster credits are aggregated once per frame like cesium-native");
+          "TileRenderPlanFrameRefresher: ready Direct raster mapping credits are aggregated once per frame like cesium-native");
 }
 void testTileRenderPlanFrameRefresherCollectsProviderRasterCredits() {
     InitializedRendererHarness harness;
@@ -24954,7 +25003,7 @@ void testTileRenderPlanFrameRefresherCollectsRenderContentCredits() {
               plan.frameCredits.front() == "Content credit",
           "TileRenderPlanFrameRefresher: glTF render content credits are aggregated once per frame like cesium-native");
 }
-void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
+void testTileRenderPlanFrameRefresherCountsDirectCompositeProgress() {
     InitializedRendererHarness harness;
     auto baseOverlay = std::make_unique<RasterOverlay>(
         std::make_unique<DebugImageryProvider>(),
@@ -24974,7 +25023,7 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
     if (!root) return;
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty()
             ? nullptr
             : root->rasterOverlayState.mappings()[0].get();
@@ -24986,14 +25035,14 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     const TilePlan& loadingPlan = tileset.tilePlan();
-    check(loadingPlan.frameMappedRasterTileCount == 1 &&
-              loadingPlan.frameMappedRasterTileLoadingCount == 1,
-          "TileRenderPlanFrameRefresher: loading mapped raster contributes to frame loading count like cesium-native");
+    check(loadingPlan.frameDirectRasterMappingCount == 1 &&
+              loadingPlan.frameDirectRasterMappingLoadingCount == 1,
+          "TileRenderPlanFrameRefresher: loading Direct raster mapping contributes to frame loading count like cesium-native");
     check(loadingPlan.frameProgressTotalCount == 2 &&
               loadingPlan.frameProgressLoadingCount == 1 &&
               std::abs(loadingPlan.frameLoadProgressPercentage - 50.0) <
                   1e-6,
-          "TileRenderPlanFrameRefresher: frame progress includes mapped raster loading percentage like cesium-native");
+          "TileRenderPlanFrameRefresher: frame progress includes Direct raster mapping loading percentage like cesium-native");
     rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
     rootRaster->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::No);
@@ -25002,10 +25051,10 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     const TilePlan& readyBeforeAttachPlan = tileset.tilePlan();
     check(rootMapped->getState() ==
-              RasterMappedToTilesetTile::State::Unattached &&
-              readyBeforeAttachPlan.frameMappedRasterTileCount == 1 &&
-              readyBeforeAttachPlan.frameMappedRasterTileLoadingCount == 1,
-          "TileRenderPlanFrameRefresher: ready but unattached mapped raster still contributes to loading progress like cesium-native");
+              DirectRasterMapping::State::Unattached &&
+              readyBeforeAttachPlan.frameDirectRasterMappingCount == 1 &&
+              readyBeforeAttachPlan.frameDirectRasterMappingLoadingCount == 1,
+          "TileRenderPlanFrameRefresher: ready but unattached Direct raster mapping still contributes to loading progress like cesium-native");
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TilesetTestAccess::prepareRenderTileRasterOverlays(
@@ -25018,19 +25067,19 @@ void testTileRenderPlanFrameRefresherCountsMappedRasterProgress() {
         *root,
         commands,
         1.0f);
-    check(rootMapped->getState() == RasterMappedToTilesetTile::State::Attached,
-          "TileRenderPlanFrameRefresher: progress fixture attaches mapped raster during update preparation");
+    check(rootMapped->getState() == DirectRasterMapping::State::Attached,
+          "TileRenderPlanFrameRefresher: progress fixture attaches Direct raster mapping during update preparation");
     TilesetTestAccess::beginTilePlan(tileset);
     TilesetTestAccess::addTileToCurrentPlan(tileset, *root);
     const TilePlan& attachedPlan = tileset.tilePlan();
-    check(attachedPlan.frameMappedRasterTileCount == 1 &&
-              attachedPlan.frameMappedRasterTileLoadingCount == 0,
-          "TileRenderPlanFrameRefresher: attached mapped raster is no longer counted as loading");
+    check(attachedPlan.frameDirectRasterMappingCount == 1 &&
+              attachedPlan.frameDirectRasterMappingLoadingCount == 0,
+          "TileRenderPlanFrameRefresher: attached Direct raster mapping is no longer counted as loading");
     check(attachedPlan.frameProgressTotalCount == 2 &&
               attachedPlan.frameProgressLoadingCount == 0 &&
               std::abs(attachedPlan.frameLoadProgressPercentage - 100.0) <
                   1e-6,
-          "TileRenderPlanFrameRefresher: frame progress returns to complete after mapped raster attaches");
+          "TileRenderPlanFrameRefresher: frame progress returns to complete after Direct raster mapping attaches");
 }
 void testPresentationTraceRecordsDeterministicCameraState() {
     DummyRenderDevice device;
@@ -25092,7 +25141,7 @@ void testPresentationTraceLinksTilePlanToSurfaceCommand() {
     if (!root || !child) return;
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty() ? nullptr : root->rasterOverlayState.mappings()[0].get();
     RasterOverlayTile* rootRaster =
         rootMapped ? rootMapped->getLoadingTile() : nullptr;
@@ -25195,8 +25244,8 @@ void testPresentationTraceCopiesFrameCreditsAndProgress() {
         TilesetOptions{});
     TilePlan& plan = TilesetTestAccess::mutableTilePlan(tileset);
     plan.frameCredits = {"Imagery credit", "Content credit"};
-    plan.frameMappedRasterTileCount = 3;
-    plan.frameMappedRasterTileLoadingCount = 1;
+    plan.frameDirectRasterMappingCount = 3;
+    plan.frameDirectRasterMappingLoadingCount = 1;
     plan.frameProgressTotalCount = 5;
     plan.frameProgressLoadingCount = 2;
     plan.frameLoadProgressPercentage = 60.0;
@@ -25219,13 +25268,13 @@ void testPresentationTraceCopiesFrameCreditsAndProgress() {
               tilesetTrace.frameCredits[0] == "Imagery credit" &&
               tilesetTrace.frameCredits[1] == "Content credit",
           "Presentation trace: frame credits expose cesium-native style current-frame attribution");
-    check(tilesetTrace.frameMappedRasterTileCount == 3 &&
-              tilesetTrace.frameMappedRasterTileLoadingCount == 1 &&
+    check(tilesetTrace.frameDirectRasterMappingCount == 3 &&
+              tilesetTrace.frameDirectRasterMappingLoadingCount == 1 &&
               tilesetTrace.frameProgressTotalCount == 5 &&
               tilesetTrace.frameProgressLoadingCount == 2 &&
               std::abs(tilesetTrace.frameLoadProgressPercentage - 60.0) <
                   1e-8,
-          "Presentation trace: mapped raster progress exposes cesium-native style frame load percentage");
+          "Presentation trace: Direct raster mapping progress exposes cesium-native style frame load percentage");
 }
 void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
     InitializedRendererHarness harness;
@@ -25251,7 +25300,7 @@ void testPresentationTraceExposesAdditiveSelectedRenderEntries() {
         [&](TilesetTile& tile, const TileKey& key) -> bool {
             TilesetTestAccess::ensureTileMesh(tileset, tile);
         TilesetTestAccess::prefetchRasterOverlays(tileset, tile);
-        RasterMappedToTilesetTile* mapped =
+        DirectRasterMapping* mapped =
             tile.rasterOverlayState.mappings().empty()
                 ? nullptr
                 : tile.rasterOverlayState.mappings()[0].get();
@@ -25336,7 +25385,7 @@ void testClippedFallbackCommandsHaveSelectedChildStableKeys() {
     if (!root || !childA || !childB) return;
     TilesetTestAccess::ensureTileMesh(tileset, *root);
     TilesetTestAccess::prefetchRasterOverlays(tileset, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty()
             ? nullptr
             : root->rasterOverlayState.mappings()[0].get();
@@ -25600,7 +25649,7 @@ void testTilesetUpsampledChildUsesAvailableRasterProjectionTexcoord() {
         imagery,
         *imageryScheme,
         nullptr);
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         root->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -25743,7 +25792,7 @@ void testTilesetRasterDetailUpsampleWaitsForCurrentProjectionDetails() {
         imagery,
         *imageryScheme,
         nullptr);
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         root->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -25838,7 +25887,7 @@ void testTilesetRasterDetailUpsampleUsesCurrentProjectionDetailsOverStaleMapping
         imagery,
         *imageryScheme,
         nullptr);
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         root->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -26058,7 +26107,7 @@ void testTerrainAvailabilityUpsampleIgnoresRasterMoreDetailProjection() {
         imagery,
         *imageryScheme,
         nullptr);
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         parent.rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -26524,7 +26573,7 @@ void testTilesetUnloadRenderContentWaitsForRasterDetailGltfChildLoading() {
         imagery,
         *imageryScheme,
         nullptr);
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         root->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -27028,7 +27077,7 @@ int main() {
     testActivatedRasterOverlayBindsProviderOwner();
     testActivatedRasterOverlayExposesPlaceholderBeforeProvider();
     testActivatedRasterOverlayEnsuresProvider();
-    testRasterOverlayProviderMappedRasterTile();
+    testRasterOverlayProviderDirectCompositeTile();
     testRasterOverlayProviderDirectTileForExactProviderRectangle();
     testRasterOverlayQuadtreeSourceRequestsStartAsOneBatch();
     testRasterOverlayOversizedQuadtreeSourceBatchStillStartsLikeCesiumNative();
@@ -27037,24 +27086,24 @@ int main() {
     testRasterOverlayCoverageIsConstrainedToTilingSchemeLikeCesiumNative();
     testRasterOverlayQuadtreeSourcePlanSplitsAntimeridian();
     testRasterOverlayQuadtreeSourceFailureRequestsParentSource();
-    testRasterOverlayMappedRasterWithFailedSourcesLoadsEmptyLikeCesiumNative();
+    testRasterOverlayDirectCompositeWithFailedSourcesLoadsEmptyLikeCesiumNative();
     testRasterOverlayFallbackParentInFlightSharesDirectAsset();
     testRasterOverlayFallbackParentDoesNotPoisonChildSourceCache();
     testRasterOverlayTerminalSourceFailureIsCachedLikeSharedAssetDepot();
     testRasterOverlayExceptionSourceFailureCanRetryLikeSharedAssetDepot();
     testRasterOverlaySourceInvalidationRecreatesDirectAssetLikeSharedAssetDepot();
     testRasterOverlayAbandonedFallbackDoesNotLeaveStaleSourceInFlight();
-    testRasterOverlayDirectTileJoinsMappedSourceInFlight();
+    testRasterOverlayDirectTileJoinsDirectCompositeSourceInFlight();
     testRasterOverlaySourceCallbackSurvivesProviderDestruction();
-    testRasterOverlayDirectTileUsesCachedMappedSourceWithoutRequestBudget();
-    testRasterOverlayMappedRasterTilesShareSourceInFlight();
+    testRasterOverlayDirectTileUsesCachedDirectCompositeSourceWithoutRequestBudget();
+    testRasterOverlayDirectCompositeTilesShareSourceInFlight();
     testRasterOverlayQuadtreeSourceZoomRespectsMaximumTextureSize();
     testRasterOverlayUploadsStopAfterElapsedBudgetExpires();
     testRasterOverlayPendingUploadSurvivesSourceCacheEviction();
-    testRasterMappedUsesRenderContentDetailsRectangle();
-    testRasterMappedMissingProjectionUsesPlaceholder();
-    testRasterMappedPlaceholderRemapsWhenProviderBecomesReady();
-    testRasterMappedFailedReadyTileDetachSkipsRendererCallback();
+    testRasterDirectCompositeUsesRenderContentDetailsRectangle();
+    testRasterDirectCompositeMissingProjectionUsesPlaceholder();
+    testRasterDirectCompositePlaceholderRemapsWhenProviderBecomesReady();
+    testRasterDirectCompositeFailedReadyTileDetachSkipsRendererCallback();
     testTilesetMissingRasterProjectionRequestsReload();
     testTilesetRasterTargetPixelsUseRenderContentRectangle();
     testTilesetEnsuresOverlayProviderBeforeMapping();
@@ -27076,7 +27125,7 @@ int main() {
     testTilesetSurfaceOverlaysCompositeIntoSingleCommand();
     testTilesetRasterMoreDetailCreatesUpsampledChildren();
     testTilesetGltfRenderContentBuildsPrimitiveCommands();
-    testTilesetGltfDrawCommandBindsMappedRasterOverlays();
+    testTilesetGltfDrawCommandBindsDirectCompositeOverlays();
     testTilesetGltfDrawCommandBindsTerrainWaterMask();
     testTilesetGltfTangentsUseModelLinearTransform();
     testTilesetGltfMaskMaterialStaysOpaqueCommand();
@@ -27127,18 +27176,18 @@ int main() {
     testTilesetJsonProviderLoadsExternalTilesetContent();
     testTilesetViewerRequestVolumeGatesContentLoadQueue();
     testTilesetUnloadRenderContentReleasesGltfResources();
-    testRasterMappedProviderNotReadyUsesPlaceholderWithoutMissingProjection();
-    testRasterMappedLoadedContentMissingProjectionOffsetsTextureCoordinateID();
-    testRasterMappedBoundingRegionWithoutRenderContentUsesPreciseRectangle();
-    testRasterMappedAttachedUnknownReportsMoreDetail();
-    testRasterMappedFailureFallbackMatchesOverlayOwner();
-    testRasterMappedFailedTileWithoutAncestorBecomesReadyNonBlocking();
-    testRasterMappedTemporaryAncestorDoesNotReportMoreDetail();
-    testRasterMappedStaleLoadingTileWithReadyFallbackBecomesAttached();
-    testRasterMappedStaleReadyTileDetachesAndRemapsCurrentEpoch();
-    testRasterMappedFailedChildFollowsParentLoadingTile();
-    testRasterMappedChildUsesLoadedAncestorBeforeTextureUpload();
-    testRasterMappedChildUsesLoadedAncestorLoadingTileBeforePromotion();
+    testRasterDirectCompositeProviderNotReadyUsesPlaceholderWithoutMissingProjection();
+    testRasterDirectCompositeLoadedContentMissingProjectionOffsetsTextureCoordinateID();
+    testRasterDirectCompositeBoundingRegionWithoutRenderContentUsesPreciseRectangle();
+    testRasterDirectCompositeAttachedUnknownReportsMoreDetail();
+    testRasterDirectCompositeFailureFallbackMatchesOverlayOwner();
+    testRasterDirectCompositeFailedTileWithoutAncestorBecomesReadyNonBlocking();
+    testRasterDirectCompositeTemporaryAncestorDoesNotReportMoreDetail();
+    testRasterDirectCompositeStaleLoadingTileWithReadyFallbackBecomesAttached();
+    testRasterDirectCompositeStaleReadyTileDetachesAndRemapsCurrentEpoch();
+    testRasterDirectCompositeFailedChildFollowsParentLoadingTile();
+    testRasterDirectCompositeChildUsesLoadedAncestorBeforeTextureUpload();
+    testRasterDirectCompositeChildUsesLoadedAncestorLoadingTileBeforePromotion();
     testCesiumNativeSseFormulaNumericalEquivalence();
     testCesiumNativePerspectiveSseNumericalEquivalence();
     testCesiumNativeTranslationAndScale();
@@ -27159,7 +27208,7 @@ int main() {
     testTilesetContentFailedMaterializesLatentChildrenWithoutRetry();
     testTilesetCacheUnloadFailedUnknownPreservesChildren();
     testTilesetRenderContentRequiresDoneState();
-    testTilesetMappedRasterMustBeReadyForRenderability();
+    testTilesetDirectCompositeMustBeReadyForRenderability();
     testTilesetUnconditionallyRefineRenderableOnlyWithoutChildren();
     testTilePriorityMetricsMatchesCesiumNativeFormula();
     testTileSelectionInputMetricsComputesCenterPriorityAndSse();
@@ -27448,7 +27497,7 @@ int main() {
     testTileRenderPlanFrameRefresherCollectsReadyRasterCredits();
     testTileRenderPlanFrameRefresherCollectsProviderRasterCredits();
     testTileRenderPlanFrameRefresherCollectsRenderContentCredits();
-    testTileRenderPlanFrameRefresherCountsMappedRasterProgress();
+    testTileRenderPlanFrameRefresherCountsDirectCompositeProgress();
     testPresentationTraceRecordsDeterministicCameraState();
     testPresentationTraceLinksTilePlanToSurfaceCommand();
     testPresentationTraceCopiesRenderEntryPassFailures();

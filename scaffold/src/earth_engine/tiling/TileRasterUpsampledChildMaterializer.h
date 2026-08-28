@@ -1,6 +1,6 @@
 #pragma once
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileChildMaterializer.h"
 #include "TilesetTile.h"
 

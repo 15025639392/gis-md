@@ -9,7 +9,7 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
 #include "earth_engine/scene/Camera.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileBoundingVolume.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TilesetTile.h"

@@ -1,6 +1,6 @@
 #include "TileTerrainHeightRangePolicy.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileBoundsMetrics.h"
 #include "TilesetTile.h"
 

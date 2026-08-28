@@ -3,7 +3,7 @@
 
 #include "GltfRenderGeometryBuilder.h"
 #include "GpuReadyData.h"
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TerrainDisplacementTemplatePool.h"  // terrainReliefFade(P5b 判据同源)
 #include "TilesetTile.h"
 #include "../content/GltfModel.h"

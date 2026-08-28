@@ -1,6 +1,6 @@
 #include "TileTerminalLoadPolicy.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileLoadTypes.h"
 #include "TilesetTile.h"
 #include "../debug/PerfTimer.h"

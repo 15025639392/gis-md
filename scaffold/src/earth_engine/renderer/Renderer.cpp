@@ -47,8 +47,7 @@ namespace earth_engine {
 // + COLOR_0(vec4) + TANGENT(vec4) = 120 bytes
 // ============================================================
 
-static const char* kGltfVertexGLSL = R"glsl(
-#version 300 es
+static const char* kGltfVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec4 a_texcoord01;
@@ -83,8 +82,7 @@ void main() {
 }
 )glsl";
 
-static const char* kGltfFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kGltfFragmentGLSL = R"glsl(#version 300 es
 precision highp float;
 
 in vec3 v_normal;
@@ -127,10 +125,10 @@ uniform sampler2D u_emissiveTexture;
 #define u_clearcoatNormalTexture u_baseColorTexture
 #define u_sheenColorTexture u_baseColorTexture
 #define u_sheenRoughnessTexture u_baseColorTexture
-uniform sampler2D u_mappedRasterTexture0;
-uniform sampler2D u_mappedRasterTexture1;
-uniform sampler2D u_mappedRasterTexture2;
-uniform sampler2D u_mappedRasterTexture3;
+uniform sampler2D u_directRasterTexture0;
+uniform sampler2D u_directRasterTexture1;
+uniform sampler2D u_directRasterTexture2;
+uniform sampler2D u_directRasterTexture3;
 uniform sampler2D u_gltfWaterMaskTexture;
 uniform float u_hasBaseColorTexture;
 uniform vec4 u_materialFactors;       // metallic, roughness, normal scale, occlusion strength
@@ -194,19 +192,19 @@ uniform float u_specularGlossinessTexCoordSet;
 uniform float u_transmissionTexCoordSet;
 uniform vec3 u_clearcoatTexCoordSets; // clearcoat, roughness, normal
 uniform vec2 u_sheenTexCoordSets;     // color, roughness
-uniform float u_mappedRasterTextureCount;
-uniform vec4 u_mappedRasterTileUV0;
-uniform vec4 u_mappedRasterTileUV1;
-uniform vec4 u_mappedRasterTileUV2;
-uniform vec4 u_mappedRasterTileUV3;
-uniform float u_mappedRasterOpacity0;
-uniform float u_mappedRasterOpacity1;
-uniform float u_mappedRasterOpacity2;
-uniform float u_mappedRasterOpacity3;
-uniform float u_mappedRasterTexCoordSet0;
-uniform float u_mappedRasterTexCoordSet1;
-uniform float u_mappedRasterTexCoordSet2;
-uniform float u_mappedRasterTexCoordSet3;
+uniform float u_directRasterTextureCount;
+uniform vec4 u_directRasterTileUV0;
+uniform vec4 u_directRasterTileUV1;
+uniform vec4 u_directRasterTileUV2;
+uniform vec4 u_directRasterTileUV3;
+uniform float u_directRasterOpacity0;
+uniform float u_directRasterOpacity1;
+uniform float u_directRasterOpacity2;
+uniform float u_directRasterOpacity3;
+uniform float u_directRasterTexCoordSet0;
+uniform float u_directRasterTexCoordSet1;
+uniform float u_directRasterTexCoordSet2;
+uniform float u_directRasterTexCoordSet3;
 uniform float u_gltfHasWaterMask;
 uniform vec4 u_gltfWaterMaskTranslationScale;
 uniform vec4 u_gltfWaterMaskState;
@@ -260,7 +258,7 @@ vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
     return base;
 }
 
-vec4 applyMappedRaster(
+vec4 applyDirectRaster(
     vec4 base,
     sampler2D rasterTexture,
     float texCoordSet,
@@ -453,41 +451,41 @@ void main() {
     if (u_hasBaseColorTexture > 0.5) {
         base *= texture(u_baseColorTexture, baseColorUv);
     }
-    if (u_mappedRasterTextureCount > 0.5) {
-        base = applyMappedRaster(
+    if (u_directRasterTextureCount > 0.5) {
+        base = applyDirectRaster(
             base,
-            u_mappedRasterTexture0,
-            u_mappedRasterTexCoordSet0,
-            u_mappedRasterTileUV0,
-            u_mappedRasterOpacity0);
+            u_directRasterTexture0,
+            u_directRasterTexCoordSet0,
+            u_directRasterTileUV0,
+            u_directRasterOpacity0);
     }
-    if (u_mappedRasterTextureCount > 1.5) {
-        base = applyMappedRaster(
+    if (u_directRasterTextureCount > 1.5) {
+        base = applyDirectRaster(
             base,
-            u_mappedRasterTexture1,
-            u_mappedRasterTexCoordSet1,
-            u_mappedRasterTileUV1,
-            u_mappedRasterOpacity1);
+            u_directRasterTexture1,
+            u_directRasterTexCoordSet1,
+            u_directRasterTileUV1,
+            u_directRasterOpacity1);
     }
-    if (u_mappedRasterTextureCount > 2.5) {
-        base = applyMappedRaster(
+    if (u_directRasterTextureCount > 2.5) {
+        base = applyDirectRaster(
             base,
-            u_mappedRasterTexture2,
-            u_mappedRasterTexCoordSet2,
-            u_mappedRasterTileUV2,
-            u_mappedRasterOpacity2);
+            u_directRasterTexture2,
+            u_directRasterTexCoordSet2,
+            u_directRasterTileUV2,
+            u_directRasterOpacity2);
     }
-    if (u_mappedRasterTextureCount > 3.5) {
-        base = applyMappedRaster(
+    if (u_directRasterTextureCount > 3.5) {
+        base = applyDirectRaster(
             base,
-            u_mappedRasterTexture3,
-            u_mappedRasterTexCoordSet3,
-            u_mappedRasterTileUV3,
-            u_mappedRasterOpacity3);
+            u_directRasterTexture3,
+            u_directRasterTexCoordSet3,
+            u_directRasterTileUV3,
+            u_directRasterOpacity3);
     }
     // 稀疏虚拟纹理(Step B2b):capped 真实地形瓦片经 per-tile 间接纹理单次 NEAREST
-    // fetch 定位共享 array 层 → 覆盖 mappedRaster 显更细影像。cell resident(A=1)才
-    // 覆盖,miss(A=0)保留 mappedRaster(决策② 共存优雅降级)。UV 复用 set 0 mercator。
+    // fetch 定位共享 array 层 → 覆盖 directComposite 显更细影像。cell resident(A=1)才
+    // 覆盖,miss(A=0)保留 directComposite(决策② 共存优雅降级)。UV 复用 set 0 mercator。
     if (u_pageStoreParams.x > 0.5) {
         // cell 网格 = **影像源瓦片网格**(单位:源瓦片),不是几何瓦片等分。
         // t = origin + uv*span → floor 即 cell 下标。标准 overlay 恒为
@@ -765,8 +763,7 @@ void main() {
 }
 )glsl";
 
-static const char* kGltfInstancedVertexGLSL = R"glsl(
-#version 300 es
+static const char* kGltfInstancedVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec4 a_texcoord01;
@@ -834,8 +831,7 @@ void main() {
 // baked into u_modelViewProjection (double precision on the CPU side).
 // ============================================================
 
-static const char* kTerrainVertexGLSL = R"glsl(
-#version 300 es
+static const char* kTerrainVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec4 a_texcoord01;
@@ -999,8 +995,7 @@ void main() {
 }
 )glsl";
 
-static const char* kTerrainFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kTerrainFragmentGLSL = R"glsl(#version 300 es
 precision highp float;
 
 in vec3 v_normal;
@@ -1025,24 +1020,24 @@ uniform sampler2D u_baseColorTexture;
 uniform float u_alphaMode;
 uniform float u_alphaCutoff;
 uniform float u_renderOpacity;
-uniform sampler2D u_mappedRasterTexture0;
-uniform sampler2D u_mappedRasterTexture1;
-uniform sampler2D u_mappedRasterTexture2;
-uniform sampler2D u_mappedRasterTexture3;
+uniform sampler2D u_directRasterTexture0;
+uniform sampler2D u_directRasterTexture1;
+uniform sampler2D u_directRasterTexture2;
+uniform sampler2D u_directRasterTexture3;
 uniform sampler2D u_gltfWaterMaskTexture;
-uniform float u_mappedRasterTextureCount;
-uniform vec4 u_mappedRasterTileUV0;
-uniform vec4 u_mappedRasterTileUV1;
-uniform vec4 u_mappedRasterTileUV2;
-uniform vec4 u_mappedRasterTileUV3;
-uniform float u_mappedRasterOpacity0;
-uniform float u_mappedRasterOpacity1;
-uniform float u_mappedRasterOpacity2;
-uniform float u_mappedRasterOpacity3;
-uniform float u_mappedRasterTexCoordSet0;
-uniform float u_mappedRasterTexCoordSet1;
-uniform float u_mappedRasterTexCoordSet2;
-uniform float u_mappedRasterTexCoordSet3;
+uniform float u_directRasterTextureCount;
+uniform vec4 u_directRasterTileUV0;
+uniform vec4 u_directRasterTileUV1;
+uniform vec4 u_directRasterTileUV2;
+uniform vec4 u_directRasterTileUV3;
+uniform float u_directRasterOpacity0;
+uniform float u_directRasterOpacity1;
+uniform float u_directRasterOpacity2;
+uniform float u_directRasterOpacity3;
+uniform float u_directRasterTexCoordSet0;
+uniform float u_directRasterTexCoordSet1;
+uniform float u_directRasterTexCoordSet2;
+uniform float u_directRasterTexCoordSet3;
 uniform float u_gltfHasWaterMask;
 uniform vec4 u_gltfWaterMaskTranslationScale;
 uniform vec4 u_gltfWaterMaskState;
@@ -1129,7 +1124,7 @@ vec4 alphaOver(vec4 base, vec4 overlay, float opacity) {
     return base;
 }
 
-vec4 applyMappedRaster(
+vec4 applyDirectRaster(
     vec4 base,
     sampler2D rasterTexture,
     float texCoordSet,
@@ -1138,7 +1133,7 @@ vec4 applyMappedRaster(
     vec2 uv = uvFromSet(texCoordSet);
     // set 0 在 VS 里已被祖先模板的 scale-bias 重映射(clipMode>1.5 那支),
     // 其余 set 是原始子瓦局部 UV —— 必须补同一 scale-bias(镜像下方 pageStore
-    // psUv 的处理)。aa99a4ac5 只修了 pageStore 路,mappedRaster 这条**回落路**
+    // psUv 的处理)。aa99a4ac5 只修了 pageStore 路,directComposite 这条**回落路**
     // 漏了:过渡期页未驻留时画面正是它,GCJ(set 1)错整一个 LOD 窗口,页到齐
     // 被 alphaOver 盖掉 = "瞬间异常,稳态自愈"(imagery.md V11 真机复现)。
     // 标准底图 texCoordSet=0 不进此分支,行为逐位不变。glTF 变体不加:mode 2
@@ -1210,33 +1205,33 @@ void main() {
     if (u_hasBaseColorTexture > 0.5) {
         base *= texture(u_baseColorTexture, terrainUv);
     }
-    // C-1:全部 mappedRaster 层按序合成在页存储之前。页存储此时承载的是**同一个
+    // C-1:全部 directComposite 层按序合成在页存储之前。页存储此时承载的是**同一个
     // 有序源列表**的合成结果(不再只有底图),故它按 cell 粒度整体覆盖是对的 ——
     // 覆盖的是同一批源的上采样祖先版本,换成高清版本。
     // (E4-3 曾按 role 把 annotation 层挪到页存储之后绕开覆盖;C-1 之后那么做会
     // 让同一个源在页内和页外各合成一次 = 清晰版上再糊一层。已连同 uniform 撤掉。)
-    if (u_mappedRasterTextureCount > 0.5) {
-        base = applyMappedRaster(
-            base, u_mappedRasterTexture0, u_mappedRasterTexCoordSet0,
-            u_mappedRasterTileUV0, u_mappedRasterOpacity0);
+    if (u_directRasterTextureCount > 0.5) {
+        base = applyDirectRaster(
+            base, u_directRasterTexture0, u_directRasterTexCoordSet0,
+            u_directRasterTileUV0, u_directRasterOpacity0);
     }
-    if (u_mappedRasterTextureCount > 1.5) {
-        base = applyMappedRaster(
-            base, u_mappedRasterTexture1, u_mappedRasterTexCoordSet1,
-            u_mappedRasterTileUV1, u_mappedRasterOpacity1);
+    if (u_directRasterTextureCount > 1.5) {
+        base = applyDirectRaster(
+            base, u_directRasterTexture1, u_directRasterTexCoordSet1,
+            u_directRasterTileUV1, u_directRasterOpacity1);
     }
-    if (u_mappedRasterTextureCount > 2.5) {
-        base = applyMappedRaster(
-            base, u_mappedRasterTexture2, u_mappedRasterTexCoordSet2,
-            u_mappedRasterTileUV2, u_mappedRasterOpacity2);
+    if (u_directRasterTextureCount > 2.5) {
+        base = applyDirectRaster(
+            base, u_directRasterTexture2, u_directRasterTexCoordSet2,
+            u_directRasterTileUV2, u_directRasterOpacity2);
     }
-    if (u_mappedRasterTextureCount > 3.5) {
-        base = applyMappedRaster(
-            base, u_mappedRasterTexture3, u_mappedRasterTexCoordSet3,
-            u_mappedRasterTileUV3, u_mappedRasterOpacity3);
+    if (u_directRasterTextureCount > 3.5) {
+        base = applyDirectRaster(
+            base, u_directRasterTexture3, u_directRasterTexCoordSet3,
+            u_directRasterTileUV3, u_directRasterOpacity3);
     }
     // 合成方案页存储(Step 3):目标 capped 瓦片改采 sampler2DArray 页存储
-    // (enabled=1),覆盖上采样 mappedRaster → 显示真实高清影像。瓦片规则切
+    // (enabled=1),覆盖上采样 directComposite → 显示真实高清影像。瓦片规则切
     // gridN×gridN 页,mesh UV 落格算 layer + 层内局部 UV,单次索引 + 单次采样;
     // 层间不插值 + 每层 CLAMP_TO_EDGE 天然无页缝(§13.1)。enabled=0 恒不进。
     if (u_pageStoreParams.x > 0.5) {
@@ -1284,8 +1279,7 @@ void main() {
 // (minH·fade,range·fade,morphFactor,pageStore gridN)+ clipUv + layers
 // (heightLayer,indirLayer,clipEnabled,_)。批级 u_modelViewProjection=
 // viewProj·frame0,u_lightDir/u_eyePositionRTC 已变到 frame0 帧(updater)。
-static const char* kTerrainInstancedVertexGLSL = R"glsl(
-#version 300 es
+static const char* kTerrainInstancedVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec4 a_texcoord01;
@@ -1446,15 +1440,13 @@ void main() {
 //
 // 写 vec4(0) 而非 discard:discard 会关掉早期深度测试。这里唯一的产出就是
 // 深度,必须让它走快路径。
-static const char* kTerrainDepthOnlyFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kTerrainDepthOnlyFragmentGLSL = R"glsl(#version 300 es
 precision highp float;
 out vec4 fragColor;
 void main() { fragColor = vec4(0.0); }
 )glsl";
 
-static const char* kTerrainInstancedFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kTerrainInstancedFragmentGLSL = R"glsl(#version 300 es
 precision highp float;
 
 in vec3 v_normal;
@@ -1552,7 +1544,7 @@ void main() {
     float NdotL = max(dot(N, L), 0.0);
 
     vec4 base = u_baseColor;
-    // 页存储:资格闸保证全 cell 驻留 → 直接覆盖(无 mappedRaster fallback)。
+    // 页存储:资格闸保证全 cell 驻留 → 直接覆盖(无 directComposite fallback)。
     // cell 网格 = 影像源瓦片网格。cellsX/cellsY/texCoordSet 打包在 v_pageParams.x
     // (逐实例只剩一个槽,见 TerrainInstanceBatcher::packPageCellDescriptor)。
     float packed = v_pageParams.x;
@@ -1594,8 +1586,7 @@ void main() {
 // Color Shader (Vector Layers) — GLSL ES 3.0
 // ============================================================
 
-static const char* kColorVertexGLSL = R"glsl(
-#version 300 es
+static const char* kColorVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec3 a_position;
 
 uniform mat4 u_modelViewProjection;
@@ -1605,8 +1596,7 @@ void main() {
 }
 )glsl";
 
-static const char* kColorFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kColorFragmentGLSL = R"glsl(#version 300 es
 precision mediump float;
 
 uniform vec4 u_color;
@@ -1663,8 +1653,7 @@ fragment float4 colorFragment(constant float4& u_color [[buffer(0)]]) {
 // colorShader 保持 pos-only + u_color(stencil 分类/旧路径用)。
 // ============================================================
 
-static const char* kVectorFillVertexGLSL = R"glsl(
-#version 300 es
+static const char* kVectorFillVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec4 a_color;   // RGBA8 归一化
 
@@ -1678,8 +1667,7 @@ void main() {
 }
 )glsl";
 
-static const char* kVectorFillFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kVectorFillFragmentGLSL = R"glsl(#version 300 es
 precision mediump float;
 
 in vec4 v_color;
@@ -1732,8 +1720,7 @@ fragment float4 vectorFillFragment(VectorFillFragmentIn in [[stage_in]]) {
 // 顶点 28B:pos(12)+normal(12)+color(4,RGBA8)。lambert 顶光 + 环境光。
 // ============================================================
 
-static const char* kVectorExtrusionVertexGLSL = R"glsl(
-#version 300 es
+static const char* kVectorExtrusionVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_normal;
 layout(location = 2) in vec4 a_color;
@@ -1749,8 +1736,7 @@ void main() {
 }
 )glsl";
 
-static const char* kVectorExtrusionFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kVectorExtrusionFragmentGLSL = R"glsl(#version 300 es
 precision mediump float;
 in vec4 v_color;
 in float v_ndl;
@@ -1817,8 +1803,7 @@ fragment float4 vectorExtrusionFragment(
 // 塞进矩阵比在 shader 里分叉安全 —— 分叉过的地方后来都出过「只改一半」的事故。
 // ============================================================
 
-static const char* kVectorPageMeshVertexGLSL = R"glsl(
-#version 300 es
+static const char* kVectorPageMeshVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec2 a_position;
 layout(location = 1) in vec2 a_extrude;
 layout(location = 2) in vec4 a_color;   // RGBA8 归一化
@@ -1835,8 +1820,7 @@ void main() {
 }
 )glsl";
 
-static const char* kVectorPageMeshFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kVectorPageMeshFragmentGLSL = R"glsl(#version 300 es
 precision mediump float;
 
 in vec4 v_color;
@@ -1887,8 +1871,7 @@ fragment float4 vectorPageMeshFragment(VectorPageMeshFragmentIn in [[stage_in]])
 }
 )msl";
 
-static const char* kVectorLineVertexGLSL = R"glsl(
-#version 300 es
+static const char* kVectorLineVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_prev;
 layout(location = 2) in vec3 a_next;
@@ -1967,8 +1950,7 @@ void main() {
 }
 )glsl";
 
-static const char* kVectorLineFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kVectorLineFragmentGLSL = R"glsl(#version 300 es
 precision mediump float;
 
 in float v_lengthSoFar;   // 沿线累计弧长(m)
@@ -2097,8 +2079,7 @@ fragment float4 vectorLineFragment(
 // (体 pass 颜色写被后端关闭,u_color 无效)。
 // ============================================================
 
-static const char* kVectorLineStencilVertexGLSL = R"glsl(
-#version 300 es
+static const char* kVectorLineStencilVertexGLSL = R"glsl(#version 300 es
 layout(location = 0) in vec3 a_position;
 layout(location = 1) in vec3 a_extrude;  // miter 方向×缩放×侧符号
 
@@ -2117,8 +2098,7 @@ void main() {
 // dash 不在这里判:虚线已在镶嵌期切成一段段独立划体(几何边界),
 // FS 只出纯色 —— 从体面插值里程在侧视下有视差会撕裂花纹(见
 // FeatureRenderLayer::appendLineVolume 的 dash 切分注释)。
-static const char* kVectorLineStencilFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kVectorLineStencilFragmentGLSL = R"glsl(#version 300 es
 precision mediump float;
 
 uniform vec4 u_color;
@@ -2238,8 +2218,7 @@ float eeSymbolTerrainVisibility(vec4 clipPos) {
 )glsl";
 
 static const std::string kVectorPointVertexGLSL =
-    std::string(R"glsl(
-#version 300 es
+    std::string(R"glsl(#version 300 es
 layout(location = 0) in vec3 a_anchor;
 layout(location = 1) in vec2 a_offsetUnit;  // 相对锚点偏移(符号尺寸倍数)
 layout(location = 2) in vec2 a_uv;          // 局部坐标 或 图集 uv
@@ -2464,8 +2443,7 @@ fragment float4 vectorPointFragment(
 // ============================================================
 
 static const std::string kVectorLabelVertexGLSL =
-    std::string(R"glsl(
-#version 300 es
+    std::string(R"glsl(#version 300 es
 layout(location = 0) in vec3 a_anchor;
 // xy = 相对锚点屏幕像素偏移(y 向上);z = placement fade opacity(0 = 隐藏)。
 // opacity 并进 offset 而非独立 attribute:三属性布局(0/1/2)。
@@ -2499,8 +2477,7 @@ void main() {
 }
 )glsl";
 
-static const char* kVectorLabelFragmentGLSL = R"glsl(
-#version 300 es
+static const char* kVectorLabelFragmentGLSL = R"glsl(#version 300 es
 precision mediump float;
 
 uniform highp sampler2DArray u_glyphAtlas;
@@ -2709,10 +2686,10 @@ struct GltfUniforms {
     GltfTextureTransform normalTex;
     GltfTextureTransform occlusionTex;
     GltfTextureTransform emissiveTex;
-    float mappedRasterTextureCount;
-    packed_float4 mappedRasterTileUV[4];
-    float mappedRasterOpacity[4];
-    float mappedRasterTexCoordSet[4];
+    float directRasterTextureCount;
+    packed_float4 directRasterTileUv[4];
+    float directRasterOpacity[4];
+    float directRasterTexCoordSet[4];
     float hasWaterMask;
     packed_float4 waterMaskTranslationScale;
     packed_float4 waterMaskState;
@@ -2746,7 +2723,7 @@ float4 gltfAlphaOver(float4 base, float4 overlay, float opacity) {
 
 float2 gltfUvFromSet(GltfVertexOut in, float texCoordSet);
 
-float4 gltfApplyMappedRaster(float4 base,
+float4 gltfApplyDirectRaster(float4 base,
                              GltfVertexOut in,
                              texture2d<float> rasterTexture,
                              sampler rasterSampler,
@@ -2963,10 +2940,10 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              texture2d<float> u_anisotropyTexture [[texture(12)]],
                              texture2d<float> u_specularGlossinessTexture [[texture(13)]],
                              texture2d<float> u_transmissionTexture [[texture(14)]],
-                             texture2d<float> u_mappedRasterTexture0 [[texture(15)]],
-                             texture2d<float> u_mappedRasterTexture1 [[texture(16)]],
-                             texture2d<float> u_mappedRasterTexture2 [[texture(17)]],
-                             texture2d<float> u_mappedRasterTexture3 [[texture(18)]],
+                             texture2d<float> u_directRasterTexture0 [[texture(15)]],
+                             texture2d<float> u_directRasterTexture1 [[texture(16)]],
+                             texture2d<float> u_directRasterTexture2 [[texture(17)]],
+                             texture2d<float> u_directRasterTexture3 [[texture(18)]],
                              texture2d<float> u_gltfWaterMaskTexture [[texture(19)]],
                              // SVT(Step B2b):真实 DEM 表面走此 glTF shader,页存储在此。
                              // 合批 Step 2:间接纹理搬 array(64² 每层,层号 u.terrainLayers.y)。
@@ -3012,48 +2989,48 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
     if (u.hasBaseColorTexture > 0.5) {
         base *= u_baseColorTexture.sample(u_baseColorSampler, baseColorUv);
     }
-    if (u.mappedRasterTextureCount > 0.5) {
-        base = gltfApplyMappedRaster(
+    if (u.directRasterTextureCount > 0.5) {
+        base = gltfApplyDirectRaster(
             base,
             in,
-            u_mappedRasterTexture0,
+            u_directRasterTexture0,
             u_tileSharedSampler,
-            u.mappedRasterTexCoordSet[0],
-            float4(u.mappedRasterTileUV[0]),
-            u.mappedRasterOpacity[0]);
+            u.directRasterTexCoordSet[0],
+            float4(u.directRasterTileUv[0]),
+            u.directRasterOpacity[0]);
     }
-    if (u.mappedRasterTextureCount > 1.5) {
-        base = gltfApplyMappedRaster(
+    if (u.directRasterTextureCount > 1.5) {
+        base = gltfApplyDirectRaster(
             base,
             in,
-            u_mappedRasterTexture1,
+            u_directRasterTexture1,
             u_tileSharedSampler,
-            u.mappedRasterTexCoordSet[1],
-            float4(u.mappedRasterTileUV[1]),
-            u.mappedRasterOpacity[1]);
+            u.directRasterTexCoordSet[1],
+            float4(u.directRasterTileUv[1]),
+            u.directRasterOpacity[1]);
     }
-    if (u.mappedRasterTextureCount > 2.5) {
-        base = gltfApplyMappedRaster(
+    if (u.directRasterTextureCount > 2.5) {
+        base = gltfApplyDirectRaster(
             base,
             in,
-            u_mappedRasterTexture2,
+            u_directRasterTexture2,
             u_tileSharedSampler,
-            u.mappedRasterTexCoordSet[2],
-            float4(u.mappedRasterTileUV[2]),
-            u.mappedRasterOpacity[2]);
+            u.directRasterTexCoordSet[2],
+            float4(u.directRasterTileUv[2]),
+            u.directRasterOpacity[2]);
     }
-    if (u.mappedRasterTextureCount > 3.5) {
-        base = gltfApplyMappedRaster(
+    if (u.directRasterTextureCount > 3.5) {
+        base = gltfApplyDirectRaster(
             base,
             in,
-            u_mappedRasterTexture3,
+            u_directRasterTexture3,
             u_tileSharedSampler,
-            u.mappedRasterTexCoordSet[3],
-            float4(u.mappedRasterTileUV[3]),
-            u.mappedRasterOpacity[3]);
+            u.directRasterTexCoordSet[3],
+            float4(u.directRasterTileUv[3]),
+            u.directRasterOpacity[3]);
     }
     // SVT(Step B2b,镜像 GLSL):per-tile 间接纹理单次 NEAREST fetch 定位 array 层
-    // 覆盖 mappedRaster;A 通道 resident 标志,miss 保留 mappedRaster(决策② 共存)。
+    // 覆盖 directComposite;A 通道 resident 标志,miss 保留 directComposite(决策② 共存)。
     if (u.pageStoreParams.x > 0.5) {
         // 镜像 GLSL:cell 网格 = 影像源瓦片网格(单位=源瓦片),
         // t = origin + uv*span。标准 overlay 退化成 uv*gridN(零回归)。
@@ -3519,10 +3496,10 @@ struct GltfUniforms {
     GltfTextureTransform normalTex;
     GltfTextureTransform occlusionTex;
     GltfTextureTransform emissiveTex;
-    float mappedRasterTextureCount;
-    packed_float4 mappedRasterTileUV[4];
-    float mappedRasterOpacity[4];
-    float mappedRasterTexCoordSet[4];
+    float directRasterTextureCount;
+    packed_float4 directRasterTileUv[4];
+    float directRasterOpacity[4];
+    float directRasterTexCoordSet[4];
     float hasWaterMask;
     packed_float4 waterMaskTranslationScale;
     packed_float4 waterMaskState;
@@ -3556,7 +3533,7 @@ float4 terrainAlphaOver(float4 base, float4 overlay, float opacity) {
     return base;
 }
 
-float4 terrainApplyMappedRaster(float4 base,
+float4 terrainApplyDirectRaster(float4 base,
                                 TerrainVertexOut in,
                                 texture2d<float> rasterTexture,
                                 sampler rasterSampler,
@@ -3566,8 +3543,8 @@ float4 terrainApplyMappedRaster(float4 base,
                                 float4 clipUv,
                                 float clipEnabled) {
     float2 uv = terrainUvFromSet(in, texCoordSet);
-    // 镜像 GLSL applyMappedRaster:set 0 在 VS 已被祖先模板 remap,其余 set
-    // 须在此补同一 scale-bias —— mappedRaster 是页未驻留时的回落路,漏补则
+    // 镜像 GLSL applyDirectRaster:set 0 在 VS 已被祖先模板 remap,其余 set
+    // 须在此补同一 scale-bias —— directComposite 是页未驻留时的回落路,漏补则
     // GCJ 过渡瞬间错一个 LOD 窗口(imagery.md V11)。
     if (texCoordSet > 0.5 && clipEnabled > 1.5) {
         uv = float2(clipUv.x, clipUv.y) + uv * float2(clipUv.z, clipUv.w);
@@ -3612,10 +3589,10 @@ fragment float4 terrainFragment(
     bool frontFacing [[front_facing]],
     constant GltfUniforms& u [[buffer(0)]],
     texture2d<float> u_baseColorTexture [[texture(0)]],
-    texture2d<float> u_mappedRasterTexture0 [[texture(15)]],
-    texture2d<float> u_mappedRasterTexture1 [[texture(16)]],
-    texture2d<float> u_mappedRasterTexture2 [[texture(17)]],
-    texture2d<float> u_mappedRasterTexture3 [[texture(18)]],
+    texture2d<float> u_directRasterTexture0 [[texture(15)]],
+    texture2d<float> u_directRasterTexture1 [[texture(16)]],
+    texture2d<float> u_directRasterTexture2 [[texture(17)]],
+    texture2d<float> u_directRasterTexture3 [[texture(18)]],
     texture2d<float> u_gltfWaterMaskTexture [[texture(19)]],
     // 合成方案页存储(Step 3):sampler2DArray 页存储在 water mask 之后的槽 20,
     // 复用同一 clamp/linear 采样器(层间不插值 + 每层 clamp 无页缝,§13.1)。
@@ -3657,36 +3634,36 @@ fragment float4 terrainFragment(
     if (u.hasBaseColorTexture > 0.5) {
         base *= u_baseColorTexture.sample(u_terrainSampler, terrainUv);
     }
-    if (u.mappedRasterTextureCount > 0.5) {
-        base = terrainApplyMappedRaster(
-            base, in, u_mappedRasterTexture0, u_terrainSampler,
-            u.mappedRasterTexCoordSet[0],
-            float4(u.mappedRasterTileUV[0]), u.mappedRasterOpacity[0],
+    if (u.directRasterTextureCount > 0.5) {
+        base = terrainApplyDirectRaster(
+            base, in, u_directRasterTexture0, u_terrainSampler,
+            u.directRasterTexCoordSet[0],
+            float4(u.directRasterTileUv[0]), u.directRasterOpacity[0],
             u.clipUv, u.clipEnabled);
     }
-    if (u.mappedRasterTextureCount > 1.5) {
-        base = terrainApplyMappedRaster(
-            base, in, u_mappedRasterTexture1, u_terrainSampler,
-            u.mappedRasterTexCoordSet[1],
-            float4(u.mappedRasterTileUV[1]), u.mappedRasterOpacity[1],
+    if (u.directRasterTextureCount > 1.5) {
+        base = terrainApplyDirectRaster(
+            base, in, u_directRasterTexture1, u_terrainSampler,
+            u.directRasterTexCoordSet[1],
+            float4(u.directRasterTileUv[1]), u.directRasterOpacity[1],
             u.clipUv, u.clipEnabled);
     }
-    if (u.mappedRasterTextureCount > 2.5) {
-        base = terrainApplyMappedRaster(
-            base, in, u_mappedRasterTexture2, u_terrainSampler,
-            u.mappedRasterTexCoordSet[2],
-            float4(u.mappedRasterTileUV[2]), u.mappedRasterOpacity[2],
+    if (u.directRasterTextureCount > 2.5) {
+        base = terrainApplyDirectRaster(
+            base, in, u_directRasterTexture2, u_terrainSampler,
+            u.directRasterTexCoordSet[2],
+            float4(u.directRasterTileUv[2]), u.directRasterOpacity[2],
             u.clipUv, u.clipEnabled);
     }
-    if (u.mappedRasterTextureCount > 3.5) {
-        base = terrainApplyMappedRaster(
-            base, in, u_mappedRasterTexture3, u_terrainSampler,
-            u.mappedRasterTexCoordSet[3],
-            float4(u.mappedRasterTileUV[3]), u.mappedRasterOpacity[3],
+    if (u.directRasterTextureCount > 3.5) {
+        base = terrainApplyDirectRaster(
+            base, in, u_directRasterTexture3, u_terrainSampler,
+            u.directRasterTexCoordSet[3],
+            float4(u.directRasterTileUv[3]), u.directRasterOpacity[3],
             u.clipUv, u.clipEnabled);
     }
     // 合成方案页存储(Step 3,镜像 GLSL 侧):目标 capped 瓦片改采页存储,
-    // 覆盖上采样 mappedRaster → 真实高清影像。enabled=0 恒不进,零回归。
+    // 覆盖上采样 directComposite → 真实高清影像。enabled=0 恒不进,零回归。
     if (u.pageStoreParams.x > 0.5) {
         // 镜像 GLSL。terrainUv 是 set 0,页存储可能要另一套 → 按 params.w 单独取。
         float psPack = u.pageStoreParams.w;
@@ -4339,7 +4316,7 @@ bool Renderer::initialize() {
         isMetal ? kVectorPageMeshFragmentMSL : withSceneOutput(kVectorPageMeshFragmentGLSL);
     impl_->vectorPageMeshShader = dev->createShader(vectorPageMeshSd);
     if (!impl_->vectorPageMeshShader) {
-        // 非致命:矢量不进页存储,cell 回落 mappedRaster 的栅格版(糊但有)。
+        // 非致命:矢量不进页存储,cell 回落 directComposite 的栅格版(糊但有)。
         fprintf(stderr,
                 "[Renderer] vectorPageMeshShader failed — vector draping falls "
                 "back to rasterized overlay\n");
@@ -4608,7 +4585,7 @@ void Renderer::attachRasterInMainThread(
     Texture*,
     float, float,
     float, float) {
-    // Surface raster ownership lives in RasterMappedToTilesetTile and
+    // Surface raster ownership lives in DirectRasterMapping and
     // SurfaceRasterBinding. Renderer must not retain or query imagery state.
 }
 

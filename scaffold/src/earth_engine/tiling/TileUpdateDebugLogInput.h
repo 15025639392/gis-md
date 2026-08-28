@@ -32,7 +32,7 @@ struct TileUpdateDebugLogInput {
     double rasterBookkeepingMs = 0.0;
     size_t pendingRequestCount = 0;
     int rasterSourceRequestsInFlight = 0;
-    int rasterActiveMappedSourceSets = 0;
+    int rasterActiveDirectCompositeSourceSets = 0;
     int rasterPendingSourceFallbacks = 0;
     int rasterInFlightSourceTiles = 0;
     int rasterInFlightSourceWaiters = 0;
@@ -51,7 +51,7 @@ struct TileUpdateDebugLogInput {
     int prefetchLoadQueueEarlyMapCount = 0;
     bool prefetchEarlyMapBudgetExhausted = false;
     int rasterUploadsProcessed = 0;
-    int rasterMappedUploadsProcessed = 0;
+    int rasterDirectCompositeUploadsProcessed = 0;
     double rasterUploadMaxMs = 0.0;
     int rasterUploadMaxWidth = 0;
     int rasterUploadMaxHeight = 0;

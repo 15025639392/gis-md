@@ -317,20 +317,20 @@ void RasterOverlayTileProvider::compactSourceDepotCacheLruLocked(
     state.sourceTileDepotCacheLru.swap(compactedLru);
 }
 
-void RasterOverlayTileProvider::compactActiveMappedSourceSetOrderLocked(
+void RasterOverlayTileProvider::compactActiveDirectCompositeSourceSetOrderLocked(
     ProviderAsyncState& state) {
-    if (state.activeMappedSourceSetOrder.empty()) {
+    if (state.activeDirectCompositeSourceSetOrder.empty()) {
         return;
     }
     std::deque<std::string> compactedOrder;
-    for (const std::string& cacheKey : state.activeMappedSourceSetOrder) {
-        auto it = state.activeMappedSourceSets.find(cacheKey);
-        if (it == state.activeMappedSourceSets.end() || !it->second) {
+    for (const std::string& cacheKey : state.activeDirectCompositeSourceSetOrder) {
+        auto it = state.activeDirectCompositeSourceSets.find(cacheKey);
+        if (it == state.activeDirectCompositeSourceSets.end() || !it->second) {
             continue;
         }
         compactedOrder.push_back(cacheKey);
     }
-    state.activeMappedSourceSetOrder.swap(compactedOrder);
+    state.activeDirectCompositeSourceSetOrder.swap(compactedOrder);
 }
 
 } // namespace earth_engine

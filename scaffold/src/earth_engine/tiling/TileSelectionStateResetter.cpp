@@ -1,6 +1,6 @@
 #include "TileSelectionStateResetter.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TileSelectionResetPolicy.h"
 #include "TilesetTile.h"
@@ -9,7 +9,7 @@ namespace earth_engine {
 
 void TileSelectionStateResetter::resetOne(
     TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    const RasterOverlayFrameContext& frame) {
     TileSelectionFrameState& selection = tile.selectionFrameState;
     const TileSelectionResetPlan resetPlan =
         TileSelectionResetPolicy::plan(
@@ -18,7 +18,7 @@ void TileSelectionStateResetter::resetOne(
                 tile.hasSurfaceDrawable(),
                 TileSelectionRasterOverlayPreparer::isCompleteRenderable(
                     tile,
-                    rasterOverlays)});
+                    frame)});
     selection.previousSelectionState = resetPlan.previousSelectionState;
     selection.selectionState = resetPlan.selectionState;
     selection.screenSpaceError = resetPlan.screenSpaceError;

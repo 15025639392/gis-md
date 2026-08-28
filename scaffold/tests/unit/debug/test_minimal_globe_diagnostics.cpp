@@ -30,8 +30,8 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     diagnostics.frameLoadProgressPercentage = 75.0;
     diagnostics.frameProgressLoadingCount = 3;
     diagnostics.frameProgressTotalCount = 12;
-    diagnostics.frameMappedRasterTileLoadingCount = 2;
-    diagnostics.frameMappedRasterTileCount = 5;
+    diagnostics.frameDirectRasterMappingLoadingCount = 2;
+    diagnostics.frameDirectRasterMappingCount = 5;
     diagnostics.rasterOverlayTilesLoading = 4;
     diagnostics.rasterPendingUploadBytes = 12 * 1024;
     diagnostics.rasterCachedSourceTileBytes = 34 * 1024;
@@ -51,7 +51,7 @@ TEST(MinimalGlobeDiagnosticsTest, PanelReportsRenderEntryFunnelCounts) {
     EXPECT_NE(std::string::npos, line.find("real 2, fill 3, ell 1, unk 0"));
     EXPECT_NE(std::string::npos, line.find("load 75%"));
     EXPECT_NE(std::string::npos, line.find("work 3/12"));
-    EXPECT_NE(std::string::npos, line.find("mapped 2/5"));
+    EXPECT_NE(std::string::npos, line.find("direct 2/5"));
     EXPECT_NE(std::string::npos, line.find("rasterLoad 4"));
     EXPECT_NE(std::string::npos, line.find("rasterCpu 12k+34k peak 56k+78k"));
 }
@@ -73,8 +73,8 @@ TEST(MinimalGlobeDiagnosticsTest, SummaryReportsRenderEntryReasonCounts) {
     tileset.minVisibleZoom = 1;
     tileset.maxVisibleZoom = 3;
     tileset.lodSizePixels = 16.0;
-    tileset.frameMappedRasterTileCount = 5;
-    tileset.frameMappedRasterTileLoadingCount = 2;
+    tileset.frameDirectRasterMappingCount = 5;
+    tileset.frameDirectRasterMappingLoadingCount = 2;
     tileset.frameProgressTotalCount = 8;
     tileset.frameProgressLoadingCount = 3;
     tileset.frameLoadProgressPercentage = 62.5;
@@ -92,7 +92,7 @@ TEST(MinimalGlobeDiagnosticsTest, SummaryReportsRenderEntryReasonCounts) {
     EXPECT_NE(std::string::npos, summary.find("prepDeferred=4"));
     EXPECT_NE(std::string::npos, summary.find("load=62%"));
     EXPECT_NE(std::string::npos, summary.find("work=3/8"));
-    EXPECT_NE(std::string::npos, summary.find("mapped=2/5"));
+    EXPECT_NE(std::string::npos, summary.find("direct=2/5"));
     EXPECT_NE(
         std::string::npos,
         summary.find("Credits: Imagery A; Roads B; Terrain C; ..."));

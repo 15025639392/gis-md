@@ -58,7 +58,7 @@ Engine  (Engine.h/.cpp — thin lifecycle + surface + input facade)
               ├── content lifecycle          → TileContentLifecycleManager, TileLoadQueue,
               │                                TileContentRuntime, GpuUploadQueue (async CPU→GPU),
               │                                TileContentCacheManager (byte-budget LRU)
-              ├── RasterOverlay mapping       → ActivatedRasterOverlay → RasterMappedToTilesetTile,
+              ├── RasterOverlay mapping       → ActivatedRasterOverlay → DirectRasterMapping,
               │                                 upsampled-child coordination, per-tile texture upload
               └── glTF render prep            → GltfContentProvider → GltfModel →
                                                 GltfRenderGeometryBuilder / GltfRenderResourcePreparer →
@@ -857,7 +857,7 @@ oracle(TileSelectionEquivalence)。前者自 2026-07-19「release 下 selector
 | `TilesetRenderFrameExecutor` (92) | `buildRenderCommands` (TilesetRenderFrameExecutor.cpp:12) | 出命令 |
 | `TileRenderFrameContext` (58) | `markIneligibleForUnloading` (TileRenderFrameContext.cpp:8)、`trackRenderReference` (TileRenderFrameContext.cpp:13)、`buildTileDrawCommand` (TileRenderFrameContext.cpp:24)、`renderCommandTimings` (TileRenderFrameContext.cpp:42) | 帧上下文 + **渲染引用跟踪**(submit 前不得释放,见 §20) |
 | `TileRenderCommandManager` (61) | ctor (TileRenderCommandManager.cpp:10)、`beginFrame` (TileRenderCommandManager.cpp:20)、`buildTileDrawCommand` (TileRenderCommandManager.cpp:30) | 常驻命令缓存。⚠️ **勿把逐帧字段写回常驻命令** |
-| `TileRenderPlanFrameRefresher` (280) | `refreshFrameCredits` (TileRenderPlanFrameRefresher.cpp:178);`collectReadyRasterTileCredits` (TileRenderPlanFrameRefresher.cpp:134)、`collectRenderContentCredits` (TileRenderPlanFrameRefresher.cpp:153)、`collectRasterOverlayProviderCredits` (TileRenderPlanFrameRefresher.cpp:160)、`collectMappedRasterProgress` (TileRenderPlanFrameRefresher.cpp:199)、`logEdgeMismatch` (TileRenderPlanFrameRefresher.cpp:66)、`formatEdgeStats` (TileRenderPlanFrameRefresher.cpp:40) | 归属信息与栅格进度;接边错位探针的**逐帧累积 + 周期报告**(单帧 n≈17 撑不起 A/B)。⚠️ **H-S5(2026-08-21)**:新瓦首建预算 4/帧(交互)/8/帧(恢复),耗尽且祖先可渲染时改走祖先裁剪回退(`renderEntryFirstBuildDeferredCount`),摊平扫掠前沿首建 burst |
+| `TileRenderPlanFrameRefresher` (280) | `refreshFrameCredits` (TileRenderPlanFrameRefresher.cpp:178);`collectReadyRasterTileCredits` (TileRenderPlanFrameRefresher.cpp:134)、`collectRenderContentCredits` (TileRenderPlanFrameRefresher.cpp:153)、`collectRasterOverlayProviderCredits` (TileRenderPlanFrameRefresher.cpp:160)、`collectDirectRasterProgress` (TileRenderPlanFrameRefresher.cpp:199)、`logEdgeMismatch` (TileRenderPlanFrameRefresher.cpp:66)、`formatEdgeStats` (TileRenderPlanFrameRefresher.cpp:40) | 归属信息与栅格进度;接边错位探针的**逐帧累积 + 周期报告**(单帧 n≈17 撑不起 A/B)。⚠️ **H-S5(2026-08-21)**:新瓦首建预算 4/帧(交互)/8/帧(恢复),耗尽且祖先可渲染时改走祖先裁剪回退(`renderEntryFirstBuildDeferredCount`),摊平扫掠前沿首建 burst |
 | `TileEdgeMismatchProbe` (156) | `measure` (TileEdgeMismatchProbe.h:111) | **跨瓦接边几何错位**直接测量(①-1 判据)。漏天像素已恒 0 但 ε 被裙墙盖住,故换尺子。⚠️ 必须乘 `terrainReliefFade`,漏了会读出假错位;⚠️ fadeUniform/fadeDiffer **必须分开统计**,后者量级大一个数量级会把 ①-1 的效果稀释掉 |
 | `TerrainEdgeNeighborHeight` (93) | `sourceOf` (TerrainEdgeNeighborHeight.h:36)、`renderedHeight` (TerrainEdgeNeighborHeight.h:61)、`edgePoint` (TerrainEdgeNeighborHeight.h:74)、`edgeNodeCount` (TerrainEdgeNeighborHeight.h:87) | 「条目本帧实际渲染出的地形高度」**共用真值源**。⚠️ 探针(量)与 LUT(修)必须逐位一致 —— 各写一份的话,修完指标归零只证明两份代码互相同意 |
 | `TerrainEdgeHeightLut` (100) | `build` (TerrainEdgeHeightLut.h:51)、`shaderNodePair` (TerrainEdgeHeightLut.h:88) | **①-1**:边吸附改取邻居真值的 CPU 侧表。⚠️ A′ 契约:`build` 只准在 resolve 阶段调用(记录裸指针同阶段消费),draw 一律查 `TilePlan::edgeLutTables`;⚠️ 节点序号 j=a/snapStep 必须与 shader 的 a0/a1 取法逐一对应(`shaderNodePair` 是这个约定的单一定义,已单测且故意破坏验过会响) |
@@ -1220,7 +1220,7 @@ The 32-byte `TerrainGpuVertex` async upload path is end-to-end (2026-07-01): pro
 | `useTerrainVertexFormat` (32 vs 120 selector) | TileRenderContentState.h:111 | set in coordinator (.h:176) |
 | Async push/upload/drain | TilesetContentLifecycleCoordinator.h:143-261 | upload side done |
 | DRAW side wired (2026-07-01) | `GltfDrawCommandBuilder.cpp:71` branches on `useTerrainVertexFormat` → `renderer.makeTerrainPrimitiveCommand` (stride 32, `kind=GltfPrimitive`, `shader=terrainShader`) | **done** (compiles + unit-tested both backends; pixel-verify pending a reachable QM terrain server) |
-| `Renderer::terrainShader()` defined + terrain shaders added | `terrainShader()` getter (Renderer.cpp:4486-4488) returns `kTerrainVertex/FragmentGLSL`, `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23) + `makeTerrainPrimitiveCommand` | **done** |
+| `Renderer::terrainShader()` defined + terrain shaders added | `terrainShader()` getter (Renderer.cpp:4463-4465) returns `kTerrainVertex/FragmentGLSL`, `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23) + `makeTerrainPrimitiveCommand` | **done** |
 
 Files read and verified: all listed content-lifecycle files under `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/tiling/`, plus `content/GltfModel.h` and `renderer/Renderer.h`. Line numbers above are current as read.
 
@@ -1283,7 +1283,7 @@ Files read and verified: all listed content-lifecycle files under `/Users/ldy/De
 
 ## 7. tiling — raster overlay mapping
 
-### RasterMappedToTilesetTile.h / .cpp
+### DirectRasterMapping.h / .cpp
 
 cesium-native `RasterMappedTo3DTile` equivalent — links one geometry tile to one imagery tile with a 3-state attachment machine. Raw-pointer accessors are non-owning; shared handles keep tile/texture lifetime stable.
 
@@ -1294,25 +1294,25 @@ cesium-native `RasterMappedTo3DTile` equivalent — links one geometry tile to o
 | `enum ReadyTileSource` | .h:57-61 | `None / Real / Ancestor` — provenance of `_pReadyTile` |
 | `struct SourceTileList` | .h:63-73 | Source imagery tile grid: `sourceZoom`, `sourceBounds`, `sourceKeys`, `minX/minY/maxX/maxY` |
 | Invariants | .h:35-40 | `_pLoadingTile`=desired (may be Loading/Failed); `_pReadyTile`=rendered (Loaded/Done); both-null=Unattached, both-set=TemporarilyAttached, ready-only=Attached; `originalFailed_` set-once |
-| `update()` | .h:89-100 / .cpp:156-481 | 7-step flow; params: geometryKey, overlayDetails, targetScreenPixels x/y, provider, prepRenderer, missingProjections, parentTile, overlayIndex, hasRenderContentDetails, boundingVolumeRectangle |
-| — stale-handle drop | .cpp:173-196 | If ready/loading tile no longer owned by provider (option/coverage change) → releaseTileReferences or drop loading handle + recompute state |
-| — Step 1 attached fast path | .cpp:198-219 | If `Attached`: revert to Unattached if renderer resources gone; else markUsed + return MoreDetail from `_pReadyTile->isMoreDetailAvailable()` |
-| — Step 2 failure fallback | .cpp:221-256 | On `overlayTileCannotRenderItself` (loading-tile `Failed` **or** empty composition), set `originalFailed_`, walk parent geometry chain via `findParentTileOverlayPreferLoading`, adopt ancestor's loading/ready tile |
+| `update()` | .h:89-100 / .cpp:156-504 | 7-step flow; params: geometryKey, overlayDetails, targetScreenPixels x/y, provider, prepRenderer, missingProjections, parentTile, overlayIndex, hasRenderContentDetails, boundingVolumeRectangle |
+| — stale-handle drop | .cpp:173-198 | If ready/loading tile no longer owned by provider (option/coverage change) → releaseTileReferences or drop loading handle + recompute state |
+| — Step 1 attached fast path | .cpp:200-221 | If `Attached`: revert to Unattached if renderer resources gone; else markUsed + return MoreDetail from `_pReadyTile->isMoreDetailAvailable()` |
+| — Step 2 failure fallback | .cpp:223-259 | Inside `update()`, on `overlayTileCannotRenderItself` (loading-tile `Failed` **or** empty composition), set `originalFailed_`, walk parent geometry chain via `findParentTileOverlayPreferLoading`, adopt ancestor's loading/ready tile |
 | — projection/rectangle lookup | .cpp:123-145 | `findRectangleForProjection` reads `textureCoordinateID` + invertedV; falls back to boundingVolumeRectangle when no render-content details |
-| — placeholder retry | .cpp:282-292 | Placeholder loading tile cleared once `provider.isReady()` |
-| — map-to-geometry | .cpp:294-369 | If no loading tile: provider-not-ready→placeholder (texCoordID=-1); render-content+geometryRectangle→`provider.mapRasterTilesToGeometryTile`; missing projection→record in `missingProjections` at index-after-list + placeholder; else boundingVolume path |
-| — Step 3 loading→ready promote | .cpp:371-405 | On `Loaded`/`Done`: detach old ready, `_pReadyTile=_pLoadingTile`, cache texture, `computeTranslationAndScale`. Gated by `canPromoteReadyRaster` (needs prepRenderer OR Unattached OR no ready) |
-| — Step 4 ancestor substitution | .cpp:76-98 | While loading, walk parent chain via `findLoadedTileOverlay` for a ready ancestor tile; adopt as `_pReadyTile` (source=Ancestor), recompute UV for CURRENT child bounds. Empty-composition candidates are **skipped** so the walk reaches a drawable ancestor instead of stopping at a blank one |
-| `overlayTileCannotRenderItself()` | .cpp:69-73 | `Failed` **or** `RasterOverlayTile::isEmptyComposition()` — the two endings that must fall back to the parent chain, else the tile and its whole descendant chain render blank |
-| — Step 5 failed-no-fallback valve | .cpp:446-460 | Failed loading tile + no ancestor + no ready → mark ready (texture null) `Attached` so raster failure never blocks geometry |
-| — Step 6 attach | .cpp:462-465 | `_pReadyTile->loadInMainThread()`; if prepRenderer + renderer resources → `attachRasterInMainThread(geometryKey, overlaySlot, tile, tex, offset/scaleUV)`; state=Temporarily/Attached |
-| — Step 7 return MoreDetail | .cpp:466-480 | loading→Unknown; else MoreDetail from ready tile unless `originalFailed_` |
-| `isMoreDetailAvailable()` | .cpp:483-492 | `!loading && !originalFailed && ready && ready.moreDetail==Yes` |
-| `hasPendingNonPlaceholderLoadingTile()` | .cpp:493-498 | Loading tile present and not Placeholder |
-| `detachFromTile()` | .cpp:581-595 | `detachRasterInMainThread(geometryKey, overlaySlot)` (skips Failed tiles / z<0), state→Unattached |
-| `releaseTileReferences()` / `clearTileOwnershipState()` | .cpp:596-601 | Detach + drop both handles, reset UV/flags/texCoordID/slot |
-| `loadThrottled()` | .cpp:646-659 | markUsed + `provider.loadTileThrottled(loadingTile, budget)`; no-op for null/placeholder |
-| `computeTranslationAndScale()` | .h:122-124 / .cpp:660-685 | Delegates to `TileSurface::computeTranslationAndScale`; non-inverted V passes through `textureWindowForNorthWestUv`. Pure rectangle-ratio, no tile-size assumption (edge bleed handled by GL CLAMP_TO_EDGE) |
+| — placeholder retry | .cpp:285-295 | Placeholder loading tile cleared once `provider.isReady()` |
+| — map-to-geometry | .cpp:297-383 | If no loading tile: provider-not-ready→placeholder (texCoordID=-1); render-content+geometryRectangle→`provider.mapRasterTilesToGeometryTile`; missing projection→record in `missingProjections` at index-after-list + placeholder; else boundingVolume path |
+| — Step 3 loading→ready promote | .cpp:391-428 | Inside `update()`, on `Loaded`/`Done`: detach old ready, `_pReadyTile=_pLoadingTile`, cache texture, `computeTranslationAndScale`. Gated by `canPromoteReadyRaster` (needs prepRenderer OR Unattached OR no ready) |
+| — Step 4 ancestor substitution | .cpp:76-100 / :430-467 | While loading, walk parent chain via `findLoadedTileOverlay` for a ready ancestor tile; adopt as `_pReadyTile` (source=Ancestor), recompute UV for CURRENT child bounds. Empty-composition candidates are **skipped** so the walk reaches a drawable ancestor instead of stopping at a blank one |
+| `overlayTileCannotRenderItself()` | .cpp:71-74 | `Failed` **or** `RasterOverlayTile::isEmptyComposition()` — the two endings that must fall back to the parent chain, else the tile and its whole descendant chain render blank |
+| — Step 5 failed-no-fallback valve | .cpp:469-482 | Failed loading tile + no ancestor + no ready → mark ready (texture null) `Attached` so raster failure never blocks geometry |
+| — Step 6 attach | .cpp:485-487 / :626-650 | `_pReadyTile->loadInMainThread()`; if prepRenderer + renderer resources → `attachRasterInMainThread(geometryKey, overlaySlot, tile, tex, offset/scaleUV)`; state=Temporarily/Attached |
+| — Step 7 return MoreDetail | .cpp:489-503 | loading→Unknown; else MoreDetail from ready tile unless `originalFailed_` |
+| `isMoreDetailAvailable()` | .cpp:506-514 | `!loading && !originalFailed && ready && ready.moreDetail==Yes` |
+| `hasPendingNonPlaceholderLoadingTile()` | .cpp:516-520 | Loading tile present and not Placeholder |
+| `detachFromTile()` | .cpp:605-618 | `detachRasterInMainThread(geometryKey, overlaySlot)` (skips Failed tiles / z<0), state→Unattached |
+| `releaseTileReferences()` / `clearTileOwnershipState()` | .cpp:620-624 / :652-670 | Detach + drop both handles, reset UV/flags/texCoordID/slot |
+| `loadThrottled()` | .cpp:672-684 | markUsed + `provider.loadTileThrottled(loadingTile, budget)`; no-op for null/placeholder |
+| `computeTranslationAndScale()` | .h:122-124 / .cpp:686-710 | Delegates to `TileSurface::computeTranslationAndScale`; non-inverted V passes through `textureWindowForNorthWestUv`. Pure rectangle-ratio, no tile-size assumption (edge bleed handled by GL CLAMP_TO_EDGE) |
 | UV fields | .h:189-191 | `rasterUV = geometryUV * scale + offset`; `offsetU/V_`, `scaleU/V_` |
 | `textureCoordinateID_` / `overlaySlot_` | .h:204,208 | Per-projection texcoord index (cesium `_textureCoordinateID`) vs. resource-notification layer slot — distinct identities |
 
@@ -1324,19 +1324,25 @@ Tileset-owned migration boundary for the ordered raster overlay stack. It owns t
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| `RasterOverlayFrameSlot` / `RasterOverlayFrameContext` | .h:21-70 | Stable `runtimeSlot`; Direct exclusions remain null slots; frame/generation/provider/depot views are published together. Overlay option values are not copied yet, so this is not a strict value snapshot. |
+| `RasterOverlayFrameSlot` / `RasterOverlayFrameContext` | `RasterOverlayRuntime.h` | Stable `runtimeSlot`; Direct exclusions remain null slots; frame/generation/provider/depot views are published together. `visible/opacity/role/priority/fallbackPolicy/blocksCompleteRenderable/projection/providerRevision/generation` are value-snapshotted for the frame. |
 | `configuredOverlays` | .h:104-107 | Stable Runtime-owned configuration stack for Scene convergence, diagnostics and cache accounting; it is distinct from a backend's frame view. |
-| `providersForBackend` | .cpp:74-120 | Private publication helper: calls the selected provider-view strategy, removes foreign/duplicate providers, and restores Runtime order without instantiating excluded overlays. Execution consumers cannot use it to bypass the frame snapshot. |
-| `beginFrame` | .cpp:127-204 | Publishes both backend views/generations. Initial generation does not invalidate pre-existing Direct work; later Direct changes release mapping/direct state before the new view is consumed. |
-| `setBackend` / `setBackendEnabled` | .cpp:206-247 | Replaces or toggles one phase-one provider-view strategy; changes become visible at the next `beginFrame`. This is not yet a full selection/request/upload/render executor contract. |
+| `providersForBackend` | .cpp:133-179 | Private publication helper: calls the selected provider-view strategy, removes foreign/duplicate providers, and restores Runtime order without instantiating excluded overlays. Execution consumers cannot use it to bypass the frame snapshot. |
+| `beginFrame` | .cpp:181-330 | Publishes both backend views/generations. Initial generation does not invalidate pre-existing Direct work; later Direct changes release mapping/direct state before the new view is consumed. |
+| `setBackend` / `setBackendEnabled` | .cpp:332-352 / :361-374 | Replaces or toggles one phase-one provider-view strategy; changes become visible at the next `beginFrame`. This is not yet a full selection/request/upload/render executor contract. |
 
-### RasterBindingSet.h / .cpp
+### RasterResolution.h / .cpp + RasterBindingSet.h / .cpp
 
-Single resolver for Direct render bindings, indexed by Runtime slot. `resolve` (.cpp:8-33) captures the mapped relation, real/ancestor surface tile, texture-coordinate id, opacity and fallback-policy legality. Readiness and draw construction use this resolver, but currently create separate instances; a later stage must share one frozen per-frame/per-tile result if option mutation between phases must be impossible.
+Backend-neutral semantic resolution plus backend-specific Direct sampling. `RasterResolution` orthogonally records request state, exact/composed content, own/ancestor relation, attachment, coverage/readiness, target pending/failure, desired/resolved zoom, presentation policy and frame generation. It deliberately carries no texture/UV. `DirectRasterSampleDescriptor` carries only Direct `Texture*`, texcoord, UV affine and erased resource lease; PageStore keeps its array+indirection+placement descriptor shape. `RasterBindingSet` publishes both by Runtime slot, and draw/readiness no longer read `DirectRasterMapping*` through their downstream binding contract.
+
+| Item | Description |
+|---|---|
+| `resolveDirectRasterBinding` | Adapter from Direct mapping lifecycle to `RasterResolution + DirectRasterSampleDescriptor`; preserves failed/empty target while an ancestor remains drawable, and keeps desired source zoom independent from displayed ancestor zoom. |
+| `rasterResolutionAllowedByPolicy` | Backend-neutral visibility/opacity/role/fallback gate; `SkipUntilReady` is expressed by `targetPending`, not by rereading Direct loading pointers. |
+| `RasterBindingSet::resolve(..., frame)` | Consumes frozen slot metadata/generation; a filtered Direct slot remains non-visible/non-drawable even though its configured overlay pointer still exists. |
 
 ### SurfaceRasterBinding.h / .cpp
 
-Decides whether a mapped raster is drawable and produces the render-time binding (texture + UV transform). "Drawable" = ready tile is a real Loaded/Done raster with an owned texture.
+Decides whether a Direct raster mapping is drawable and produces the render-time binding (texture + UV transform). "Drawable" = ready tile is a real Loaded/Done raster with an owned texture.
 
 | Item | Lines | Description |
 | --- | --- | --- |
@@ -1348,7 +1354,7 @@ Decides whether a mapped raster is drawable and produces the render-time binding
 
 ### TileRasterOverlayState.h / .cpp
 
-Per-tile collection of `RasterMappedToTilesetTile` mappings (one slot per active overlay), plus missing-projection accumulation and mapping-identity invalidation. Lives on `TilesetTile.rasterOverlayState`.
+Per-tile collection of `DirectRasterMapping` mappings (one slot per active overlay), plus missing-projection accumulation and mapping-identity invalidation. Lives on `TilesetTile.rasterOverlayState`.
 
 | Item | Lines | Description |
 | --- | --- | --- |
@@ -1360,11 +1366,11 @@ Per-tile collection of `RasterMappedToTilesetTile` mappings (one slot per active
 | `hasDrawableReadyMapping()` | .cpp:61-65 | Drawable-ready: `chooseSurfaceRasterBinding(...).kind != None` |
 | `synchronizeMappingIdentity()` | .cpp:67-82 | On identity change, `releaseAndClearReferences` then store new identity |
 | `releaseReferences` / `releaseAndClearReferences` | .cpp:89-97 | Release handles; latter also clears vector + missing projections + identity |
-| `forEachMapping()` | .h:51-56 | Visits each slot (nullable) — used by ancestor lookups in RasterMappedToTilesetTile |
+| `forEachMapping()` | .h:51-56 | Visits each slot (nullable) — used by ancestor lookups in DirectRasterMapping |
 
 ### TileRasterOverlayPrefetcher.h / .cpp
 
-Per-tile prefetch driver: syncs mapping slots to the active-overlay list, runs `RasterMappedToTilesetTile::update` for each overlay in priority order, then throttled-loads the resulting loading tiles. Selection-phase (no renderer resources; `pPrepRenderer` optional).
+Per-tile prefetch driver: syncs mapping slots to the active-overlay list, runs `DirectRasterMapping::update` for each overlay in priority order, then throttled-loads the resulting loading tiles. Selection-phase (no renderer resources; `pPrepRenderer` optional).
 
 | Item | Lines | Description |
 | --- | --- | --- |
@@ -1373,7 +1379,7 @@ Per-tile prefetch driver: syncs mapping slots to the active-overlay list, runs `
 | — done-tile guard | .cpp:29-33 | `doneTileCannotHoldRasterOverlays` → release all + return |
 | — slot sync | .cpp:34-44 | `synchronizeMappingIdentity` (signature) + `resizeMappingSlots` + `clearMissingProjections`; empty overlays → return |
 | — mapping context | .cpp:48-50 | `TileRasterOverlayMappingPolicy::contextFor(tile)` |
-| — per-overlay loop | .cpp:52-139 | For each `overlayProcessingOrder` index: skip invisible (release slot), `ensureTileProvider(device)`, compute geometry/boundingVolume/target rectangles, `computeDesiredScreenPixels`, then `mapped.update(...)` |
+| — per-overlay loop | .cpp:52-139 | For each `overlayProcessingOrder` index: skip invisible (release slot), `ensureTileProvider(device)`, compute geometry/boundingVolume/target rectangles, `computeDesiredScreenPixels`, then `DirectRasterMapping::update(...)` |
 | — MSE note | .cpp:85-96 | Passes TILESET MSE (16.0), NOT overlay MSE (2.0), into `computeDesiredScreenPixels`; overlay MSE divided again downstream — using overlay MSE twice underestimates zoom by ~3 levels (16/2=8) |
 | — missing projection handling | .cpp:123-131 | If Done tile → `action.unloadTileContent=true`; else `releaseAndClearReferences`; return early |
 | — throttled load | .cpp:133-138 | Non-placeholder loading tile → `mapped.loadThrottled(provider, &frameResourceBudget)` |
@@ -1384,9 +1390,9 @@ Pure policy helpers for overlay eligibility, required-readiness gating, and prio
 
 | Method | Lines | Description |
 | --- | --- | --- |
-| `doneTileCannotHoldRasterOverlays()` | .cpp:14-19 | True if tile `Done` but not Render content OR `!hasRasterOverlayHostContent()` |
-| `requiredOverlaysReady()` | .cpp:21-36 | For every visible overlay with `blocksCompleteRenderable()`, require `hasReadyMapping(i)` |
-| `processingOrder()` | .cpp:160-179 | Stable-sort indices by overlay `priority()` descending (null → `RasterOverlayPriority::Low`) |
+| `doneTileCannotHoldRasterOverlays()` | .cpp:18-23 | True if tile `Done` but not Render content OR `!hasRasterOverlayHostContent()` |
+| `requiredOverlaysReady()` | .cpp:25-43 | For every visible overlay with `blocksCompleteRenderable()`, require `hasReadyMapping(i)` |
+| `processingOrder()` | .cpp:167-186 | Stable-sort indices by overlay `priority()` descending (null → `RasterOverlayPriority::Low`) |
 
 ### RasterOverlayProjection.h / .cpp
 
@@ -1443,7 +1449,7 @@ Header-only frame orchestrator. Drives per-frame overlay uploads and selection-p
 
 ### TileRasterOverlayMappingPolicy.h
 
-Header-only. Resolves which rectangle/projection context a tile presents to `RasterMappedToTilesetTile::update` — render-content details vs. bounding-volume fallback.
+Header-only. Resolves which rectangle/projection context a tile presents to `DirectRasterMapping::update` — render-content details vs. bounding-volume fallback.
 
 | Item | Lines | Description |
 | --- | --- | --- |
@@ -1558,7 +1564,7 @@ CPU→GPU handoff struct for the async path (built on worker, consumed on GL thr
 
 ### GltfDrawCommandBuilder.h / .cpp
 
-Emits per-primitive `RenderCommand`s from prepared `GltfPrimitiveRenderResources`, binding materials, textures, water mask, and mapped raster overlays. cesium-native draw-call assembly.
+Emits per-primitive `RenderCommand`s from prepared `GltfPrimitiveRenderResources`, binding materials, textures, water mask, and Direct raster overlay samples. cesium-native draw-call assembly.
 
 | Item | Lines | Description |
 | --- | --- | --- |
@@ -1906,7 +1912,7 @@ cesium-native `RasterOverlayTile` equivalent: one imagery tile with its own asyn
 | `setTexture` / `markLoadedWithoutTexture` | .cpp:32-41 | Owns GPU `Texture` via `unique_ptr`; sets opaque `rendererResources_` handle; empty-image case marks Loaded without texture |
 | `loadInMainThread` | .cpp:62-73 | Loaded→Done transition (cesium-native GPU-resource step) |
 | `getTargetScreenPixelsX/Y` | .h:80-85 | cesium-native `getTargetScreenPixels` (default 256×256) |
-| mapped-raster fields | .h:137-174 | Mapped (non-source) tile: source zoom/bounds/keys + min/max XY of source-tile plan |
+| direct-composite fields | .h:137-174 | Mapped (non-source) tile: source zoom/bounds/keys + min/max XY of source-tile plan |
 | atlas UV | .h:176-184 | Atlas offset/scale U/V |
 | `lastUsedFrame` | .h:214 | Used by provider `trimUnusedTiles` eviction |
 
@@ -1919,7 +1925,7 @@ Resource-prep boundary: provider owns tile lifecycle + decoded CPU imagery; uplo
 | `RasterTextureUploadOptions` | .h:10-12 | `generateMipmaps` only. |
 | `RasterTextureUploader` iface | .h:25-34 | `maxTextureSize`, `uploadRasterTexture(DecodedImage, options)` → `unique_ptr<Texture>` |
 
-### RasterOverlayTileProvider.h / .cpp (~1630 lines) + RasterOverlayImageCompositing.h / .cpp + RasterOverlayTileProviderBudget.cpp + RasterOverlayTileLoadDispatch.cpp + RasterOverlayUploadProcessor.cpp
+### RasterOverlayTileProvider.h / .cpp + RasterOverlaySourcePlan.h / .cpp + RasterOverlayImageCompositing.h / .cpp + RasterOverlayTileProviderBudget.cpp + RasterOverlayTileLoadDispatch.cpp + RasterOverlayUploadProcessor.cpp
 
 cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, async load dispatch, GPU-upload scheduling, throttling, source-tile depot, and frame-based trimming. Maps geometry rectangles → provider quadtree source imagery (cesium-native `mapRasterTilesToGeometryTile`). Provider still stops at CPU imagery; GPU upload delegated to injected `RasterTextureUploader`.
 
@@ -1927,8 +1933,8 @@ cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, as
 |---|---|---|
 | ctor / dtor | .h:51-55 / .cpp:632-644 | Takes `ImageryProvider&`, `TileScheme&`, optional uploader (null = headless test); dtor drains async state |
 | `getTile` | .cpp:1161-1195 | Get/create cached tile by key; returns shared placeholder when not ready; stamps `frameNumber_` |
-| `mapRasterTilesToGeometryTile` | .cpp:1196-1303 | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, else composed mapped tile |
-| `buildQuadtreeSourcePlan` | .cpp:507... | Choose source zoom (SSE/texture-size driven) + source-key rectangle |
+| `mapRasterTilesToGeometryTile` | .cpp:1196-1303 | cesium-native equivalent: geometry rect → quadtree source plan; exact single-source → direct tile, otherwise build a Direct composite tile |
+| `buildRasterOverlaySourcePlan` | `RasterOverlaySourcePlan.cpp` | Backend-neutral immutable geometry→imagery plan: MSE zoom, maximum-texture downgrade, antimeridian coverage, Cesium 1/512 edge trim, source keys/range and exact-single-source classification. Direct resolution and composite loading share this function. |
 | `resolveTile` | .cpp:1304-1329 | Best available tile ≤ desiredZoom over bounds; nullptr if none |
 | `loadTile` / `loadTileThrottled` | .cpp:1402-1470 | Start async load (Loading + HTTP); throttled by `maximumSimultaneousTileLoads` (=20, .h:189) |
 | `composeQuadtreeSourceImagesWithDetails` | .cpp:588-623 | Composite source images into target rect; propagate MoreDetailAvailable/credits/diagnostics |
@@ -1937,16 +1943,17 @@ cesium-native `RasterOverlayTileProvider` equivalent. Owns raster tile cache, as
 | `refreshSourceAssetDepot` | .cpp:865-873 | Rebuild shared source-tile depot on option change |
 | `requestDiagnostics` | .cpp:1330-1356 | Aggregates imagery-provider + raster-source request counters |
 | 上传处理簇 | **RasterOverlayUploadProcessor.cpp** | I-P4 拆刀 5:主线程上传推进——`processPendingUploads` .cpp:57(逐瓦片 pendingUploads 消费,`uploadAllowedDuringInteraction` 交互期尺寸过滤 .cpp:33)、`hasPendingWork` .cpp:393;专属 3 常量 + 1 helper,零主文件残留依赖 |
-| 加载/派发簇 | **RasterOverlayTileLoadDispatch.cpp** | I-P4 第四刀 4b:从主文件拆出的 load/issue 核心——`loadMappedRasterTile`/`pumpLoadingMappedRasterTile` .cpp:96/194、`loadSourceTileList`/`loadSourceImageSet` .cpp:217/234、`issueMappedSourceImageSet` .cpp:475、`estimateNewSourceRequestsForSourceKeys` .cpp:548、`issuePendingSourceFallbacks` .cpp:580、`issueActiveMappedSourceImageSets` .cpp:687;自带 5 个专属匿名 helper(日志/请求槽/在飞容量/waiter token/瞬态失败),复用收口后的共享几何集 |
-| 投影+合成簇 | **RasterOverlayImageCompositing.cpp** | I-P4 拆出:投影工具(`projectionForSourceScheme`/`projectionForScheme`/`webMercatorY`/`projectedSouth/North/Height` 等 .cpp:298-381)+ 几何覆盖映射(4a 收口:`inwardSampleEpsilon` .cpp:384、`mapGeometryBoundsToImageryCoverage` .cpp:427、`effectiveCoverageRectangle` .cpp:506 等)+ 像素合成(`unsafeBlitImage`/`unsafeBilinearResize` .cpp:186-296、`blitImage` .cpp:519、`combineQuadtreeSourceImages` .cpp:615、`composeMappedSourceImageSet` .cpp:744)+ `RasterSourceResult`(h)+ 通用判断(`isDecodedImageUploadable`/`decodedImageSizeBytes` 等) |
-| depot 嵌套 struct | **RasterOverlaySourceDepot.h** | I-P4 第二刀:QuadtreeSourceAssetDepot(源瓦片共享缓存/in-flight/条件请求,约 670 行)+ MappedSourceImageSet(映射源集合派发/合成回调,约 290 行);依赖 ProviderAsyncState 私有状态,嵌套类定义在头文件使主文件成员访问可见 |
+| 加载/派发簇 | **RasterOverlayTileLoadDispatch.cpp** | I-P4 第四刀 4b:从主文件拆出的 load/issue 核心——`loadDirectCompositeTile`/`pumpLoadingDirectCompositeTile` .cpp:96/194、`loadSourceTileList`/`loadSourceImageSet` .cpp:217/234、`issueDirectCompositeSourceImageSet` .cpp:475、`estimateNewSourceRequestsForSourceKeys` .cpp:548、`issuePendingSourceFallbacks` .cpp:580、`issueActiveDirectCompositeSourceImageSets` .cpp:687;自带 5 个专属匿名 helper(日志/请求槽/在飞容量/waiter token/瞬态失败),复用收口后的共享几何集 |
+| 投影+合成簇 | **RasterOverlayImageCompositing.cpp** | I-P4 拆出:投影工具(`projectionForSourceScheme`/`projectionForScheme`/`webMercatorY`/`projectedSouth/North/Height` 等 .cpp:298-381)+ 几何覆盖映射(4a 收口:`inwardSampleEpsilon` .cpp:384、`mapGeometryBoundsToImageryCoverage` .cpp:427、`effectiveCoverageRectangle` .cpp:506 等)+ 像素合成(`unsafeBlitImage`/`unsafeBilinearResize` .cpp:186-296、`blitImage` .cpp:519、`combineQuadtreeSourceImages` .cpp:615、`composeDirectCompositeSourceImageSet` .cpp:744)+ `RasterSourceResult`(h)+ 通用判断(`isDecodedImageUploadable`/`decodedImageSizeBytes` 等) |
+| source plan 合同 | **RasterOverlaySourcePlan.h / .cpp** | directComposite 退场首刀：纯值 `RasterOverlaySourcePlan` + coverage/range，零 cache/request/upload/attachment/GPU 指针依赖；保留 Cesium MSE、边界容差、反经线与 unsupported-child→source-parent fallback 的枚举语义。 |
+| depot 嵌套 struct | **RasterOverlaySourceDepot.h** | I-P4 第二刀:QuadtreeSourceAssetDepot(源瓦片共享缓存/in-flight/条件请求,约 670 行)+ DirectCompositeSourceImageSet(映射源集合派发/合成回调,约 290 行);依赖 ProviderAsyncState 私有状态,嵌套类定义在头文件使主文件成员访问可见 |
 | 状态预算簿记 | **RasterOverlayTileProviderBudget.cpp** | I-P4 第三刀:静态成员函数,pending-upload 字节记账/backpressure(`pendingUploadSizeBytes`/`retain|releasePendingUploadImageBytesLocked` 等)+ source-depot 预算/LRU(`enforceSourceDepotBudgetLocked`/`compactSourceDepotCacheLruLocked`)+ 失效清空(`clearSourceDepotCacheLocked`/`clearPendingUploadsLocked`);只依赖头文件完整类型与 `RasterOverlayImageCompositing.h` 共享自由函数,零匿名 helper |
 
 | State/struct | Lines | Description |
 |---|---|---|
 | `QuadtreeSourceImage` / `CompositeImageResult` | .h:60-93 | Per-source decoded image; composed output + detail/credits |
-| `RasterSourceTileMapping` / `RasterTileMapping` | .h:95-115 | Source-tile plan (keys + min/max XY) and mapping result (direct vs composed) |
-| `ProviderAsyncState` | .h:394-447 | Shared state that **outlives the provider** for in-flight callbacks (cesium-native depot lifetime): `pendingUploads`, source depot cache/in-flight/LRU, active mapped source sets, atomics, `revision`, async-destruction promise |
+| `RasterOverlaySourcePlan` / `RasterTileMapping` | `RasterOverlaySourcePlan.h` / provider .h | Backend-neutral source plan (bounds, keys, min/max XY, exact-single-source) and temporary provider mapping result (`directTile/sourceTiles` names retained for compatibility in this slice). |
+| `ProviderAsyncState` | .h:394-447 | Shared state that **outlives the provider** for in-flight callbacks (cesium-native depot lifetime): `pendingUploads`, source depot cache/in-flight/LRU, active Direct composite source sets, atomics, `revision`, async-destruction promise |
 | `SourceTileAsset` / `InFlightSourceTileAsset` | .h:368-384 | cesium-native `SharedAssetDepot`: source imagery shared by `TileKey`, generation-tracked |
 | defaults | .h:456-459, 408 | `maximumScreenSpaceError_`=2.0, `maximumTextureSize_`=2048, `subTileCacheBytes`=16 MiB |
 
@@ -2532,22 +2539,22 @@ Static; fills `frameState.selectorViews`. Input `SceneSelectorViewBuildInput` (.
 
 Turns FrameState into ordered RenderCommands, sorts/validates, aggregates diagnostics, submits. Context struct `SceneRenderPipeline::Context` (.h:34-58)。⚠️ 2026-08-06 复核:此处原写「Owns `tileCommandSet_` (RenderCommandStreamingSet) + `tileCommandCandidates_` for stable-key streaming」—— 这两个成员**全仓库都不存在**,stable-key streaming 那套已撤。类现在持有的是 `polarCap_` (PolarCapRenderer) 与 `terrainBatcher_` (TerrainInstanceBatcher,mutable)。
 
-Render flow in `render()` (.cpp:209-286):
+Render flow in `render()` (.cpp:210-351):
 
 | Order | Method | Lines | Builds |
 |---|---|---|---|
-| 0 | `reserveCommands` | .cpp:345-364 | Reserve = **4 + vectorLayers*4 + Σ tileset renderEntries** |
+| 0 | `reserveCommands` | .cpp:354-377 | Reserve = **4 + vectorLayers*4 + Σ tileset renderEntries** |
 | 1 | ~~`buildStableLayerCommands`~~ | — | ⚠️ **已撤销,函数不存在**。此行原描述 stable-key streaming(prefixes `terrain:` / `content:N:`,经 `tileCommandSet_.update`)—— 该机制连同两个成员一起已从代码里移除;瓦片命令现由第 4 步 `buildLayerCommands` 直接插入。(2026-08-06 复核) |
-| 2 | `buildSkyCommands` | .cpp:373-412 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
-| 3 | `buildAtmosphereCommands` | .cpp:413-441 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
-| 4 | `buildLayerCommands` | .cpp:442-675 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
-| 5 | `applyMvpUniforms` | .cpp:727-735 | `SceneRenderCommandUniformUpdater::apply` |
-| 6 | `sortAndValidate` | .cpp:736-781 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
-| 5.5 | `assembleTerrainBatches` | .cpp:676-726 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
-| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:779-808 / :809-858 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
-| 7 | `aggregateDiagnostics` | .cpp:859-887 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
-| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:893-977 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
-| — | beforeSubmit → submit | .cpp:233-248 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:978-1014) |
+| 2 | `buildSkyCommands` | .cpp:379-417 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
+| 3 | `buildAtmosphereCommands` | .cpp:419-446 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
+| 4 | `buildLayerCommands` | .cpp:448-681 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
+| 5 | `applyMvpUniforms` | .cpp:733-741 | `SceneRenderCommandUniformUpdater::apply` |
+| 6 | `sortAndValidate` | .cpp:742-787 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:682-732 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:788-817 / :818-866 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
+| 7 | `aggregateDiagnostics` | .cpp:867-900 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
+| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:901-985 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
+| — | beforeSubmit → submit | .cpp:291-306 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:986-1024) |
 
 Terrain surface = `GltfPrimitive` cmds carrying `terrainRenderContent` (`isTerrainSurfaceCommand`, .cpp:32-35). QM terrain now draws via the 32-byte `TerrainGpuVertex` path (`makeTerrainPrimitiveCommand`, stride 32, `terrainShader`; 2026-07-01); ellipsoid-fallback terrain still uses the 120-byte `GltfGpuVertex` glTF path. `Renderer::terrainShader()` is defined (`kTerrainVertex/FragmentGLSL` + MSL).
 
@@ -2642,16 +2649,16 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 
 | Method | Lines | Notes |
 | --- | --- | --- |
-| `initialize()` (no-arg) | .h:34, .cpp:4168-4404 | Builds the neutral placeholder and compiles the terrain/glTF/vector shader set. glTF shader failure is non-fatal; terrain shader failure is fatal. |
-| `submit` | .cpp:4406-4409 | Forwards to `device->submit` if initialized. |
-| `dispose` | .cpp:4411-4429 | Resets the shader/texture resources. |
-| Shared-resource getters | .cpp:4439-4488 | Depth/color/vector/atlas/placeholder/glTF/terrain resource accessors. Removed globe-resource getters remain absent. |
-| `terrainShader()` | .h:123 / .cpp:4486-4488 | 32-byte terrain vertex, no PBR extensions; the draw side calls `makeTerrainPrimitiveCommand`. |
-| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4492-4516 | `GltfPrimitive`, **`vertexStride`=120**; defaults live in `GltfUniformBlock` and the factory does not populate the string-map. |
-| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4518-4546 | Live compact-terrain command with **`vertexStride`=32**, `terrainShader`, and glTF uniform block enabled. |
-| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4547-4567 | EXT_mesh_gpu_instancing path; delegates to the glTF command then installs the instance stream. |
-| `makeTerrainInstancedCommand(...)` | .cpp:4568-4589 | Terrain batching path; delegates to the compact command then installs the terrain instance stream/shader. |
-| `attachRasterInMainThread` / `detachRasterInMainThread` | .cpp:4604-4620 | No-op notification hooks; raster ownership stays in `RasterMappedToTilesetTile` / `SurfaceRasterBinding`. |
+| `initialize()` (no-arg) | .h:34, .cpp:4145-4381 | Builds the neutral placeholder and compiles the terrain/glTF/vector shader set. glTF shader failure is non-fatal; terrain shader failure is fatal. |
+| `submit` | .cpp:4383-4386 | Forwards to `device->submit` if initialized. |
+| `dispose` | .cpp:4388-4406 | Resets the shader/texture resources. |
+| Shared-resource getters | .cpp:4410-4465 | Depth/color/vector/atlas/placeholder/glTF/terrain resource accessors. Removed globe-resource getters remain absent. |
+| `terrainShader()` | .h:123 / .cpp:4463-4465 | 32-byte terrain vertex, no PBR extensions; the draw side calls `makeTerrainPrimitiveCommand`. |
+| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4469-4493 | `GltfPrimitive`, **`vertexStride`=120**; defaults live in `GltfUniformBlock` and the factory does not populate the string-map. |
+| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4495-4522 | Live compact-terrain command with **`vertexStride`=32**, `terrainShader`, and glTF uniform block enabled. |
+| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4524-4543 | EXT_mesh_gpu_instancing path; delegates to the glTF command then installs the instance stream. |
+| `makeTerrainInstancedCommand(...)` | .cpp:4545-4564 | Terrain batching path; delegates to the compact command then installs the terrain instance stream/shader. |
+| `attachRasterInMainThread` / `detachRasterInMainThread` | .cpp:4581-4597 | No-op notification hooks; raster ownership stays in `DirectRasterMapping` / `SurfaceRasterBinding`. |
 
 `makeTileGeometry` (.cpp:3892-3873) builds a UV-only grid VBO (`TileVertex{{u,v}}`) + `uint32_t` index buffer.
 
@@ -2671,20 +2678,24 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 
 | 方法 | 行 | 说明 |
 |---|---|---|
-| `providerStackCompatibility` / `pageDomainCompatibilityName` | .cpp:371-432 | PageStore mixed-scheme 运行期契约:同一 compose group 必须共享 canonical page-facing scheme 与有效 projection；异构组整组 fail-closed |
-| `initialize(device, Config)` | .cpp:1583-1669 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512、`maxUploadsPerFrame`=3、`maxComposeDispatchesPerFrame`=8 |
-| `resetPageDomainState` / `rejectPageDomain` | .cpp:1670-1738 | canonical provider/scheme/projection 切换或拒绝时推进 generation，清空 scheme-less 页账本/层池/间接纹理；迟到异步结果由 generation 闸丢弃 |
-| `updateVisiblePages(view, ...)` | .cpp:749-1536 | **核心**。先做 provider/terrain page-domain 兼容性闸，再遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1832-1926 | 仅 active+compatible domain 把该瓦片的间接层号/页参数写进地形 RenderCommand；拒绝态保留 mappedRaster |
-| `tick()` | .cpp:1927-1992 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
-| `drainInbox` / `kickPageFetches` | .cpp:2103-2255 / :1998-2052 | 解码结果派发 worker 合成，异步生产路径消费 PageStore `ComposeDispatch` grant；无 worker 的测试/同步 fallback 就地执行。页 fetch 消费 PageStore `NetworkRequest` grant，拒绝后保留待重试；两段均携带 page-domain generation |
-| `drainReadyUploads` | .cpp:2366-2516 | worker 快照按本地预算与 PageStore `GpuUpload` grant 上传；上传前校验 page-domain generation + key + layer；`uploadedSources` 在此推进。grant 单位是逻辑事务，不等于底层写调用数 |
-| `erasePageEntry` | .cpp:1816-1831 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
-| `resamplePageSource` | .cpp:433-501 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
-| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:548-555 / :694-714 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
-| `placeTileInSourceGrid` (static) | .cpp:556-651 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
-| `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:502-517 / :518-523 / :524-527 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
-| `packKey` / `unpackKey` (static) | .cpp:536-547 / :528-535 | TileKey ↔ uint64 页键；只在单 canonical domain 内有效，跨 domain 由 generation 隔离 |
+| `providerStackCompatibility` / `pageDomainCompatibilityName` | .cpp:630-669 / :698-728 | PageStore mixed-scheme 运行期契约:同一 compose group 必须共享 canonical page-facing scheme 与有效 projection；异构组整组 fail-closed |
+| `pageSourceStackCompatibility` | .cpp:670-697 | 首 active source 必须是 opacity≈1 的 `BaseImagery`；annotation-only / translucent canonical base 整组 fail-closed。注意配置 opacity=1 尚不能证明源像素 alpha 全不透明。 |
+| `beginSubmission(frameId)` / `SubmissionLease` | .cpp:2049-2074 | CPU command-consistency lease。SceneRenderPipeline 在命令构建前获取并持有到 submit/引用释放之后；期间 PageStore determination/tick/reconfigure/invalidate mutation 被拒绝。它不是 GPU completion lease。 |
+| `initialize(device, Config)` | .cpp:2075-2164 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512、`maxUploadsPerFrame`=3、`maxComposeDispatchesPerFrame`=8 |
+| `resetPageDomainState` / `rejectPageDomain` | .cpp:2165-2217 / :2218-2235 | canonical provider/scheme/projection 切换或拒绝时推进 generation，清空 scheme-less 页账本/层池/间接纹理；迟到异步结果由 generation 闸丢弃 |
+| `updateVisiblePages(view, ...)` | .cpp:1045-2013 | **核心**。先做 provider/terrain page-domain 兼容性闸，再遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:2407-2512 | 仅 active+compatible domain 把该瓦片的间接层号/页参数写进地形 RenderCommand；拒绝态保留 directComposite |
+| `tick()` | .cpp:2513-2582 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `drainInbox` / `kickPageFetches` | .cpp:2807-2977 / :2614-2702 | 解码结果派发 worker 合成，异步生产路径消费 PageStore `ComposeDispatch` grant；无 worker 的测试/同步 fallback 就地执行。页 fetch 消费 PageStore `NetworkRequest` grant，拒绝后保留待重试；两段均携带 page-domain generation |
+| `drainReadyUploads` | .cpp:3021-3248 | worker 快照按本地预算与 PageStore `GpuUpload` grant 上传；上传前校验 page-domain generation + key + layer；`uploadedSources` 在此推进。grant 单位是逻辑事务，不等于底层写调用数 |
+| `erasePageEntry` | .cpp:2329-2344 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `resamplePageSource` | .cpp:729-797 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
+| `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:844-851 / :990-1010 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
+| `placeTileInSourceGrid` (static) | .cpp:852-947 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
+| `encodeLayerRGBA8` / `decodeLayerRGBA8` / `decodeDepthRGBA8` (static) | .cpp:798-813 / :814-819 / :820-823 | 间接纹理的 RGBA8 编解码(层号 + resident 位 + 档位) |
+| `packKey` / `unpackKey` (static) | .cpp:832-843 / :824-831 | TileKey ↔ uint64 页键；只在单 canonical domain 内有效，跨 domain 由 generation 隔离 |
+
+GPU coverage 边界：`SubmissionLease` 只冻结 CPU 侧命令一致性。Metal `Renderer::submit()` 可能仍只编码，不能据此覆写 array layer；完整退场仍需 `RenderDevice submittedSerial/completedSerial → PageStore layer retireSerial`，completed serial 到达后才能重租/覆写。
 
 **常量**:`kIndirSideTexels`=64、`kIndirArrayLayers`=256 (.h:72-73)。
 
@@ -2703,7 +2714,7 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 | Item | Lines | Description |
 | --- | --- | --- |
 | `IPrepareRendererResources` | .h:23-58 | cesium-native `IPrepareRendererResources` equivalent; abstract raster-texture lifecycle notification only — explicitly NOT the source of truth for surface visibility / ancestor fallback / drawable raster binding (.h:14-17). |
-| `attachRasterInMainThread` | .h:40-46 | cesium-native `attachRasterInMainThread`; called from `RasterMappedToTilesetTile::update()` Step 6 with geometry key, overlay slot, ready raster tile, GPU texture, UV translation/scale. |
+| `attachRasterInMainThread` | .h:40-46 | cesium-native `attachRasterInMainThread`; called from `DirectRasterMapping::update()` Step 6 with geometry key, overlay slot, ready raster tile, GPU texture, UV translation/scale. |
 | `detachRasterInMainThread` | .h:55-57 | cesium-native `detachRasterInMainThread`; `noexcept`, no-op-safe; called on eviction / tile replacement / loading→ready promotion. |
 
 ### TileTextureCache.h / .cpp
@@ -2800,13 +2811,13 @@ OpenGL ES 3.0 backend implementing `renderer/RenderDevice.h`. Assumes caller own
 | `createShader` | .cpp:734-815 | Compile VS+FS, log via `__android_log_print`, link, delete shaders |
 | `createFramebuffer` | .cpp:858-984 | Creates color/depth attachments and validates framebuffer completeness |
 | `beginFrame` | .cpp:1018-1022 | **Reverse-Z setup**: restores `glDepthMask(TRUE)`, disables blend/polygon-offset; `glClearColor(0.1,0.3,0.6,1)`; `glClearDepthf(0.0)` (clear to farthest); `glDepthFunc(GL_GEQUAL)`; cull back |
-| `submit` | .cpp:1308-2041 | Redundancy-cached program/VBO/IBO/texture + attrib-enable flags; fixed vector/glTF uniform blocks bypass generic map；逐命令 draw。 |
-| `endFrame` | .cpp:2355-2369 | 收尾可选 GPU timer；`eglSwapBuffers` 仍由外部负责 |
-| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2405-2472 | State init (reverse-Z `GL_GEQUAL`), viewport cache, context-bound cache reset |
+| `submit` | .cpp:1320-2041 | Redundancy-cached program/VBO/IBO/texture + attrib-enable flags; fixed vector/glTF uniform blocks bypass generic map；逐命令 draw。 |
+| `endFrame` | .cpp:2367-2381 | 收尾可选 GPU timer；`eglSwapBuffers` 仍由外部负责 |
+| `onSurfaceCreated`/`Changed`/`Destroyed` | .cpp:2422-2475 | State init (reverse-Z `GL_GEQUAL`), viewport cache, context-bound cache reset |
 
-Per-command command-kind counters in `submit` (.cpp:1308-2041) tally glTF/vector/environment/unknown commands；`GlobeSurface` kind no longer exists in `RenderCommandKind`.
+Per-command command-kind counters in `submit` (.cpp:1320-2041) tally glTF/vector/environment/unknown commands；`GlobeSurface` kind no longer exists in `RenderCommandKind`.
 
-**Stride-based vertex-layout dispatch** in `submit` (.cpp:1308-2041) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
+**Stride-based vertex-layout dispatch** in `submit` (.cpp:1320-2041) — no VAOs; per-command `glVertexAttribPointer` keyed on `cmd.vertexStride`:
 - stride 32 OR glTF (kind `GltfPrimitive[Instanced]` && stride==**120**): attrib0 POSITION, 1 NORMAL, 2 TEXCOORD (4 floats for glTF, else 2); glTF adds attribs 10-14 (COLOR_0/TANGENT/TEXCOORD sets 2-7) (.cpp:476-524)
 - `GltfPrimitiveInstanced` + `instanceStride==kGltfInstanceMatrixStride` (100): attribs 3-9 from `instanceBuffer` with `glVertexAttribDivisor(...,1)` — instance model matrix (4×vec4) + normal matrix (3×vec3) (.cpp:525-575)
 - `GltfPrimitiveInstanced` + `vertexStride==32` + `instanceStride==kTerrainInstanceStride` (96): the **terrain batch** layout — per-vertex attribs 0-3 from the shared template, attribs 4-9 = 6×vec4 per-instance with divisor 1 (rel×3 / dispMorph / clipUv / layers) (.cpp:1047-1051 selects, :1687-1697 sets up)
@@ -2837,22 +2848,22 @@ Metal 2 backend (iOS/macOS) via `CAMetalLayer`. PImpl (.mm:62-75). Internal wrap
 
 | Item | Lines | Description |
 | --- | --- | --- |
-| `makeDepthState` | .mm:150-163 | **Reverse-Z**: `MTLCompareFunctionGreaterEqual` (matches OpenGlobus `reverseDepth`); ctor precomputes readWrite/readOnly/disabled states (.mm:150-163) |
+| `makeDepthState` | .mm:158-180 | **Reverse-Z**: `MTLCompareFunctionGreaterEqual` (matches OpenGlobus `reverseDepth`); ctor precomputes readWrite/readOnly/disabled states (.mm:158-180) |
 | Ctor | .mm:109-126 | Bridges `CAMetalLayer*`, creates command queue, depth states, `linearClampSampler` (maxAnisotropy=4) |
-| Capabilities | .mm:216-218 | `maxTextureSize`=4096, `maxDrawBuffers`=4 hardcoded; `rendererString` from device name |
-| `createTexture`/`updateTextureRegion` | .mm:240-326 | RGBA8/R8 pixel formats; per-texture sampler; `replaceRegion` bounds-checked |
-| `createBuffer`/`updateBuffer` | .mm:367-376 | `MTLResourceStorageModeShared`; `updateBuffer` `memcpy` into `.contents` |
-| `createShader` | .mm:415-668 | Compiles combined VS+FS MSL source; entry-point sniffing selects 6 `PipelineLayout` variants (Surface/Tile/Gltf/GltfInstanced/Color/DebugLine, .mm:443-443 — **no globe-shader detection**); builds `MTLVertexDescriptor` per layout; emits paired opaque(blend=NO)+blended(blend=YES) PSOs |
-| `beginFrame` | .mm:765-796 | `nextDrawable`; clearColor (0.1,0.3,0.6,1); **reverse-Z `clearDepth=0.0`**; retains drawable via `objc_setAssociatedObject` |
-| `submit` | .mm:919-1267 | Per-command PSO/depth-state select; vertex buffer @0, instance buffer @7; **fixed uniform indices 0..83** (see below); texture+sampler binding 0..kGltfWaterMaskTextureSlot; cull/blend; indexed/instanced draw |
-| `endFrame` | .mm:1325-1345 | End encoding, `presentDrawable`, `CFRelease`, commit |
-| `onSurfaceChanged` | .mm:1350-1365 | Sets `drawableSize`; allocates `Depth32Float` depth texture (RenderTarget, Private) |
+| Capabilities | .mm:224-247 | `maxTextureSize`=4096, `maxDrawBuffers`=4 hardcoded; `rendererString` from device name |
+| `createTexture`/`updateTextureRegion` | .mm:248-374 | RGBA8/R8 pixel formats; per-texture sampler; `replaceRegion` bounds-checked |
+| `createBuffer`/`updateBuffer` | .mm:375-421 | `MTLResourceStorageModeShared`; `updateBuffer` orphans storage to avoid CPU/GPU races |
+| `createShader` | .mm:423-677 | Compiles combined VS+FS MSL source; entry-point sniffing selects 6 `PipelineLayout` variants (Surface/Tile/Gltf/GltfInstanced/Color/DebugLine, .mm:443-443 — **no globe-shader detection**); builds `MTLVertexDescriptor` per layout; emits paired opaque(blend=NO)+blended(blend=YES) PSOs |
+| `beginFrame` | .mm:773-804 | `nextDrawable`; clearColor (0.1,0.3,0.6,1); **reverse-Z `clearDepth=0.0`**; bounded in-flight semaphore |
+| `submit` | .mm:927-1331 | Per-command PSO/depth-state select; vertex buffer @0, instance buffer @7; glTF/terrain fragment uniforms use one mirrored `GltfUniformBlock` at buffer(0), vertex MVP at buffer(1), generic non-glTF uniforms retain small fixed slots; texture+sampler binding 0..kGltfWaterMaskTextureSlot; cull/blend; indexed/instanced draw |
+| `endFrame` | .mm:1333-1363 | End encoding, `presentDrawable`, commit and publish completion serial |
+| `onSurfaceChanged` | .mm:1381-1395 | Sets `drawableSize`; allocates `Depth32Float` depth texture (RenderTarget, Private) |
 
 Vertex descriptors (.mm:325-433): DebugLine stride 8; Tile stride 20 (pos+uv); Color stride 12 (pos); Surface stride 32 (pos+normal+uv); Gltf/GltfInstanced stride 120 (attribs 0-2 + 10-14); GltfInstanced adds bufferIndex-7 attribs 3-9 (`kGltfInstanceMatrixStride`=**100**, `MTLVertexStepFunctionPerInstance`).
 
-**Fixed uniform-buffer index scheme** (.mm:556-738) — hand-numbered `setVertexBytes`/`setFragmentBytes`: vertex MVP=1, model/tileBounds=2, tileUV=3, cameraRelativeOrigin=4; fragment `u_lightDir`=0 … glTF material factors and `u_mappedRaster*`/`u_gltfWaterMask*` uniforms densely packed to index **83** (.mm:738). SurfaceTile fast-path uses struct fields (`surfaceModelViewProjection`, `surfaceTileUv`, `surfaceCameraRelativeOrigin`, `surfaceLightDir`, opacities) instead of the `cmd.uniforms` map (.mm:565-620). `allowsNextDrawableTimeout` is set on the layer in the macOS demo (`examples/macos/MinimalGlobe/MetalView.mm`), not here.
+**Uniform-buffer contract** (.mm:962-1127): vertex MVP is buffer(1); glTF/terrain fragment state is copied once from `GltfUniformBlock` to buffer(0) (.mm:1045-1053). The two MSL `GltfUniforms` structs must remain byte-for-byte field-order mirrors of `GltfUniformBlock.h`; `test_pipeline_feature_contracts` guards the active PageStore/road-field tail and `test_glsl_compile` guards compiled variants. Generic vector/surface commands still use the small fixed slots around this block. `allowsNextDrawableTimeout` is set on the layer in the macOS demo (`examples/macos/MinimalGlobe/MetalView.mm`), not here.
 
-Note: per-backend uniform binding is duplicated — GLES binds uniforms by name lookup, Metal by these fixed indices; the two lists must be kept in sync manually (duplication risk). Same 6-layout / stride tables are mirrored across GLES `submit` and Metal `createShader`.
+Note: GLES consumes `kGltfUniformTable` name→offset descriptors while Metal memcpy-binds the mirrored block. Field order and descriptor coverage are cross-backend ABI, not independent hand-numbered per-uniform lists. The 6-layout / stride tables remain mirrored across GLES `submit` and Metal `createShader`.
 
 ### macos/MacPlatformBridge.h / .mm
 
@@ -3074,8 +3085,8 @@ cesium-native `ActivatedRasterOverlay` equivalent. Wraps a `RasterOverlay&` (mus
 | `setMaximumSimultaneousTileLoads(int)` | .h:52 / .cpp:105-115 | `n>0 ? n : 20`; applies to both providers |
 | `getThrottledTilesCurrentlyLoading` | .h:53 / .cpp:117-120 | forward, 0 if none |
 | `visible` / `opacity` | .h:55-56 / .cpp:122-128 | delegate to `overlay_` |
-| `getProjection()` | .h:70 / .cpp:130-135 | **生效**采样投影(读 provider,不读 config)。georeference 会被 scheme 闸口拒掉,请求值不可信 |
-| `syncProviderOptionsFromOverlay` (private) | .h:65 / .cpp:137-152 | re-derives throttle from overlay (`>0 ? : 20`), calls `applyOwnerOptions()` on both providers |
+| `getProjection()` | .h:70 / .cpp:164-170 | **生效**采样投影(读 provider,不读 config)。georeference 会被 scheme 闸口拒掉,请求值不可信 |
+| `syncProviderOptionsFromOverlay` (private) | .h:65 / .cpp:171-188 | re-derives throttle from overlay (`>0 ? : 20`), calls `applyOwnerOptions()` on both providers |
 
 Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 
@@ -3625,20 +3636,20 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceCreated()` | .h:45, .cpp:65-75 | `device_->onSurfaceCreated()` then `scene_->setRenderDevice(device_)`; sets `surfaceCreated_` on success. |
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:76-82 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:83-120 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
-| `render(deltaSeconds=0)` | .h:57, .cpp:556-1155 | Per-frame driver. Guards `surfaceCreated_ && isReady()`, auto-computes delta via `steady_clock` when ≤0, then times `device_->beginFrame` → `scene_->update` → PageStore pump → `scene_->render` → `device_->endFrame`. The PageStore pump receives the same Scene arbiter used by terrain/raster/MVT. |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:1149-1152 | Forward to `scene_->onInputEvent`. |
+| `render(deltaSeconds=0)` | .h:57, .cpp:556-1154 | Per-frame driver. Guards `surfaceCreated_ && isReady()`, auto-computes delta via `steady_clock` when ≤0, then times `device_->beginFrame` → `scene_->update` → PageStore pump → `scene_->render` → `device_->endFrame`. The PageStore pump receives the same Scene arbiter used by terrain/raster/MVT. |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:1156-1159 | Forward to `scene_->onInputEvent`. |
 | `onDragStart/Move/End` | .h:65-67, .cpp:1160-1183 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1249-1252 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1257-1260 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1256-1259 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1264-1267 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1278-1283 | `scene_->hasTerrain()`. |
-| `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
+| `hasTerrain()` | .h:94, .cpp:1285-1290 | `scene_->hasTerrain()`. |
+| `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:1291-1306 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
 | `getClearColor` | .cpp:1367-1374 | Reads `frameState().clearR/G/B/A`. |
 | `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1375-1385 | Runtime `Diagnostics` + per-frame `PresentationTrace`; `frameResourceArbiterSnapshot()` sits between them and exposes producer×stage accounting. |
-| `camera() / isReady()` | .h:130-131, .cpp:1178-1181, 1380-1384 | `isReady` = `scene_ && scene_->isReady()`. |
+| `camera() / isReady()` | .h:130-131, .cpp:1185-1188, 1387-1391 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:700-748 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
@@ -3742,7 +3753,7 @@ Per-kind fixed render state (defaults set in the Renderer command factories, enf
 | `makeGltfPrimitiveInstancedCommand` | GltfPrimitiveInstanced, delegates to `makeGltfPrimitiveCommand` then sets `instanceStride=kGltfInstanceMatrixStride`=**100** (mat4 64B + mat3 36B) | .cpp:4154-4173 |
 | `makeTerrainInstancedCommand` | GltfPrimitiveInstanced **but vertexStride=32**, delegates to `makeTerrainPrimitiveCommand` then sets `terrainInstancedShader` + `instanceStride=kTerrainInstanceStride`=**96** (6×vec4) | .cpp:4175-4195 |
 
-`terrainShader()` is **defined** (getter Renderer.h:123 / Renderer.cpp:4486; `kTerrainVertex/FragmentGLSL` + `kTerrainVertex/FragmentMSL`, Metal buffers ≤23). The draw side is wired: `GltfDrawCommandBuilder::build` branches at GltfDrawCommandBuilder.cpp:120-140 — `instanceCount>0` → `makeGltfPrimitiveInstancedCommand` (:120), else `useTerrainVertexFormat` → `makeTerrainPrimitiveCommand` (:133), else the stride-120 glTF path. Per-command `terrainRenderContent`/`surfaceClipUv`/raster-overlay population is shared across all three; ellipsoid-fallback terrain still routes through the stride-120 path.
+`terrainShader()` is **defined** (getter Renderer.h:123 / Renderer.cpp:4463; `kTerrainVertex/FragmentGLSL` + `kTerrainVertex/FragmentMSL`, Metal buffers ≤23). The draw side is wired: `GltfDrawCommandBuilder::build` branches at GltfDrawCommandBuilder.cpp:120-140 — `instanceCount>0` → `makeGltfPrimitiveInstancedCommand` (:120), else `useTerrainVertexFormat` → `makeTerrainPrimitiveCommand` (:133), else the stride-120 glTF path. Per-command `terrainRenderContent`/`surfaceClipUv`/raster-overlay population is shared across all three; ellipsoid-fallback terrain still routes through the stride-120 path.
 
 ### Reverse-Z convention
 
@@ -3762,7 +3773,7 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 
 | Contract | Where | Why |
 |---|---|---|
-| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | `render()` submits commands, then `releaseRenderReferences` body SceneRenderPipeline.cpp:978-1014 iterates `tileset->releaseRenderReferences()` (.cpp:944-951) | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
+| `renderer.submit(commands)` BEFORE `releaseRenderReferences()` | `render()` submits commands, then `releaseRenderReferences` body SceneRenderPipeline.cpp:986-1024 iterates `tileset->releaseRenderReferences()` | Render commands hold **raw** `Buffer*/Texture*` plus `resourceKeepAlive` shared_ptrs (RenderCommand.h:46-54). References must survive the submit that consumes them; releasing first would free GPU resources mid-draw. |
 | `processPendingLoads(...)` BEFORE `drainGpuUploadQueue(...)` | TilesetUpdateFrameRuntime.cpp:59 then :143 | `processPendingLoads` is what pushes onto `GpuUploadQueue`; the drain in the same frame pops and does the GPU upload. Reversing the order does not error — it just makes every upload lag one frame, which reads as "loading is always half a beat late" and gets misattributed to network or device. **Machine-checked**: `contracts::Id::LoadsBeforeGpuDrain` (Tileset.cpp:359). |
 | Ref-count keep-alive until GPU consumption | GpuUploadQueue.h (deque of `PendingGpuUpload`); drain finalizes via `uploadToGpu` + `finishRenderResourcePreparation` | CPU-prepared vertex/index bytes and tile state must stay alive from enqueue through upload. The claim is `asyncGpuUploadPending` + a retained lifecycle upload key; three sites must release it (`TilePendingUploadCompletion::eraseUpload`) or the tile is pinned forever. Not machine-checked. |
 
@@ -3778,7 +3789,7 @@ Metal prebuilds three states (`depthReadWrite` / `depthReadOnly` / `depthDisable
 
 ### IPrepareRendererResources boundary
 
-`IPrepareRendererResources` (renderer/IPrepareRendererResources.h) is the renderer-decoupling interface (cesium-native `IPrepareRendererResources` equivalent) threaded through scene/tiling as `pPrepRenderer` (SceneTilesetCoordinator.cpp:55, SceneFrameRuntime.cpp:33, drain finalize `.h:247-250`). Renderer implements the notification hooks but **stores no imagery state**: `Renderer::attachRasterInMainThread` / `detachRasterInMainThread` are intentional no-ops (Renderer.cpp:4464-4428) — surface raster ownership lives in `RasterMappedToTilesetTile`/`SurfaceRasterBinding` (cesium-native `RasterMappedTo3DTile` equivalent). Raster attach happens on the **main thread** at upload-finalize time.
+`IPrepareRendererResources` (renderer/IPrepareRendererResources.h) is the renderer-decoupling interface (cesium-native `IPrepareRendererResources` equivalent) threaded through scene/tiling as `pPrepRenderer` (SceneTilesetCoordinator.cpp:55, SceneFrameRuntime.cpp:33, drain finalize `.h:247-250`). Renderer implements the notification hooks but **stores no imagery state**: `Renderer::attachRasterInMainThread` / `detachRasterInMainThread` are intentional no-ops (Renderer.cpp:4464-4428) — surface raster ownership lives in `DirectRasterMapping`/`SurfaceRasterBinding` (cesium-native `RasterMappedTo3DTile` equivalent). Raster attach happens on the **main thread** at upload-finalize time.
 
 ### Two-phase update/render FrameState contract
 
@@ -3860,7 +3871,7 @@ Zero lane-specific limits fall back to the shared default. They remain Tileset-l
 | **`TerrainGpuVertex`** | **32 B** (`static_assert`) | POS(12) + NRM(12) + TEXCOORD_0(8) | .h:31-39 |
 | `GltfGpuInstance` | 100 B (16 model + 9 normal floats) | matches `kGltfInstanceMatrixStride`=100 (RenderCommand.h:19) | .h:41-44 |
 
-Draw-side strides mirror these: glTF=**120** (`makeGltfPrimitiveCommand`, Renderer.cpp:4492), instance=**100** (`makeGltfPrimitiveInstancedCommand`, Renderer.cpp:4547). `GpuReadyData.vertexStride` documents `32 (TerrainGpuVertex) or 120 (GltfGpuVertex)` (GpuReadyData.h:17). `TerrainGpuVertex` is produced/uploaded (GltfRenderGeometryBuilder.cpp:225-229, GltfRenderResourcePreparer.cpp:492-501,622-624) **and drawn** via `terrainShader` / `makeTerrainPrimitiveCommand`. ⚠️ The former "never drawn — stride-32 draw path unwired" claim here was false; corrected 2026-08-06.
+Draw-side strides mirror these: glTF=**120** (`makeGltfPrimitiveCommand`, Renderer.cpp:4469), instance=**100** (`makeGltfPrimitiveInstancedCommand`, Renderer.cpp:4524). `GpuReadyData.vertexStride` documents `32 (TerrainGpuVertex) or 120 (GltfGpuVertex)` (GpuReadyData.h:17). `TerrainGpuVertex` is produced/uploaded (GltfRenderGeometryBuilder.cpp:225-229, GltfRenderResourcePreparer.cpp:492-501,622-624) **and drawn** via `terrainShader` / `makeTerrainPrimitiveCommand`. ⚠️ The former "never drawn — stride-32 draw path unwired" claim here was false; corrected 2026-08-06.
 
 ### Upload / reverse-Z constants
 

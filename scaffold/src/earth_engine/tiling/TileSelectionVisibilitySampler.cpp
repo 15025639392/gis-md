@@ -1,6 +1,6 @@
 #include "TileSelectionVisibilitySampler.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileBoundsMetrics.h"
 #include "TileSelectionCullingPolicy.h"
 #include "TilesetTile.h"

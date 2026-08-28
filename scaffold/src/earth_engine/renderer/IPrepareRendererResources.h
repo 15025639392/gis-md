@@ -27,7 +27,7 @@ public:
     /// cesium-native: attachRasterInMainThread.
     /// Notifies that a raster texture + UV transform is ready for the given
     /// geometry tile.
-    /// Called from RasterMappedToTilesetTile::update() Step 6.
+    /// Called from DirectRasterMapping::update() Step 6.
     /// @param geometryKey   The geometry tile's quadtree key.
     /// @param overlayIndex  Which overlay slot (0-based), so multiple overlay
     ///                      resource notifications can coexist.

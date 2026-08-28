@@ -1,10 +1,11 @@
 #include "TileRasterOverlayReadinessPolicy.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "SurfaceRasterBinding.h"
 #include "RasterBindingSet.h"
 #include "TileLoadState.h"
 #include "TilesetTile.h"
+#include "RasterOverlayRuntime.h"
 
 #include "../content/GltfModel.h"
 #include "../layers/ActivatedRasterOverlay.h"
@@ -23,11 +24,14 @@ bool TileRasterOverlayReadinessPolicy::doneTileCannotHoldRasterOverlays(
 
 bool TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
     const TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    const RasterOverlayFrameContext& frame) {
+    const auto& rasterOverlays = frame.directOverlays();
     for (size_t i = 0; i < rasterOverlays.size(); ++i) {
         const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
-        if (!activeOverlay || !activeOverlay->visible() ||
-            !activeOverlay->getOverlay().blocksCompleteRenderable()) {
+        const RasterOverlayFrameSlot& slot = frame.slots()[i];
+        const bool visible = slot.directProvider != nullptr && slot.visible;
+        const bool blocks = slot.blocksCompleteRenderable;
+        if (!activeOverlay || !visible || !blocks) {
             continue;
         }
         if (!tile.rasterOverlayState.hasReadyMapping(i)) {
@@ -41,29 +45,31 @@ bool TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
 BaseImageryBlockReason
 TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
     const TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
-    const RasterBindingSet bindings =
-        RasterBindingSet::resolve(tile, rasterOverlays);
+    const RasterOverlayFrameContext& frame) {
+    const auto& rasterOverlays = frame.directOverlays();
+    const RasterBindingSet bindings = RasterBindingSet::resolve(tile, frame);
     for (size_t i = 0; i < rasterOverlays.size(); ++i) {
         const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
-        if (!activeOverlay || !activeOverlay->visible()) {
+        const RasterOverlayFrameSlot& slot = frame.slots()[i];
+        const bool visible = slot.directProvider != nullptr && slot.visible;
+        const RasterOverlayRole role = slot.role;
+        const bool blocks = slot.blocksCompleteRenderable;
+        if (!activeOverlay || !visible) {
             continue;
         }
-        const RasterOverlay& overlay = activeOverlay->getOverlay();
-        if (overlay.role() != RasterOverlayRole::BaseImagery ||
-            !overlay.blocksCompleteRenderable()) {
+        if (role != RasterOverlayRole::BaseImagery || !blocks) {
             continue;
         }
         const RasterBinding* resolved = bindings.bindingAtRuntimeSlot(i);
-        const RasterMappedToTilesetTile* mapped =
-            resolved ? resolved->mapped : nullptr;
-        if (!resolved || !resolved->allowedByPolicy) {
-            return mapped
-                ? BaseImageryBlockReason::NoReadyTexture
-                : BaseImageryBlockReason::NoMapping;
+        if (!resolved ||
+            resolved->resolution.requestState == RasterRequestState::NoMapping) {
+            return BaseImageryBlockReason::NoMapping;
+        }
+        if (!resolved->resolution.allowedByPolicy) {
+            return BaseImageryBlockReason::NoReadyTexture;
         }
         const int32_t textureCoordinateID =
-            resolved->textureCoordinateId;
+            resolved->directSample.textureCoordinateId;
         if (textureCoordinateID < 0 ||
             textureCoordinateID >= static_cast<int32_t>(kGltfMaxTexCoordSets)) {
             return BaseImageryBlockReason::TexcoordInvalid;
@@ -76,27 +82,29 @@ TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
 BaseImageryNoTextureProbe
 TileRasterOverlayReadinessPolicy::probeNoReadyTexture(
     const TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    const RasterOverlayFrameContext& frame) {
     BaseImageryNoTextureProbe probe;
+    const auto& rasterOverlays = frame.directOverlays();
+    const RasterBindingSet bindings = RasterBindingSet::resolve(tile, frame);
     for (size_t i = 0; i < rasterOverlays.size(); ++i) {
         const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
-        if (!activeOverlay || !activeOverlay->visible()) {
+        const RasterOverlayFrameSlot& slot = frame.slots()[i];
+        const bool visible = slot.directProvider != nullptr && slot.visible;
+        const RasterOverlayRole role = slot.role;
+        const bool blocks = slot.blocksCompleteRenderable;
+        if (!activeOverlay || !visible) {
             continue;
         }
-        const RasterOverlay& overlay = activeOverlay->getOverlay();
-        if (overlay.role() != RasterOverlayRole::BaseImagery ||
-            !overlay.blocksCompleteRenderable()) {
+        if (role != RasterOverlayRole::BaseImagery || !blocks) {
             continue;
         }
-        const RasterMappedToTilesetTile* mapped =
+        const DirectRasterMapping* mapped =
             tile.rasterOverlayState.mappingAt(i);
         if (!mapped) {
             continue;  // NoMapping,不是本探针的对象。
         }
-        if (rasterOverlayBindingAllowedByPolicy(
-                activeOverlay,
-                mapped,
-                chooseSurfaceRasterBinding(mapped))) {
+        const RasterBinding* resolved = bindings.bindingAtRuntimeSlot(i);
+        if (resolved && resolved->resolution.allowedByPolicy) {
             continue;
         }
 
@@ -121,7 +129,7 @@ TileRasterOverlayReadinessPolicy::probeNoReadyTexture(
              ancestor;
              ancestor = ancestor->parent) {
             ++probe.ancestorDepth;
-            const RasterMappedToTilesetTile* ancestorMapped =
+            const DirectRasterMapping* ancestorMapped =
                 ancestor->rasterOverlayState.mappingAt(i);
             if (!ancestorMapped) {
                 continue;
@@ -139,21 +147,21 @@ TileRasterOverlayReadinessPolicy::probeNoReadyTexture(
 
 bool TileRasterOverlayReadinessPolicy::requiredBaseImageryDrawableReady(
     const TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
-    return baseImageryBlockReason(tile, rasterOverlays) ==
+    const RasterOverlayFrameContext& frame) {
+    return baseImageryBlockReason(tile, frame) ==
            BaseImageryBlockReason::None;
 }
 
 bool TileRasterOverlayReadinessPolicy::terrainSurfaceImageryDrawableReady(
     const TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    const RasterOverlayFrameContext& frame) {
     const TileRenderContentState& renderContent = tile.content.renderContent;
     if (!renderContent.isTerrainRenderContent() &&
         !renderContent.drawIsTerrainContent()) {
         return true;
     }
 
-    return requiredBaseImageryDrawableReady(tile, rasterOverlays);
+    return requiredBaseImageryDrawableReady(tile, frame);
 }
 
 std::vector<size_t> TileRasterOverlayReadinessPolicy::processingOrder(
@@ -167,10 +175,10 @@ std::vector<size_t> TileRasterOverlayReadinessPolicy::processingOrder(
         const ActivatedRasterOverlay* lhs = rasterOverlays[a];
         const ActivatedRasterOverlay* rhs = rasterOverlays[b];
         const int lhsPriority = lhs
-            ? static_cast<int>(lhs->getOverlay().priority())
+            ? static_cast<int>(lhs->priority())
             : static_cast<int>(RasterOverlayPriority::Low);
         const int rhsPriority = rhs
-            ? static_cast<int>(rhs->getOverlay().priority())
+            ? static_cast<int>(rhs->priority())
             : static_cast<int>(RasterOverlayPriority::Low);
         return lhsPriority > rhsPriority;
     });

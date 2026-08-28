@@ -4,7 +4,7 @@
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileContentUnloadCoordinator.h"
 #include "earth_engine/tiling/TileScheme.h"
 
@@ -477,7 +477,7 @@ TEST(
     RasterOverlayDetails details = makeWebMercatorDetails(parent.bounds);
     RecordingPrepareRendererResources prep;
     std::vector<RasterOverlayProjection> missingProjections;
-    RasterMappedToTilesetTile& mapping =
+    DirectRasterMapping& mapping =
         parent.rasterOverlayState.ensureMapping(0);
     mapping.update(
         parent.key,
@@ -498,7 +498,7 @@ TEST(
         provider,
         &prep,
         missingProjections);
-    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+    ASSERT_EQ(DirectRasterMapping::State::Attached,
               mapping.getState());
     ASSERT_EQ(1, prep.attachCount);
 

@@ -1,4 +1,4 @@
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileContentLifecycleManager.h"
 
 namespace earth_engine {

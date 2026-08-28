@@ -6,6 +6,7 @@
 namespace earth_engine {
 
 class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 struct TilesetTile;
 
 // 底图影像"不可画"的成因。用于破洞诊断:选中瓦片因影像未就绪被 finalizer
@@ -41,7 +42,7 @@ struct BaseImageryNoTextureProbe {
     int ancestorsWithTexture = 0;
     // 第二级:第一轮实测发现 load=Loaded/Done 却 ready=空 —— 影像已经在手却没被
     // 提升为 ready。要分清是「update 根本没跑」还是「跑了却被打回」:
-    //   mappingState        RasterMappedToTilesetTile::State(0 未挂 /2 已挂)
+    //   mappingState        DirectRasterMapping::State(0 未挂 /2 已挂)
     //   authoritativeUpdates 该瓦片 overlay 状态的权威更新次数(逐帧不涨 = 没跑)
     //   tileLoadState / tileContentKind  几何瓦片自身的状态(Done+Render 才留 mapping)
     int mappingState = -1;
@@ -58,25 +59,25 @@ public:
     /// tile 不是该成因时返回 valid=false。
     static BaseImageryNoTextureProbe probeNoReadyTexture(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+        const RasterOverlayFrameContext& frame);
 
     /// requiredBaseImageryDrawableReady 的成因版:返回第一个拦住这片瓦片的
     /// 原因,None 表示可画。前者按后者实现,二者不会漂。
     static BaseImageryBlockReason baseImageryBlockReason(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+        const RasterOverlayFrameContext& frame);
 
     static bool requiredOverlaysReady(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+        const RasterOverlayFrameContext& frame);
 
     static bool requiredBaseImageryDrawableReady(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+        const RasterOverlayFrameContext& frame);
 
     static bool terrainSurfaceImageryDrawableReady(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+        const RasterOverlayFrameContext& frame);
 
     static std::vector<size_t> processingOrder(
         const std::vector<ActivatedRasterOverlay*>& rasterOverlays);

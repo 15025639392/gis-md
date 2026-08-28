@@ -1,6 +1,6 @@
 #include "TileContentUploadCommitter.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileContentUploadPolicy.h"
 #include "TileRasterOverlayDetailsGenerator.h"
 #include "TilesetTile.h"

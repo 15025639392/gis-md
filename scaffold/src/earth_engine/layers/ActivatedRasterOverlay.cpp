@@ -120,11 +120,45 @@ int ActivatedRasterOverlay::getThrottledTilesCurrentlyLoading() const {
 }
 
 bool ActivatedRasterOverlay::visible() const {
-    return overlay_.visible();
+    return hasFramePresentation_ ? frameVisible_ : overlay_.visible();
 }
 
 float ActivatedRasterOverlay::opacity() const {
-    return overlay_.opacity();
+    return hasFramePresentation_ ? frameOpacity_ : overlay_.opacity();
+}
+
+RasterOverlayRole ActivatedRasterOverlay::role() const {
+    return hasFramePresentation_ ? frameRole_ : overlay_.role();
+}
+
+RasterOverlayPriority ActivatedRasterOverlay::priority() const {
+    return hasFramePresentation_ ? framePriority_ : overlay_.priority();
+}
+
+RasterOverlayFallbackPolicy ActivatedRasterOverlay::fallbackPolicy() const {
+    return hasFramePresentation_ ? frameFallbackPolicy_
+                                 : overlay_.fallbackPolicy();
+}
+
+bool ActivatedRasterOverlay::blocksCompleteRenderable() const {
+    return hasFramePresentation_ ? frameBlocksCompleteRenderable_
+                                 : overlay_.blocksCompleteRenderable();
+}
+
+void ActivatedRasterOverlay::publishFramePresentation(
+    bool visible,
+    float opacity,
+    RasterOverlayRole role,
+    RasterOverlayPriority priority,
+    RasterOverlayFallbackPolicy fallbackPolicy,
+    bool blocksCompleteRenderable) {
+    hasFramePresentation_ = true;
+    frameVisible_ = visible;
+    frameOpacity_ = opacity;
+    frameRole_ = role;
+    framePriority_ = priority;
+    frameFallbackPolicy_ = fallbackPolicy;
+    frameBlocksCompleteRenderable_ = blocksCompleteRenderable;
 }
 
 RasterOverlayProjection ActivatedRasterOverlay::getProjection() const {

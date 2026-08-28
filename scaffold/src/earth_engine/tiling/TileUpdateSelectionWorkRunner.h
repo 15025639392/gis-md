@@ -24,6 +24,7 @@
 namespace earth_engine {
 
 class IPrepareRendererResources;
+class RasterOverlayFrameContext;
 
 struct TileUpdateSelectionWorkInput {
     TilePlan& tilePlan;
@@ -45,6 +46,7 @@ struct TileUpdateSelectionWorkInput {
     int terrainFillProxyGridSize = 16;
     bool hasTerrainQuadtree = false;
     IPrepareRendererResources* pPrepRenderer = nullptr;
+    const RasterOverlayFrameContext& rasterFrame;
 };
 
 struct TileUpdateSelectionWorkResult {
@@ -256,7 +258,7 @@ public:
                                    TileRasterOverlayReadinessPolicy::
                                        terrainSurfaceImageryDrawableReady(
                                            ancestor,
-                                           input.rasterOverlays);
+                                           input.rasterFrame);
                         })) {
                     continue;
                 }

@@ -119,14 +119,14 @@ struct alignas(16) GltfUniformBlock {
     TextureTransform occlusionTex{};
     TextureTransform emissiveTex{};
 
-    float mappedRasterTextureCount = 0.0f;
-    std::array<std::array<float, 4>, 4> mappedRasterTileUv{{
+    float directRasterTextureCount = 0.0f;
+    std::array<std::array<float, 4>, 4> directRasterTileUv{{
         {0.0f, 0.0f, 1.0f, 1.0f},
         {0.0f, 0.0f, 1.0f, 1.0f},
         {0.0f, 0.0f, 1.0f, 1.0f},
         {0.0f, 0.0f, 1.0f, 1.0f}}};
-    std::array<float, 4> mappedRasterOpacity{1.0f, 1.0f, 1.0f, 1.0f};
-    std::array<float, 4> mappedRasterTexCoordSet{0.0f, 0.0f, 0.0f, 0.0f};
+    std::array<float, 4> directRasterOpacity{1.0f, 1.0f, 1.0f, 1.0f};
+    std::array<float, 4> directRasterTexCoordSet{0.0f, 0.0f, 0.0f, 0.0f};
 
     float hasWaterMask = 0.0f;
     std::array<float, 4> waterMaskTranslationScale{0.0f, 0.0f, 1.0f, 0.0f};
@@ -136,7 +136,7 @@ struct alignas(16) GltfUniformBlock {
     float clipEnabled = 0.0f;
 
     // 北极星合成方案页存储采样(Step 3):
-    //   x = enabled(0=走原 mappedRaster 路径,不动;>0.5=改采 sampler2DArray 页存储)
+    //   x = enabled(0=走原 directComposite 路径,不动;>0.5=改采 sampler2DArray 页存储)
     //   y = cellsX(cell 网格宽,单位=源瓦片)
     //   z = cellsY(cell 网格高)
     //   w = texCoordSet(片元用哪套 texcoord 定位 cell)
@@ -307,23 +307,23 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_TRANSFORM("u_occlusionTex", occlusionTex),
         EE_GLTF_TRANSFORM("u_emissiveTex", emissiveTex),
         EE_GLTF_ENTRY(
-            "u_mappedRasterTextureCount", mappedRasterTextureCount, 1),
-        EE_GLTF_ENTRY_AT("u_mappedRasterTileUV0", mappedRasterTileUv, 0, 4),
-        EE_GLTF_ENTRY_AT("u_mappedRasterTileUV1", mappedRasterTileUv, 1, 4),
-        EE_GLTF_ENTRY_AT("u_mappedRasterTileUV2", mappedRasterTileUv, 2, 4),
-        EE_GLTF_ENTRY_AT("u_mappedRasterTileUV3", mappedRasterTileUv, 3, 4),
-        EE_GLTF_ENTRY_AT("u_mappedRasterOpacity0", mappedRasterOpacity, 0, 1),
-        EE_GLTF_ENTRY_AT("u_mappedRasterOpacity1", mappedRasterOpacity, 1, 1),
-        EE_GLTF_ENTRY_AT("u_mappedRasterOpacity2", mappedRasterOpacity, 2, 1),
-        EE_GLTF_ENTRY_AT("u_mappedRasterOpacity3", mappedRasterOpacity, 3, 1),
+            "u_directRasterTextureCount", directRasterTextureCount, 1),
+        EE_GLTF_ENTRY_AT("u_directRasterTileUV0", directRasterTileUv, 0, 4),
+        EE_GLTF_ENTRY_AT("u_directRasterTileUV1", directRasterTileUv, 1, 4),
+        EE_GLTF_ENTRY_AT("u_directRasterTileUV2", directRasterTileUv, 2, 4),
+        EE_GLTF_ENTRY_AT("u_directRasterTileUV3", directRasterTileUv, 3, 4),
+        EE_GLTF_ENTRY_AT("u_directRasterOpacity0", directRasterOpacity, 0, 1),
+        EE_GLTF_ENTRY_AT("u_directRasterOpacity1", directRasterOpacity, 1, 1),
+        EE_GLTF_ENTRY_AT("u_directRasterOpacity2", directRasterOpacity, 2, 1),
+        EE_GLTF_ENTRY_AT("u_directRasterOpacity3", directRasterOpacity, 3, 1),
         EE_GLTF_ENTRY_AT(
-            "u_mappedRasterTexCoordSet0", mappedRasterTexCoordSet, 0, 1),
+            "u_directRasterTexCoordSet0", directRasterTexCoordSet, 0, 1),
         EE_GLTF_ENTRY_AT(
-            "u_mappedRasterTexCoordSet1", mappedRasterTexCoordSet, 1, 1),
+            "u_directRasterTexCoordSet1", directRasterTexCoordSet, 1, 1),
         EE_GLTF_ENTRY_AT(
-            "u_mappedRasterTexCoordSet2", mappedRasterTexCoordSet, 2, 1),
+            "u_directRasterTexCoordSet2", directRasterTexCoordSet, 2, 1),
         EE_GLTF_ENTRY_AT(
-            "u_mappedRasterTexCoordSet3", mappedRasterTexCoordSet, 3, 1),
+            "u_directRasterTexCoordSet3", directRasterTexCoordSet, 3, 1),
         EE_GLTF_ENTRY("u_gltfHasWaterMask", hasWaterMask, 1),
         EE_GLTF_ENTRY(
             "u_gltfWaterMaskTranslationScale", waterMaskTranslationScale, 4),

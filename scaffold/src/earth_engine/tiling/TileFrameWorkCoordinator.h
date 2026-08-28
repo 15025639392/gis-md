@@ -17,6 +17,7 @@
 namespace earth_engine {
 
 class IPrepareRendererResources;
+class RasterOverlayFrameContext;
 
 struct TileFrameWorkState {
     bool& cameraMoving;
@@ -52,6 +53,7 @@ struct TileFrameWorkInput {
     // P5b:presentation hold(首屏 base 影像未达成)→ 禁止 selection reuse,
     // 保证 overlay prefetch/影像请求持续推进直到首屏可上屏(防启动死锁)。
     bool presentationHeld = false;
+    const RasterOverlayFrameContext& rasterFrame;
 };
 
 struct TileFrameWorkResult {
@@ -172,7 +174,8 @@ public:
                 input.enableTerrainFillProxy,
                 input.terrainFillProxyGridSize,
                 input.hasTerrainQuadtree,
-                input.pPrepRenderer},
+                input.pPrepRenderer,
+                input.rasterFrame},
             refreshTilePlanRenderEntries,
             selectTiles,
             findTile,

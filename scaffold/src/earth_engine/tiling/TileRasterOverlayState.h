@@ -1,6 +1,6 @@
 #pragma once
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "SurfaceTile.h"
 
 #include <cstddef>
@@ -19,11 +19,11 @@ struct TileRasterOverlayUpdateAction {
 
 class TileRasterOverlayState {
 public:
-    std::vector<std::unique_ptr<RasterMappedToTilesetTile>>& mappings() {
+    std::vector<std::unique_ptr<DirectRasterMapping>>& mappings() {
         invalidateFrameUpdateCache();
         return mappings_;
     }
-    const std::vector<std::unique_ptr<RasterMappedToTilesetTile>>& mappings()
+    const std::vector<std::unique_ptr<DirectRasterMapping>>& mappings()
         const {
         return mappings_;
     }
@@ -45,9 +45,9 @@ public:
     void resizeMappingSlots(size_t count,
                             IPrepareRendererResources* pPrepRenderer);
     size_t mappingCount() const { return mappings_.size(); }
-    RasterMappedToTilesetTile* mappingAt(size_t index);
-    const RasterMappedToTilesetTile* mappingAt(size_t index) const;
-    RasterMappedToTilesetTile& ensureMapping(size_t index);
+    DirectRasterMapping* mappingAt(size_t index);
+    const DirectRasterMapping* mappingAt(size_t index) const;
+    DirectRasterMapping& ensureMapping(size_t index);
     void releaseMapping(size_t index,
                         IPrepareRendererResources* pPrepRenderer);
     /// Cover-ready for selection/renderability: a failed ready raster still
@@ -112,7 +112,7 @@ public:
     }
 
 private:
-    std::vector<std::unique_ptr<RasterMappedToTilesetTile>> mappings_;
+    std::vector<std::unique_ptr<DirectRasterMapping>> mappings_;
     std::vector<RasterOverlayProjection> missingProjections_;
     bool hasMappingIdentity_ = false;
     uint64_t mappingIdentity_ = 0;

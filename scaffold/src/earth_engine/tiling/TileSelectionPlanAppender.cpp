@@ -1,6 +1,6 @@
 #include "TileSelectionPlanAppender.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileLoadQueue.h"
 #include "TilePlan.h"
 #include "TileSelectionRenderEntryPolicy.h"

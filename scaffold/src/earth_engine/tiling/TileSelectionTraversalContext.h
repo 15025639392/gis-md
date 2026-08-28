@@ -12,7 +12,7 @@
 
 namespace earth_engine {
 
-class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 class RenderDevice;
 class FrameResourceBudget;
 class IPrepareRendererResources;
@@ -38,7 +38,6 @@ struct TileSelectionTraversalContext {
     TileLoadQueue& loadQueue;
     TileSelectionCounters& counters;
     const TilesetOptions& options;
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     RenderDevice* device = nullptr;
     IPrepareRendererResources* pPrepRenderer = nullptr;
     FrameResourceBudget& frameResourceBudget;
@@ -82,6 +81,7 @@ struct TileSelectionTraversalContext {
     // builder's aggregate initializer on purpose — default-constructs empty and
     // grows to its steady-state capacity on the first frame.
     std::vector<double> scratchDistances;
+    const RasterOverlayFrameContext& rasterFrame;
 
 };
 

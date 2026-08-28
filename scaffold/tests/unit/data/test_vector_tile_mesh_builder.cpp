@@ -156,7 +156,7 @@ TEST(VectorTileMeshBuilder, ExtrudeIsPerpendicularToSegment) {
 }
 
 // 画家序:同一层内先面后线(线压在面上),与 E4-1 栅格路径同序。两条路径压盖
-// 关系不一致的话,cell 在页存储与 mappedRaster 之间切换时画面会跳。
+// 关系不一致的话,cell 在页存储与 directComposite 之间切换时画面会跳。
 TEST(VectorTileMeshBuilder, FillEmittedBeforeLineWithinLayer) {
     MvtTile tile = makeTile("L", MvtGeomType::Polygon, {halfTileRing()});
     VectorRasterLayerPaint paint;

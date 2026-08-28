@@ -56,10 +56,10 @@ public:
             mixDouble(signature, options.coverageRectangle.east());
             mixDouble(signature, options.coverageRectangle.north());
             mix(signature, static_cast<uint64_t>(
-                               options.blocksCompleteRenderable ? 1 : 0));
-            mix(signature, static_cast<uint64_t>(options.role));
-            mix(signature, static_cast<uint64_t>(options.priority));
-            mix(signature, static_cast<uint64_t>(options.fallbackPolicy));
+                               activeOverlay->blocksCompleteRenderable() ? 1 : 0));
+            mix(signature, static_cast<uint64_t>(activeOverlay->role()));
+            mix(signature, static_cast<uint64_t>(activeOverlay->priority()));
+            mix(signature, static_cast<uint64_t>(activeOverlay->fallbackPolicy()));
             mix(signature, static_cast<uint64_t>(std::lround(
                                static_cast<double>(activeOverlay->opacity()) *
                                1000000.0)));

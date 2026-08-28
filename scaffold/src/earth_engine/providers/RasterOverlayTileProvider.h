@@ -3,6 +3,7 @@
 #include "ProviderRequestDiagnostics.h"
 #include "RasterAsset.h"
 #include "RasterOverlayTile.h"
+#include "RasterOverlaySourcePlan.h"
 #include "RasterTextureUploader.h"
 #include "../tiling/TileRasterOverlayUploadResult.h"
 #include "../platform/bridge/PlatformBridge.h"
@@ -102,26 +103,12 @@ public:
         std::vector<std::string> credits;
     };
 
-    struct RasterSourceTileMapping {
-        int sourceZoom = 0;
-        Rectangle sourceBounds = Rectangle::MAXIMUM;
-        std::vector<TileKey> sourceKeys;
-        int minX = 0;
-        int minY = 0;
-        int maxX = 0;
-        int maxY = 0;
-
-        int budgetUnits() const {
-            return static_cast<int>(sourceKeys.size());
-        }
-
-        bool empty() const { return sourceKeys.empty(); }
-    };
-
     struct RasterTileMapping {
         TilePtr tile;
+        // Compatibility names retained for this migration slice. The value is
+        // now produced by the backend-neutral RasterOverlaySourcePlan.
         bool directTile = false;
-        RasterSourceTileMapping sourceTiles;
+        RasterOverlaySourcePlan sourceTiles;
     };
 
     static CompositeImageResult composeQuadtreeSourceImagesWithDetails(
@@ -315,9 +302,9 @@ public:
         }
         return total;
     }
-    int getActiveMappedSourceSetOrderCount() const {
+    int getActiveDirectCompositeSourceSetOrderCount() const {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        return static_cast<int>(asyncState_->activeMappedSourceSetOrder.size());
+        return static_cast<int>(asyncState_->activeDirectCompositeSourceSetOrder.size());
     }
     int getPendingSourceFallbackCount() const {
         return static_cast<int>(
@@ -341,7 +328,7 @@ public:
 
     /// Monotonic state revision. Increments when raster tile load state or GPU
     /// texture readiness changes, so diagnostics and cache users can observe
-    /// provider-side progress without walking every mapped tile.
+    /// provider-side progress without walking every Direct mapping.
     uint64_t revision() const {
         return asyncState_->revision.load(std::memory_order_relaxed);
     }
@@ -381,8 +368,8 @@ public:
     void markUsed(const RasterOverlayTile& tile);
 
     /// True when this tile is still the provider-owned cache entry for its
-    /// identity. Mapped raster cache keys include a provider mapping epoch, so
-    /// option changes invalidate old geometry-to-raster compositions.
+    /// identity. Direct composite cache keys include a provider mapping epoch,
+    /// so option changes invalidate old geometry-to-raster compositions.
     bool ownsCurrentTile(const RasterOverlayTile& tile) const;
 
     /// Evict tiles that have not been referenced recently.
@@ -390,10 +377,11 @@ public:
     /// AFTER all tile access for the frame is complete.
     void trimUnusedTiles(bool cachePressure = false);
 
-    /// Generation fence for a Direct backend replacement. Cancels mapped
-    /// source sets, drops mapped and direct uploads/tiles and advances
-    /// mappingRevision, while preserving backend-neutral exact-source cache
-    /// entries that a PageStore consumer may still be using.
+    /// Generation fence for a Direct backend replacement. Cancels Direct
+    /// composite source sets, drops Direct composite and exact-tile
+    /// uploads/tiles, and advances mappingRevision while preserving
+    /// backend-neutral exact-source cache entries that a PageStore consumer
+    /// may still be using.
     void invalidateDirectExecutionState();
 
     // Texture ownership: RasterOverlayTile owns its GPU texture
@@ -416,69 +404,42 @@ private:
     static void syncRasterLandingTicketLocked(
         const std::shared_ptr<ProviderAsyncState>& state);
 
-    struct QuadtreeSourcePlan {
-        int sourceZoom = 0;
-        int minX = 0;
-        int minY = 0;
-        int maxX = 0;
-        int maxY = 0;
-        std::vector<TileKey> sourceKeys;
-
-        int budgetUnits() const {
-            return static_cast<int>(sourceKeys.size());
-        }
-
-        bool empty() const { return sourceKeys.empty(); }
-    };
-
-    struct MappedSourceImageSet;
+    struct DirectCompositeSourceImageSet;
     struct QuadtreeSourceAssetDepot;
 
-    static QuadtreeSourcePlan buildQuadtreeSourcePlan(
-        const TileScheme& scheme,
-        const ImageryProvider& provider,
-        const RasterTextureUploader* uploader,
-        const Rectangle& geometryBounds,
-        const Rectangle& sourceBounds,
-        double targetScreenPixelsX,
-        double targetScreenPixelsY,
-        double maximumScreenSpaceError,
-        int maximumTextureSize,
-        int minimumLevel,
-        int maximumLevel);
-
     bool loadSourceTileList(RasterOverlayTile& tile,
-                            RasterSourceTileMapping sourceTiles,
+                            RasterOverlaySourcePlan sourcePlan,
                             const Rectangle& targetBounds,
                             const std::string& cacheKey,
                             FrameResourceBudget* budget);
     bool loadSourceImageSet(RasterOverlayTile& tile,
-                            RasterSourceTileMapping sourceTiles,
+                            RasterOverlaySourcePlan sourcePlan,
                             const Rectangle& targetBounds,
                             const std::string& cacheKey,
                             FrameResourceBudget* budget);
+    int effectiveMaximumTextureSize() const;
     void refreshSourceAssetDepot();
     void syncProviderContentRevision();
     static uint64_t nextSourceWaiterOwnerToken();
 
-    /// Internal: load a mapped raster tile by combining the provider's
+    /// Internal: load a Direct composite tile by combining the provider's
     /// quadtree imagery tiles that overlap its geometry rectangle.
-    bool loadMappedRasterTile(RasterOverlayTile& tile,
+    bool loadDirectCompositeTile(RasterOverlayTile& tile,
                               FrameResourceBudget* budget = nullptr);
-    bool pumpLoadingMappedRasterTile(RasterOverlayTile& tile,
+    bool pumpLoadingDirectCompositeTile(RasterOverlayTile& tile,
                                      FrameResourceBudget* budget);
-    int issueMappedSourceImageSet(
-        const std::shared_ptr<MappedSourceImageSet>& sourceSet,
+    int issueDirectCompositeSourceImageSet(
+        const std::shared_ptr<DirectCompositeSourceImageSet>& sourceSet,
         FrameResourceBudget* budget);
     int issuePendingSourceFallbacks(FrameResourceBudget* budget);
-    int issueActiveMappedSourceImageSets(
+    int issueActiveDirectCompositeSourceImageSets(
         FrameResourceBudget* budget,
         double* fallbackMs,
         double* snapshotMs,
         double* issueMs);
     int estimateNewSourceRequestsForSourceKeys(
         const std::vector<TileKey>& sourceKeys) const;
-    bool mappedTileWouldIssueNewSourceRequests(
+    bool directCompositeTileWouldIssueNewSourceRequests(
         const RasterOverlayTile& tile) const;
 
     /// Tile cache key from TileKey.
@@ -498,9 +459,9 @@ private:
         return textureByteLedger_;
     }
     void invalidateDirectRasterTileCache();
-    void invalidateMappedRasterTileCache();
+    void invalidateDirectCompositeTileCache();
     void invalidateSourceAssetDepotCache();
-    void abandonActiveSourceSets(bool mappedOnly);
+    void abandonActiveSourceSets(bool directCompositeOnly);
     void discardPendingUploadsForMissingTiles();
     bool pendingUploadBackpressureActive() const;
 
@@ -537,7 +498,8 @@ private:
     /// Provider-level source imagery depot, matching cesium-native
     /// SharedAssetDepot ownership. Geometry requests may compose different
     /// output tiles, but the underlying quadtree source tile is shared by
-    /// TileKey here rather than owned by an individual mapped source request.
+    /// TileKey here rather than owned by an individual Direct composite
+    /// source request.
     struct SourceTileAsset {
         TileKey key;
         Rectangle bounds;
@@ -590,7 +552,7 @@ private:
         std::vector<PendingUpload> pendingUploads;
         std::vector<SourceTileAsset> sourceAssets;
         std::vector<InFlightSourceTileAsset> inFlightSources;
-        std::vector<std::shared_ptr<MappedSourceImageSet>> sourceSets;
+        std::vector<std::shared_ptr<DirectCompositeSourceImageSet>> sourceSets;
     };
 
     /// Shared runtime state touched by async raster callbacks. It intentionally
@@ -612,10 +574,10 @@ private:
             sourceTileDepotInFlight;
         std::unordered_map<uint64_t, std::vector<TileKey>>
             sourceTileDepotFallbackKeysByOwner;
-        std::unordered_set<uint64_t> activeMappedSourceOwnerTokens;
-        std::unordered_map<std::string, std::shared_ptr<MappedSourceImageSet>>
-            activeMappedSourceSets;
-        std::deque<std::string> activeMappedSourceSetOrder;
+        std::unordered_set<uint64_t> activeDirectCompositeSourceOwnerTokens;
+        std::unordered_map<std::string, std::shared_ptr<DirectCompositeSourceImageSet>>
+            activeDirectCompositeSourceSets;
+        std::deque<std::string> activeDirectCompositeSourceSetOrder;
         std::deque<PendingSourceFallback> pendingSourceFallbacks;
         std::atomic<uint32_t> pendingSourceFallbackCount{0};
         // Multi-source raster composition becomes ready from provider
@@ -695,7 +657,8 @@ private:
         ProviderAsyncState& state,
         RetiredAsyncResources& retired);
     // 按谓词从 pendingUploads 清除条目(释放字节→retired→末尾 enforce budget)。
-    // 调用方须已持 state.mutex。invalidateMapped 与 discardPending... 共用。
+    // 调用方须已持 state.mutex。Direct execution invalidation 与
+    // discardPendingUploadsForMissingTiles 共用。
     static void erasePendingUploadsMatchingLocked(
         ProviderAsyncState& state,
         const std::function<bool(const PendingUpload&)>& predicate,
@@ -704,7 +667,7 @@ private:
         ProviderAsyncState& state,
         RetiredAsyncResources& retired);
     static void compactSourceDepotCacheLruLocked(ProviderAsyncState& state);
-    static void compactActiveMappedSourceSetOrderLocked(
+    static void compactActiveDirectCompositeSourceSetOrderLocked(
         ProviderAsyncState& state);
     static void retainPendingUploadImageBytesLocked(
         ProviderAsyncState& state,
@@ -747,7 +710,7 @@ private:
     /// Used to stamp lastUsedFrame on tiles in getTile().
     uint64_t frameNumber_ = 0;
 
-    uint64_t mappedRasterTileEpoch_ = 0;
+    uint64_t directCompositeTileEpoch_ = 0;
     uint64_t mappingRevision_ = 0;
     uint64_t observedProviderContentRevision_ = 0;
     double maximumScreenSpaceError_ = 2.0;

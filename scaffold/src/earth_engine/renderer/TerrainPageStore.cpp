@@ -38,10 +38,17 @@ namespace earth_engine {
 // PageSourceAssembler — 单页多源按序 alphaOver 合成(纯 CPU,C-1)
 // ============================================================
 
-void PageSourceAssembler::configure(int sourceCount, int sideTexels) {
-    sourceCount_ = std::max(0, sourceCount);
+void PageSourceAssembler::configure(
+    const std::vector<float>& sourceOpacities,
+    int sideTexels) {
+    sourceCount_ = static_cast<int>(sourceOpacities.size());
     side_ = std::max(0, sideTexels);
     composited_ = 0;
+    sourceOpacities_.clear();
+    sourceOpacities_.reserve(sourceOpacities.size());
+    for (float opacity : sourceOpacities) {
+        sourceOpacities_.push_back(std::clamp(opacity, 0.0f, 1.0f));
+    }
     accum_.clear();
     accum_.shrink_to_fit();
     stash_.assign(static_cast<size_t>(sourceCount_), std::vector<uint8_t>{});
@@ -58,9 +65,10 @@ namespace {
 /// 直通(非预乘)alpha 的 source-over:src 叠在 dst 上,就地写 dst。
 /// out.a = sa + da(1-sa);out.rgb = (src·sa + dst·da·(1-sa)) / out.a。
 /// out.a==0 时 rgb 无意义,置 0 保证确定性(否则除零)。
-void alphaOverStraightInPlace(uint8_t* dst, const uint8_t* src, size_t texels) {
+void alphaOverStraightInPlace(uint8_t* dst, const uint8_t* src,
+                              size_t texels, float opacity) {
     for (size_t i = 0; i < texels; ++i) {
-        const float sa = src[3] * (1.0f / 255.0f);
+        const float sa = src[3] * (1.0f / 255.0f) * opacity;
         const float da = dst[3] * (1.0f / 255.0f);
         const float inv = 1.0f - sa;
         const float oa = sa + da * inv;
@@ -75,6 +83,28 @@ void alphaOverStraightInPlace(uint8_t* dst, const uint8_t* src, size_t texels) {
             }
             dst[3] = static_cast<uint8_t>(
                 std::min(255.0f, std::max(0.0f, oa * 255.0f + 0.5f)));
+        }
+        dst += 4;
+        src += 4;
+    }
+}
+
+void copyStraightWithOpacity(uint8_t* dst, const uint8_t* src,
+                             size_t texels, float opacity) {
+    if (opacity >= 1.0f) {
+        std::memcpy(dst, src, texels * 4u);
+        return;
+    }
+    for (size_t i = 0; i < texels; ++i) {
+        const float alpha = std::min(
+            255.0f, std::max(0.0f, src[3] * opacity + 0.5f));
+        dst[3] = static_cast<uint8_t>(alpha);
+        if (dst[3] == 0) {
+            dst[0] = dst[1] = dst[2] = 0;
+        } else {
+            dst[0] = src[0];
+            dst[1] = src[1];
+            dst[2] = src[2];
         }
         dst += 4;
         src += 4;
@@ -107,12 +137,19 @@ bool PageSourceAssembler::accept(int sourceIndex, const uint8_t* rgba) {
     const uint8_t* next = rgba;
     std::vector<uint8_t> pending;
     while (next != nullptr) {
+        const float opacity =
+            sourceOpacities_[static_cast<size_t>(composited_)];
         if (composited_ == 0) {
-            accum_.assign(next, next + bytes);  // 首源直接拷贝(单源逐字节等价)
+            accum_.resize(bytes);
+            copyStraightWithOpacity(
+                accum_.data(), next,
+                static_cast<size_t>(side_) * static_cast<size_t>(side_),
+                opacity);
         } else {
             alphaOverStraightInPlace(
                 accum_.data(), next,
-                static_cast<size_t>(side_) * static_cast<size_t>(side_));
+                static_cast<size_t>(side_) * static_cast<size_t>(side_),
+                opacity);
         }
         ++composited_;
         next = nullptr;
@@ -138,6 +175,7 @@ void TerrainPageLayerPool::configure(int blockCount, int blockLayers) {
     slots_.assign(static_cast<size_t>(std::max(0, blockCount)), Slot{});
     keyToSlot_.clear();
     nextGeneration_ = 1;  // 重配重置分配代(旧句柄随之失效)
+    completedSerial_ = 0;
 }
 
 int TerrainPageLayerPool::layerBaseFor(uint64_t key) const {
@@ -154,6 +192,7 @@ TerrainPageLayerPool::Handle TerrainPageLayerPool::acquire(uint64_t key,
     if (outEvicted) {
         *outEvicted = 0;
     }
+    reclaimCompletedRetirements();
     // 已驻留:touch + 返回(generation 不变)。
     if (const auto it = keyToSlot_.find(key); it != keyToSlot_.end()) {
         slots_[static_cast<size_t>(it->second)].lastFrame = frameId;
@@ -172,13 +211,15 @@ TerrainPageLayerPool::Handle TerrainPageLayerPool::acquire(uint64_t key,
     if (slot < 0) {
         uint64_t best = std::numeric_limits<uint64_t>::max();
         for (size_t i = 0; i < slots_.size(); ++i) {
-            if (slots_[i].lastFrame < frameId && slots_[i].lastFrame < best) {
+            if (slots_[i].mapped && !slots_[i].pendingUse &&
+                slots_[i].lastUseSerial <= completedSerial_ &&
+                slots_[i].lastFrame < frameId && slots_[i].lastFrame < best) {
                 best = slots_[i].lastFrame;
                 slot = static_cast<int>(i);
             }
         }
         if (slot < 0) {
-            return Handle{};  // 全部本帧可见 → 回落 mappedRaster
+            return Handle{};  // 全部本帧可见 → 回落 directComposite
         }
         if (outEvicted) {
             *outEvicted = slots_[static_cast<size_t>(slot)].key;
@@ -187,10 +228,161 @@ TerrainPageLayerPool::Handle TerrainPageLayerPool::acquire(uint64_t key,
     }
     // 占用/重分配:分配代自增(全局单调,release 后重占用也不会复用旧代)。
     slots_[static_cast<size_t>(slot)] =
-        Slot{true, key, frameId, nextGeneration_++};
+        Slot{true, true, false, key, frameId, 0, nextGeneration_++};
     keyToSlot_[key] = slot;
     return Handle{slot * blockLayers_,
                   slots_[static_cast<size_t>(slot)].generation};
+}
+
+TerrainPageLayerPool::Handle TerrainPageLayerPool::acquireReplacement(
+    uint64_t key, uint64_t frameId, uint64_t* outEvicted,
+    int* outRetiredSlot) {
+    if (outEvicted) {
+        *outEvicted = 0;
+    }
+    if (outRetiredSlot) {
+        *outRetiredSlot = -1;
+    }
+    const auto oldIt = keyToSlot_.find(key);
+    if (oldIt == keyToSlot_.end()) {
+        return acquire(key, frameId, outEvicted);
+    }
+    reclaimCompletedRetirements();
+    const int oldSlot = oldIt->second;
+    int replacement = -1;
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        if (static_cast<int>(i) != oldSlot && !slots_[i].used) {
+            replacement = static_cast<int>(i);
+            break;
+        }
+    }
+    if (replacement < 0) {
+        uint64_t best = std::numeric_limits<uint64_t>::max();
+        for (size_t i = 0; i < slots_.size(); ++i) {
+            const Slot& candidate = slots_[i];
+            if (static_cast<int>(i) == oldSlot || !candidate.mapped ||
+                candidate.pendingUse ||
+                candidate.lastUseSerial > completedSerial_ ||
+                candidate.lastFrame >= frameId || candidate.lastFrame >= best) {
+                continue;
+            }
+            best = candidate.lastFrame;
+            replacement = static_cast<int>(i);
+        }
+    }
+    if (replacement < 0) {
+        return Handle{};
+    }
+    Slot& replacementSlot = slots_[static_cast<size_t>(replacement)];
+    if (replacementSlot.mapped) {
+        if (outEvicted) {
+            *outEvicted = replacementSlot.key;
+        }
+        keyToSlot_.erase(replacementSlot.key);
+    }
+    Slot& retired = slots_[static_cast<size_t>(oldSlot)];
+    retired.mapped = false;
+    keyToSlot_.erase(oldIt);
+    if (outRetiredSlot) {
+        *outRetiredSlot = oldSlot * blockLayers_;
+    }
+    if (!retired.pendingUse && retired.lastUseSerial <= completedSerial_) {
+        retired = Slot{};
+    }
+    replacementSlot =
+        Slot{true, true, false, key, frameId, 0, nextGeneration_++};
+    keyToSlot_[key] = replacement;
+    return Handle{replacement * blockLayers_, replacementSlot.generation};
+}
+
+TerrainPageLayerPool::Handle TerrainPageLayerPool::acquireStaging(
+    uint64_t stagingKey, uint64_t publishedKey, uint64_t frameId,
+    uint64_t* outEvicted) {
+    if (outEvicted) {
+        *outEvicted = 0;
+    }
+    reclaimCompletedRetirements();
+    if (keyToSlot_.find(stagingKey) != keyToSlot_.end()) {
+        return Handle{};
+    }
+    int slot = -1;
+    for (size_t i = 0; i < slots_.size(); ++i) {
+        if (!slots_[i].used) {
+            slot = static_cast<int>(i);
+            break;
+        }
+    }
+    if (slot < 0) {
+        uint64_t best = std::numeric_limits<uint64_t>::max();
+        for (size_t i = 0; i < slots_.size(); ++i) {
+            const Slot& candidate = slots_[i];
+            if (!candidate.mapped || candidate.key == publishedKey ||
+                candidate.pendingUse || candidate.lastUseSerial > completedSerial_ ||
+                candidate.lastFrame >= frameId || candidate.lastFrame >= best) {
+                continue;
+            }
+            best = candidate.lastFrame;
+            slot = static_cast<int>(i);
+        }
+    }
+    if (slot < 0) {
+        return Handle{};
+    }
+    Slot& physical = slots_[static_cast<size_t>(slot)];
+    if (physical.mapped) {
+        if (outEvicted) {
+            *outEvicted = physical.key;
+        }
+        keyToSlot_.erase(physical.key);
+    }
+    physical = Slot{true, true, false, stagingKey, frameId, 0,
+                    nextGeneration_++};
+    keyToSlot_[stagingKey] = slot;
+    return Handle{slot * blockLayers_, physical.generation};
+}
+
+bool TerrainPageLayerPool::replaceKey(uint64_t stagingKey, uint64_t key,
+                                      int* outRetiredSlot) {
+    if (outRetiredSlot) {
+        *outRetiredSlot = -1;
+    }
+    const auto stagingIt = keyToSlot_.find(stagingKey);
+    if (stagingIt == keyToSlot_.end()) {
+        return false;
+    }
+    const int stagingSlotIndex = stagingIt->second;
+    if (const auto oldIt = keyToSlot_.find(key); oldIt != keyToSlot_.end()) {
+        if (oldIt->second == stagingSlotIndex) {
+            return stagingKey == key;
+        }
+        Slot& old = slots_[static_cast<size_t>(oldIt->second)];
+        old.mapped = false;
+        if (outRetiredSlot) {
+            *outRetiredSlot = oldIt->second * blockLayers_;
+        }
+        if (!old.pendingUse && old.lastUseSerial <= completedSerial_) {
+            old = Slot{};
+        }
+        keyToSlot_.erase(oldIt);
+    }
+    Slot& staging = slots_[static_cast<size_t>(stagingSlotIndex)];
+    if (!staging.used || !staging.mapped || staging.key != stagingKey) {
+        return false;
+    }
+    keyToSlot_.erase(stagingIt);
+    staging.key = key;
+    keyToSlot_[key] = stagingSlotIndex;
+    return true;
+}
+
+bool TerrainPageLayerPool::canWriteInPlace(uint64_t key) const {
+    const auto it = keyToSlot_.find(key);
+    if (it == keyToSlot_.end()) {
+        return false;
+    }
+    const Slot& physical = slots_[static_cast<size_t>(it->second)];
+    return physical.used && physical.mapped && !physical.pendingUse &&
+           physical.lastUseSerial <= completedSerial_;
 }
 
 bool TerrainPageLayerPool::current(Handle h) const {
@@ -206,7 +398,7 @@ bool TerrainPageLayerPool::current(Handle h) const {
         return false;
     }
     const Slot& s = slots_[static_cast<size_t>(blockIndex)];
-    return s.used && s.generation == h.generation;
+    return s.used && s.mapped && s.generation == h.generation;
 }
 
 uint32_t TerrainPageLayerPool::generationFor(uint64_t key) const {
@@ -233,8 +425,61 @@ void TerrainPageLayerPool::touchSlot(int slot, uint64_t frameId) {
     if (blockIndex < 0 || static_cast<size_t>(blockIndex) >= slots_.size()) {
         return;
     }
-    if (slots_[static_cast<size_t>(blockIndex)].used) {
+    if (slots_[static_cast<size_t>(blockIndex)].mapped) {
         slots_[static_cast<size_t>(blockIndex)].lastFrame = frameId;
+    }
+}
+
+void TerrainPageLayerPool::markSlotPendingUse(int slot) {
+    if (slot < 0) {
+        return;
+    }
+    const int blockIndex = slot / blockLayers_;
+    if (blockIndex < 0 || static_cast<size_t>(blockIndex) >= slots_.size()) {
+        return;
+    }
+    Slot& physical = slots_[static_cast<size_t>(blockIndex)];
+    if (physical.used) {
+        physical.pendingUse = true;
+    }
+}
+
+void TerrainPageLayerPool::publishPendingUses(uint64_t submittedSerial) {
+    if (submittedSerial == 0) {
+        return;
+    }
+    for (Slot& slot : slots_) {
+        if (!slot.used || !slot.pendingUse) {
+            continue;
+        }
+        slot.pendingUse = false;
+        slot.lastUseSerial = std::max(slot.lastUseSerial, submittedSerial);
+    }
+    reclaimCompletedRetirements();
+}
+
+void TerrainPageLayerPool::setCompletedSerial(uint64_t completedSerial) {
+    completedSerial_ = std::max(completedSerial_, completedSerial);
+    reclaimCompletedRetirements();
+}
+
+void TerrainPageLayerPool::retireAll(uint64_t completedSerial) {
+    setCompletedSerial(completedSerial);
+    for (Slot& slot : slots_) {
+        if (slot.mapped) {
+            slot.mapped = false;
+        }
+    }
+    keyToSlot_.clear();
+    reclaimCompletedRetirements();
+}
+
+void TerrainPageLayerPool::reclaimCompletedRetirements() {
+    for (Slot& slot : slots_) {
+        if (slot.used && !slot.mapped && !slot.pendingUse &&
+            slot.lastUseSerial <= completedSerial_) {
+            slot = Slot{};
+        }
     }
 }
 
@@ -243,7 +488,11 @@ void TerrainPageLayerPool::release(uint64_t key) {
     if (it == keyToSlot_.end()) {
         return;
     }
-    slots_[static_cast<size_t>(it->second)] = Slot{};
+    Slot& slot = slots_[static_cast<size_t>(it->second)];
+    slot.mapped = false;
+    if (!slot.pendingUse && slot.lastUseSerial <= completedSerial_) {
+        slot = Slot{};
+    }
     keyToSlot_.erase(it);
 }
 
@@ -255,10 +504,18 @@ namespace {
 
 // per-cell 渐变 LOD 的真 miss 地板(§16.3⑥,替代 §15.3① 的 0.5 硬剔)。
 // §15.3① 曾按 cell 屏幕误差硬剔到 0.5×阈值——但被剔的中距 cell 一步跌回 z12
-// mappedRaster(5 级悬崖)= 高倾斜「模糊带」根因。§16.3 改为:视锥内 cell 按距离取
+// directComposite(5 级悬崖)= 高倾斜「模糊带」根因。§16.3 改为:视锥内 cell 按距离取
 // 自适应粗祖先页(渐变),仅保留一层**更低**的地板兜厚 OBB 掠射假阳性——屏幕贡献
-// < 1/4 阈值的 cell(远景/掠射误戳)才真 miss 回落 mappedRaster,防 near-nadir 枚举爆量。
+// < 1/4 阈值的 cell(远景/掠射误戳)才真 miss 回落 directComposite,防 near-nadir 枚举爆量。
 constexpr double kCellSseMissFloorFraction = 0.25;
+
+// packKey() occupies only the low 63 bits for every supported terrain/raster
+// zoom. The high bit therefore names an unpublished COW staging allocation in
+// the same physical pool without colliding with a real page/tile key.
+constexpr uint64_t kLayerStagingBit = uint64_t{1} << 63;
+uint64_t layerStagingKey(uint64_t key) {
+    return key | kLayerStagingBit;
+}
 
 bool samePageFacingScheme(const TileScheme& a, const TileScheme& b,
                           TerrainPageStore::PageDomainCompatibility& reason) {
@@ -409,6 +666,35 @@ TerrainPageStore::providerStackCompatibility(
     return PageDomainCompatibility::Compatible;
 }
 
+TerrainPageStore::PageDomainCompatibility
+TerrainPageStore::pageSourceStackCompatibility(
+    const std::vector<RasterOverlayPageSource>& sources,
+    bool directFallbackStackParity) {
+    if (sources.empty()) {
+        return PageDomainCompatibility::NoProvider;
+    }
+    if (!directFallbackStackParity) {
+        return PageDomainCompatibility::DirectFallbackStackMismatch;
+    }
+    if (sources.size() >
+        static_cast<size_t>(kMaxGltfRasterOverlays)) {
+        return PageDomainCompatibility::TooManySourcesForDirectFallback;
+    }
+    const RasterOverlayPageSource& canonical = sources.front();
+    if (canonical.role != RasterOverlayRole::BaseImagery) {
+        return PageDomainCompatibility::CanonicalSourceRoleMismatch;
+    }
+    if (canonical.opacity < 0.999999f) {
+        return PageDomainCompatibility::CanonicalBaseOpacityMismatch;
+    }
+    for (const RasterOverlayPageSource& source : sources) {
+        if (source.provider == nullptr) {
+            return PageDomainCompatibility::ProviderContractMismatch;
+        }
+    }
+    return PageDomainCompatibility::Compatible;
+}
+
 const char* TerrainPageStore::pageDomainCompatibilityName(
     PageDomainCompatibility compatibility) {
     switch (compatibility) {
@@ -428,6 +714,14 @@ const char* TerrainPageStore::pageDomainCompatibilityName(
             return "provider-contract-mismatch";
         case PageDomainCompatibility::TerrainSchemeMismatch:
             return "terrain-scheme-mismatch";
+        case PageDomainCompatibility::CanonicalSourceRoleMismatch:
+            return "canonical-source-role-mismatch";
+        case PageDomainCompatibility::CanonicalBaseOpacityMismatch:
+            return "canonical-base-opacity-mismatch";
+        case PageDomainCompatibility::TooManySourcesForDirectFallback:
+            return "too-many-sources-for-direct-fallback";
+        case PageDomainCompatibility::DirectFallbackStackMismatch:
+            return "direct-fallback-stack-mismatch";
     }
     return "unknown";
 }
@@ -510,7 +804,7 @@ void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident,
     // B = per-cell 渐变 LOD 深度 d(§16.3),clamp [0, kMaxDetDepthLevels]。片元
     // span=2^d 定位粗祖先页子区;d=0 逐字节=现状精页。
     out[2] = static_cast<uint8_t>(std::clamp(depth, 0, kMaxDetDepthLevels));
-    // A 三态门控(刀2 场 resident 独立):miss=0(保留 mappedRaster)、影像 resident
+    // A 三态门控(刀2 场 resident 独立):miss=0(保留 directComposite)、影像 resident
     // 但场未 ready=128(片元采影像不采场)、影像+场都 ready=255。片元对影像做
     // step(0.3) 离散(A≥128 → 采影像),场 gate 用 A>0.6(仅 255)。无场功能时
     // fieldReady 恒 true → 退化 0/255 二态,逐位=改造前。
@@ -751,10 +1045,15 @@ TerrainPageStore::makeDeterminationSignature(
 void TerrainPageStore::updateVisiblePages(
     const SelectorView& view,
     const std::vector<TilesetTile*>& visibleTiles,
-    const std::vector<RasterOverlayTileProvider*>& providers,
+    const std::vector<RasterOverlayPageSource>& sources,
     double terrainMaxScreenSpaceError,
     SceneFrameResourceArbiter* resourceArbiter,
-    std::shared_ptr<RasterAssetDepot> assetDepot) {
+    std::shared_ptr<RasterAssetDepot> assetDepot,
+    bool directFallbackStackParity) {
+    if (rejectMutationDuringSubmission("updateVisiblePages")) {
+        return;
+    }
+    synchronizeGpuCompletion();
     resourceArbiter_ = resourceArbiter;
     assetDepot_ = std::move(assetDepot);
     // 放在最前而不是最后:本函数有多处早退,放末尾会被跳过。用上一帧的在途
@@ -767,24 +1066,66 @@ void TerrainPageStore::updateVisiblePages(
     // C-1:源列表变了(增删/换序)→ 已合成的页少一层或多一层都是错的,全部作废重来。
     // 逐指针精确比对(与 det 签名同样的「宁可多跑不可用错」取向)。
     // null 源必须剔除:它永远不会到达,会把 assembler 的按序游标永久卡住。
+    detSourcesScratch_.clear();
     detProvidersScratch_.clear();
-    for (RasterOverlayTileProvider* p : providers) {
-        if (p != nullptr) detProvidersScratch_.push_back(p);
+    for (const RasterOverlayPageSource& source : sources) {
+        if (!source.provider || source.opacity <= 0.0f) {
+            continue;
+        }
+        detSourcesScratch_.push_back(source);
+        detProvidersScratch_.push_back(source.provider);
     }
     const PageDomainCompatibility compatibility =
-        providerStackCompatibility(detProvidersScratch_);
+        pageSourceStackCompatibility(
+            detSourcesScratch_, directFallbackStackParity);
     if (compatibility != PageDomainCompatibility::Compatible) {
+        const char* detail =
+            "page source stack has no opaque BaseImagery canonical source";
+        if (compatibility == PageDomainCompatibility::NoProvider) {
+            detail = "no active imagery provider";
+        } else if (
+            compatibility ==
+            PageDomainCompatibility::TooManySourcesForDirectFallback) {
+            detail = "page source stack exceeds Direct fallback capacity";
+        } else if (
+            compatibility ==
+            PageDomainCompatibility::DirectFallbackStackMismatch) {
+            detail = "PageStore sources differ from the Direct fallback stack";
+        }
         rejectPageDomain(
             compatibility,
-            compatibility == PageDomainCompatibility::NoProvider
+            detail);
+        return;
+    }
+    const PageDomainCompatibility providerCompatibility =
+        providerStackCompatibility(detProvidersScratch_);
+    if (providerCompatibility != PageDomainCompatibility::Compatible) {
+        rejectPageDomain(
+            providerCompatibility,
+            providerCompatibility == PageDomainCompatibility::NoProvider
                 ? "no active imagery provider"
                 : "provider stack is not one page grid");
         return;
     }
 
+    // The provider projection is immutable, but the frame source still owns
+    // the authoritative value used by this determination. Reject a malformed
+    // backend view rather than silently mixing live provider state with the
+    // published frame metadata.
+    for (const RasterOverlayPageSource& source : detSourcesScratch_) {
+        if (source.projection != source.provider->getProjection()) {
+            rejectPageDomain(
+                PageDomainCompatibility::ProviderProjectionMismatch,
+                "frame source projection disagrees with provider projection");
+            return;
+        }
+    }
+
     RasterOverlayTileProvider* canonicalProvider =
         detProvidersScratch_.front();
     const TileScheme& canonicalScheme = canonicalProvider->getTileScheme();
+    const RasterOverlayProjection canonicalProjection =
+        detSourcesScratch_.front().projection;
     for (const TilesetTile* tile : visibleTiles) {
         if (tile != nullptr &&
             terrainSurfaceSourceForDraw(tile->content.renderContent) ==
@@ -797,23 +1138,37 @@ void TerrainPageStore::updateVisiblePages(
         }
     }
 
-    const bool providerSetChanged = providers_ != detProvidersScratch_;
+    const auto sameSourceIdentity = [](const RasterOverlayPageSource& lhs,
+                                       const RasterOverlayPageSource& rhs) {
+        return lhs.runtimeSlot == rhs.runtimeSlot &&
+               lhs.provider == rhs.provider &&
+               lhs.projection == rhs.projection;
+    };
+    const bool sourceIdentityChanged =
+        sources_.size() != detSourcesScratch_.size() ||
+        !std::equal(
+            sources_.begin(), sources_.end(), detSourcesScratch_.begin(),
+            sameSourceIdentity);
     const bool domainChanged =
         !pageDomainActive_ || pageDomainSchemeId_ != canonicalScheme.id() ||
-        pageDomainProjection_ != canonicalProvider->getProjection();
+        pageDomainProjection_ != canonicalProjection;
     std::vector<uint64_t> contentRevisions;
-    contentRevisions.reserve(detProvidersScratch_.size());
-    for (RasterOverlayTileProvider* provider : detProvidersScratch_) {
-        contentRevisions.push_back(
-            provider->getImageryProvider().contentRevision());
+    contentRevisions.reserve(detSourcesScratch_.size());
+    for (const RasterOverlayPageSource& source : detSourcesScratch_) {
+        contentRevisions.push_back(source.providerRevision);
     }
-    if (providerSetChanged || domainChanged) {
+    if (sourceIdentityChanged || domainChanged) {
         const PageDomainCompatibility previous = pageDomainCompatibility_;
         resetPageDomainState();
-        providers_ = detProvidersScratch_;
+        sources_ = detSourcesScratch_;
+        sourceOpacities_.clear();
+        sourceOpacities_.reserve(sources_.size());
+        for (const RasterOverlayPageSource& source : sources_) {
+            sourceOpacities_.push_back(source.opacity);
+        }
         providerContentRevisions_ = std::move(contentRevisions);
         pageDomainSchemeId_ = canonicalScheme.id();
-        pageDomainProjection_ = canonicalProvider->getProjection();
+        pageDomainProjection_ = canonicalProjection;
         pageDomainActive_ = true;
         pageDomainCompatibility_ = PageDomainCompatibility::Compatible;
         if (previous != PageDomainCompatibility::Compatible) {
@@ -822,11 +1177,30 @@ void TerrainPageStore::updateVisiblePages(
                         "sources=%d generation=%llu",
                         canonicalScheme.id().c_str(),
                         rasterOverlayProjectionName(pageDomainProjection_),
-                        static_cast<int>(providers_.size()),
+                        static_cast<int>(sources_.size()),
                         static_cast<unsigned long long>(pageDomainGeneration_));
         }
     } else {
         pageDomainCompatibility_ = PageDomainCompatibility::Compatible;
+        bool opacityChanged =
+            sources_.size() != detSourcesScratch_.size();
+        if (!opacityChanged) {
+            for (size_t i = 0; i < detSourcesScratch_.size(); ++i) {
+                if (sourceOpacities_[i] != detSourcesScratch_[i].opacity) {
+                    opacityChanged = true;
+                    break;
+                }
+            }
+        }
+        sources_ = detSourcesScratch_;
+        sourceOpacities_.clear();
+        sourceOpacities_.reserve(sources_.size());
+        for (const RasterOverlayPageSource& source : sources_) {
+            sourceOpacities_.push_back(source.opacity);
+        }
+        if (opacityChanged) {
+            invalidateComposedPages();
+        }
         if (providerContentRevisions_ != contentRevisions) {
             const bool invalidationAlreadyPending = std::any_of(
                 pages_.begin(),
@@ -871,7 +1245,7 @@ void TerrainPageStore::updateVisiblePages(
     residencyCheckedTiles_ = 0;
     fullyResidentTiles_ = 0;
     worstResidentRatio_ = 1.0f;
-    RasterOverlayTileProvider* provider = providers_.front();
+    RasterOverlayTileProvider* provider = sources_.front().provider;
     const TileScheme& scheme = provider->getTileScheme();
     const int providerMaxLevel = provider->getMaximumLevel();
     auto hasReadyPageUpload = [&]() {
@@ -1077,8 +1451,8 @@ void TerrainPageStore::updateVisiblePages(
                     p.tile->geometricError, view.projectionMatrix,
                     view.viewportHeightPixels, cellDist);
             // [远景矢量补覆盖] §16.3⑥ 曾把屏幕贡献 < 1/4 阈值的 cell 判「真 miss」直接
-            // 剔除(A=0)回落 mappedRaster。「页=纯影像」时代无害(远景卫图 mappedRaster
-            // 兜底够用),但刀1/刀2 后 drape 面与 SDF 路网场**只寄生在页上**、mappedRaster
+            // 剔除(A=0)回落 directComposite。「页=纯影像」时代无害(远景卫图 directComposite
+            // 兜底够用),但刀1/刀2 后 drape 面与 SDF 路网场**只寄生在页上**、directComposite
             // 无矢量等价物 → 远景高俯角整片没水面/没路网。改法:不再 continue 丢弃,而是让
             // 它照常走下面的渐变路径取**最粗祖先页**(cellSse<threshold → za 恒钳到 tileZ)。
             //
@@ -1120,7 +1494,7 @@ void TerrainPageStore::updateVisiblePages(
         // [拉远连续性] 整瓦「锚页」恒驻(za=tileZ,最粗层):祖先 walk 的结构约束
         // 是只能从 p.zoom 走到 tileZ、比 p.zoom 细的页不可寻址(一粗 cell 需 4 细页)。
         // 拉远时 za 逐层变粗、新层页 just-in-time 才 kick,p.zoom 掉穿"最后一层暖层"
-        // 的瞬间 walk 全空 → A=0:影像有 mappedRaster 兜底看不出断,线没有等价物 →
+        // 的瞬间 walk 全空 → A=0:影像有 directComposite 兜底看不出断,线没有等价物 →
         // 整片消失再出现。锚页让最粗一层永远有双就绪兜底:任意拉远速度,线最多短暂
         // 变粗(锚页干线级),不消失;细层页到达逐层锐化。成本 +1 页/可见瓦(≤~52,
         // 池 512 富余);与远景补覆盖的地板 cell 目标页同 key,try_emplace 天然去重。
@@ -1163,13 +1537,21 @@ void TerrainPageStore::updateVisiblePages(
 
         // 驻留编码(**每帧必跑**):按当前 resident/uploaded 重建间接纹理。
         // residentCells 统计本帧真正拿到高清页(A=255,含祖先回退)的 cell 数;
-        // == gridN² 即「全 cell 驻留」= 合批资格闸(此时 mappedRaster fallback
-        // 必不被采样 → 批命令可丢 mappedRaster,见 TerrainInstanceBatcher)。
+        // == gridN² 即「全 cell 驻留」= 合批资格闸(此时 directComposite fallback
+        // 必不被采样 → 批命令可丢 directComposite,见 TerrainInstanceBatcher)。
         indirTexelsScratch_.assign(
             static_cast<size_t>(p.placement.cellsX) *
                 static_cast<size_t>(p.placement.cellsY) * 4u,
             0);
         int residentCells = 0;
+        std::vector<int> imageLayers;
+        std::vector<int> fieldLayers;
+        auto appendUniqueLayer = [](std::vector<int>& layers, int layer) {
+            if (layer >= 0 &&
+                std::find(layers.begin(), layers.end(), layer) == layers.end()) {
+                layers.push_back(layer);
+            }
+        };
         for (const DetKeptCell& kc : cache.kept) {
             uint8_t* texel =
                 indirTexelsScratch_.data() +
@@ -1217,7 +1599,7 @@ void TerrainPageStore::updateVisiblePages(
                 aKey.y = subY >> ad;
                 const uint64_t aPageKey = packKey(aKey);
                 const auto ait = pages_.find(aPageKey);
-                if (ait == pages_.end() || !ait->second.uploadedTexels()) {
+                if (ait == pages_.end() || !ait->second.displayReady()) {
                     continue;
                 }
                 imgLayer = ait->second.layer;
@@ -1227,77 +1609,22 @@ void TerrainPageStore::updateVisiblePages(
             }
             if (imgLayer >= 0) {
                 pool_.touch(imgKey, frameId_);  // 显示中的页不该被淘汰
+                appendUniqueLayer(imageLayers, imgLayer);
                 encodeLayerRGBA8(imgLayer, true, true, imgD, texel);
                 ++residentCells;
             } else {
-                // 全冷 → mappedRaster(resident=false)。
+                // 全冷 → directComposite(resident=false)。
                 encodeLayerRGBA8(0, false, true, kc.d, texel);
             }
         }
 
         // 合批 Step 2:认领/保活本瓦片的 array 层,texel 写左上 gridN² 区。
         // 池满(理论上不可能:层数 256 > 峰值可见 ~185)→ 本帧放弃 indir,
-        // 该瓦片回落 mappedRaster(优雅降级)。层被夺走的离屏瓦片由 evicted
+        // 该瓦片回落 directComposite(优雅降级)。层被夺走的离屏瓦片由 evicted
         // 分支置 layer=-1(其 sweep 稍后清除)。
         TileIndir& ind = tileIndirs_[p.tileKeyPacked];
         ind.cellZoom = p.zoom;
-        if (ind.layer < 0 ||
-            indirPool_.layerBaseFor(p.tileKeyPacked) != ind.layer) {
-            uint64_t evicted = 0;
-            const auto indH =
-                indirPool_.acquire(p.tileKeyPacked, frameId_, &evicted);
-            ind.layer = indH.slot;
-            // 策略生效率:间接纹理层的**无换租获取率**。稳态应接近 1;持续偏低 =
-            // 层池容量不足以承载当前可见集,每帧互相踢(thrash),表现为闪烁/重传。
-            policy::observe(policy::Id::IndirLayerAllocNoEvict,
-                            evicted == 0 ? 1 : 0, 1);
-            if (evicted != 0) {
-                auto eit = tileIndirs_.find(evicted);
-                if (eit != tileIndirs_.end()) {
-                    eit->second.layer = -1;
-                }
-            }
-        } else {
-            indirPool_.touch(p.tileKeyPacked, frameId_);
-        }
-        if (ind.layer >= 0) {
-            // One visible tile's image+field indirection writes form one GPU
-            // transaction. Keep one PageStore grant for already-ready page
-            // content so per-frame indirection maintenance cannot permanently
-            // starve the uploads that make those mappings useful.
-            if (resourceArbiter_) {
-                const uint32_t remaining = resourceArbiter_->remaining(
-                    SceneFrameResourceProducer::PageStore,
-                    SceneFrameResourceStage::GpuUpload,
-                    FrameResourcePriority::Normal);
-                const uint32_t readyReserve = hasReadyPageUpload() ? 1u : 0u;
-                if (remaining <= readyReserve ||
-                    !resourceArbiter_->tryAcquire(
-                        SceneFrameResourceProducer::PageStore,
-                        SceneFrameResourceStage::GpuUpload,
-                        FrameResourcePriority::Normal)) {
-                    // Never expose stale indirection metadata after a denied
-                    // write. The tile falls back to mappedRaster this frame;
-                    // retaining the pool ownership lets the next frame retry
-                    // the same layer without churn.
-                    ind.layer = -1;
-                    ind.fullyResident = false;
-                    ind.lastFrame = frameId_;
-                    cache.lastFrame = frameId_;
-                    ++determinationDirtyRevision_;
-                    continue;
-                }
-            }
-            // 尺寸与行距必须跟 **cell 网格**走。写成 gridN 而缓冲按 cellsX 排,
-            // 行距差一格 → 每行递进错位 → 屏幕大片读到未初始化 texel(A=0)只剩
-            // 零星正确块。真机截图立刻现形,host 测试看不到(不走纹理上传)。
-            const double indirUpStartMs = perf::nowMs();
-            device_->updateTextureRegion(
-                indirArrayTexture_.get(), 0, 0,
-                p.placement.cellsX, p.placement.cellsY,
-                indirTexelsScratch_.data(),
-                static_cast<size_t>(p.placement.cellsX) * 4u, ind.layer);
-            lastIndirUploadMs_ += perf::nowMs() - indirUpStartMs;
+        {
 
             // ==== 步3 场平面(z 封顶解耦):逐 cell 求 z-封顶场页并重建场间接
             // 纹理(复用本瓦片的 ind.layer 层号)。场页 key 与影像页脱钩 →
@@ -1387,6 +1714,7 @@ void TerrainPageStore::updateVisiblePages(
                         ++winFieldHoleCells_;
                         continue;  // 全冷(无任何存货)A=0:片元不采场
                     }
+                    appendUniqueLayer(fieldLayers, useLayer);
                     uint8_t* ftexel =
                         fieldIndirTexelsScratch_.data() +
                         (static_cast<size_t>(kc.dy) * p.placement.cellsX +
@@ -1396,14 +1724,6 @@ void TerrainPageStore::updateVisiblePages(
                     ftexel[2] = static_cast<uint8_t>(useDf);
                     ftexel[3] = 255;
                 }
-                const double fieldIndirUpStartMs = perf::nowMs();
-                device_->updateTextureRegion(
-                    fieldIndirArrayTexture_.get(), 0, 0,
-                    p.placement.cellsX, p.placement.cellsY,
-                    fieldIndirTexelsScratch_.data(),
-                    static_cast<size_t>(p.placement.cellsX) * 4u, ind.layer);
-                lastIndirUploadMs_ += perf::nowMs() - fieldIndirUpStartMs;
-
                 // [V24 线闪根修·下半] 场锚页预暖(镜像影像锚页,同一课的
                 // 步3 补作业):拉远时新档比存货粗,df≥0 寻址不到细存货,
                 // 祖先回退救不了 —— 必须趁细档还在渲染时把 fz-1 的场页
@@ -1453,7 +1773,140 @@ void TerrainPageStore::updateVisiblePages(
                 }
             }
         }
+        const bool hasFieldIndirection =
+            fieldArrayTexture_ && fieldIndirArrayTexture_;
+        const bool indirWriteRequired =
+            ind.placement.cellsX != p.placement.cellsX ||
+            ind.placement.cellsY != p.placement.cellsY ||
+            ind.imageTexels != indirTexelsScratch_ ||
+            (hasFieldIndirection &&
+             ind.fieldTexels != fieldIndirTexelsScratch_);
+        const int publishedIndirLayer =
+            indirPool_.layerBaseFor(p.tileKeyPacked);
+        int targetIndirLayer = publishedIndirLayer;
+        bool stagingIndir = false;
+        bool newlyAllocatedIndir = false;
+        uint64_t stagingIndirKey = 0;
+        if (indirWriteRequired) {
+            if (resourceArbiter_) {
+                const uint32_t remaining = resourceArbiter_->remaining(
+                    SceneFrameResourceProducer::PageStore,
+                    SceneFrameResourceStage::GpuUpload,
+                    FrameResourcePriority::Normal);
+                const uint32_t readyReserve = hasReadyPageUpload() ? 1u : 0u;
+                if (remaining <= readyReserve ||
+                    !resourceArbiter_->tryAcquire(
+                        SceneFrameResourceProducer::PageStore,
+                        SceneFrameResourceStage::GpuUpload,
+                        FrameResourcePriority::Normal)) {
+                    ind.layer = -1;
+                    ind.fullyResident = false;
+                    ind.lastFrame = frameId_;
+                    cache.lastFrame = frameId_;
+                    ++determinationDirtyRevision_;
+                    continue;
+                }
+            }
+            uint64_t evicted = 0;
+            TerrainPageLayerPool::Handle target;
+            if (publishedIndirLayer < 0) {
+                target = indirPool_.acquire(
+                    p.tileKeyPacked, frameId_, &evicted);
+                newlyAllocatedIndir = target.valid();
+            } else if (indirPool_.canWriteInPlace(p.tileKeyPacked)) {
+                target = {publishedIndirLayer,
+                          indirPool_.generationFor(p.tileKeyPacked)};
+                indirPool_.touch(p.tileKeyPacked, frameId_);
+            } else {
+                stagingIndirKey = layerStagingKey(p.tileKeyPacked);
+                target = indirPool_.acquireStaging(
+                    stagingIndirKey, p.tileKeyPacked, frameId_, &evicted);
+                stagingIndir = target.valid();
+            }
+            targetIndirLayer = target.slot;
+            policy::observe(policy::Id::IndirLayerAllocNoEvict,
+                            evicted == 0 ? 1 : 0, 1);
+            if (evicted != 0) {
+                auto evictedIndir = tileIndirs_.find(evicted);
+                if (evictedIndir != tileIndirs_.end()) {
+                    evictedIndir->second.layer = -1;
+                }
+            }
+            if (targetIndirLayer < 0) {
+                ind.layer = -1;
+                ind.fullyResident = false;
+                ind.lastFrame = frameId_;
+                cache.lastFrame = frameId_;
+                ++determinationDirtyRevision_;
+                continue;
+            }
+            const double indirUpStartMs = perf::nowMs();
+            // A backend may report an error after queuing the GL/PBO command
+            // (the GLES implementation checks glGetError only afterwards).
+            // Pin before issuing either upload so every failure path retires
+            // the destination by submission serial instead of recycling it
+            // immediately.
+            indirPool_.markSlotPendingUse(targetIndirLayer);
+            bool uploadedIndirection = device_->updateTextureRegion(
+                indirArrayTexture_.get(), 0, 0, p.placement.cellsX,
+                p.placement.cellsY, indirTexelsScratch_.data(),
+                static_cast<size_t>(p.placement.cellsX) * 4u,
+                targetIndirLayer);
+            // The image indirection upload may already be queued in an
+            // asynchronous GLES/PBO backend even when the companion field
+            // upload below fails. Pin the physical slice immediately after
+            // the first successful write so a failure cannot release and
+            // recycle it while that DMA is still reading the staging data.
+            if (uploadedIndirection && hasFieldIndirection) {
+                uploadedIndirection = device_->updateTextureRegion(
+                    fieldIndirArrayTexture_.get(), 0, 0,
+                    p.placement.cellsX, p.placement.cellsY,
+                    fieldIndirTexelsScratch_.data(),
+                    static_cast<size_t>(p.placement.cellsX) * 4u,
+                    targetIndirLayer);
+            }
+            lastIndirUploadMs_ += perf::nowMs() - indirUpStartMs;
+            if (!uploadedIndirection) {
+                if (stagingIndir) {
+                    indirPool_.release(stagingIndirKey);
+                } else if (newlyAllocatedIndir) {
+                    indirPool_.release(p.tileKeyPacked);
+                }
+                ind.layer = -1;
+                ind.fullyResident = false;
+                ind.lastFrame = frameId_;
+                cache.lastFrame = frameId_;
+                ++determinationDirtyRevision_;
+                continue;
+            }
+            if (stagingIndir &&
+                !indirPool_.replaceKey(stagingIndirKey, p.tileKeyPacked)) {
+                indirPool_.release(stagingIndirKey);
+                ind.layer = -1;
+                ind.fullyResident = false;
+                ind.lastFrame = frameId_;
+                cache.lastFrame = frameId_;
+                ++determinationDirtyRevision_;
+                continue;
+            }
+            ind.imageTexels = indirTexelsScratch_;
+            ind.fieldTexels = hasFieldIndirection
+                ? fieldIndirTexelsScratch_
+                : std::vector<uint8_t>{};
+        } else if (publishedIndirLayer >= 0) {
+            indirPool_.touch(p.tileKeyPacked, frameId_);
+        }
+        ind.layer = targetIndirLayer;
+        if (ind.layer < 0) {
+            ind.fullyResident = false;
+            ind.lastFrame = frameId_;
+            cache.lastFrame = frameId_;
+            ++determinationDirtyRevision_;
+            continue;
+        }
         ind.gridN = p.gridN;
+        ind.imageLayers = std::move(imageLayers);
+        ind.fieldLayers = std::move(fieldLayers);
         ind.placement = p.placement;
         ind.texCoordSet = p.texCoordSet;
         // [瓦界对齐] instanced 管线的几何 UV→源格仿射(每帧重算:zoom/placement
@@ -1466,7 +1919,7 @@ void TerrainPageStore::updateVisiblePages(
         // 合批资格 = 「**所有会产生片元的 cell 都有页**」。
         //
         // 批命令共享首实例的纹理(batch.textures = first.textures),而实例化片元
-        // shader 里根本没有 mappedRaster 采样器 —— A=0 的 cell 不会回落祖先影像,
+        // shader 里根本没有 directComposite 采样器 —— A=0 的 cell 不会回落祖先影像,
         // 而是停在 u_baseColor,渲染成被光照打亮的纯色面(真机实测:半屏纯白,
         // 地形起伏还在,像雪山,比出洞更难在截图里被认出来)。
         //
@@ -1486,7 +1939,7 @@ void TerrainPageStore::updateVisiblePages(
         // notFullyResident 为止)。记下最差覆盖率,把"差一点"与"根本达不到"分开。
         // 策略生效率:会产生片元的 cell 里有多少真拿到了高清页。
         // 分母 = kept(过视锥的全部 cell,含被降级到粗页的远 cell —— 远景补覆盖后它们
-        // 都在 kept 里)。差额是页尚未到达的 cell,回落 mappedRaster = 糊。
+        // 都在 kept 里)。差额是页尚未到达的 cell,回落 directComposite = 糊。
         policy::observe(policy::Id::CellPageCoverage, residentCells,
                         static_cast<int>(cache.kept.size()));
         // 分母跟 **cell 网格**走,不跟几何等分走:GCJ 下二者不等(源网格多一列
@@ -1506,7 +1959,7 @@ void TerrainPageStore::updateVisiblePages(
     // sweep:清本帧不再可见瓦片的间接纹理 + 几何缓存(页经 LRU 自然淘汰)。
     for (auto it = tileIndirs_.begin(); it != tileIndirs_.end();) {
         if (it->second.lastFrame != frameId_) {
-            if (it->second.layer >= 0) {
+            if (indirPool_.layerBaseFor(it->first) >= 0) {
                 indirPool_.release(it->first);
             }
             it = tileIndirs_.erase(it);
@@ -1551,7 +2004,7 @@ void TerrainPageStore::updateVisiblePages(
                     lastVisiblePageCount_, pool_.residentCount(),
                     uploadedLayerTotal_, visibleCappedTiles, logZMin, logZMax,
                     maxTileSse, coarseFarCells, determinationSkippedFrames_,
-                    static_cast<int>(providers_.size()), completePages,
+                    static_cast<int>(sources_.size()), completePages,
                     partialPages,
                     fullyResidentTiles_, residencyCheckedTiles_,
                     static_cast<double>(worstResidentRatio_));
@@ -1580,7 +2033,49 @@ TerrainPageStore::~TerrainPageStore() {
     }
 }
 
+void TerrainPageStore::SubmissionLease::release() {
+    if (!owner_) {
+        return;
+    }
+    if (owner_->submissionLeaseDepth_ > 0) {
+        --owner_->submissionLeaseDepth_;
+        if (owner_->submissionLeaseDepth_ == 0) {
+            owner_->submissionFrameId_ = 0;
+        }
+    }
+    owner_ = nullptr;
+}
+
+TerrainPageStore::SubmissionLease TerrainPageStore::beginSubmission(
+    uint64_t frameId) {
+    if (submissionLeaseDepth_ == 0) {
+        submissionFrameId_ = frameId;
+    }
+    ++submissionLeaseDepth_;
+    return SubmissionLease(this, frameId);
+}
+
+bool TerrainPageStore::rejectMutationDuringSubmission(
+    const char* operation) {
+    if (submissionLeaseDepth_ == 0) {
+        return false;
+    }
+    ++rejectedSubmissionMutationCount_;
+    platformLog(
+        LogLevel::Warning,
+        "PageStore",
+        "mutation rejected during CPU submission lease: operation=%s "
+        "leaseFrame=%llu depth=%u",
+        operation ? operation : "-",
+        static_cast<unsigned long long>(submissionFrameId_),
+        submissionLeaseDepth_);
+    return true;
+}
+
 bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
+    if (rejectMutationDuringSubmission("initialize")) {
+        return false;
+    }
     if (!device) {
         return false;
     }
@@ -1694,10 +2189,11 @@ void TerrainPageStore::resetPageDomainState() {
     // that compact value; retaining slots would let the same z/x/y+layer pair
     // impersonate a new tenant. Inbox vectors are intentionally retained so
     // the generation gate, rather than queue timing, is the safety proof.
-    pool_.configure(config_.maxPages, /*blockLayers=*/1);
-    indirPool_.configure(kIndirArrayLayers, /*blockLayers=*/1);
+    const uint64_t completedSerial = device_ ? device_->completedSerial() : 0;
+    pool_.retireAll(completedSerial);
+    indirPool_.retireAll(completedSerial);
     if (fieldArrayTexture_) {
-        fieldPool_.configure(config_.maxFieldPages, /*blockLayers=*/1);
+        fieldPool_.retireAll(completedSerial);
         std::fill(fieldLayerKey_.begin(), fieldLayerKey_.end(),
                   kInvalidFieldKey);
     }
@@ -1705,7 +2201,8 @@ void TerrainPageStore::resetPageDomainState() {
     detTileCache_.clear();
     visiblePagesScratch_.clear();
     everCreatedPages_.clear();
-    providers_.clear();
+    sources_.clear();
+    sourceOpacities_.clear();
     providerContentRevisions_.clear();
     pageDomainActive_ = false;
     pageDomainCompatibility_ = PageDomainCompatibility::NoProvider;
@@ -1721,7 +2218,7 @@ void TerrainPageStore::resetPageDomainState() {
 void TerrainPageStore::rejectPageDomain(
     PageDomainCompatibility compatibility, const char* detail) {
     const PageDomainCompatibility previous = pageDomainCompatibility_;
-    if (pageDomainActive_ || !providers_.empty() || !pages_.empty() ||
+    if (pageDomainActive_ || !sources_.empty() || !pages_.empty() ||
         !tileIndirs_.empty() || !fieldPages_.empty()) {
         resetPageDomainState();
     }
@@ -1729,7 +2226,7 @@ void TerrainPageStore::rejectPageDomain(
     if (compatibility != previous) {
         platformLog(LogLevel::Warning, "PageStore",
                     "canonical page domain rejected: reason=%s detail=%s; "
-                    "PageStore disabled for this provider group, mappedRaster "
+                    "PageStore disabled for this provider group, directComposite "
                     "remains authoritative",
                     pageDomainCompatibilityName(compatibility),
                     detail ? detail : "-");
@@ -1737,6 +2234,9 @@ void TerrainPageStore::rejectPageDomain(
 }
 
 void TerrainPageStore::clearAllComposedPages() {
+    if (rejectMutationDuringSubmission("clearAllComposedPages")) {
+        return;
+    }
     for (auto& [key, entry] : pages_) {
         for (RasterAssetRequestHandle& handle : entry.fetchHandles) {
             handle.cancel();
@@ -1744,6 +2244,10 @@ void TerrainPageStore::clearAllComposedPages() {
         if (entry.compose) {
             entry.compose->cancelled.store(true, std::memory_order_release);
         }
+        // The page ledger is about to forget the key. Retire its physical
+        // slice through the serial-aware pool instead of leaving a warm key
+        // that the next bake could overwrite while an old frame samples it.
+        pool_.release(key);
     }
     pages_.clear();
     // Content/style invalidation within the same canonical domain keeps pool
@@ -1753,11 +2257,17 @@ void TerrainPageStore::clearAllComposedPages() {
 
 void TerrainPageStore::setRoadFieldStyleUniforms(
     const std::array<float, 4>& color, const std::array<float, 4>& widthRamp) {
+    if (rejectMutationDuringSubmission("setRoadFieldStyleUniforms")) {
+        return;
+    }
     config_.roadFieldColor = color;
     config_.roadFieldWidthRamp = widthRamp;
 }
 
 void TerrainPageStore::invalidateComposedPages() {
+    if (rejectMutationDuringSubmission("invalidateComposedPages")) {
+        return;
+    }
     // V28 原子换手:失效**不清账本、不动 layer / uploadedSources / 间接纹理**
     // → 旧合成继续上屏。每页 ++targetEpoch + 标 needsRebake,determination 下帧
     // beginPageBake 重建 compose 重 kick;hold 到 complete 才换手(仅当前显示
@@ -1767,7 +2277,7 @@ void TerrainPageStore::invalidateComposedPages() {
     // 与"源列表变更"用的 clearAllComposedPages(仍清账本)分道:那条改的是源
     // **数量**(旧合成层数就是错的,只能弃),此条只换源**内容**(旧像素仍是
     // 合法画面,顶到新的就绪)。消灭的正是 V28 报告症状:清账本 → 间接纹理
-    // miss → 回落 mappedRaster 那一跳(卫星底图连坐换肤刷新)。
+    // miss → 回落 directComposite 那一跳(卫星底图连坐换肤刷新)。
     for (auto& [key, pe] : pages_) {
         ++pe.targetEpoch;
         pe.needsRebake = true;
@@ -1783,6 +2293,9 @@ void TerrainPageStore::invalidateComposedPages() {
 }
 
 void TerrainPageStore::invalidateFieldPages(int newFieldMaxZoom) {
+    if (rejectMutationDuringSubmission("invalidateFieldPages")) {
+        return;
+    }
     // V28 场路原子换手:**不清账本、不清 fieldLayerKey_** → 旧场线继续上屏顶住,
     // 新场 R8 到达覆写同层完成换手(消灭旧 clear 路的"线整块灭→烘完再回"空洞,
     // 真机换肤时 fhole 尖刺那半)。场是单源,无影像那种按源单调闸;epoch 仅挡
@@ -1829,27 +2342,96 @@ void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
     ++determinationDirtyRevision_;  // 淘汰 → 引用该层的 cell 下帧必须重编码为 miss
 }
 
+void TerrainPageStore::synchronizeGpuCompletion() {
+    if (!device_) {
+        return;
+    }
+    const uint64_t completed = device_->completedSerial();
+    pool_.setCompletedSerial(completed);
+    indirPool_.setCompletedSerial(completed);
+    fieldPool_.setCompletedSerial(completed);
+}
+
+void TerrainPageStore::onFrameSubmitted(uint64_t submittedSerial) {
+    pool_.publishPendingUses(submittedSerial);
+    indirPool_.publishPendingUses(submittedSerial);
+    fieldPool_.publishPendingUses(submittedSerial);
+}
+
+TerrainPageStore::RasterStackBinding
+TerrainPageStore::resolveTerrainBinding(const TilesetTile& tile) const {
+    RasterStackBinding binding;
+    RasterStackResolution& resolution = binding.resolution;
+    resolution.compatible =
+        arrayTexture_ && pageDomainActive_ &&
+        pageDomainCompatibility_ == PageDomainCompatibility::Compatible;
+    resolution.sourceCount = sources_.size();
+    resolution.generation = pageDomainGeneration_;
+    if (!resolution.compatible ||
+        terrainSurfaceSourceForDraw(tile.content.renderContent) !=
+            TerrainSurfaceCommandSource::RealTerrain) {
+        return binding;
+    }
+
+    const auto it = tileIndirs_.find(packKey(tile.key));
+    if (it == tileIndirs_.end() || it->second.layer < 0) {
+        return binding;
+    }
+    const TileIndir& ind = it->second;
+    resolution.attached = true;
+    resolution.fullyResident = ind.fullyResident;
+    resolution.coverage = ind.fullyResident
+        ? RasterStackCoverage::Full
+        : ind.imageLayers.empty()
+            ? RasterStackCoverage::None
+            : RasterStackCoverage::Partial;
+    resolution.drawable =
+        resolution.coverage != RasterStackCoverage::None;
+    resolution.fallbackRequired =
+        resolution.coverage != RasterStackCoverage::Full;
+
+    RasterStackSampleDescriptor& sample = binding.sample;
+    sample.imageArray = arrayTexture_.get();
+    sample.imageIndirectionArray = indirArrayTexture_.get();
+    sample.fieldArray = fieldArrayTexture_.get();
+    sample.fieldIndirectionArray = fieldIndirArrayTexture_.get();
+    sample.indirectionLayer = ind.layer;
+    sample.texCoordSet = ind.texCoordSet;
+    sample.cellZoom = ind.cellZoom;
+    sample.placement = ind.placement;
+    std::copy(
+        ind.geomAffine, ind.geomAffine + 6, sample.geomAffine.begin());
+    return binding;
+}
+
 void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
                                              const TilesetTile& tile) {
-    if (!arrayTexture_ || !cmd.terrainRenderContent || !pageDomainActive_ ||
-        pageDomainCompatibility_ != PageDomainCompatibility::Compatible) {
+    if (!cmd.terrainRenderContent) {
         return;
     }
-    // 只挂真实地形(fill/ellipsoid proxy 不是最终高清目标 → 留 mappedRaster)。
-    if (cmd.terrainSurfaceSource != TerrainSurfaceCommandSource::RealTerrain) {
+    const RasterStackBinding binding = resolveTerrainBinding(tile);
+    if (!binding.resolution.attached ||
+        cmd.terrainSurfaceSource != TerrainSurfaceCommandSource::RealTerrain) {
         return;
     }
-    // C-1:源列表由 determination 每帧刷新(它是唯一事实源,与 mappedRaster 同序),
+    // C-1:源列表由 determination 每帧刷新(它是唯一事实源,与 directComposite 同序),
     // 此处不再兜底捕获 —— 两处各自捕获正是「靠后 overlay 被静默丢弃」的温床。
 
     // B2b:无相机,只 bind determination 本帧建好的稀疏间接纹理。无 TileIndir
-    // (未 determined / 无可见页 / 层被夺)→ 不动 → mappedRaster(决策② 共存,
+    // (未 determined / 无可见页 / 层被夺)→ 不动 → directComposite(决策② 共存,
     // 零回归)。合批 Step 2:间接纹理 = 共享 array + 层号(u_terrainLayers.y)。
     const auto it = tileIndirs_.find(packKey(tile.key));
-    if (it == tileIndirs_.end() || it->second.layer < 0) {
+    if (it == tileIndirs_.end()) {
         return;
     }
     const TileIndir& ind = it->second;
+    indirPool_.markSlotPendingUse(ind.layer);
+    for (const int layer : ind.imageLayers) {
+        pool_.markSlotPendingUse(layer);
+    }
+    for (const int layer : ind.fieldLayers) {
+        fieldPool_.markSlotPendingUse(layer);
+    }
     const size_t maxSlot =
         fieldArrayTexture_
             ? static_cast<size_t>(kGltfRoadFieldIndirTextureSlot)
@@ -1858,10 +2440,12 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     if (cmd.textures.size() <= maxSlot) {
         cmd.textures.resize(maxSlot + 1u, nullptr);
     }
-    cmd.textures[kGltfPageStoreArrayTextureSlot] = arrayTexture_.get();
+    cmd.textures[kGltfPageStoreArrayTextureSlot] =
+        binding.sample.imageArray;
     // 间接纹理 array 绑 slot21,片元经层号 fetch 定位 layer + 读 A 通道作 miss
     // 回退 factor。
-    cmd.textures[kGltfPageStoreIndirTextureSlot] = indirArrayTexture_.get();
+    cmd.textures[kGltfPageStoreIndirTextureSlot] =
+        binding.sample.imageIndirectionArray;
     // enabled=1 + cell 网格(单位=源瓦片)+ texcoord 集 → 片元采页存储。
     // layer 由间接纹理 RG 承载,resident/miss 由其 A 承载。
     //
@@ -1875,30 +2459,32 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     // 的倍数(代码里那句「右移无进位污染」),局部=全局所以没人发现;搬进源网格后
     // x0 成了任意整数,d>0 的 cell 会采到祖先页里错的子区 —— 真机上是块状明暗
     // 棋盘格。标准 overlay 下 span | gridN | x0 → 相位对 span 取模恒 0,逐字节不变。
-    const int phaseX = ind.placement.x0 & (kMaxDetSpan - 1);
-    const int phaseY = ind.placement.y0 & (kMaxDetSpan - 1);
+    const int phaseX = binding.sample.placement.x0 & (kMaxDetSpan - 1);
+    const int phaseY = binding.sample.placement.y0 & (kMaxDetSpan - 1);
     cmd.gltfUniforms.pageStoreParams = {
         1.0f,
-        static_cast<float>(ind.placement.cellsX),
-        static_cast<float>(ind.placement.cellsY),
-        static_cast<float>(ind.texCoordSet) +
+        static_cast<float>(binding.sample.placement.cellsX),
+        static_cast<float>(binding.sample.placement.cellsY),
+        static_cast<float>(binding.sample.texCoordSet) +
             8.0f * static_cast<float>(phaseX) +
             512.0f * static_cast<float>(phaseY)};
     cmd.gltfUniforms.pageStoreUv = {
-        static_cast<float>(ind.placement.originU),
-        static_cast<float>(ind.placement.originV),
-        static_cast<float>(ind.placement.spanU),
-        static_cast<float>(ind.placement.spanV)};
-    cmd.gltfUniforms.terrainLayers[1] = static_cast<float>(ind.layer);
-    cmd.terrainPageStoreFullyResident = ind.fullyResident;
+        static_cast<float>(binding.sample.placement.originU),
+        static_cast<float>(binding.sample.placement.originV),
+        static_cast<float>(binding.sample.placement.spanU),
+        static_cast<float>(binding.sample.placement.spanV)};
+    cmd.gltfUniforms.terrainLayers[1] =
+        static_cast<float>(binding.sample.indirectionLayer);
+    cmd.terrainPageStoreFullyResident = binding.resolution.fullyResident;
     // [瓦界对齐] 几何 UV→源格仿射:batcher(实例记录)与逐瓦位移地形 FS
     // (u_pageGeomA/B)共用同一套 → 合批态翻转零视觉差。真实网格 glTF FS 不消费。
-    std::copy(ind.geomAffine, ind.geomAffine + 6,
-              cmd.terrainPageGeomAffine.begin());
-    cmd.gltfUniforms.pageGeomA = {ind.geomAffine[0], ind.geomAffine[1],
-                                  ind.geomAffine[2], ind.geomAffine[3]};
-    cmd.gltfUniforms.pageGeomB = {ind.geomAffine[4], ind.geomAffine[5], 0.0f,
-                                  0.0f};
+    cmd.terrainPageGeomAffine = binding.sample.geomAffine;
+    cmd.gltfUniforms.pageGeomA = {
+        binding.sample.geomAffine[0], binding.sample.geomAffine[1],
+        binding.sample.geomAffine[2], binding.sample.geomAffine[3]};
+    cmd.gltfUniforms.pageGeomB = {
+        binding.sample.geomAffine[4], binding.sample.geomAffine[5], 0.0f,
+        0.0f};
 
     // 刀2 场"第二平面":与影像页同一次间接查找(同 layer/sampleUv/祖先
     // scale-bias),FS 只多一次采样 + smoothstep。占位清场保证层复用时旧
@@ -1925,6 +2511,10 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
 }
 
 void TerrainPageStore::tick(SceneFrameResourceArbiter* resourceArbiter) {
+    if (rejectMutationDuringSubmission("tick")) {
+        return;
+    }
+    synchronizeGpuCompletion();
     resourceArbiter_ = resourceArbiter;
     if (!arrayTexture_) {
         return;
@@ -1932,7 +2522,7 @@ void TerrainPageStore::tick(SceneFrameResourceArbiter* resourceArbiter) {
     ++frameId_;  // 推进帧号(下帧 determination 的 LRU touch/淘汰基准)
     for (auto& page : pages_) {
         PageEntry& entry = page.second;
-        if (entry.fetchIssued.size() == providers_.size() &&
+        if (entry.fetchIssued.size() == sources_.size() &&
             std::find(entry.fetchIssued.begin(), entry.fetchIssued.end(), false) !=
                 entry.fetchIssued.end()) {
             kickPageFetches(
@@ -2001,14 +2591,14 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
         pe.compose->cancelled.store(true, std::memory_order_release);
     }
     pe.compose = std::make_shared<PageComposeState>();
-    pe.compose->assembler.configure(static_cast<int>(providers_.size()),
-                                    config_.pageSizeTexels);
+    pe.compose->assembler.configure(
+        sourceOpacities_, config_.pageSizeTexels);
     pe.compose->epoch = pe.targetEpoch;
     pe.compose->domainGeneration = pageDomainGeneration_;
     pe.compose->holdUntilComplete = holdUntilComplete;
     pe.fetchHandles.clear();
     pe.fetchIssued.clear();
-    pe.totalSources = static_cast<int>(providers_.size());
+    pe.totalSources = static_cast<int>(sources_.size());
     pe.terminalFailure = false;
     pe.lastProgressFrame = frameId_;
     pe.needsRebake = false;
@@ -2024,14 +2614,15 @@ void TerrainPageStore::beginPageBake(const TileKey& fetchKey, uint64_t pageKey,
 void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
                                        uint64_t pageKey, int layer,
                                        PageEntry& entry) {
-    if (entry.fetchHandles.size() != providers_.size()) {
+    if (entry.fetchHandles.size() != sources_.size()) {
         entry.fetchHandles.clear();
-        entry.fetchHandles.resize(providers_.size());
-        entry.fetchIssued.assign(providers_.size(), false);
+        entry.fetchHandles.resize(sources_.size());
+        entry.fetchIssued.assign(sources_.size(), false);
     }
     std::shared_ptr<PendingInbox> inbox = inbox_;
-    for (size_t s = 0; s < providers_.size(); ++s) {
-        if (providers_[s] == nullptr || entry.fetchIssued[s]) {
+    for (size_t s = 0; s < sources_.size(); ++s) {
+        RasterOverlayTileProvider* provider = sources_[s].provider;
+        if (provider == nullptr || entry.fetchIssued[s]) {
             continue;
         }
         const int source = static_cast<int>(s);
@@ -2039,9 +2630,9 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
         // C-1b:**每个源各自钳到自己的 maxZoom**。页 zoom 由屏幕(与底图上限)驱动,
         // 常深于标注/矢量类源的上限;不钳则那些源恒 404 → 永不到达 → assembler 卡在
         // 前序、该源在页内彻底消失(真机踩过:矢量路网整片没了)。钳到祖先后按
-        // scale-bias 取子矩形放大 —— 与 mappedRaster 那条路逐瓦片挑祖先同语义。
+        // scale-bias 取子矩形放大 —— 与 directComposite 那条路逐瓦片挑祖先同语义。
         TileKey fetchKey = pageTileKey;
-        int depth = pageTileKey.z - providers_[s]->getMaximumLevel();
+        int depth = pageTileKey.z - provider->getMaximumLevel();
         depth = std::max(0, std::min(depth, pageTileKey.z));
         int subX = 0;
         int subY = 0;
@@ -2086,11 +2677,11 @@ void TerrainPageStore::kickPageFetches(const TileKey& pageTileKey,
         RasterAssetAcquireResult acquired = assetDepot_
             ? assetDepot_->acquireExactSource(
                   RasterAssetConsumer::PageStore,
-                  *providers_[s],
+                  *provider,
                   fetchKey,
                   std::move(tryAdmit),
                   std::move(onReady))
-            : providers_[s]->acquireExactSource(
+            : provider->acquireExactSource(
                   fetchKey,
                   std::move(tryAdmit),
                   std::move(onReady));
@@ -2113,10 +2704,53 @@ void TerrainPageStore::debugKickPageFetchesForTest(
     const TileKey& pageTileKey,
     const std::vector<RasterOverlayTileProvider*>& providers,
     std::shared_ptr<RasterAssetDepot> assetDepot) {
-    providers_ = providers;
+    sources_.clear();
+    sourceOpacities_.clear();
+    for (size_t i = 0; i < providers.size(); ++i) {
+        RasterOverlayTileProvider* provider = providers[i];
+        if (!provider) {
+            continue;
+        }
+        sources_.push_back(RasterOverlayPageSource{
+            i,
+            provider,
+            1.0f,
+            RasterOverlayRole::BaseImagery,
+            RasterOverlayPriority::High,
+            RasterOverlayFallbackPolicy::AncestorOrPlaceholder,
+            true,
+            provider->getProjection(),
+            provider->getImageryProvider().contentRevision()});
+        sourceOpacities_.push_back(1.0f);
+    }
     assetDepot_ = std::move(assetDepot);
     PageEntry entry;
     kickPageFetches(pageTileKey, packKey(pageTileKey), 0, entry);
+}
+
+bool TerrainPageStore::debugPageNeedsRebakeForTest(uint64_t pageKey) const {
+    const auto it = pages_.find(pageKey);
+    return it != pages_.end() && it->second.needsRebake;
+}
+
+bool TerrainPageStore::debugPageDisplayReadyForTest(uint64_t pageKey) const {
+    const auto it = pages_.find(pageKey);
+    return it != pages_.end() && it->second.displayReady();
+}
+
+int TerrainPageStore::debugPageLayerForTest(uint64_t pageKey) const {
+    const auto it = pages_.find(pageKey);
+    return it != pages_.end() ? it->second.layer : -1;
+}
+
+int TerrainPageStore::debugIndirectionLayerForTest(uint64_t tileKey) const {
+    const auto it = tileIndirs_.find(tileKey);
+    return it != tileIndirs_.end() ? it->second.layer : -1;
+}
+
+int TerrainPageStore::debugFieldLayerForTest(uint64_t fieldKey) const {
+    const auto it = fieldPages_.find(fieldKey);
+    return it != fieldPages_.end() ? it->second.layer : -1;
 }
 
 // ==== 步3 场平面:独立于影像页的场页生产/淘汰 ====
@@ -2209,7 +2843,7 @@ void TerrainPageStore::drainInbox() {
         if (item.terminalFailure) {
             // A failed exact source must not leave a partially composed page
             // overriding the complete Direct fallback. Drop the page so the
-            // next determination can retry it while mappedRaster remains
+            // next determination can retry it while directComposite remains
             // visible for this frame.
             erasePageEntry(item.key);
             continue;
@@ -2218,6 +2852,13 @@ void TerrainPageStore::drainInbox() {
         if (!image || image->width <= 0 || image->height <= 0 ||
             image->channels <= 0 || image->bytesPerChannel <= 0 ||
             image->pixels.empty()) {
+            // Malformed/empty exact content has the same presentation
+            // semantics as a terminal source failure: this PageStore page
+            // cannot represent the complete active stack. Drop its logical
+            // mapping so Direct (including its ancestor/base-color fallback)
+            // remains authoritative, and do not leave a permanently pumped
+            // page that can never become display-ready.
+            erasePageEntry(item.key);
             continue;
         }
         // 校验页仍驻留且 layer 匹配(淘汰/换租后 layer 变或页消失 → 丢弃)。
@@ -2264,10 +2905,11 @@ void TerrainPageStore::drainInbox() {
                 const bool accepted = compose->assembler.accept(source, rgba.data());
                 if (accepted) {
                     const bool done = compose->assembler.complete();
-                    // V28:hold 模式攒到 complete 才发一次整页快照 —— 否则 base 先
-                    // 到会把正显示的旧完整合成覆写成无矢量底图(换肤那一跳)。
-                    // 非 hold(新建页 / 半成品页)保持增量点亮:部分到达先上屏。
-                    if (!compose->holdUntilComplete || done) {
+                    // A PageStore layer is published only as a complete active
+                    // source stack. Partial snapshots were never displayable;
+                    // suppressing their GPU writes also gives every bake one
+                    // immutable physical-layer publication.
+                    if (done) {
                         out.texels = compose->assembler.texels();  // 快照
                         out.composedSources = compose->assembler.compositedCount();
                         out.epoch = compose->epoch;
@@ -2337,7 +2979,7 @@ void TerrainPageStore::debugCreatePageForTest(uint64_t pageKey, int layer) {
     auto [it, inserted] = pages_.try_emplace(pageKey);
     PageEntry& pe = it->second;
     if (inserted) {
-        // beginPageBake:providers_ 为空 → kickPageFetches 零次,assembler
+        // beginPageBake:sources_ 为空 → kickPageFetches 零次,assembler
         // 源数=0;只建账本与 compose 状态,供派发门计数测试。
         beginPageBake(unpackKey(pageKey), pageKey, layer, pe,
                       /*holdUntilComplete=*/false);
@@ -2357,6 +2999,19 @@ void TerrainPageStore::debugDeliverDecodedImage(
     inbox_->pages.push_back(
         {pageKey, domainGeneration, layer, source, depth, subX, subY,
          std::move(image), false});
+}
+
+void TerrainPageStore::debugDeliverPageFailureForTest(
+    uint64_t pageKey, int layer, uint64_t domainGeneration) {
+    if (!inbox_) {
+        return;
+    }
+    if (domainGeneration == std::numeric_limits<uint64_t>::max()) {
+        domainGeneration = pageDomainGeneration_;
+    }
+    std::lock_guard<std::mutex> lock(inbox_->mutex);
+    inbox_->pages.push_back(
+        {pageKey, domainGeneration, layer, 0, 0, 0, 0, nullptr, true});
 }
 
 void TerrainPageStore::debugResetPageDomainForTest() {
@@ -2409,17 +3064,61 @@ void TerrainPageStore::drainReadyUploads() {
                 fieldRequeueFrom = idx;
                 break;
             }
+            int uploadLayer = item.layer;
+            uint64_t stagingKey = 0;
+            bool staging = false;
+            uint64_t evicted = 0;
+            if (it->second.uploaded &&
+                !fieldPool_.canWriteInPlace(item.key)) {
+                stagingKey = layerStagingKey(item.key);
+                const auto replacement = fieldPool_.acquireStaging(
+                    stagingKey, item.key, frameId_, &evicted);
+                uploadLayer = replacement.slot;
+                staging = replacement.valid();
+                if (evicted != 0) {
+                    eraseFieldEntry(evicted);
+                }
+                if (!staging) {
+                    fieldRequeueFrom = idx;
+                    break;
+                }
+            }
             const double uploadStartMs = perf::nowMs();
-            device_->updateTextureRegion(
+            const bool uploadedField = device_->updateTextureRegion(
                 fieldArrayTexture_.get(), 0, 0, side, side, item.r8.data(),
-                static_cast<size_t>(side) * 4u, item.layer);
+                static_cast<size_t>(side) * 4u, uploadLayer);
             const double upMs = perf::nowMs() - uploadStartMs;
             winUploadMs_ += upMs;
             frameUploadMs += upMs;
+            if (!uploadedField) {
+                if (staging) {
+                    fieldPool_.release(stagingKey);
+                }
+                fieldRequeueFrom = idx;
+                break;
+            }
+            // The upload itself may be asynchronous (GLES PBO). Protect the
+            // destination slice even when no draw command references it yet.
+            fieldPool_.markSlotPendingUse(uploadLayer);
+            int retiredLayer = -1;
+            if (staging &&
+                !fieldPool_.replaceKey(
+                    stagingKey, item.key, &retiredLayer)) {
+                fieldPool_.release(stagingKey);
+                fieldRequeueFrom = idx;
+                break;
+            }
+            if (staging) {
+                it->second.layer = uploadLayer;
+                if (retiredLayer >= 0 &&
+                    retiredLayer < static_cast<int>(fieldLayerKey_.size())) {
+                    fieldLayerKey_[retiredLayer] = kInvalidFieldKey;
+                }
+            }
             // 记住该场层现装的是这个 key 的真场 → 同 key 淘汰重建可跳烘不闪。
-            if (item.layer >= 0 &&
-                item.layer < static_cast<int>(fieldLayerKey_.size())) {
-                fieldLayerKey_[item.layer] = item.key;
+            if (uploadLayer >= 0 &&
+                uploadLayer < static_cast<int>(fieldLayerKey_.size())) {
+                fieldLayerKey_[uploadLayer] = item.key;
             }
             it->second.uploaded = true;
             it->second.pendingRebake = false;  // V28:原地重烘换手完成
@@ -2468,7 +3167,7 @@ void TerrainPageStore::drainReadyUploads() {
         }
         // V28 换手判据(epoch 闸 + 同代按源单调,纯函数见 pageUploadSupersedes):
         // 旧代 straggler 丢弃;新代整页就绪直接换手(旧完整合成顶到此刻一次替换,
-        // 不经 mappedRaster 回落);同代内旧源快照晚到不覆盖新画面。
+        // 不经 directComposite 回落);同代内旧源快照晚到不覆盖新画面。
         if (!pageUploadSupersedes(item.epoch, item.composedSources, pe.targetEpoch,
                                   pe.contentEpoch, pe.uploadedSources)) {
             continue;
@@ -2481,14 +3180,47 @@ void TerrainPageStore::drainReadyUploads() {
             requeueFrom = idx;
             break;
         }
+        int uploadLayer = item.layer;
+        uint64_t stagingKey = 0;
+        bool staging = false;
+        uint64_t evicted = 0;
+        if (pe.uploadedSources > 0 && !pool_.canWriteInPlace(item.key)) {
+            stagingKey = layerStagingKey(item.key);
+            const auto replacement = pool_.acquireStaging(
+                stagingKey, item.key, frameId_, &evicted);
+            uploadLayer = replacement.slot;
+            staging = replacement.valid();
+            if (evicted != 0) {
+                erasePageEntry(evicted);
+            }
+            if (!staging) {
+                requeueFrom = idx;
+                break;
+            }
+        }
         const double uploadStartMs = perf::nowMs();
-        device_->updateTextureRegion(arrayTexture_.get(), 0, 0, side, side,
-                                     item.texels.data(),
-                                     static_cast<size_t>(side) * 4u,
-                                     item.layer);
+        const bool uploadedImage = device_->updateTextureRegion(
+            arrayTexture_.get(), 0, 0, side, side, item.texels.data(),
+            static_cast<size_t>(side) * 4u, uploadLayer);
         const double upMs = perf::nowMs() - uploadStartMs;
         winUploadMs_ += upMs;
         frameUploadMs += upMs;
+        if (!uploadedImage) {
+            if (staging) {
+                pool_.release(stagingKey);
+            }
+            requeueFrom = idx;
+            break;
+        }
+        pool_.markSlotPendingUse(uploadLayer);
+        if (staging && !pool_.replaceKey(stagingKey, item.key)) {
+            pool_.release(stagingKey);
+            requeueFrom = idx;
+            break;
+        }
+        if (staging) {
+            pe.layer = uploadLayer;
+        }
         pe.contentEpoch = item.epoch;  // 上屏内容的样式代随之推进
         pe.uploadedSources = item.composedSources;
         pe.lastProgressFrame = frameId_;  // 上传推进 = 进度(见 kStalledPageFrames)

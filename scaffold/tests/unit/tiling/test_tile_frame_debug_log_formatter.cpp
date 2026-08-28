@@ -122,7 +122,7 @@ TEST(
     input.prefetchRenderPlanAuthoritativeUpdates = 29;
     input.prefetchRenderPlanStableReuses = 31;
     input.rasterUploadsProcessed = 37;
-    input.rasterMappedUploadsProcessed = 41;
+    input.rasterDirectCompositeUploadsProcessed = 41;
     input.rasterUploadMaxMs = 2.5;
     input.rasterUploadMaxWidth = 256;
     input.rasterUploadMaxHeight = 512;
@@ -143,7 +143,7 @@ TEST(
     EXPECT_NE(text.find("prefRenderAuth=29"), std::string::npos);
     EXPECT_NE(text.find("prefRenderReuse=31"), std::string::npos);
     EXPECT_NE(text.find("rasterUploads=37"), std::string::npos);
-    EXPECT_NE(text.find("rasterMapped=41"), std::string::npos);
+    EXPECT_NE(text.find("rasterDirectComposite=41"), std::string::npos);
     EXPECT_NE(text.find("rasterMax=2.50"), std::string::npos);
     EXPECT_NE(text.find("rasterMaxSize=256x512"), std::string::npos);
     EXPECT_NE(text.find("interaction=1"), std::string::npos);

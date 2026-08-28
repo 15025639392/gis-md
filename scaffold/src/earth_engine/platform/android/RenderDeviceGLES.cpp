@@ -1018,6 +1018,18 @@ void RenderDeviceGLES::setClearColor(float r, float g, float b, float a) {
 void RenderDeviceGLES::beginFrame() {
     // 帧获取阶段无事可做(EGL context/surface 由外部管理);pass 的
     // clear + 状态设置在 beginPass() 里逐 pass 执行。
+    while (!frameSerialFences_.empty()) {
+        FrameSerialFence& front = frameSerialFences_.front();
+        const GLenum status = glClientWaitSync(
+            static_cast<GLsync>(front.fence), 0, 0);
+        if (status != GL_ALREADY_SIGNALED &&
+            status != GL_CONDITION_SATISFIED) {
+            break;
+        }
+        glDeleteSync(static_cast<GLsync>(front.fence));
+        completedSerial_ = std::max(completedSerial_, front.serial);
+        frameSerialFences_.pop_front();
+    }
 }
 
 bool RenderDeviceGLES::beginPass(Framebuffer* target, bool clearTarget) {
@@ -1610,7 +1622,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // into the freed 5-9 range (mirrors glesGltfTextureUnit above).
             for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
                 std::string name =
-                    "u_mappedRasterTexture" + std::to_string(i);
+                    "u_directRasterTexture" + std::to_string(i);
                 setSampler(name.c_str(), kGlesGltfRasterUnitBase + i);
             }
             setSampler("u_gltfWaterMaskTexture", kGlesGltfWaterUnit);
@@ -2358,6 +2370,11 @@ void RenderDeviceGLES::endFrame() {
     if (gpuTimingEnabled_) {
         gpuTimer_.endFrame();
     }
+    const uint64_t serial = ++submittedSerial_;
+    if (GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0)) {
+        frameSerialFences_.push_back(
+            FrameSerialFence{static_cast<void*>(fence), serial});
+    }
     // EGL swap 由外部调用者处理（eglSwapBuffers）
     // eglSwapBuffers() 会隐式等待 GPU 完成，不需要显式 glFlush()
     // 移除 glFlush() 避免阻塞 CPU→GPU 并行
@@ -2458,6 +2475,11 @@ void RenderDeviceGLES::onSurfaceDestroyed() {
         s.ticket = 0;
         s.inUse = false;
     }
+    // Context teardown invalidates GLsync objects. Do not call GL here; all
+    // pre-teardown work is no longer capable of sampling the new context's
+    // resources, so the logical timeline may be retired completely.
+    frameSerialFences_.clear();
+    completedSerial_ = submittedSerial_;
     // 异步上传环同理:context 失效只清 CPU id(PBO 随 context 销毁),
     // 下次上传惰性重建。
     for (int i = 0; i < kUploadPboRing; ++i) {

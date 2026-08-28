@@ -1,6 +1,6 @@
 #include "TileLoadDiagnostics.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileLoadLifecycle.h"
 #include "TileLoadQueue.h"
 #include "TileUnloadQueue.h"

@@ -1,6 +1,6 @@
 #include "TileSelectionHistory.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TilesetTile.h"
 
 namespace earth_engine {

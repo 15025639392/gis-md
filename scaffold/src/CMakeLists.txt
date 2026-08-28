@@ -312,6 +312,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/SurfaceRasterBinding.cpp
     earth_engine/tiling/RasterBindingSet.h
     earth_engine/tiling/RasterBindingSet.cpp
+    earth_engine/tiling/RasterResolution.h
+    earth_engine/tiling/RasterResolution.cpp
     earth_engine/tiling/TileSurface.h
     earth_engine/tiling/TileSurface.cpp
     earth_engine/tiling/TilePlan.h
@@ -524,8 +526,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/TilesetTile.h
     earth_engine/tiling/TilesetTileRegistry.h
     earth_engine/tiling/TilesetTileRegistry.cpp
-    earth_engine/tiling/RasterMappedToTilesetTile.h
-    earth_engine/tiling/RasterMappedToTilesetTile.cpp
+    earth_engine/tiling/DirectRasterMapping.h
+    earth_engine/tiling/DirectRasterMapping.cpp
     earth_engine/tiling/Tileset.h
     earth_engine/tiling/Tileset.cpp
     earth_engine/tiling/RasterOverlayRuntime.h
@@ -574,6 +576,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/RasterOverlayTile.h
     earth_engine/providers/RasterOverlayTile.cpp
     earth_engine/providers/RasterTextureUploader.h
+    earth_engine/providers/RasterOverlaySourcePlan.h
+    earth_engine/providers/RasterOverlaySourcePlan.cpp
     earth_engine/providers/RasterOverlayTileProvider.h
     earth_engine/providers/RasterOverlayTileProvider.cpp
     earth_engine/providers/RasterOverlayImageCompositing.cpp

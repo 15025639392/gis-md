@@ -9,7 +9,7 @@
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/RasterOverlayProjection.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -75,7 +75,7 @@ RasterOverlayDetails providerDetails(const TileScheme& scheme,
 }
 
 // 把 mapping 推进到目标状态并返回每帧 update() 均值(ms)。
-double measureUpdatePerFrame(RasterMappedToTilesetTile& mapped,
+double measureUpdatePerFrame(DirectRasterMapping& mapped,
                              const TileKey& key,
                              const RasterOverlayDetails& details,
                              RasterOverlayTileProvider& provider,
@@ -114,7 +114,7 @@ TEST(RasterHoleUpdateCost, HoleTilePerFrameUpdateVsStable) {
     const TileKey holeKey{scheme->id(), 1, 1, 1};
     const Rectangle holeBounds = scheme->tileToRectangle(holeKey);
     TilesetTile holeTile(holeKey, holeBounds);
-    RasterMappedToTilesetTile& hole =
+    DirectRasterMapping& hole =
         holeTile.rasterOverlayState.ensureMapping(0);
     const RasterOverlayDetails holeDetails =
         providerDetails(*scheme, holeBounds);
@@ -135,7 +135,7 @@ TEST(RasterHoleUpdateCost, HoleTilePerFrameUpdateVsStable) {
     const TileKey stableKey{scheme->id(), 1, 0, 1};
     const Rectangle stableBounds = scheme->tileToRectangle(stableKey);
     TilesetTile stableTile(stableKey, stableBounds);
-    RasterMappedToTilesetTile& stable =
+    DirectRasterMapping& stable =
         stableTile.rasterOverlayState.ensureMapping(0);
     const RasterOverlayDetails stableDetails =
         providerDetails(*scheme, stableBounds);
@@ -210,7 +210,7 @@ TEST(RasterHoleUpdateCost, HoleTilePerFramePrefetchVsStable) {
         budget.beginFrame(1, config);
         TileRasterOverlayPrefetcher::prefetch(
             tile, overlays, {0}, nullptr, 16.0, budget, &prep, 1);
-        RasterMappedToTilesetTile* mapped =
+        DirectRasterMapping* mapped =
             tile.rasterOverlayState.mappingAt(0);
         if (!mapped) {
             ADD_FAILURE() << "mapping 未创建";

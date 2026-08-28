@@ -3,6 +3,7 @@
 #include "TileContentResourceInvalidator.h"
 #include "TileMeshPreparationManager.h"
 #include "TilesetTile.h"
+#include "RasterOverlayRuntime.h"
 #include "../renderer/Renderer.h"
 
 namespace earth_engine {
@@ -10,11 +11,11 @@ namespace earth_engine {
 TileRenderCommandManager::TileRenderCommandManager(
     TileMeshPreparationManager& meshPreparation,
     TileContentResourceInvalidator& resourceInvalidator,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    const RasterOverlayFrameContext& rasterFrame,
     RenderDevice* device)
     : meshPreparation_(meshPreparation),
       resourceInvalidator_(resourceInvalidator),
-      rasterOverlays_(rasterOverlays),
+      rasterFrame_(rasterFrame),
       device_(device) {}
 
 void TileRenderCommandManager::beginFrame(
@@ -41,9 +42,9 @@ void TileRenderCommandManager::buildTileDrawCommand(
         renderer,
         tile,
         commands,
-        rasterOverlays_,
         device_,
         TileRenderCommandPrepareContext{
+            rasterFrame_,
             frameNumber_,
             generation_,
             currentFrameTimeSeconds_,

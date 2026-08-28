@@ -55,7 +55,8 @@ double projectedVForLatitudeInternal(
 // ============================================================
 // 几何 ↔ 影像覆盖映射(I-P4 第四刀 4a:从 RasterOverlayTileProvider.cpp 收口)
 // ============================================================
-// getTile/resolveTile 与 loadMapped/pump/sourceTileList 共享的纯几何 helper。
+// getTile/resolveTile 与 Direct composite load/pump/sourceTileList 共享的纯几何
+// helper。
 // 零 provider 私有状态依赖,输入全显式传参。
 
 /// 采样内缩 epsilon:跨度 1e-9 分之一,下限 1e-12(防退化线段变零宽)。
@@ -100,8 +101,8 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     const Rectangle& targetBounds,
     std::vector<RasterSourceResult>&& sources);
 
-/// mapped raster 源的合成入口(空祖先回落 → 空图)。
-RasterOverlayTileProvider::CompositeImageResult composeMappedSourceImageSet(
+/// Direct composite 源的合成入口(空祖先回落 → 空图)。
+RasterOverlayTileProvider::CompositeImageResult composeDirectCompositeSourceImageSet(
     const TileScheme& scheme,
     const Rectangle& targetBounds,
     std::vector<RasterSourceResult>&& sources,
@@ -149,14 +150,14 @@ void trackPeakBytes(int64_t currentBytes, int64_t& peakBytes);
 void decrementActiveRasterTileLoads(std::atomic<uint32_t>& activeLoads);
 
 /// 源加载成功/失败回调类型(depot 与 provider 共享)。
-using MappedSourceLoadSuccess =
+using DirectCompositeSourceLoadSuccess =
     std::function<void(std::unique_ptr<DecodedImage>,
                        std::shared_ptr<const DecodedImage>,
                        Rectangle,
                        RasterOverlayTile::MoreDetailAvailable,
                        std::vector<std::string>,
                        std::vector<std::string>)>;
-using MappedSourceLoadFailure = std::function<void(std::vector<std::string>)>;
+using DirectCompositeSourceLoadFailure = std::function<void(std::vector<std::string>)>;
 
 /// 源结果是否已解析(image 或终态失败)。
 bool isResolvedRasterSourceResult(const RasterSourceResult& source);

@@ -6,7 +6,7 @@
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/math/Rectangle.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/RasterOverlayProjection.h"
 #include "earth_engine/tiling/TileFillProxyPreparer.h"
 #include "earth_engine/tiling/TilesetTile.h"

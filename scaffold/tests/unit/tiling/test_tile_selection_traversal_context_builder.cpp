@@ -1,12 +1,13 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/resources/FrameResourceBudget.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileContentAccess.h"
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
 #include "earth_engine/tiling/TileOcclusionState.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TileSelectionTraversalContextBuilder.h"
+#include "../../helpers/RasterOverlayTestFrame.h"
 #include "earth_engine/tiling/Tileset.h"
 #include "earth_engine/tiling/TilesetTile.h"
 #include "earth_engine/tiling/TilesetTileRegistry.h"
@@ -20,7 +21,6 @@ struct TraversalContextFixture {
     TileLoadQueue loadQueue;
     TileSelectionCounters counters;
     TilesetOptions options;
-    std::vector<ActivatedRasterOverlay*> rasterOverlays;
     FrameResourceBudget budget;
     TilesetTileRegistry registry;
     std::unique_ptr<TileScheme> scheme = TileScheme::createGeographicTMS();
@@ -39,12 +39,13 @@ struct TraversalContextFixture {
                 loadQueue,
                 counters,
                 options,
-                rasterOverlays,
                 nullptr,
                 nullptr,
                 budget,
                 Vec3(1.0, 2.0, 3.0),
-                contentAccess},
+                contentAccess,
+                nullptr,
+                earth_engine::testing::emptyRasterOverlayFrame()},
             binding);
     }
 };
@@ -75,10 +76,12 @@ TEST(TileSelectionTraversalContextBuilderTest, WiresContextToInputObjects) {
     EXPECT_EQ(&context.loadQueue, &fixture.loadQueue);
     EXPECT_EQ(&context.counters, &fixture.counters);
     EXPECT_EQ(&context.options, &fixture.options);
-    EXPECT_EQ(&context.rasterOverlays, &fixture.rasterOverlays);
     EXPECT_EQ(&context.contentAccess, &fixture.contentAccess);
     EXPECT_EQ(context.device, nullptr);
     EXPECT_EQ(&context.frameResourceBudget, &fixture.budget);
+    EXPECT_EQ(
+        &context.rasterFrame,
+        &earth_engine::testing::emptyRasterOverlayFrame());
 }
 
 // Occlusion is a genuinely injected policy (software occlusion vs. none): the

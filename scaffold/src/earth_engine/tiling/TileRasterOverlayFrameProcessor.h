@@ -63,7 +63,8 @@ public:
                         interactionActive,
                         &frameResourceBudget);
                 result.processedUploads += overlayResult.processedUploads;
-                result.mappedUploads += overlayResult.mappedUploads;
+                result.directCompositeUploads +=
+                    overlayResult.directCompositeUploads;
                 result.selectTaskMs += overlayResult.selectTaskMs;
                 result.uploadTextureMs += overlayResult.uploadTextureMs;
                 result.tileFinalizeMs += overlayResult.tileFinalizeMs;
@@ -177,8 +178,9 @@ public:
                 if (!prefetchedTiles.insert(item.key).second) {
                     continue;
                 }
-                // Geometry-to-raster mapping is a once-at-load step. Already
-                // mapped tiles only need the cheap throttled request pump.
+                // Geometry-to-raster mapping is a once-at-load step. Tiles
+                // with an existing Direct mapping only need the cheap
+                // throttled request pump.
                 if (item.tile->rasterOverlayState.mappingCount() > 0) {
                     if (item.tile->content.loadState != TileLoadState::Done) {
                         const double advanceStartMs = perf::nowMs();
@@ -262,7 +264,7 @@ public:
                 if (!prefetchedTiles.insert(request.key).second) {
                     continue;
                 }
-                // Same 闸1 rule as the visible loop: already-mapped load-queue
+                // Same 闸1 rule as the visible loop: already-attached load-queue
                 // tiles only advance throttled imagery loads; not-Done tiles are
                 // NOT mapped here (mapping happens in update preparation once
                 // the content reaches Done).

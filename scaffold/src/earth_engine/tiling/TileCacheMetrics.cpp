@@ -1,6 +1,6 @@
 #include "TileCacheMetrics.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TilesetTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
 #include "../providers/TerrainProvider.h"

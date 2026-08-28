@@ -72,8 +72,9 @@ public:
     /// The tile's quadtree key.
     const TileKey& getTileID() const { return key_; }
 
-    /// Provider cache key. Real quadtree tiles use scheme/z/x/y. Mapped
-    /// raster tiles use a key derived from geometry bounds and source level.
+    /// Provider cache key. Exact quadtree source tiles use scheme/z/x/y.
+    /// Direct composite tiles use a key derived from geometry bounds and
+    /// source level.
     const std::string& getCacheKey() const { return cacheKey_; }
 
     /// The geographic rectangle covered by this tile.
@@ -148,44 +149,44 @@ public:
     int getMaxZoom() const { return maxZoom_; }
     void setMaxZoom(int maxZoom) { maxZoom_ = maxZoom; }
 
-    /// Provider-internal mapped raster tile: this tile is not one source
-    /// quadtree tile. It represents the image produced by mapping a geometry
-    /// rectangle to one or more provider quadtree source tiles.
-    bool isMappedRasterTile() const { return mappedRasterTile_; }
-    int getMappedSourceZoom() const { return mappedSourceZoom_; }
-    void setMappedRasterTileSourceZoom(int sourceZoom) {
-        mappedRasterTile_ = true;
-        mappedSourceZoom_ = sourceZoom;
+    /// Provider-internal Direct composite tile: this tile is not one source
+    /// quadtree tile. It represents the image produced for a geometry
+    /// rectangle from one or more provider quadtree source tiles.
+    bool isDirectCompositeTile() const { return directCompositeTile_; }
+    int getDirectCompositeSourceZoom() const { return directCompositeSourceZoom_; }
+    void setDirectCompositeSourceZoom(int sourceZoom) {
+        directCompositeTile_ = true;
+        directCompositeSourceZoom_ = sourceZoom;
     }
-    void setMappedSourceList(int sourceZoom,
+    void setDirectCompositeSourceList(int sourceZoom,
                              const Rectangle& sourceBounds,
                              std::vector<TileKey> sourceKeys,
                              int minX,
                              int minY,
                              int maxX,
                              int maxY) {
-        mappedRasterTile_ = true;
-        mappedSourceZoom_ = sourceZoom;
-        mappedSourceBounds_ = sourceBounds;
-        mappedSourceKeys_ = std::move(sourceKeys);
-        mappedSourceMinX_ = minX;
-        mappedSourceMinY_ = minY;
-        mappedSourceMaxX_ = maxX;
-        mappedSourceMaxY_ = maxY;
+        directCompositeTile_ = true;
+        directCompositeSourceZoom_ = sourceZoom;
+        directCompositeSourceBounds_ = sourceBounds;
+        directCompositeSourceKeys_ = std::move(sourceKeys);
+        directCompositeSourceMinX_ = minX;
+        directCompositeSourceMinY_ = minY;
+        directCompositeSourceMaxX_ = maxX;
+        directCompositeSourceMaxY_ = maxY;
     }
-    bool hasMappedSourceList() const {
-        return mappedRasterTile_ && !mappedSourceKeys_.empty();
+    bool hasDirectCompositeSourceList() const {
+        return directCompositeTile_ && !directCompositeSourceKeys_.empty();
     }
-    const Rectangle& getMappedSourceBounds() const {
-        return mappedSourceBounds_;
+    const Rectangle& getDirectCompositeSourceBounds() const {
+        return directCompositeSourceBounds_;
     }
-    const std::vector<TileKey>& getMappedSourceKeys() const {
-        return mappedSourceKeys_;
+    const std::vector<TileKey>& getDirectCompositeSourceKeys() const {
+        return directCompositeSourceKeys_;
     }
-    int getMappedSourceMinX() const { return mappedSourceMinX_; }
-    int getMappedSourceMinY() const { return mappedSourceMinY_; }
-    int getMappedSourceMaxX() const { return mappedSourceMaxX_; }
-    int getMappedSourceMaxY() const { return mappedSourceMaxY_; }
+    int getDirectCompositeSourceMinX() const { return directCompositeSourceMinX_; }
+    int getDirectCompositeSourceMinY() const { return directCompositeSourceMinY_; }
+    int getDirectCompositeSourceMaxX() const { return directCompositeSourceMaxX_; }
+    int getDirectCompositeSourceMaxY() const { return directCompositeSourceMaxY_; }
 
     /// For imagery atlas: UV offset/scale within the atlas texture.
     float getAtlasOffsetU() const { return atlasOffsetU_; }
@@ -216,14 +217,14 @@ private:
     MoreDetailAvailable moreDetailAvailable_ = MoreDetailAvailable::Unknown;
     std::vector<std::string> loadDiagnostics_;
     std::vector<std::string> credits_;
-    bool mappedRasterTile_ = false;
-    int mappedSourceZoom_ = 0;
-    Rectangle mappedSourceBounds_ = Rectangle::MAXIMUM;
-    std::vector<TileKey> mappedSourceKeys_;
-    int mappedSourceMinX_ = 0;
-    int mappedSourceMinY_ = 0;
-    int mappedSourceMaxX_ = 0;
-    int mappedSourceMaxY_ = 0;
+    bool directCompositeTile_ = false;
+    int directCompositeSourceZoom_ = 0;
+    Rectangle directCompositeSourceBounds_ = Rectangle::MAXIMUM;
+    std::vector<TileKey> directCompositeSourceKeys_;
+    int directCompositeSourceMinX_ = 0;
+    int directCompositeSourceMinY_ = 0;
+    int directCompositeSourceMaxX_ = 0;
+    int directCompositeSourceMaxY_ = 0;
     double targetScreenPixelsX_ = 256.0;
     double targetScreenPixelsY_ = 256.0;
     float atlasOffsetU_ = 0.0f, atlasOffsetV_ = 0.0f;

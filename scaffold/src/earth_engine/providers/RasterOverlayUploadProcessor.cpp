@@ -37,8 +37,8 @@ bool uploadAllowedDuringInteraction(
     // 交互期只按单次上传成本（尺寸）过滤；节奏由 budget 的
     // RasterTextureUpload lane 控制（TileFrameResourceBudgetPlanner 在
     // smoothing/交互下给出时间基或 ≤8/帧 的涓流额度）。此前对
-    // "mapped-raster/" 前缀无条件排除：长交互把影像上传全量积压
-    // （真机 60+ pendUp），交互期影像完全停更。≤512² 的 mapped raster
+    // "direct-composite/" 前缀无条件排除：长交互把影像上传全量积压
+    // （真机 60+ pendUp），交互期影像完全停更。≤512² 的 Direct composite
     // 单次上传 <1ms，交由 lane 限额涓流即可。
     (void)cacheKey;
     if (!image) {
@@ -113,7 +113,7 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
     }
 
     const double sourcePumpStartMs = perf::nowMs();
-    issueActiveMappedSourceImageSets(
+    issueActiveDirectCompositeSourceImageSets(
         budget,
         &result.sourceFallbackMs,
         &result.sourceSnapshotMs,
@@ -196,7 +196,7 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
                 targetTiles.end(),
                 [this](const TilePtr& target) {
                     return !target ||
-                           (target->isMappedRasterTile() &&
+                           (target->isDirectCompositeTile() &&
                             !ownsCurrentTile(*target));
                 }),
             targetTiles.end());
@@ -253,15 +253,15 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
 
         const double uploadStartMs = perf::nowMs();
         double uploadMs = 0.0;
-        bool mappedUpload = false;
+        bool directCompositeUpload = false;
         for (const TilePtr& target : targetTiles) {
             RasterOverlayTile& tile = *target;
-            mappedUpload = mappedUpload || tile.isMappedRasterTile();
-            // Resource-prep upload (main-thread safe). Mapped raster images are
-            // already combined at the selector's target screen-pixel density;
-            // on mobile, generating mipmaps for every mapped raster image is
-            // expensive main-thread work without improving the current
-            // selected tile.
+            directCompositeUpload =
+                directCompositeUpload || tile.isDirectCompositeTile();
+            // Resource-prep upload (main-thread safe). Direct composite images
+            // are already combined at the selector's target screen-pixel
+            // density; on mobile, generating mipmaps for every composite is
+            // expensive main-thread work without improving the selected tile.
             const bool generateMipmaps = false;
             RasterTextureUploadOptions uploadOptions;
             uploadOptions.generateMipmaps = generateMipmaps;
@@ -292,7 +292,7 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
                 continue;
             }
             const int sourceLevel =
-                tile.isMappedRasterTile() ? tile.getMappedSourceZoom() : tile.getTileID().z;
+                tile.isDirectCompositeTile() ? tile.getDirectCompositeSourceZoom() : tile.getTileID().z;
             const RasterOverlayTile::MoreDetailAvailable moreDetailAvailable =
                 upload.moreDetailAvailable !=
                         RasterOverlayTile::MoreDetailAvailable::Unknown
@@ -314,11 +314,11 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
                 uploadImage->width > 1024 ||
                 uploadImage->height > 1024) {
                 platformLog(LogLevel::Info, "RasterOverlayTileProvider",
-                    "upload %.2fms size=%dx%d mapped=%d mipmap=%d cache=%s",
+                    "upload %.2fms size=%dx%d directComposite=%d mipmap=%d cache=%s",
                     uploadMs,
                     uploadImage->width,
                     uploadImage->height,
-                    tile.isMappedRasterTile() ? 1 : 0,
+                    tile.isDirectCompositeTile() ? 1 : 0,
                     generateMipmaps ? 1 : 0,
                     tile.getCacheKey().c_str());
             }
@@ -326,8 +326,8 @@ TileRasterOverlayUploadResult RasterOverlayTileProvider::processPendingUploads(
         }
         budget->recordElapsed(FrameResourceLane::RasterTextureUpload, uploadMs);
         ++result.processedUploads;
-        if (mappedUpload) {
-            ++result.mappedUploads;
+        if (directCompositeUpload) {
+            ++result.directCompositeUploads;
         }
         completedUploads.push_back(std::move(upload));
         if (budget->mainThreadTimeExpired()) {
@@ -435,7 +435,7 @@ bool RasterOverlayTileProvider::hasPendingWork() const {
     std::lock_guard<std::mutex> lock(asyncState_->mutex);
     return !asyncState_->pendingUploads.empty() ||
            !asyncState_->inFlightRequests.empty() ||
-           !asyncState_->activeMappedSourceSets.empty() ||
+           !asyncState_->activeDirectCompositeSourceSets.empty() ||
            !asyncState_->pendingSourceFallbacks.empty() ||
            !asyncState_->sourceTileDepotInFlight.empty() ||
            asyncState_->activeRasterComposeTasks.load(

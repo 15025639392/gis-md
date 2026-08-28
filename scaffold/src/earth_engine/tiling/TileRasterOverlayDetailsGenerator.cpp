@@ -1,7 +1,7 @@
 #include "TileRasterOverlayDetailsGenerator.h"
 #include "../debug/PlatformLog.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileBoundingVolume.h"
 #include "TileRenderContentState.h"
 #include "TilesetTile.h"

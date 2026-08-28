@@ -106,8 +106,8 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTileIfNeeded(
         return visitOutcome.returnCulledTraversalDetails
             ? TileSelectionTraversalDetailsBuilder::forCulledTile(
                   tile,
-                  context.rasterOverlays,
-                  context.options.forbidHoles)
+                  context.options.forbidHoles,
+                  context.rasterFrame)
             : TileTraversalDetails{};
     }
 
@@ -144,7 +144,7 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
         collectDetailedTimings ? perf::nowMs() : 0.0;
     TileSelectionRasterOverlayPreparer::prepare(
         tile,
-        context.rasterOverlays,
+        context.rasterFrame,
         context.device,
         context.options.maximumScreenSpaceError,
         context.frameResourceBudget,
@@ -155,7 +155,7 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
         !TileSelectionRootPolicy::isVirtualTerrainRoot(tile.key) &&
         TileSelectionRasterOverlayPreparer::isRenderable(
             tile,
-            context.rasterOverlays);
+            context.rasterFrame);
     tile.updateTraversalRenderability(renderable);
     // 呈现级可画:向下回落守卫(continueDeeper:上帧 Refined 且不可画 →
     // 后代留任)的输入必须与 finalizer 的建条判据同源 —— 遍历级 renderable
@@ -170,9 +170,9 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
          tile.content.contentKind == TileContentKind::External ||
          TileRenderPlanFinalizer::canBuildRenderEntryDirectly(
              tile,
-             context.rasterOverlays,
              TileRenderPlanFinalizer::DirectRenderFallbackPolicy::
-                 AllowTransientSurfaceAsLastResort));
+                 AllowTransientSurfaceAsLastResort,
+             context.rasterFrame));
     if (collectDetailedTimings) {
         context.performanceTimings->refineOverlayMs +=
             perf::nowMs() - refineOverlayStartMs;
@@ -254,8 +254,8 @@ TileTraversalDetails TileSelectionTraversalExecutor::visitTile(
                 perf::nowMs() - refinePreStartMs;
         }
         return TileSelectionTraversalDetailsBuilder::forSingleTile(
-            tile,
-            context.rasterOverlays);
+                 tile,
+                 context.rasterFrame);
     }
     if (collectDetailedTimings) {
         context.performanceTimings->refineCommitMs +=

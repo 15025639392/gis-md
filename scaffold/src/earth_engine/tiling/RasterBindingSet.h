@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SurfaceRasterBinding.h"
+#include "RasterResolution.h"
 
 #include <cstddef>
 #include <cstdint>
@@ -9,6 +9,7 @@
 namespace earth_engine {
 
 class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 struct TilesetTile;
 
 /// One render-ready binding resolved from a stable Runtime overlay slot.
@@ -16,12 +17,8 @@ struct TilesetTile;
 /// authoritative identity shared with mapping and projection details.
 struct RasterBinding {
     size_t runtimeSlot = 0;
-    ActivatedRasterOverlay* overlay = nullptr;
-    const RasterMappedToTilesetTile* mapped = nullptr;
-    SurfaceRasterBinding surface;
-    int32_t textureCoordinateId = -1;
-    float opacity = 1.0f;
-    bool allowedByPolicy = false;
+    RasterResolution resolution;
+    DirectRasterSampleDescriptor directSample;
 };
 
 /// Immutable per-tile snapshot used by readiness diagnostics and draw command
@@ -31,7 +28,7 @@ class RasterBindingSet {
 public:
     static RasterBindingSet resolve(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& overlays);
+        const RasterOverlayFrameContext& frame);
 
     const std::vector<RasterBinding>& bindings() const { return bindings_; }
     bool empty() const { return bindings_.empty(); }

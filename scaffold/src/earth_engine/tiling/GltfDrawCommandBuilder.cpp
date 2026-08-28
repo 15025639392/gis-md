@@ -1,12 +1,9 @@
 #include "GltfDrawCommandBuilder.h"
 
-#include "RasterMappedToTilesetTile.h"
-#include "SurfaceRasterBinding.h"
 #include "RasterBindingSet.h"
 #include "TileCacheKey.h"
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TilesetTile.h"
-#include "../layers/ActivatedRasterOverlay.h"
 #include "../layers/RasterOverlay.h"
 #include "../renderer/Renderer.h"
 #include "../renderer/TerrainPageStore.h"
@@ -621,7 +618,6 @@ void applyPerFrameCommandState(
     Renderer& renderer,
     RenderCommand& cmd,
     TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& overlays,
     const GltfDrawCommandBuildContext& context,
     GltfDrawCommandBuildTimings* timings) {
     cmd.frameId = context.frameNumber;
@@ -752,25 +748,24 @@ void applyPerFrameCommandState(
         timings ? perf::nowMs() : 0.0;
     int rasterOverlayTextureCount = 0;
     cmd.surfaceBaseRasterState = 0;
-    cmd.surfaceBaseIsMappedRasterTile = 0;
+    cmd.surfaceBaseUsesDirectRaster = 0;
     const RasterBindingSet rasterBindings =
-        RasterBindingSet::resolve(tile, overlays);
+        RasterBindingSet::resolve(tile, context.rasterFrame);
     for (const RasterBinding& resolved : rasterBindings.bindings()) {
-        if (!resolved.allowedByPolicy) {
+        if (!resolved.resolution.allowedByPolicy) {
             continue;
         }
         if (rasterOverlayTextureCount >= kMaxGltfRasterOverlays) {
             break;
         }
-        ActivatedRasterOverlay* activeOverlay = resolved.overlay;
-        const RasterMappedToTilesetTile* mapped = resolved.mapped;
-        const SurfaceRasterBinding& binding = resolved.surface;
-        const int32_t textureCoordinateID = resolved.textureCoordinateId;
+        const RasterResolution& resolution = resolved.resolution;
+        const DirectRasterSampleDescriptor& sample = resolved.directSample;
+        const int32_t textureCoordinateID = sample.textureCoordinateId;
         if (textureCoordinateID < 0 ||
             textureCoordinateID >= static_cast<int32_t>(kGltfMaxTexCoordSets)) {
             continue;
         }
-        Texture* texture = binding.tile->getTexture();
+        Texture* texture = sample.texture;
         if (!texture) {
             continue;
         }
@@ -781,37 +776,33 @@ void applyPerFrameCommandState(
             cmd.textures.resize(textureSlot + 1u, nullptr);
         }
         cmd.textures[textureSlot] = texture;
-        if (binding.tileHandle) {
+        if (sample.resourceLease) {
             // 帧级保活(替代逐命令 resourceKeepAlive):同一 overlay tile 被本帧
             // 多命令引用时只锚定一份。释放时机不变,见 Renderer::keepAliveThisFrame。
-            renderer.keepAliveThisFrame(binding.tileHandle);
+            renderer.keepAliveThisFrame(sample.resourceLease);
         }
         cmd.gltfRasterOverlayTileUvs[rasterOverlayTextureCount] = {
-            binding.offsetU,
-            binding.offsetV,
-            binding.scaleU,
-            binding.scaleV};
+            sample.offsetU,
+            sample.offsetV,
+            sample.scaleU,
+            sample.scaleV};
         cmd.gltfRasterOverlayOpacities[rasterOverlayTextureCount] =
-            resolved.opacity;
+            resolution.opacity;
         cmd.gltfRasterOverlayTexCoordSets[rasterOverlayTextureCount] =
             static_cast<float>(textureCoordinateID);
-        if (activeOverlay &&
-            activeOverlay->getOverlay().role() ==
-                RasterOverlayRole::BaseImagery) {
+        if (resolution.role == RasterOverlayRole::BaseImagery) {
             cmd.surfaceBaseRasterState = 1;
-            cmd.surfaceBaseIsMappedRasterTile = 1;
+            cmd.surfaceBaseUsesDirectRaster = 1;
             // 加载质量诊断:记下这片瓦片的底图到底贴的是第几级影像,以及
             // 距离"想要的那级"差多少 —— 差值就是屏幕上肉眼看到的糊的程度。
-            // _pLoadingTile = 想要的目标层(还在加载),_pReadyTile = 实际渲染
-            // 的那张(可能是祖先)。settled 时 loading 为空,二者相等 → delta 0。
-            const RasterOverlayTile* wantedTile =
-                mapped->getLoadingTile() ? mapped->getLoadingTile()
-                                         : binding.tile;
             cmd.surfaceGeometryZoom = tile.key.z;
-            cmd.surfaceTextureZoom = binding.tile->getTileID().z;
+            cmd.surfaceTextureZoom = resolution.resolvedZoom;
             cmd.imageryAncestorLevelDelta =
-                std::max(0, wantedTile->getTileID().z -
-                                binding.tile->getTileID().z);
+                resolution.desiredZoom >= 0 && resolution.resolvedZoom >= 0
+                    ? std::max(
+                          0,
+                          resolution.desiredZoom - resolution.resolvedZoom)
+                    : 0;
         }
         ++rasterOverlayTextureCount;
     }
@@ -820,12 +811,12 @@ void applyPerFrameCommandState(
         cmd.terrainSurfaceSource =
             terrainSurfaceSourceForDraw(tile.content.renderContent);
     }
-    u.mappedRasterTextureCount =
+    u.directRasterTextureCount =
         static_cast<float>(rasterOverlayTextureCount);
     for (int i = 0; i < kMaxGltfRasterOverlays; ++i) {
-        u.mappedRasterTileUv[i] = cmd.gltfRasterOverlayTileUvs[i];
-        u.mappedRasterOpacity[i] = cmd.gltfRasterOverlayOpacities[i];
-        u.mappedRasterTexCoordSet[i] = cmd.gltfRasterOverlayTexCoordSets[i];
+        u.directRasterTileUv[i] = cmd.gltfRasterOverlayTileUvs[i];
+        u.directRasterOpacity[i] = cmd.gltfRasterOverlayOpacities[i];
+        u.directRasterTexCoordSet[i] = cmd.gltfRasterOverlayTexCoordSets[i];
     }
     if (timings) {
         timings->rasterBindingMs +=
@@ -850,7 +841,7 @@ void applyPerFrameCommandState(
     }
 
     // 北极星合成方案页存储(门③ Step3):最后一步,对目标 capped 真实地形瓦片
-    // 挂 array 纹理 + 置 pageStoreParams.enabled=1(覆盖上采样 mappedRaster)。
+    // 挂 array 纹理 + 置 pageStoreParams.enabled=1(覆盖上采样 directComposite)。
     // 未启用(指针空)或非目标瓦片时 no-op → 逐字节走现状路径,零回归。
     if (TerrainPageStore* pageStore = renderer.terrainPageStore()) {
         pageStore->applyToTerrainCommand(cmd, tile);
@@ -862,7 +853,6 @@ void applyPerFrameCommandState(
 void GltfDrawCommandBuilder::build(
     Renderer& renderer,
     TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& overlays,
     RenderCommandList& commands,
     const GltfDrawCommandBuildContext& context,
     GltfDrawCommandBuildTimings* timings) {
@@ -879,7 +869,7 @@ void GltfDrawCommandBuilder::build(
     // never-drop(cesium 语义):base 影像未就绪(自身与祖先都没有 ready 纹理)时,
     // **不再跳过 draw** —— 几何已可画(上面的 hasDrawableResources 已保证),照常
     // 建命令,下面的 raster 绑定会得到 rasterOverlayTextureCount=0,着色器出
-    // u_baseColor 的纯色面(Renderer.cpp 地形 FS:mappedRaster 只在 count>0 时叠)。
+    // u_baseColor 的纯色面(Renderer.cpp 地形 FS:directComposite 只在 count>0 时叠)。
     // 这样"几何可画但缺影像"渲成 base 色而非透底洞。祖先影像就绪时下面正常绑上
     // (逐级缩放的常态),此路只在连祖先都没有(快拉/冷启动下载未完)时触发。
     if (timings) {
@@ -967,7 +957,6 @@ void GltfDrawCommandBuilder::build(
             renderer,
             commands.back(),
             tile,
-            overlays,
             context,
             timings);
         if (timings) {

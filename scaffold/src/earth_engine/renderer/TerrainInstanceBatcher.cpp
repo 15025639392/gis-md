@@ -35,7 +35,7 @@ RejectReason rejectReasonFor(const RenderCommand& cmd) {
     if (cmd.gltfUniforms.pageStoreParams[0] <= 0.5f) {    // 页存储开
         return RejectReason::PageStoreOff;
     }
-    if (!cmd.terrainPageStoreFullyResident) {             // → 丢 mappedRaster
+    if (!cmd.terrainPageStoreFullyResident) {             // → 丢 directComposite
         return RejectReason::NotFullyResident;
     }
     if (cmd.gltfUniforms.hasWaterMask > 0.5f) return RejectReason::HasWaterMask;
@@ -286,7 +286,7 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
         // 一条永远不合格的地形命令,而 hold 那条闸没有活性上限。
         batch.gltfRasterOverlayTextureCount = first.gltfRasterOverlayTextureCount;
         batch.surfaceBaseRasterState = first.surfaceBaseRasterState;
-        batch.surfaceBaseIsMappedRasterTile = first.surfaceBaseIsMappedRasterTile;
+        batch.surfaceBaseUsesDirectRaster = first.surfaceBaseUsesDirectRaster;
         batch.gltfUniforms.baseColor = first.gltfUniforms.baseColor;
         // 批级 params 只留 enabled;cell 网格逐实例给(见 rec.dispMorph[3])。
         batch.gltfUniforms.pageStoreParams = {1.0f, 0.0f, 0.0f, 0.0f};

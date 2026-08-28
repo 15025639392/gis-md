@@ -1,6 +1,7 @@
 #include "SurfaceRasterBinding.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../layers/RasterOverlay.h"
+#include "RasterOverlayRuntime.h"
 
 namespace earth_engine {
 
@@ -14,7 +15,7 @@ bool isLegalSurfaceRasterTile(const RasterOverlayTile* tile) {
 }
 
 SurfaceRasterBinding chooseSurfaceRasterBinding(
-    const RasterMappedToTilesetTile* mapped) {
+    const DirectRasterMapping* mapped) {
     if (!mapped) {
         return {};
     }
@@ -32,7 +33,7 @@ SurfaceRasterBinding chooseSurfaceRasterBinding(
     binding.scaleU = mapped->getScaleU();
     binding.scaleV = mapped->getScaleV();
     binding.kind = mapped->getReadyTileSource() ==
-            RasterMappedToTilesetTile::ReadyTileSource::Ancestor
+            DirectRasterMapping::ReadyTileSource::Ancestor
         ? SurfaceRasterBindingKind::AncestorTile
         : SurfaceRasterBindingKind::RealTile;
     return binding;
@@ -40,19 +41,36 @@ SurfaceRasterBinding chooseSurfaceRasterBinding(
 
 bool rasterOverlayBindingAllowedByPolicy(
     const ActivatedRasterOverlay* activeOverlay,
-    const RasterMappedToTilesetTile* mapped,
+    const DirectRasterMapping* mapped,
     const SurfaceRasterBinding& binding) {
     if (!activeOverlay || !activeOverlay->visible() ||
         !mapped || binding.kind == SurfaceRasterBindingKind::None ||
         !binding.tile || !binding.tile->getTexture()) {
         return false;
     }
-    if (activeOverlay->getOverlay().role() ==
-            RasterOverlayRole::BaseImagery) {
+    if (activeOverlay->role() == RasterOverlayRole::BaseImagery) {
         return true;
     }
-    if (activeOverlay->getOverlay().fallbackPolicy() ==
+    if (activeOverlay->fallbackPolicy() ==
         RasterOverlayFallbackPolicy::SkipUntilReady) {
+        return mapped->getLoadingTile() == nullptr;
+    }
+    return true;
+}
+
+bool rasterOverlayBindingAllowedByPolicy(
+    const RasterOverlayFrameSlot& slot,
+    const DirectRasterMapping* mapped,
+    const SurfaceRasterBinding& binding) {
+    if (!slot.visible || slot.opacity <= 0.0f || !mapped ||
+        binding.kind == SurfaceRasterBindingKind::None ||
+        !binding.tile || !binding.tile->getTexture()) {
+        return false;
+    }
+    if (slot.role == RasterOverlayRole::BaseImagery) {
+        return true;
+    }
+    if (slot.fallbackPolicy == RasterOverlayFallbackPolicy::SkipUntilReady) {
         return mapped->getLoadingTile() == nullptr;
     }
     return true;

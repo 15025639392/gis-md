@@ -2,9 +2,10 @@
 
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../layers/RasterOverlay.h"
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileRasterOverlayPrefetcher.h"
 #include "TileRasterOverlayReadinessPolicy.h"
+#include "RasterOverlayRuntime.h"
 #include "TileRasterOverlaySignature.h"
 #include "TileRenderablePolicy.h"
 #include "TilesetTile.h"
@@ -23,22 +24,26 @@ class TileSelectionRasterOverlayPreparer {
 public:
     static bool canSkipReadyOverlayPrefetch(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+        const RasterOverlayFrameContext& frame) {
+        const auto& rasterOverlays = frame.directOverlays();
         if (!TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
                 tile,
-                rasterOverlays)) {
+                frame)) {
             return false;
         }
         for (size_t i = 0;
              i < rasterOverlays.size() &&
              i < tile.rasterOverlayState.mappingCount();
-             ++i) {
+            ++i) {
             const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
-            if (!activeOverlay || !activeOverlay->visible() ||
-                !activeOverlay->getOverlay().blocksCompleteRenderable()) {
+            const RasterOverlayFrameSlot& slot = frame.slots()[i];
+            const bool visible =
+                slot.directProvider != nullptr && slot.visible;
+            const bool blocks = slot.blocksCompleteRenderable;
+            if (!activeOverlay || !visible || !blocks) {
                 continue;
             }
-            const RasterMappedToTilesetTile* mapped =
+            const DirectRasterMapping* mapped =
                 tile.rasterOverlayState.mappingAt(i);
             if (mapped && mapped->hasPendingNonPlaceholderLoadingTile()) {
                 return false;
@@ -52,11 +57,11 @@ public:
 
     static bool isCompleteRenderable(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+        const RasterOverlayFrameContext& frame) {
         const bool requiredRasterOverlaysReady =
             TileRasterOverlayReadinessPolicy::requiredOverlaysReady(
                 tile,
-                rasterOverlays);
+                frame);
 
         return TileRenderablePolicy::isCompleteRenderable(
             tile.renderableSnapshot(requiredRasterOverlaysReady));
@@ -64,8 +69,8 @@ public:
 
     static bool isRenderable(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
-        return isCompleteRenderable(tile, rasterOverlays);
+        const RasterOverlayFrameContext& frame) {
+        return isCompleteRenderable(tile, frame);
     }
 
     static std::vector<size_t> processingOrder(
@@ -76,12 +81,13 @@ public:
 
     static void prepare(
         TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        const RasterOverlayFrameContext& frame,
         RenderDevice* device,
         double maximumScreenSpaceError,
         FrameResourceBudget& frameResourceBudget,
         uint64_t frameNumber = 0,
         IPrepareRendererResources* pPrepRenderer = nullptr) {
+        const auto& rasterOverlays = frame.directOverlays();
         if (!tile.canPrepareRasterOverlays()) {
             return;
         }
@@ -93,7 +99,7 @@ public:
             tile.rasterOverlayState.mappingCount() >= rasterOverlays.size()) {
             if (canSkipReadyOverlayPrefetch(
                     tile,
-                    rasterOverlays)) {
+                    frame)) {
                 return;
             }
         }

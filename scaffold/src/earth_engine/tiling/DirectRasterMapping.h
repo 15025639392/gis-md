@@ -38,7 +38,7 @@ struct TilesetTile;
 ///   - When both non-null, state is TemporarilyAttached
 ///   - When both nullptr, state is Unattached
 ///   - _originalFailed is set once on original tile failure, never cleared
-class RasterMappedToTilesetTile {
+class DirectRasterMapping {
 public:
     /// Aligned with cesium-native AttachmentState values
     enum class State {
@@ -72,11 +72,11 @@ public:
         bool empty() const { return sourceKeys.empty(); }
     };
 
-    RasterMappedToTilesetTile();
-    ~RasterMappedToTilesetTile();
+    DirectRasterMapping();
+    ~DirectRasterMapping();
 
-    RasterMappedToTilesetTile(const RasterMappedToTilesetTile&) = delete;
-    RasterMappedToTilesetTile& operator=(const RasterMappedToTilesetTile&) = delete;
+    DirectRasterMapping(const DirectRasterMapping&) = delete;
+    DirectRasterMapping& operator=(const DirectRasterMapping&) = delete;
 
     /// cesium-native RasterMappedTo3DTile::update — 7-step flow.
     /// @param geometryKey   The geometry tile's quadtree key.
@@ -106,6 +106,13 @@ public:
     /// failure/loaded-state consumption. Ready ancestor fallbacks should not
     /// let traversal skip this lifecycle update.
     bool hasPendingNonPlaceholderLoadingTile() const;
+
+    /// The originally requested target ended in a terminal failure. The
+    /// mapping may still expose a drawable ancestor, so this is deliberately
+    /// independent from getReadyTile() and getReadyTileSource().
+    bool didOriginalTargetFail() const { return originalFailed_; }
+    bool wasOriginalTargetEmpty() const { return originalEmpty_; }
+    int desiredSourceZoom() const { return desiredZoom_; }
 
     /// True when a subsequent update can only repeat the Attached fast path.
     bool hasStableUpdateState() const;
@@ -199,8 +206,8 @@ public:
         return _pReadyTile;
     }
     ReadyTileSource getReadyTileSource() const { return readyTileSource_; }
-    const SourceTileList& getMappedSourceTiles() const {
-        return mappedSourceTiles_;
+    const SourceTileList& getDirectCompositeSourceTiles() const {
+        return directCompositeSourceTiles_;
     }
     bool usesDirectRasterTile() const { return directRasterTile_; }
 
@@ -245,7 +252,7 @@ private:
 
     ReadyTileSource loadingTileSource_ = ReadyTileSource::None;
     ReadyTileSource readyTileSource_ = ReadyTileSource::None;
-    SourceTileList mappedSourceTiles_;
+    SourceTileList directCompositeSourceTiles_;
     bool directRasterTile_ = false;
 
     /// UV transform: rasterUV = geometryUV * scale + offset.
@@ -270,6 +277,8 @@ private:
     /// Never cleared — suppresses MoreDetailAvailable::Yes.
     /// Aligned with cesium-native _originalFailed.
     bool originalFailed_ = false;
+    bool originalEmpty_ = false;
+    int desiredZoom_ = -1;
 
     /// The geometry tile key this raster is mapped to.
     /// Used for attachRaster/detachRaster notification key consistency.

@@ -23,7 +23,7 @@ struct TileSelectionFrameFinalizationInput {
     const std::vector<TilesetTile*>& previousActiveTiles;
     TileSelectionCounters& selectionCounters;
     TileContentAccess& contentAccess;
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
+    const std::vector<ActivatedRasterOverlay*>& configuredRasterOverlays;
     TileRenderPlanFrameRefreshOptions renderPlanOptions;
 };
 

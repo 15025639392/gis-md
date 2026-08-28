@@ -6,6 +6,7 @@ namespace earth_engine {
 
 class TileContentAccess;
 class Tileset;
+class RasterOverlayFrameContext;
 enum class TileOcclusionState;
 
 struct TileSelectionTraversalContextBuildInput {
@@ -13,14 +14,13 @@ struct TileSelectionTraversalContextBuildInput {
     TileLoadQueue& loadQueue;
     TileSelectionCounters& counters;
     const TilesetOptions& options;
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     RenderDevice* device = nullptr;
     IPrepareRendererResources* pPrepRenderer = nullptr;
     FrameResourceBudget& frameResourceBudget;
     Vec3 lastCameraPosition = Vec3::zero();
     TileContentAccess& contentAccess;
     TileSelectionPerformanceTimings* performanceTimings = nullptr;
-    // ③ 增量缓存(nullptr = 全量/影子路径,捕获全 no-op)。
+    const RasterOverlayFrameContext& rasterFrame;
 };
 
 // The injected policies for a traversal: occlusion (software occlusion vs.

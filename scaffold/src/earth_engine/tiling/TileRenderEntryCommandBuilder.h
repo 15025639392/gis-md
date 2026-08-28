@@ -1,6 +1,6 @@
 #pragma once
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TilePlan.h"
 #include "TilesetTile.h"
 

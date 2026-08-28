@@ -141,6 +141,15 @@ public:
     virtual void submit(const RenderCommandList& commands) = 0;
     virtual void endFrame() = 0;
 
+    /// Monotonic GPU submission timeline. A value is issued when endFrame()
+    /// hands the frame to the backend, not when commands are merely encoded.
+    /// 0 means that this backend has not published a submission yet.
+    virtual uint64_t submittedSerial() const { return 0; }
+    /// Latest serial for which the backend has observed GPU completion without
+    /// blocking the render thread. A backend that cannot expose completion
+    /// safely may leave this at 0; PageStore must then retain retired layers.
+    virtual uint64_t completedSerial() const { return 0; }
+
     // ---- GPU 区间计时(测量台;默认关) ----
     // 语义与三条读数边界见 GpuFrameTiming.h。区间**平铺不嵌套**:beginGpuRegion
     // 会先关掉上一个还开着的区间。后端不支持时全部退化为 no-op,调用方无需分支。

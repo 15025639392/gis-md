@@ -2,7 +2,7 @@
 
 #include "TileCacheKey.h"
 #include "TileContentAccess.h"
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TileRenderPlanFinalizer.h"
 #include "TileEdgeMismatchProbe.h"
@@ -134,7 +134,7 @@ struct FrameCreditCollector {
 void collectReadyRasterTileCredits(const TilesetTile& tile,
                                    FrameCreditCollector& credits) {
     tile.rasterOverlayState.forEachMapping(
-        [&credits](const RasterMappedToTilesetTile* mapping) {
+        [&credits](const DirectRasterMapping* mapping) {
             if (!mapping) {
                 return;
             }
@@ -196,18 +196,18 @@ void refreshFrameCredits(TilePlan& tilePlan,
     }
 }
 
-void collectMappedRasterProgress(const TilesetTile& tile,
+void collectDirectRasterProgress(const TilesetTile& tile,
                                  TilePlan& tilePlan) {
     tile.rasterOverlayState.forEachMapping(
-        [&tilePlan](const RasterMappedToTilesetTile* mapping) {
+        [&tilePlan](const DirectRasterMapping* mapping) {
             if (!mapping) {
                 return;
             }
 
-            ++tilePlan.frameMappedRasterTileCount;
+            ++tilePlan.frameDirectRasterMappingCount;
             if (mapping->getState() !=
-                RasterMappedToTilesetTile::State::Attached) {
-                ++tilePlan.frameMappedRasterTileLoadingCount;
+                DirectRasterMapping::State::Attached) {
+                ++tilePlan.frameDirectRasterMappingLoadingCount;
             }
         });
 }
@@ -225,8 +225,8 @@ int baseProgressTotalCount(const TilePlan& tilePlan) {
 }
 
 void refreshFrameProgress(TilePlan& tilePlan) {
-    tilePlan.frameMappedRasterTileCount = 0;
-    tilePlan.frameMappedRasterTileLoadingCount = 0;
+    tilePlan.frameDirectRasterMappingCount = 0;
+    tilePlan.frameDirectRasterMappingLoadingCount = 0;
 
     std::unordered_set<TilesetTile*> visitedTiles;
     visitedTiles.reserve(tilePlan.renderEntries.size() * 2);
@@ -234,7 +234,7 @@ void refreshFrameProgress(TilePlan& tilePlan) {
         if (!tile || !visitedTiles.insert(tile).second) {
             return;
         }
-        collectMappedRasterProgress(*tile, tilePlan);
+        collectDirectRasterProgress(*tile, tilePlan);
     };
 
     for (TilesetTile* tile : tilePlan.tilesToRenderThisFrame) {
@@ -247,9 +247,9 @@ void refreshFrameProgress(TilePlan& tilePlan) {
     }
 
     tilePlan.frameProgressTotalCount =
-        baseProgressTotalCount(tilePlan) + tilePlan.frameMappedRasterTileCount;
+        baseProgressTotalCount(tilePlan) + tilePlan.frameDirectRasterMappingCount;
     tilePlan.frameProgressLoadingCount =
-        tilePlan.frameMappedRasterTileLoadingCount;
+        tilePlan.frameDirectRasterMappingLoadingCount;
     tilePlan.frameLoadProgressPercentage =
         tilePlan.frameProgressLoadingCount == 0 ||
                 tilePlan.frameProgressTotalCount <= 0
@@ -266,7 +266,7 @@ void refreshFrameProgress(TilePlan& tilePlan) {
 void TileRenderPlanFrameRefresher::refresh(
     TilePlan& tilePlan,
     TileContentAccess& contentAccess,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    const std::vector<ActivatedRasterOverlay*>& configuredRasterOverlays,
     const TileRenderPlanFrameRefreshOptions& options) {
     TileRenderPlanFinalizer::refreshRenderEntries(
         tilePlan,
@@ -280,22 +280,22 @@ void TileRenderPlanFrameRefresher::refresh(
                 : kActiveInteractionFirstBuildBudget,
             options.firstBuildBudgetOverride >= 0
                 ? options.firstBuildBudgetOverride
-                : kRecoveryFirstBuildBudget},
-        rasterOverlays,
+                : kRecoveryFirstBuildBudget,
+            options.rasterFrame},
         [&contentAccess](const TileKey& key) {
             return contentAccess.ensureTile(key);
         },
         [](const TileKey& key) {
             return TileCacheKey::forTile(key);
         },
-        [&rasterOverlays](const TilesetTile& tile) {
+        [&options](const TilesetTile& tile) {
             const bool geometryDrawable =
                 tile.content.renderContent.hasDrawableResources();
             return geometryDrawable &&
                    TileRasterOverlayReadinessPolicy::
                        terrainSurfaceImageryDrawableReady(
                            tile,
-                           rasterOverlays);
+                           options.rasterFrame);
         });
     // 档位单一决策点:渲染集定稿后、任何档位消费者跑之前,给本帧每个渲染
     // 瓦片带迟滞刷新 displacementGridSize(上一帧值即迟滞态,与 draw 保档
@@ -336,7 +336,7 @@ void TileRenderPlanFrameRefresher::refresh(
     if (options.seamEdgeMismatchProbe) {
         logEdgeMismatch(tilePlan);
     }
-    refreshFrameCredits(tilePlan, rasterOverlays);
+    refreshFrameCredits(tilePlan, configuredRasterOverlays);
     refreshFrameProgress(tilePlan);
 }
 

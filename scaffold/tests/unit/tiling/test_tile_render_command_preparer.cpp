@@ -1,10 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/renderer/Renderer.h"
-#include "earth_engine/providers/DebugImageryProvider.h"
-#include "earth_engine/layers/ActivatedRasterOverlay.h"
-#include "earth_engine/layers/RasterOverlay.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileRenderCommandPreparer.h"
 #include "earth_engine/tiling/TileScheme.h"
 
@@ -16,6 +13,7 @@
 #include "earth_engine/tiling/TileContentUploadPolicy.h"
 #include "earth_engine/tiling/TileFillGeometrySignature.h"
 #include "../../helpers/MockRenderDevice.h"
+#include "../../helpers/RasterOverlayTestFrame.h"
 
 #include <array>
 #include <cstring>
@@ -37,8 +35,10 @@ private:
 };
 
 TileRenderCommandPrepareContext makeContext(
-    bool allowSynchronousMeshPrep) {
-    TileRenderCommandPrepareContext context;
+    bool allowSynchronousMeshPrep,
+    const RasterOverlayFrameContext& rasterFrame =
+        earth_engine::testing::emptyRasterOverlayFrame()) {
+    TileRenderCommandPrepareContext context{rasterFrame};
     context.frameNumber = 31;
     context.generation = 9;
     context.currentFrameTimeSeconds = 1.25;
@@ -189,7 +189,6 @@ std::optional<Vec3> firstRenderedWorldPosition(
 
 TEST(TileRenderCommandPreparerTest, DefersMeshPrepWhenSynchronousPrepDisabled) {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     bool ensureMeshCalled = false;
@@ -198,7 +197,6 @@ TEST(TileRenderCommandPreparerTest, DefersMeshPrepWhenSynchronousPrepDisabled) {
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(false),
         [&ensureMeshCalled](TilesetTile&) {
@@ -215,7 +213,6 @@ TEST(TileRenderCommandPreparerTest, DefersMeshPrepWhenSynchronousPrepDisabled) {
 // nofill 计数(假设 A 的判据)才有意义。
 TEST(TileRenderCommandPreparerTest, CountsZeroDrawWithoutContentOrFill) {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TileRenderCommandPerformanceTimings timings;
@@ -224,7 +221,6 @@ TEST(TileRenderCommandPreparerTest, CountsZeroDrawWithoutContentOrFill) {
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(true),
         [](TilesetTile&) {},
@@ -239,7 +235,6 @@ TEST(TileRenderCommandPreparerTest, CountsZeroDrawWithoutContentOrFill) {
 // 反向闸:真的画出来了就不许进任何零绘制桶,否则 nofill>0 会变成常态噪声。
 TEST(TileRenderCommandPreparerTest, LeavesZeroDrawCountersClearWhenDrawn) {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TileRenderCommandPerformanceTimings timings;
@@ -248,7 +243,6 @@ TEST(TileRenderCommandPreparerTest, LeavesZeroDrawCountersClearWhenDrawn) {
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(true),
         [](TilesetTile& meshTile) {
@@ -276,7 +270,6 @@ TEST(TileRenderCommandPreparerTest, LeavesZeroDrawCountersClearWhenDrawn) {
 
 TEST(TileRenderCommandPreparerTest, RunsSynchronousMeshPrepBeforeDrawableCheck) {
     TilesetTile tile(TileKey{"test", 0, 0, 0}, Rectangle{});
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     bool ensureMeshCalled = false;
@@ -285,7 +278,6 @@ TEST(TileRenderCommandPreparerTest, RunsSynchronousMeshPrepBeforeDrawableCheck) 
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(true),
         [&ensureMeshCalled](TilesetTile& meshTile) {
@@ -328,7 +320,6 @@ TEST(TileRenderCommandPreparerTest,
     tile.selectionFrameState.completeRenderable = true;
     tile.selectionFrameState.renderable = true;
 
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     bool ensureMeshCalled = false;
@@ -337,7 +328,6 @@ TEST(TileRenderCommandPreparerTest,
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(true),
         [&ensureMeshCalled](TilesetTile& meshTile) {
@@ -371,7 +361,6 @@ TEST(TileRenderCommandPreparerTest,
     tile.content.renderContent.setGltfResourcesReady(true);
     ASSERT_TRUE(tile.content.renderContent.isGltfRenderReady());
 
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     bool ensureMeshCalled = false;
@@ -380,7 +369,6 @@ TEST(TileRenderCommandPreparerTest,
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(true),
         [&ensureMeshCalled](TilesetTile&) {
@@ -420,14 +408,12 @@ TEST(TileRenderCommandPreparerTest,
     tile.content.renderContent.addGltfPrimitiveResource(std::move(primitive));
     tile.content.renderContent.setGltfResourcesReady(true);
 
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TileRenderCommandPreparer::build(
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(true),
         [](TilesetTile&) {});
@@ -452,7 +438,6 @@ TEST(TileRenderCommandPreparerTest,
     tile.content.renderContent.setGltfResourcesReady(true);
     ASSERT_TRUE(tile.content.renderContent.isGltfRenderReady());
 
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
 
@@ -460,7 +445,6 @@ TEST(TileRenderCommandPreparerTest,
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(true),
         [](TilesetTile&) {
@@ -498,7 +482,6 @@ TEST(
         std::move(resources));
     tile.markRenderContentDone();
 
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     const uint64_t retainedRevisionBefore =
@@ -508,7 +491,6 @@ TEST(
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(true),
         [](TilesetTile&) {});
@@ -543,7 +525,6 @@ TEST(
     tile.markRenderContentLoaded();
 
     earth_engine::testing::MockRenderDevice device;
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     const uint64_t retainedRevisionBefore =
@@ -553,7 +534,6 @@ TEST(
         renderer,
         tile,
         commands,
-        overlays,
         &device,
         makeContext(true),
         [](TilesetTile&) {});
@@ -673,14 +653,12 @@ TEST(
 
     const int bufferCountAfterUpload = device.createdBufferCount;
     Buffer* const uploadedVertexBuffer = resources->vertexBuffer.get();
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     const bool resourcesChanged = TileRenderCommandPreparer::build(
         renderer,
         tile,
         commands,
-        overlays,
         &device,
         makeContext(true),
         [](TilesetTile&) {});
@@ -851,7 +829,6 @@ TEST(
         std::move(resources));
     tile.markRenderContentDone();
 
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
     TileRenderCommandPerformanceTimings firstFrameTimings;
@@ -861,7 +838,6 @@ TEST(
             renderer,
             tile,
             commands,
-            overlays,
             nullptr,
             makeContext(true),
             [](TilesetTile&) {},
@@ -881,7 +857,6 @@ TEST(
             renderer,
             tile,
             commands,
-            overlays,
             nullptr,
             secondFrameContext,
             [](TilesetTile&) {},
@@ -921,7 +896,6 @@ TEST(
             1});
 
     earth_engine::testing::MockRenderDevice device;
-    std::vector<ActivatedRasterOverlay*> overlays;
     Renderer renderer(nullptr);
     RenderCommandList commands;
 
@@ -929,7 +903,6 @@ TEST(
         renderer,
         tile,
         commands,
-        overlays,
         &device,
         makeContext(true),
         [](TilesetTile&) {});
@@ -949,15 +922,6 @@ TEST(
 TEST(
     TileRenderCommandPreparerTest,
     DrawBuildDoesNotAdvanceUnpreparedRasterOverlayState) {
-    RasterOverlay::Options options;
-    options.blocksCompleteRenderable = false;
-    auto overlay = std::make_unique<RasterOverlay>(
-        std::make_unique<DebugImageryProvider>(),
-        TileScheme::createGeographicTMS(),
-        options);
-    ActivatedRasterOverlay activated(*overlay);
-    std::vector<ActivatedRasterOverlay*> overlays{&activated};
-
     TilesetTile tile(
         TileKey{"Geographic-TMS", 0, 0, 0},
         Rectangle::fromDegrees(-180.0, -90.0, 0.0, 90.0));
@@ -983,7 +947,6 @@ TEST(
         renderer,
         tile,
         commands,
-        overlays,
         nullptr,
         makeContext(true),
         [](TilesetTile&) {});

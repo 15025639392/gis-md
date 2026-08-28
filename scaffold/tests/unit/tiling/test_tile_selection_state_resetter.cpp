@@ -1,8 +1,9 @@
 #include <gtest/gtest.h>
 
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileSelectionStateResetter.h"
 #include "earth_engine/tiling/TilesetTile.h"
+#include "../../helpers/RasterOverlayTestFrame.h"
 
 using namespace earth_engine;
 
@@ -22,7 +23,9 @@ TEST(TileSelectionStateResetterTest, ResetsSelectionFrameStateForTile) {
     tile.selectionFrameState.completeRenderable = true;
     tile.selectionFrameState.renderable = true;
 
-    TileSelectionStateResetter::resetOne(tile, {});
+    TileSelectionStateResetter::resetOne(
+        tile,
+        earth_engine::testing::emptyRasterOverlayFrame());
 
     EXPECT_EQ(
         tile.selectionFrameState.previousSelectionState,

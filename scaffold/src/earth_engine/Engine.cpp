@@ -691,6 +691,9 @@ bool Engine::render(double deltaSeconds) {
     if (terrainPageStoreEnabled_ && !terrainPageStoreInitFailed_) {
         // 渲染线程驱动:目标锁定后 kick 异步影像 fetch + 排空已到达影像灌 layer。
         if (terrainPageStore_) {
+            // Pull only GPU-completed PageStore layers back into the reusable
+            // pool before this frame can allocate, upload, or retire slices.
+            terrainPageStore_->synchronizeGpuCompletion();
             const double pageStoreStartMs = perf::nowMs();
             // 北极星 SVT B2a 门②:选择完成(FrameState + tilePlan 已填)后、tick 前,
             // 跑「屏幕可见影像页 determination」并插桩(纯读 + log,不碰池/fetch/render)。
@@ -698,21 +701,22 @@ bool Engine::render(double deltaSeconds) {
             const FrameState& frameState = scene_->frameState();
             Tileset* tileset = scene_->tileset();
             if (!frameState.selectorViews.empty() && tileset != nullptr) {
-                // C-1:把**整个有序** overlay 列表交给页存储(与 mappedRaster 同序
-                // 合成)。此前只传 overlays.front(),靠后的 overlay 在页存储路径上
-                // 被静默丢弃 —— 两条合成路径语义不一致正是矢量层贴地失效的根。
+                // PageStore consumes the same immutable source snapshot as
+                // the rest of Overlay Runtime. It must not reread mutable
+                // visibility/opacity after the frame transaction publishes.
                 const RasterOverlayFrameContext& rasterFrame =
                     tileset->rasterOverlayRuntime().frameContext();
-                const std::vector<RasterOverlayTileProvider*>& providers =
-                    rasterFrame.pageStoreProviders();
+                const std::vector<RasterOverlayPageSource>& sources =
+                    rasterFrame.pageStoreSources();
                 const double uvpStartMs = perf::nowMs();
                 terrainPageStore_->updateVisiblePages(
                     frameState.selectorViews.front(),
                     tileset->tilePlan().tilesToRenderThisFrame,
-                    providers,
+                    sources,
                     tileset->maximumScreenSpaceError(),
                     &scene_->frameResourceArbiter(),
-                    rasterFrame.assetDepotHandle());
+                    rasterFrame.assetDepotHandle(),
+                    rasterFrame.pageStoreHasDirectFallbackParity());
                 pageStoreUvpMs = perf::nowMs() - uvpStartMs;
                 pageStoreIndirMs = terrainPageStore_->lastIndirUploadMs();
             }
@@ -874,6 +878,9 @@ bool Engine::render(double deltaSeconds) {
             }
         }
         device_->endFrame();
+        if (terrainPageStore_) {
+            terrainPageStore_->onFrameSubmitted(device_->submittedSerial());
+        }
         scene_->recordEngineTiming(
             Scene::EngineTimingScope::EndFrame,
             perf::nowMs() - startMs);

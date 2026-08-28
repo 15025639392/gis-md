@@ -57,8 +57,8 @@ std::string buildRenderEntryDiagnosticsLine(const Diagnostics& diagnostics) {
                diagnostics.frameLoadProgressPercentage)
         << "% work " << diagnostics.frameProgressLoadingCount
         << "/" << diagnostics.frameProgressTotalCount
-        << " mapped " << diagnostics.frameMappedRasterTileLoadingCount
-        << "/" << diagnostics.frameMappedRasterTileCount
+        << " direct " << diagnostics.frameDirectRasterMappingLoadingCount
+        << "/" << diagnostics.frameDirectRasterMappingCount
         << " rasterLoad " << diagnostics.rasterOverlayTilesLoading
         << " rasterCpu "
         << diagnostics.rasterPendingUploadBytes / 1024
@@ -110,8 +110,8 @@ std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
             << "/" << command.surfaceMeshIndexCount
             << ",base=real"
             << ",rs=" << command.surfaceBaseRasterState;
-        if (command.surfaceBaseIsMappedRasterTile) {
-            out << ",mapped";
+        if (command.surfaceBaseUsesDirectRaster) {
+            out << ",direct";
         }
         if (command.surfaceSkirtIndexCount > 0) {
             out << ",skirt-" << command.surfaceSkirtIndexCount;
@@ -149,8 +149,9 @@ std::string buildPresentationTraceSummary(const PresentationTrace& trace) {
                    terrainTrace->frameLoadProgressPercentage)
             << "% work=" << terrainTrace->frameProgressLoadingCount
             << "/" << terrainTrace->frameProgressTotalCount
-            << " mapped=" << terrainTrace->frameMappedRasterTileLoadingCount
-            << "/" << terrainTrace->frameMappedRasterTileCount
+            << " direct="
+            << terrainTrace->frameDirectRasterMappingLoadingCount
+            << "/" << terrainTrace->frameDirectRasterMappingCount
             << "\n";
         if (!terrainTrace->frameCredits.empty()) {
             const size_t creditCount =

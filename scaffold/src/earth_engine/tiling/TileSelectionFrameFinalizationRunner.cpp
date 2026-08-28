@@ -17,13 +17,13 @@ TileSelectionFrameFinalizationRunner::finalize(
             TileRenderPlanFrameRefresher::refresh(
                 input.tilePlan,
                 input.contentAccess,
-                input.rasterOverlays,
+                input.configuredRasterOverlays,
                 input.renderPlanOptions);
         },
         [&input](const TilesetTile& tile) {
             return TileSelectionRasterOverlayPreparer::isRenderable(
                 tile,
-                input.rasterOverlays);
+                input.renderPlanOptions.rasterFrame);
         });
 }
 

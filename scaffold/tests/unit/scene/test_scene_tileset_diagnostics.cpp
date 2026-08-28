@@ -284,10 +284,10 @@ TEST(
 
 TEST(
     SceneTilesetDiagnosticsSnapshotTest,
-    AppliesMappedRasterFrameProgressToDiagnostics) {
+    AppliesDirectCompositeFrameProgressToDiagnostics) {
     SceneTilesetDiagnosticsSnapshot snapshot;
-    snapshot.frameMappedRasterTileCount = 4;
-    snapshot.frameMappedRasterTileLoadingCount = 2;
+    snapshot.frameDirectRasterMappingCount = 4;
+    snapshot.frameDirectRasterMappingLoadingCount = 2;
     snapshot.frameProgressTotalCount = 10;
     snapshot.frameProgressLoadingCount = 3;
     snapshot.frameLoadProgressPercentage = 70.0;
@@ -296,8 +296,8 @@ TEST(
     SceneTilesetDiagnostics::reset(diagnostics);
     snapshot.applyTo(diagnostics);
 
-    EXPECT_EQ(diagnostics.frameMappedRasterTileCount, 4);
-    EXPECT_EQ(diagnostics.frameMappedRasterTileLoadingCount, 2);
+    EXPECT_EQ(diagnostics.frameDirectRasterMappingCount, 4);
+    EXPECT_EQ(diagnostics.frameDirectRasterMappingLoadingCount, 2);
     EXPECT_EQ(diagnostics.frameProgressTotalCount, 10);
     EXPECT_EQ(diagnostics.frameProgressLoadingCount, 3);
     EXPECT_NEAR(diagnostics.frameLoadProgressPercentage, 70.0, 1e-8);
@@ -305,25 +305,25 @@ TEST(
 
 TEST(
     SceneTilesetDiagnosticsSnapshotTest,
-    AggregatesMappedRasterFrameProgressByTotalWork) {
+    AggregatesDirectCompositeFrameProgressByTotalWork) {
     SceneTilesetDiagnosticsSnapshot snapshot;
-    snapshot.frameMappedRasterTileCount = 3;
-    snapshot.frameMappedRasterTileLoadingCount = 1;
+    snapshot.frameDirectRasterMappingCount = 3;
+    snapshot.frameDirectRasterMappingLoadingCount = 1;
     snapshot.frameProgressTotalCount = 5;
     snapshot.frameProgressLoadingCount = 2;
     snapshot.frameLoadProgressPercentage = 60.0;
 
     SceneTilesetDiagnosticsSnapshot next;
-    next.frameMappedRasterTileCount = 2;
-    next.frameMappedRasterTileLoadingCount = 1;
+    next.frameDirectRasterMappingCount = 2;
+    next.frameDirectRasterMappingLoadingCount = 1;
     next.frameProgressTotalCount = 5;
     next.frameProgressLoadingCount = 1;
     next.frameLoadProgressPercentage = 80.0;
 
     snapshot.add(next);
 
-    EXPECT_EQ(snapshot.frameMappedRasterTileCount, 5);
-    EXPECT_EQ(snapshot.frameMappedRasterTileLoadingCount, 2);
+    EXPECT_EQ(snapshot.frameDirectRasterMappingCount, 5);
+    EXPECT_EQ(snapshot.frameDirectRasterMappingLoadingCount, 2);
     EXPECT_EQ(snapshot.frameProgressTotalCount, 10);
     EXPECT_EQ(snapshot.frameProgressLoadingCount, 3);
     EXPECT_NEAR(snapshot.frameLoadProgressPercentage, 70.0, 1e-8);

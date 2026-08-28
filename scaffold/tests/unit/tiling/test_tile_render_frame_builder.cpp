@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/renderer/Renderer.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileRenderFrameBuilder.h"
 #include "earth_engine/tiling/TileRenderReferenceReleaser.h"

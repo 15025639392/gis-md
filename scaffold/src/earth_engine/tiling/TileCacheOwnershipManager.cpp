@@ -1,6 +1,6 @@
 #include "TileCacheOwnershipManager.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileCacheKey.h"
 #include "TileContentLifecycleManager.h"
 #include "TilePendingUploadCompletion.h"

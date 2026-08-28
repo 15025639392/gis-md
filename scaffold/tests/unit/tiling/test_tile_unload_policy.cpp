@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileUnloadPolicy.h"
 #include "earth_engine/tiling/TileUnloadQueue.h"
 #include "earth_engine/tiling/TilesetTile.h"

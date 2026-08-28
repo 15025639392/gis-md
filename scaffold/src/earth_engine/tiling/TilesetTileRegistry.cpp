@@ -7,7 +7,7 @@
 #include "TileSelectionRootPolicy.h"
 #include "TileScheme.h"
 #include "TileTerrainHeightRangePolicy.h"
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "../core/geodesy/Ellipsoid.h"
 #include "../core/geodesy/QuadtreeGeometricError.h"
 

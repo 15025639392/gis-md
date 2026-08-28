@@ -81,9 +81,11 @@ def check_feature_plumbing(page_store, batcher, uniform_h):
          None),
         ('EE_GLTF_ENTRY("u_roadFieldWidth"', "roadFieldWidth = config_",
          None),
-        ('EE_GLTF_ENTRY("u_pageGeomA"', "pageGeomA = {ind.geomAffine[0]",
+        ('EE_GLTF_ENTRY("u_pageGeomA"',
+         "pageGeomA = {\n        binding.sample.geomAffine[0]",
          "m.terrainPageGeomAffine[0]"),
-        ('EE_GLTF_ENTRY("u_pageGeomB"', "pageGeomB = {ind.geomAffine[4]",
+        ('EE_GLTF_ENTRY("u_pageGeomB"',
+         "pageGeomB = {\n        binding.sample.geomAffine[4]",
          "m.terrainPageGeomAffine[4]"),
     ]
     for entry, apply_fp, batch_fp in features:
@@ -147,10 +149,10 @@ def cpp_struct_fields(uniform_h):
     i = uniform_h.find("struct alignas(16) GltfUniformBlock {")
     j = uniform_h.find("\n};", i)
     body = uniform_h[i:j]
-    # 嵌套 struct(如 MappedRasterTransform)整体是一个数组字段,按字段名取;
-    # 只取顶层缩进(4 空格)的成员声明。
+    # 只取顶层缩进(4 空格)的标量/定长数组成员声明；嵌套的
+    # TextureTransform 字段位于本守卫关注的 pageStore 尾段之前。
     fields = re.findall(
-        r"^    (?:std::array<float, \d+>|float|MappedRasterTransform)\s+"
+        r"^    (?:std::array<float, \d+>|float)\s+"
         r"([A-Za-z_]\w*)", body, re.M)
     return fields
 
@@ -167,8 +169,8 @@ def check_msl_mirrors(renderer, uniform_h):
         return
     for k, pos in enumerate(starts):
         msl = msl_struct_fields(renderer[pos:], "struct GltfUniforms {")
-        # C++ 侧嵌套数组字段(mappedRasterTransforms 等)在 MSL 侧可能展开/改名,
-        # 只强校验从 pageStoreParams 起的**尾段**(页存储/场/仿射特性区)同名同序:
+        # 只强校验从 pageStoreParams 起的**尾段**(页存储/场/仿射特性区)
+        # 同名同序；前段材质纹理变换由独立表与 shader 编译守卫覆盖：
         # 这是历史上唯一发生过增删的活跃区,也是错位代价最高的区段。
         try:
             ci = cpp.index("pageStoreParams")

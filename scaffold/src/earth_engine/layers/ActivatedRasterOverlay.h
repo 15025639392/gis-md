@@ -2,6 +2,7 @@
 
 #include "../tiling/RasterOverlayProjection.h"
 #include "../tiling/TileRasterOverlayUploadResult.h"
+#include "RasterOverlay.h"
 
 #include <cstdint>
 #include <memory>
@@ -60,6 +61,16 @@ public:
 
     bool visible() const;
     float opacity() const;
+    RasterOverlayRole role() const;
+    RasterOverlayPriority priority() const;
+    RasterOverlayFallbackPolicy fallbackPolicy() const;
+    bool blocksCompleteRenderable() const;
+    void publishFramePresentation(bool visible,
+                                  float opacity,
+                                  RasterOverlayRole role,
+                                  RasterOverlayPriority priority,
+                                  RasterOverlayFallbackPolicy fallbackPolicy,
+                                  bool blocksCompleteRenderable);
 
     // ── Accessors ──
 
@@ -78,6 +89,14 @@ private:
     std::unique_ptr<RasterOverlayTileProvider> placeholderProvider_;
     std::unique_ptr<RasterOverlayTileProvider> tileProvider_;
     int maximumSimultaneousTileLoads_ = 20;
+    bool hasFramePresentation_ = false;
+    bool frameVisible_ = true;
+    float frameOpacity_ = 1.0f;
+    RasterOverlayRole frameRole_ = RasterOverlayRole::BaseImagery;
+    RasterOverlayPriority framePriority_ = RasterOverlayPriority::High;
+    RasterOverlayFallbackPolicy frameFallbackPolicy_ =
+        RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
+    bool frameBlocksCompleteRenderable_ = true;
 };
 
 } // namespace earth_engine

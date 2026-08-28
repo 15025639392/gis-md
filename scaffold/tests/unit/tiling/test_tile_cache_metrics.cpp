@@ -9,7 +9,7 @@
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/tiling/GltfRenderResourcePreparer.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileCacheMetrics.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileScheme.h"
@@ -411,7 +411,7 @@ TEST(TileCacheMetricsTest, SharedAncestorRasterTextureCountsOnlyOnceGlobally) {
     std::vector<RasterOverlayProjection> missing;
 
     auto parentTile = std::make_unique<TilesetTile>(parentKey, parentBounds);
-    RasterMappedToTilesetTile& parentMapping =
+    DirectRasterMapping& parentMapping =
         parentTile->rasterOverlayState.ensureMapping(0);
     parentMapping.update(
         parentKey,
@@ -443,7 +443,7 @@ TEST(TileCacheMetricsTest, SharedAncestorRasterTextureCountsOnlyOnceGlobally) {
     auto childTile =
         std::make_unique<TilesetTile>(childKey, childBounds, parentTile.get());
     childTile->geometricError = 100.0;
-    RasterMappedToTilesetTile& childMapping =
+    DirectRasterMapping& childMapping =
         childTile->rasterOverlayState.ensureMapping(0);
     childMapping.update(
         childKey,
@@ -471,7 +471,7 @@ TEST(TileCacheMetricsTest, SharedAncestorRasterTextureCountsOnlyOnceGlobally) {
         budget);
 
     ASSERT_EQ(parentRaster, childMapping.getReadyTile());
-    ASSERT_EQ(RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+    ASSERT_EQ(DirectRasterMapping::ReadyTileSource::Ancestor,
               childMapping.getReadyTileSource());
 
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;

@@ -10,7 +10,7 @@
 #include "earth_engine/core/geodesy/WebMercatorProjection.h"
 #include "earth_engine/tiling/SurfaceRasterBinding.h"
 #include "earth_engine/tiling/SurfaceTile.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/RasterOverlayProjection.h"
 #include "earth_engine/tiling/TileChildFrameMaterializer.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
@@ -137,7 +137,7 @@ std::unique_ptr<GltfModel> makeQuadTerrainGltfModel(
     return model;
 }
 
-RasterMappedToTilesetTile& addMoreDetailRasterMapping(
+DirectRasterMapping& addMoreDetailRasterMapping(
     TilesetTile& tile,
     RasterOverlayTileProvider& provider) {
     auto gltfModel = makeQuadTerrainGltfModel(tile.bounds);
@@ -150,7 +150,7 @@ RasterMappedToTilesetTile& addMoreDetailRasterMapping(
 
     auto& mapped = tile.rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
-    const RasterMappedToTilesetTile::MoreDetail firstMoreDetail =
+    const DirectRasterMapping::MoreDetail firstMoreDetail =
         mapped.update(
             tile.key,
             tile.content.renderContent.rasterOverlayDetails(),
@@ -163,7 +163,7 @@ RasterMappedToTilesetTile& addMoreDetailRasterMapping(
     RasterOverlayTile* loadingTile = mapped.getLoadingTile();
     RasterOverlayTile* readyTile = mapped.getReadyTile();
     EXPECT_TRUE(
-        firstMoreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown ||
+        firstMoreDetail == DirectRasterMapping::MoreDetail::Unknown ||
         loadingTile != nullptr ||
         readyTile != nullptr);
     if (loadingTile) {
@@ -180,7 +180,7 @@ RasterMappedToTilesetTile& addMoreDetailRasterMapping(
     }
 
     EXPECT_EQ(
-        RasterMappedToTilesetTile::MoreDetail::Yes,
+        DirectRasterMapping::MoreDetail::Yes,
         mapped.update(
             tile.key,
             tile.content.renderContent.rasterOverlayDetails(),
@@ -1714,7 +1714,7 @@ TEST(TileChildMaterializerTest,
     staleChild->content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     staleChild->content.renderContent.markRenderContentReady();
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         staleChild->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -1737,7 +1737,7 @@ TEST(TileChildMaterializerTest,
         provider,
         &prep,
         missingProjections);
-    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+    ASSERT_EQ(DirectRasterMapping::State::Attached,
               mapped.getState());
     ASSERT_EQ(1, prep.attachCount);
 
@@ -2363,7 +2363,7 @@ TEST(TileRasterUpsampledChildMaterializerTest,
         parent.bounds};
     details->boundingRegion = {parent.bounds, -20.0, 120.0};
 
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         parent.rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -2380,7 +2380,7 @@ TEST(TileRasterUpsampledChildMaterializerTest,
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     EXPECT_EQ(
-        RasterMappedToTilesetTile::MoreDetail::Yes,
+        DirectRasterMapping::MoreDetail::Yes,
         mapped.update(
             parent.key,
             parent.content.renderContent.rasterOverlayDetails(),
@@ -2457,7 +2457,7 @@ TEST(TileChildMaterializerTest,
     sw->content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     sw->content.renderContent.markRenderContentReady();
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         sw->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -2695,7 +2695,7 @@ TEST(TileChildMaterializerTest,
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
     parent.geometricError = 100.0;
     parent.content.renderContent.setTerrainHeightRange(-5.0, 25.0);
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         addMoreDetailRasterMapping(parent, provider);
 
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>> tiles;
@@ -2783,7 +2783,7 @@ TEST(TileChildMaterializerTest,
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     EXPECT_EQ(
-        RasterMappedToTilesetTile::MoreDetail::Yes,
+        DirectRasterMapping::MoreDetail::Yes,
         mapped.update(
             parent.key,
             parent.content.renderContent.rasterOverlayDetails(),
@@ -2824,7 +2824,7 @@ TEST(TileChildMaterializerTest,
         Rectangle::fromDegrees(-20.0, -10.0, 0.0, 10.0));
     parent.geometricError = 100.0;
 
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         addMoreDetailRasterMapping(parent, provider);
     ASSERT_TRUE(mapped.isMoreDetailAvailable());
     ASSERT_TRUE(parent.content.renderContent.hasGltfContent());
@@ -2893,7 +2893,7 @@ TEST(TileChildMaterializerTest,
     auto& mapped = parent.rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     EXPECT_EQ(
-        RasterMappedToTilesetTile::MoreDetail::Unknown,
+        DirectRasterMapping::MoreDetail::Unknown,
         mapped.update(
             parent.key,
             parent.content.renderContent.rasterOverlayDetails(),
@@ -2909,7 +2909,7 @@ TEST(TileChildMaterializerTest,
     loadingTile->setMoreDetailAvailable(
         RasterOverlayTile::MoreDetailAvailable::Yes);
     EXPECT_EQ(
-        RasterMappedToTilesetTile::MoreDetail::Yes,
+        DirectRasterMapping::MoreDetail::Yes,
         mapped.update(
             parent.key,
             parent.content.renderContent.rasterOverlayDetails(),

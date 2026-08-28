@@ -1,8 +1,11 @@
 #include "RasterOverlayRuntime.h"
 
 #include "../layers/ActivatedRasterOverlay.h"
+#include "../layers/RasterOverlay.h"
+#include "../providers/ImageryProvider.h"
 #include "../providers/RasterOverlayTileProvider.h"
 
+#include <algorithm>
 #include <unordered_set>
 #include <utility>
 
@@ -48,6 +51,62 @@ private:
 std::unique_ptr<RasterOverlayBackend> makeDefaultBackend(
     RasterOverlayBackendKind kind) {
     return std::make_unique<ProviderStackRasterOverlayBackend>(kind);
+}
+
+bool samePresentationSnapshot(const RasterOverlayFrameSlot& lhs,
+                              const RasterOverlayFrameSlot& rhs) {
+    return lhs.runtimeSlot == rhs.runtimeSlot &&
+           lhs.overlay == rhs.overlay &&
+           lhs.directProvider == rhs.directProvider &&
+           lhs.pageStoreProvider == rhs.pageStoreProvider &&
+           lhs.visible == rhs.visible &&
+           lhs.opacity == rhs.opacity &&
+           lhs.role == rhs.role &&
+           lhs.priority == rhs.priority &&
+           lhs.fallbackPolicy == rhs.fallbackPolicy &&
+           lhs.blocksCompleteRenderable == rhs.blocksCompleteRenderable &&
+           lhs.projection == rhs.projection &&
+           lhs.providerRevision == rhs.providerRevision;
+}
+
+bool samePresentationSnapshot(
+    const std::vector<RasterOverlayFrameSlot>& lhs,
+    const std::vector<RasterOverlayFrameSlot>& rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        if (!samePresentationSnapshot(lhs[i], rhs[i])) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool samePageSource(const RasterOverlayPageSource& lhs,
+                    const RasterOverlayPageSource& rhs) {
+    return lhs.runtimeSlot == rhs.runtimeSlot &&
+           lhs.provider == rhs.provider &&
+           lhs.opacity == rhs.opacity &&
+           lhs.role == rhs.role &&
+           lhs.priority == rhs.priority &&
+           lhs.fallbackPolicy == rhs.fallbackPolicy &&
+           lhs.blocksCompleteRenderable == rhs.blocksCompleteRenderable &&
+           lhs.projection == rhs.projection &&
+           lhs.providerRevision == rhs.providerRevision;
+}
+
+bool samePageSources(const std::vector<RasterOverlayPageSource>& lhs,
+                     const std::vector<RasterOverlayPageSource>& rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        if (!samePageSource(lhs[i], rhs[i])) {
+            return false;
+        }
+    }
+    return true;
 }
 
 } // namespace
@@ -124,8 +183,12 @@ bool RasterOverlayRuntime::beginFrame(
     RenderDevice* device) {
     const std::vector<ActivatedRasterOverlay*> previousDirect =
         frameContext_.directOverlays_;
-    const std::vector<RasterOverlayTileProvider*> previousPageStore =
-        frameContext_.pageStoreProviders_;
+    const std::vector<RasterOverlayFrameSlot> previousSlots =
+        frameContext_.slots_;
+    const std::vector<RasterOverlayPageSource> previousPageStoreSources =
+        frameContext_.pageStoreSources_;
+    const bool previousPageStoreFallbackParity =
+        frameContext_.pageStoreHasDirectFallbackParity_;
     const uint64_t previousDirectGeneration = directGeneration_;
     const bool directWasDirty = directFrameDirty_;
     const bool hasPublishedDirectGeneration = directGeneration_ != 0;
@@ -150,11 +213,16 @@ bool RasterOverlayRuntime::beginFrame(
     frameContext_.directOverlays_.assign(overlays_.size(), nullptr);
     frameContext_.directProviders_ = direct;
     frameContext_.pageStoreProviders_ = pageStore;
+    frameContext_.pageStoreSources_.clear();
+    frameContext_.pageStoreSources_.reserve(pageStore.size());
 
     std::unordered_set<RasterOverlayTileProvider*> directSet(
         direct.begin(), direct.end());
     std::unordered_set<RasterOverlayTileProvider*> pageStoreSet(
         pageStore.begin(), pageStore.end());
+    std::vector<std::pair<size_t, RasterOverlayTileProvider*>>
+        activeDirectSources;
+    activeDirectSources.reserve(direct.size());
     for (size_t i = 0; i < overlays_.size(); ++i) {
         ActivatedRasterOverlay* overlay = overlays_[i];
         RasterOverlayTileProvider* provider =
@@ -162,14 +230,74 @@ bool RasterOverlayRuntime::beginFrame(
         RasterOverlayFrameSlot& slot = frameContext_.slots_[i];
         slot.runtimeSlot = i;
         slot.overlay = overlay;
+        if (overlay) {
+            const RasterOverlay::Options& options =
+                overlay->getOverlay().getOptions();
+            slot.visible = options.visible;
+            slot.opacity = std::clamp(options.opacity, 0.0f, 1.0f);
+            slot.role = options.role;
+            slot.priority = options.priority;
+            slot.fallbackPolicy = options.fallbackPolicy;
+            slot.blocksCompleteRenderable =
+                options.blocksCompleteRenderable;
+            overlay->publishFramePresentation(
+                slot.visible,
+                slot.opacity,
+                slot.role,
+                slot.priority,
+                slot.fallbackPolicy,
+                slot.blocksCompleteRenderable);
+            slot.projection = overlay->getProjection();
+            slot.providerRevision = provider
+                ? provider->getImageryProvider().contentRevision()
+                : 0;
+        }
         if (provider && directSet.count(provider) != 0) {
             slot.directProvider = provider;
             frameContext_.directOverlays_[i] = overlay;
+            if (slot.visible && slot.opacity > 0.0f) {
+                activeDirectSources.emplace_back(slot.runtimeSlot, provider);
+            }
         }
         if (provider && pageStoreSet.count(provider) != 0) {
             slot.pageStoreProvider = provider;
+            if (slot.visible && slot.opacity > 0.0f) {
+                frameContext_.pageStoreSources_.push_back(
+                    RasterOverlayPageSource{
+                        slot.runtimeSlot,
+                        provider,
+                        slot.opacity,
+                        slot.role,
+                        slot.priority,
+                        slot.fallbackPolicy,
+                        slot.blocksCompleteRenderable,
+                        slot.projection,
+                        slot.providerRevision});
+            }
         }
     }
+
+    frameContext_.pageStoreHasDirectFallbackParity_ =
+        activeDirectSources.size() == frameContext_.pageStoreSources_.size();
+    if (frameContext_.pageStoreHasDirectFallbackParity_) {
+        for (size_t i = 0; i < activeDirectSources.size(); ++i) {
+            const RasterOverlayPageSource& pageSource =
+                frameContext_.pageStoreSources_[i];
+            if (activeDirectSources[i].first != pageSource.runtimeSlot ||
+                activeDirectSources[i].second != pageSource.provider) {
+                frameContext_.pageStoreHasDirectFallbackParity_ = false;
+                break;
+            }
+        }
+    }
+
+    const bool presentationChanged =
+        !samePresentationSnapshot(previousSlots, frameContext_.slots_);
+    const bool pageStoreSourcesChanged =
+        !samePageSources(
+            previousPageStoreSources, frameContext_.pageStoreSources_) ||
+        previousPageStoreFallbackParity !=
+            frameContext_.pageStoreHasDirectFallbackParity_;
 
     if (directFrameDirty_ ||
         previousDirect != frameContext_.directOverlays_) {
@@ -183,18 +311,21 @@ bool RasterOverlayRuntime::beginFrame(
         ++directGeneration_;
         directFrameDirty_ = false;
     }
-    if (pageStoreFrameDirty_ ||
-        previousPageStore != frameContext_.pageStoreProviders_) {
+    if (pageStoreFrameDirty_ || pageStoreSourcesChanged) {
         ++pageStoreGeneration_;
         pageStoreFrameDirty_ = false;
     }
     if (frameContext_.directGeneration_ != directGeneration_ ||
-        frameContext_.pageStoreGeneration_ != pageStoreGeneration_) {
+        frameContext_.pageStoreGeneration_ != pageStoreGeneration_ ||
+        presentationChanged) {
         ++generation_;
     }
     frameContext_.generation_ = generation_;
     frameContext_.directGeneration_ = directGeneration_;
     frameContext_.pageStoreGeneration_ = pageStoreGeneration_;
+    for (RasterOverlayFrameSlot& slot : frameContext_.slots_) {
+        slot.generation = generation_;
+    }
     return previousDirectGeneration != directGeneration_;
 }
 

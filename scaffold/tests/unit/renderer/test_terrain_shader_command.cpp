@@ -4,12 +4,13 @@
 #include "earth_engine/tiling/GltfDrawCommandBuilder.h"
 #include "earth_engine/tiling/GltfRenderGeometryBuilder.h"
 #include "earth_engine/tiling/TilesetTile.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/content/GltfModel.h"
 #include "earth_engine/core/math/Mat4.h"
 
 #include "../../helpers/MockRenderDevice.h"
+#include "../../helpers/RasterOverlayTestFrame.h"
 
 #include <memory>
 #include <string>
@@ -84,7 +85,7 @@ TEST(TerrainShaderCommandTest, MakeTerrainPrimitiveCommandHasCorrectDefaults) {
     EXPECT_EQ((std::array<float, 4>{0.0f, 0.0f, 1.0f, 1.0f}),
               cmd.gltfUniforms.clipUv);
     EXPECT_FLOAT_EQ(0.0f, cmd.gltfUniforms.clipEnabled);
-    EXPECT_FLOAT_EQ(0.0f, cmd.gltfUniforms.mappedRasterTextureCount);
+    EXPECT_FLOAT_EQ(0.0f, cmd.gltfUniforms.directRasterTextureCount);
     // PBR-extension fields still exist in the block but stay at defaults
     // (the "absent from the map" semantics no longer apply).
     EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
@@ -115,12 +116,12 @@ TEST(TerrainShaderCommandTest, TerrainPrimitiveUsesTerrainShaderAndStride) {
         makePrimitive(device, /*terrainVertexFormat=*/true));
     tile.content.renderContent.setGltfResourcesReady(true);
 
-    std::vector<ActivatedRasterOverlay*> overlays;
     RenderCommandList commands;
-    GltfDrawCommandBuildContext context;
+    GltfDrawCommandBuildContext context{
+        earth_engine::testing::emptyRasterOverlayFrame()};
     context.frameNumber = 7;
     context.generation = 3;
-    GltfDrawCommandBuilder::build(renderer, tile, overlays, commands, context);
+    GltfDrawCommandBuilder::build(renderer, tile, commands, context);
 
     ASSERT_EQ(1u, commands.size());
     const RenderCommand& cmd = commands.front();
@@ -149,10 +150,10 @@ TEST(TerrainShaderCommandTest, NonTerrainPrimitiveUsesGltfShaderAndStride) {
         makePrimitive(device, /*terrainVertexFormat=*/false));
     tile.content.renderContent.setGltfResourcesReady(true);
 
-    std::vector<ActivatedRasterOverlay*> overlays;
     RenderCommandList commands;
-    GltfDrawCommandBuildContext context;
-    GltfDrawCommandBuilder::build(renderer, tile, overlays, commands, context);
+    GltfDrawCommandBuildContext context{
+        earth_engine::testing::emptyRasterOverlayFrame()};
+    GltfDrawCommandBuilder::build(renderer, tile, commands, context);
 
     ASSERT_EQ(1u, commands.size());
     const RenderCommand& cmd = commands.front();
@@ -171,7 +172,7 @@ TEST(TerrainShaderCommandTest, TerrainShadersDropPbrExtensionUniforms) {
 
     // Kept: base color, raster overlays, water mask, clip, lighting, opacity.
     EXPECT_NE(std::string::npos, glslF.find("u_baseColor"));
-    EXPECT_NE(std::string::npos, glslF.find("u_mappedRasterTextureCount"));
+    EXPECT_NE(std::string::npos, glslF.find("u_directRasterTextureCount"));
     EXPECT_NE(std::string::npos, glslF.find("u_gltfWaterMaskState"));
     EXPECT_NE(std::string::npos, glslF.find("u_clipEnabled"));
     EXPECT_NE(std::string::npos, glslF.find("u_lightDir"));
@@ -226,10 +227,10 @@ TEST(TerrainShaderCommandTest, TerrainFragmentMslBufferIndicesStayUnderMetalCap)
              "float hasBaseColorTexture;",
              "float alphaMode;",
              "float alphaCutoff;",
-             "float mappedRasterTextureCount;",
-             "packed_float4 mappedRasterTileUV[4];",
-             "float mappedRasterOpacity[4];",
-             "float mappedRasterTexCoordSet[4];",
+             "float directRasterTextureCount;",
+             "packed_float4 directRasterTileUv[4];",
+             "float directRasterOpacity[4];",
+             "float directRasterTexCoordSet[4];",
              "float hasWaterMask;",
              "packed_float4 waterMaskTranslationScale;",
              "packed_float4 waterMaskState;",

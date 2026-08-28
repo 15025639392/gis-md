@@ -6,6 +6,7 @@
 #include "earth_engine/tiling/TilesetTile.h"
 
 #include "../../helpers/MockRenderDevice.h"
+#include "../../helpers/RasterOverlayTestFrame.h"
 
 #include <memory>
 #include <string>
@@ -68,7 +69,12 @@ TEST(
                 TileSelectionReuseMode::Strict,
                 TileSelectionReuseRejectReason::None,
                 true,
-                16.0},
+                16.0,
+                false,
+                16,
+                false,
+                nullptr,
+                earth_engine::testing::emptyRasterOverlayFrame()},
             [&]() { refreshCalled = true; },
             [&](const FrameState&, TileSelectionPerformanceTimings&) {
                 selectCalled = true;
@@ -139,7 +145,12 @@ TEST(
                 TileSelectionReuseMode::Stale,
                 TileSelectionReuseRejectReason::None,
                 true,
-                16.0},
+                16.0,
+                false,
+                16,
+                false,
+                nullptr,
+                earth_engine::testing::emptyRasterOverlayFrame()},
             [&]() { refreshCalled = true; },
             [&](const FrameState&, TileSelectionPerformanceTimings&) {
                 selectCalled = true;
@@ -198,7 +209,12 @@ TEST(
                 TileSelectionReuseMode::None,
                 TileSelectionReuseRejectReason::SelectorMovedStaleDisabled,
                 false,
-                16.0},
+                16.0,
+                false,
+                16,
+                false,
+                nullptr,
+                earth_engine::testing::emptyRasterOverlayFrame()},
             [&]() { refreshCalled = true; },
             [&](const FrameState& selectedFrame,
                 TileSelectionPerformanceTimings& timings) {
@@ -322,7 +338,9 @@ TEST(
                 16.0,
                 true,
                 1,
-                true},
+                true,
+                nullptr,
+                earth_engine::testing::emptyRasterOverlayFrame()},
             [&]() {
                 ++refreshCallCount;
                 refreshSawReadyFill |=
@@ -402,7 +420,9 @@ TEST(
             16.0,
             true,
             1,
-            true},
+            true,
+            nullptr,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         []() {},
         [](const FrameState&, TileSelectionPerformanceTimings&) {},
         [&](const TileKey&) -> TilesetTile* {
@@ -475,7 +495,9 @@ TEST(
             16.0,
             true,
             1,
-            true},
+            true,
+            nullptr,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         [&]() {
             ++refreshCallCount;
             refreshSawReadyFill |=
@@ -556,7 +578,9 @@ TEST(
                 16.0,
                 true,
                 1,
-                true},
+                true,
+                nullptr,
+                earth_engine::testing::emptyRasterOverlayFrame()},
             [&]() { ++refreshCallCount; },
             [](const FrameState&, TileSelectionPerformanceTimings&) {},
             [&](const TileKey& key) -> TilesetTile* {

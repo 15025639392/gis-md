@@ -68,7 +68,7 @@ PageStoreCompatibilityKey = {
 - 允许 source 的内容、`maximumLevel` 和源图尺寸不同；祖先钳制与页内重采样负责吸收这些差异。
 - 不允许 XYZ/TMS、Mercator/Geographic、Standard/GCJ 等 page-facing 语义直接混在一个 group。异构原生 source 必须在 provider adapter 内完成选瓦、重投影和重采样，最终对外声明并输出 canonical page image；MVT drape provider 就属于这种 adapter，而不是 PageStore 自己理解 MVT 原生网格。
 - 当前真实地形 tile 的 scheme 必须与 canonical scheme 相同；一个 PageStore 也不允许多个 canonical domain 并存。
-- 不兼容时整组 PageStore fail-closed，清空 scheme-less 页账本和间接纹理绑定，继续以 `mappedRaster` 为权威回退；不能静默丢掉某个 overlay，因为有序 `alphaOver` 少一层就已改变画面语义。
+- 不兼容时整组 PageStore fail-closed，清空 scheme-less 页账本和间接纹理绑定，继续以 Direct raster mapping/composite 为权威回退；不能静默丢掉某个 overlay，因为有序 `alphaOver` 少一层就已改变画面语义。
 - `packKey(z/x/y)` 只是 canonical domain 内部的紧凑 key，不是跨 scheme 全局身份。provider/domain 变化会推进 `pageDomainGeneration`，影像 compose、场页与 GPU upload 的异步结果都必须匹配该 generation，防止旧回调在相同 `z/x/y + layer` 上串入新 domain。
 
 这条边界与 Cesium 的“geometry scheme 可和单个 overlay provider scheme 不同”不冲突：Cesium 是每个 provider 在自己的 tiling/projection 空间独立建立映射；它没有定义多个异构 provider 直接共用一个 PageStore 页键。本规则是 gis-md 自研 PageStore 的运行期契约。

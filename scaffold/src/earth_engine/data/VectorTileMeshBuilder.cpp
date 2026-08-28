@@ -158,7 +158,7 @@ VectorTileMesh buildVectorTileMesh(const MvtTile& tile, int zoom,
         const double invExtent = 1.0 / static_cast<double>(std::max(1u, layer->extent));
 
         // 层内两遍:先面后线(线压在面上)。与 E4-1 栅格路径同序 —— 两条路径
-        // 必须给出同样的压盖关系,否则 cell 在页存储与 mappedRaster 之间切换时
+        // 必须给出同样的压盖关系,否则 cell 在页存储与 directComposite 之间切换时
         // 画面会跳。
         for (int pass = 0; pass < 2; ++pass) {
             const std::array<uint8_t, 4>& color =

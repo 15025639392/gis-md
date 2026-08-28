@@ -11,7 +11,7 @@
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTile.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/GpuUploadQueue.h"
 #include "earth_engine/tiling/TileBaseCoveragePin.h"
 #include "earth_engine/tiling/TileCacheKey.h"
@@ -716,7 +716,7 @@ TEST(
     std::vector<RasterOverlayProjection> missing;
 
     auto parentTile = std::make_unique<TilesetTile>(parentKey, parentBounds);
-    RasterMappedToTilesetTile& parentMapping =
+    DirectRasterMapping& parentMapping =
         parentTile->rasterOverlayState.ensureMapping(0);
     parentMapping.update(
         parentKey,
@@ -748,7 +748,7 @@ TEST(
     auto childTile =
         std::make_unique<TilesetTile>(childKey, childBounds, parentTile.get());
     childTile->geometricError = 100.0;
-    RasterMappedToTilesetTile& childMapping =
+    DirectRasterMapping& childMapping =
         childTile->rasterOverlayState.ensureMapping(0);
     childMapping.update(
         childKey,
@@ -776,7 +776,7 @@ TEST(
         budget);
 
     ASSERT_EQ(parentRaster, childMapping.getReadyTile());
-    ASSERT_EQ(RasterMappedToTilesetTile::ReadyTileSource::Ancestor,
+    ASSERT_EQ(DirectRasterMapping::ReadyTileSource::Ancestor,
               childMapping.getReadyTileSource());
 
     const std::string parentCacheKey = TileCacheKey::forTile(parentKey);

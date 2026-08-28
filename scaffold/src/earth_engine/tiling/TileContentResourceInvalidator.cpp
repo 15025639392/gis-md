@@ -1,6 +1,6 @@
 #include "TileContentResourceInvalidator.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileCacheKey.h"
 #include "TileContentCacheManager.h"
 #include "TileUnloadPolicy.h"

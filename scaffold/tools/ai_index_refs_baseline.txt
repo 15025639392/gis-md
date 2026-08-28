@@ -15,15 +15,8 @@ AndroidPlatformBridge.cpp:32:-  # JNI 辅助块起点,32 行是空行、真正�
 AndroidPlatformBridge.cpp:60:-  # 函数体内语句 gJvm->AttachCurrentThread —— 已回读,正确
 BoundingCylinderRegion.cpp:79:-  # 构造函数,索引不建范围 —— 已回读,79 行确是 ctor 首行
 CurlMultiRequestScheduler.cpp:207:-  # Impl 构造函数缩进在结构体内,索引不建范围 —— 已回读,207 行确为 explicit Impl 首行
-EarthEngineSdkFacade.cpp:402:-  # 函数体内语句 bingOptions.subdomains —— 已回读,正确
-RasterMappedToTilesetTile.cpp:221:-  # 指向 `// Step 2:` 分段注释,非函数定义 —— 已回读,正确
-RasterMappedToTilesetTile.cpp:371:-  # 同上,指向分段注释 —— 已回读,正确
 Renderer.cpp:4464:-  # 同上,vertexStride=120 —— 已回读,正确
 SkyBox.cpp:45:-  # kSkyBoxStarfieldVert GLSL 字符串常量首行 —— 已回读,正确
-SkyGradient.cpp:125:-  # `// ====` 分节分隔注释 —— 已回读,正确
-SkyGradient.cpp:164:-  # 同上,分节分隔注释 —— 已回读,正确
-SkyGradient.cpp:181:-  # 函数体内 horizMassFactor=38.0 —— 已回读,正确
-SkyGradient.cpp:201:-  # 函数体内 secondaryScattering —— 已回读,正确
 SunDirection.cpp:23:-  # 匿名命名空间常量块,23 行是空行、常量在 20-22 —— 文档给的是块范围,可接受
 TileSelectionTraversalExecutor.cpp:213:-  # 函数体内语句,本行是散文步骤号,无符号可锚
 XYZImageryProvider.cpp:42:-  # logAndroidXyzFailure 定义首行,该名未在文档行里反引号 —— 已回读,正确

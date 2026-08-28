@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/core/resources/FrameResourceBudget.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileLoadDiagnostics.h"
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 #include "earth_engine/tiling/TileLoadQueue.h"

@@ -76,8 +76,8 @@ TilesetProviderDiagnosticsCollector::collect(
             provider->getThrottledTilesCurrentlyLoading();
         snapshot.rasterSourceRequestsInFlight +=
             provider->getActiveRasterSourceRequests();
-        snapshot.rasterActiveMappedSourceSets +=
-            provider->getActiveMappedSourceSetOrderCount();
+        snapshot.rasterActiveDirectCompositeSourceSets +=
+            provider->getActiveDirectCompositeSourceSetOrderCount();
         snapshot.rasterPendingSourceFallbacks +=
             provider->getPendingSourceFallbackCount();
         snapshot.rasterInFlightSourceTiles +=

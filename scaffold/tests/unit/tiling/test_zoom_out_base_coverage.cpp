@@ -35,7 +35,7 @@
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileBaseCoveragePin.h"
 #include "earth_engine/tiling/TileBoundsMetrics.h"
 #include "earth_engine/tiling/TilePlan.h"
@@ -374,7 +374,7 @@ struct ImageryFixture {
         }
     }
 
-    const RasterMappedToTilesetTile* baseImageryMapping(const TileKey& key) {
+    const DirectRasterMapping* baseImageryMapping(const TileKey& key) {
         TilesetTile* t = TilesetTestAccess::findTile(*tileset, key);
         return t ? t->rasterOverlayState.mappingAt(0) : nullptr;
     }
@@ -390,7 +390,7 @@ TEST(ZoomOutBaseCoverage, PinnedPumpDrivesNeverViewedBaseImagery) {
     // The east root was never in the frustum, yet its base imagery mapping is
     // established and an imagery tile is being loaded — only the pump reaches
     // out-of-view tiles (render-set prefetch never would).
-    const RasterMappedToTilesetTile* eastMap = fx.baseImageryMapping(fx.east);
+    const DirectRasterMapping* eastMap = fx.baseImageryMapping(fx.east);
     ASSERT_NE(eastMap, nullptr)
         << "pump must establish never-viewed east's base imagery mapping";
     EXPECT_NE(eastMap->getLoadingTile(), nullptr)

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
 #include "TileRasterOverlayDetailsGenerator.h"
 #include "TilesetTile.h"
@@ -87,7 +87,7 @@ struct TileRasterOverlayMappingPolicy {
         TilesetTile& tile,
         const TileRasterOverlayMappingContext& context,
         RasterOverlayProjection projection,
-        RasterMappedToTilesetTile& mapped,
+        DirectRasterMapping& mapped,
         double maximumScreenSpaceError) {
         const void* detailsPtr = context.overlayDetails;
         if (detailsPtr != nullptr &&

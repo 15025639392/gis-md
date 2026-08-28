@@ -2,6 +2,7 @@
 
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/tiling/TileFrameWorkCoordinator.h"
+#include "../../helpers/RasterOverlayTestFrame.h"
 
 using namespace earth_engine;
 
@@ -67,7 +68,15 @@ TEST(
             20,
             0.0,
             1.25,
-            16.0},
+            16.0,
+            false,
+            60.0,
+            false,
+            16,
+            false,
+            nullptr,
+            false,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         TileFrameWorkState{
             cameraMoving,
             interactionActive,
@@ -162,7 +171,15 @@ TEST(TileFrameWorkCoordinatorTest, StableFrameStrictReusesSelection) {
             20,
             0.0,
             1.25,
-            16.0},
+            16.0,
+            false,
+            60.0,
+            false,
+            16,
+            false,
+            nullptr,
+            false,
+            earth_engine::testing::emptyRasterOverlayFrame()},
         TileFrameWorkState{
             cameraMoving,
             interactionActive,

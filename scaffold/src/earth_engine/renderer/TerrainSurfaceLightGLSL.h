@@ -38,7 +38,7 @@ namespace earth_engine {
 //
 // 参数全显式传入、不读 uniform → 各 shader 的 uniform 命名(u_ambient vs
 // u.ambient)与本函数解耦。
-//   baseRgb : 反照率(影像/底色,含 mappedRaster 合成后)
+//   baseRgb : 反照率(影像/底色,含 directComposite 合成后)
 //   NdotL   : 表面法线·太阳方向(未 clamp,函数内自取受光/方向两分量)
 //   ambient : 天空蓝补光色(u_ambient.rgb / u.ambient.rgb)
 //

@@ -1,7 +1,7 @@
 #include "TileFillProxyPreparer.h"
 
 #include "GltfRenderGeometryBuilder.h"
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TerrainRasterOverlayProjectionResolver.h"
 #include "LoadedTerrainHeightSampler.h"
 #include "TileFillGeometrySignature.h"

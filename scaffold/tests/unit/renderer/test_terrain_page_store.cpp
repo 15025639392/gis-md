@@ -21,6 +21,7 @@
 #include "../../helpers/MockRenderDevice.h"
 
 using namespace earth_engine;
+using earth_engine::testing::DummyTexture;
 using earth_engine::testing::MockRenderDevice;
 
 namespace {
@@ -40,6 +41,36 @@ std::vector<uint8_t> solidPage(int side, uint8_t r, uint8_t g, uint8_t b,
         px[i] = r; px[i + 1] = g; px[i + 2] = b; px[i + 3] = a;
     }
     return px;
+}
+
+std::vector<RasterOverlayPageSource> pageSources(
+    std::initializer_list<RasterOverlayTileProvider*> providers,
+    std::initializer_list<float> opacities = {}) {
+    std::vector<float> opacityValues(opacities);
+    std::vector<RasterOverlayPageSource> result;
+    result.reserve(providers.size());
+    size_t slot = 0;
+    for (RasterOverlayTileProvider* provider : providers) {
+        if (!provider) {
+            ++slot;
+            continue;
+        }
+        const float opacity = slot < opacityValues.size()
+            ? opacityValues[slot]
+            : 1.0f;
+        result.push_back(RasterOverlayPageSource{
+            slot,
+            provider,
+            opacity,
+            RasterOverlayRole::BaseImagery,
+            RasterOverlayPriority::High,
+            RasterOverlayFallbackPolicy::AncestorOrPlaceholder,
+            true,
+            provider->getProjection(),
+            provider->getImageryProvider().contentRevision()});
+        ++slot;
+    }
+    return result;
 }
 
 class PageDomainImageryProvider final : public ImageryProvider {
@@ -141,7 +172,7 @@ private:
 // 这是「页存储改成多源」这次改造的零回归闸:底图独占时画面不能有任何变化。
 TEST(PageSourceAssembler, SingleSourceIsByteIdenticalCopy) {
     PageSourceAssembler asmb;
-    asmb.configure(1, 2);
+    asmb.configure({1.0f}, 2);
     const std::vector<uint8_t> src = solidPage(2, 13, 200, 77, 255);
     EXPECT_TRUE(asmb.accept(0, src.data()));
     EXPECT_TRUE(asmb.hasTexels());
@@ -149,10 +180,33 @@ TEST(PageSourceAssembler, SingleSourceIsByteIdenticalCopy) {
     EXPECT_EQ(asmb.texels(), src);
 }
 
+TEST(PageSourceAssembler, SingleSourceOpacityScalesAlphaOnly) {
+    PageSourceAssembler asmb;
+    asmb.configure(std::vector<float>{0.5f}, 1);
+    const std::vector<uint8_t> src = solidPage(1, 13, 200, 77, 200);
+    ASSERT_TRUE(asmb.accept(0, src.data()));
+    ASSERT_EQ(asmb.texels().size(), 4u);
+    EXPECT_EQ(asmb.texels()[0], 13);
+    EXPECT_EQ(asmb.texels()[1], 200);
+    EXPECT_EQ(asmb.texels()[2], 77);
+    EXPECT_EQ(asmb.texels()[3], 100);
+}
+
+TEST(PageSourceAssembler, AppliesPerSourceOpacityInRuntimeOrder) {
+    PageSourceAssembler asmb;
+    asmb.configure(std::vector<float>{1.0f, 0.25f}, 1);
+    const std::vector<uint8_t> base = solidPage(1, 0, 0, 0, 255);
+    const std::vector<uint8_t> top = solidPage(1, 255, 255, 255, 255);
+    ASSERT_TRUE(asmb.accept(0, base.data()));
+    ASSERT_TRUE(asmb.accept(1, top.data()));
+    EXPECT_NEAR(asmb.texels()[0], 64, 1);
+    EXPECT_EQ(asmb.texels()[3], 255);
+}
+
 // 有序合成:源 1 半透明叠在源 0 上。直通 alpha 的 source-over。
 TEST(PageSourceAssembler, CompositesInSourceOrder) {
     PageSourceAssembler asmb;
-    asmb.configure(2, 1);
+    asmb.configure({1.0f, 1.0f}, 1);
     const std::vector<uint8_t> base = solidPage(1, 0, 0, 0, 255);
     const std::vector<uint8_t> top = solidPage(1, 255, 255, 255, 128);
     ASSERT_TRUE(asmb.accept(0, base.data()));
@@ -169,10 +223,10 @@ TEST(PageSourceAssembler, OrderMattersOpaqueTopWins) {
     const std::vector<uint8_t> black = solidPage(1, 0, 0, 0, 255);
     const std::vector<uint8_t> white = solidPage(1, 255, 255, 255, 255);
     PageSourceAssembler a, b;
-    a.configure(2, 1);
+    a.configure({1.0f, 1.0f}, 1);
     a.accept(0, black.data());
     a.accept(1, white.data());
-    b.configure(2, 1);
+    b.configure({1.0f, 1.0f}, 1);
     b.accept(0, white.data());
     b.accept(1, black.data());
     EXPECT_EQ(a.texels()[0], 255);
@@ -183,7 +237,7 @@ TEST(PageSourceAssembler, OrderMattersOpaqueTopWins) {
 // (否则矢量层比底图先到就会把底图叠在自己上面 → 矢量被盖掉。)
 TEST(PageSourceAssembler, OutOfOrderArrivalIsStashedThenDrained) {
     PageSourceAssembler asmb;
-    asmb.configure(2, 1);
+    asmb.configure({1.0f, 1.0f}, 1);
     const std::vector<uint8_t> base = solidPage(1, 0, 0, 0, 255);
     const std::vector<uint8_t> top = solidPage(1, 255, 255, 255, 255);
     EXPECT_FALSE(asmb.accept(1, top.data())) << "源1先到 → 暂存,不该上传";
@@ -193,10 +247,11 @@ TEST(PageSourceAssembler, OutOfOrderArrivalIsStashedThenDrained) {
     EXPECT_EQ(asmb.texels()[0], 255) << "最终结果与顺序到达一致";
 }
 
-// 部分到达先点亮:源 0 到了就该上传(hasTexels),不等最慢的源。
+// 部分到达可先产出上传快照，但 PageStore 的显示闸必须继续保持 miss，直到
+// 完整 source stack 到齐；否则不透明底图会提前盖住 Direct 上尚未到页的注记。
 TEST(PageSourceAssembler, PartialArrivalUploadsEarly) {
     PageSourceAssembler asmb;
-    asmb.configure(3, 1);
+    asmb.configure({1.0f, 1.0f, 1.0f}, 1);
     const std::vector<uint8_t> base = solidPage(1, 10, 20, 30, 255);
     EXPECT_TRUE(asmb.accept(0, base.data()));
     EXPECT_TRUE(asmb.hasTexels());
@@ -208,7 +263,7 @@ TEST(PageSourceAssembler, PartialArrivalUploadsEarly) {
 // 半透明源越叠越浓),且不浪费本帧上传预算。
 TEST(PageSourceAssembler, DuplicateArrivalIsIdempotent) {
     PageSourceAssembler asmb;
-    asmb.configure(2, 1);
+    asmb.configure({1.0f, 1.0f}, 1);
     const std::vector<uint8_t> base = solidPage(1, 0, 0, 0, 255);
     const std::vector<uint8_t> top = solidPage(1, 255, 255, 255, 128);
     ASSERT_TRUE(asmb.accept(0, base.data()));
@@ -220,10 +275,10 @@ TEST(PageSourceAssembler, DuplicateArrivalIsIdempotent) {
 }
 
 // 全源到齐后释放缓冲 → 稳态零额外内存;但已合成的事实不能丢
-// (determination 靠 hasTexels 判 cell resident,释放后判错就整片回落 mappedRaster)。
+// (determination 靠 hasTexels 判 cell resident,释放后判错就整片回落 directComposite)。
 TEST(PageSourceAssembler, ReleaseBuffersKeepsProgressFlags) {
     PageSourceAssembler asmb;
-    asmb.configure(1, 4);
+    asmb.configure({1.0f}, 4);
     const std::vector<uint8_t> src = solidPage(4, 1, 2, 3, 4);
     ASSERT_TRUE(asmb.accept(0, src.data()));
     asmb.releaseBuffers();
@@ -239,7 +294,7 @@ TEST(PageSourceAssembler, RejectsInvalidInput) {
     EXPECT_FALSE(unconfigured.accept(0, src.data()));
 
     PageSourceAssembler asmb;
-    asmb.configure(2, 1);
+    asmb.configure({1.0f, 1.0f}, 1);
     EXPECT_FALSE(asmb.accept(-1, src.data()));
     EXPECT_FALSE(asmb.accept(2, src.data()));
     EXPECT_FALSE(asmb.accept(0, nullptr));
@@ -249,7 +304,7 @@ TEST(PageSourceAssembler, RejectsInvalidInput) {
 // 全透明源叠在全透明上 → 仍全透明,且 rgb 确定(不能因除零出 NaN/垃圾)。
 TEST(PageSourceAssembler, TransparentOverTransparentStaysZero) {
     PageSourceAssembler asmb;
-    asmb.configure(2, 1);
+    asmb.configure({1.0f, 1.0f}, 1);
     const std::vector<uint8_t> empty = solidPage(1, 200, 200, 200, 0);
     ASSERT_TRUE(asmb.accept(0, empty.data()));
     ASSERT_TRUE(asmb.accept(1, empty.data()));
@@ -466,7 +521,7 @@ TEST(TerrainPageLayerPool, RefusesEvictionWhenAllTouchedThisFrame) {
     uint64_t ev = 0;
     pool.acquire(10, /*frame=*/7, &ev);  // 本帧
     pool.acquire(11, /*frame=*/7, &ev);  // 本帧
-    // 第三个瓦片同帧:两块都是本帧可见 → 不淘汰,返回 -1(调用方回落 mappedRaster)。
+    // 第三个瓦片同帧:两块都是本帧可见 → 不淘汰,返回 -1(调用方回落 directComposite)。
     const int base = pool.acquire(12, 7, &ev).slot;
     EXPECT_EQ(base, -1);
     EXPECT_EQ(ev, 0u);
@@ -486,6 +541,234 @@ TEST(TerrainPageLayerPool, ReleaseFreesBlockForReuse) {
     EXPECT_EQ(reused, b0);
     EXPECT_EQ(ev, 0u);
     pool.release(999);  // 不存在 → no-op
+}
+
+TEST(TerrainPageLayerPool, PendingUseCannotBeEvicted) {
+    TerrainPageLayerPool pool = makePool(/*blockCount=*/1, /*blockLayers=*/16);
+    uint64_t ev = 0;
+    const auto visible = pool.acquire(/*key=*/10, /*frame=*/1, &ev);
+    ASSERT_TRUE(visible.valid());
+    pool.markSlotPendingUse(visible.slot);
+
+    const auto denied = pool.acquire(/*key=*/11, /*frame=*/2, &ev);
+
+    EXPECT_FALSE(denied.valid());
+    EXPECT_EQ(ev, 0u);
+    EXPECT_EQ(pool.layerBaseFor(10), visible.slot);
+    EXPECT_TRUE(pool.current(visible));
+}
+
+TEST(TerrainPageLayerPool,
+     SubmittedUseCannotBeReusedUntilCompletionThenCanBeEvicted) {
+    TerrainPageLayerPool pool = makePool(/*blockCount=*/1, /*blockLayers=*/16);
+    uint64_t ev = 0;
+    const auto submitted = pool.acquire(/*key=*/10, /*frame=*/1, &ev);
+    ASSERT_TRUE(submitted.valid());
+    pool.markSlotPendingUse(submitted.slot);
+    pool.publishPendingUses(/*submittedSerial=*/7);
+
+    EXPECT_FALSE(pool.acquire(/*key=*/11, /*frame=*/2, &ev).valid());
+    EXPECT_EQ(ev, 0u);
+    pool.setCompletedSerial(/*completedSerial=*/6);
+    EXPECT_FALSE(pool.acquire(/*key=*/11, /*frame=*/2, &ev).valid());
+    EXPECT_EQ(pool.layerBaseFor(10), submitted.slot);
+
+    pool.setCompletedSerial(/*completedSerial=*/7);
+    const auto reused = pool.acquire(/*key=*/11, /*frame=*/2, &ev);
+    EXPECT_TRUE(reused.valid());
+    EXPECT_EQ(reused.slot, submitted.slot);
+    EXPECT_EQ(ev, 10u);
+    EXPECT_FALSE(pool.current(submitted));
+}
+
+TEST(TerrainPageLayerPool, ReleaseRetiresInFlightSlotUntilCompletion) {
+    TerrainPageLayerPool pool = makePool(/*blockCount=*/1, /*blockLayers=*/16);
+    uint64_t ev = 0;
+    const auto submitted = pool.acquire(/*key=*/10, /*frame=*/1, &ev);
+    ASSERT_TRUE(submitted.valid());
+    pool.markSlotPendingUse(submitted.slot);
+    pool.publishPendingUses(/*submittedSerial=*/9);
+
+    pool.release(/*key=*/10);
+
+    EXPECT_EQ(pool.layerBaseFor(10), -1);
+    EXPECT_EQ(pool.residentCount(), 0);
+    EXPECT_FALSE(pool.current(submitted));
+    EXPECT_FALSE(pool.acquire(/*key=*/11, /*frame=*/2, &ev).valid());
+    EXPECT_EQ(ev, 0u);
+
+    pool.setCompletedSerial(/*completedSerial=*/9);
+    const auto reused = pool.acquire(/*key=*/11, /*frame=*/2, &ev);
+    EXPECT_TRUE(reused.valid());
+    EXPECT_EQ(reused.slot, submitted.slot);
+    EXPECT_EQ(ev, 0u);
+}
+
+TEST(TerrainPageLayerPool, RetireAllDelaysPhysicalReuseUntilCompletion) {
+    TerrainPageLayerPool pool = makePool(/*blockCount=*/2, /*blockLayers=*/16);
+    uint64_t ev = 0;
+    const auto first = pool.acquire(/*key=*/10, /*frame=*/1, &ev);
+    const auto second = pool.acquire(/*key=*/11, /*frame=*/1, &ev);
+    ASSERT_TRUE(first.valid());
+    ASSERT_TRUE(second.valid());
+    pool.markSlotPendingUse(first.slot);
+    pool.markSlotPendingUse(second.slot);
+    pool.publishPendingUses(/*submittedSerial=*/12);
+
+    pool.retireAll(/*completedSerial=*/11);
+
+    EXPECT_EQ(pool.residentCount(), 0);
+    EXPECT_EQ(pool.layerBaseFor(10), -1);
+    EXPECT_EQ(pool.layerBaseFor(11), -1);
+    EXPECT_FALSE(pool.current(first));
+    EXPECT_FALSE(pool.current(second));
+    EXPECT_FALSE(pool.acquire(/*key=*/20, /*frame=*/2, &ev).valid());
+
+    pool.setCompletedSerial(/*completedSerial=*/12);
+    const auto reused = pool.acquire(/*key=*/20, /*frame=*/2, &ev);
+    EXPECT_TRUE(reused.valid());
+    EXPECT_EQ(reused.slot, first.slot);
+    EXPECT_EQ(ev, 0u);
+}
+
+TEST(TerrainPageLayerPool, AcquireReplacementPublishesNewSlotAndRetiresOld) {
+    TerrainPageLayerPool pool = makePool(/*blockCount=*/2, /*blockLayers=*/16);
+    uint64_t ev = 0;
+    const auto original = pool.acquire(/*key=*/10, /*frame=*/1, &ev);
+    ASSERT_TRUE(original.valid());
+    pool.markSlotPendingUse(original.slot);
+    pool.publishPendingUses(/*submittedSerial=*/15);
+
+    int retiredSlot = -1;
+    const auto replacement = pool.acquireReplacement(
+        /*key=*/10, /*frame=*/2, &ev, &retiredSlot);
+
+    ASSERT_TRUE(replacement.valid());
+    EXPECT_NE(replacement.slot, original.slot);
+    EXPECT_EQ(retiredSlot, original.slot);
+    EXPECT_EQ(ev, 0u);
+    EXPECT_EQ(pool.layerBaseFor(10), replacement.slot);
+    EXPECT_FALSE(pool.current(original));
+    EXPECT_TRUE(pool.current(replacement));
+
+    // replacement 是本帧映射，旧槽仍被 serial 15 占用；此时没有安全槽。
+    EXPECT_FALSE(pool.acquire(/*key=*/11, /*frame=*/2, &ev).valid());
+    pool.setCompletedSerial(/*completedSerial=*/15);
+    const auto newPage = pool.acquire(/*key=*/11, /*frame=*/3, &ev);
+    EXPECT_TRUE(newPage.valid());
+    EXPECT_EQ(newPage.slot, original.slot);
+    EXPECT_EQ(ev, 0u);
+    EXPECT_EQ(pool.layerBaseFor(10), replacement.slot);
+}
+
+TEST(TerrainPageLayerPool,
+     AcquireReplacementWithoutSafeSlotReturnsInvalidAndKeepsOriginal) {
+    TerrainPageLayerPool pool = makePool(/*blockCount=*/1, /*blockLayers=*/16);
+    uint64_t ev = 123;
+    const auto original = pool.acquire(/*key=*/10, /*frame=*/1, &ev);
+    ASSERT_TRUE(original.valid());
+
+    int retiredSlot = 123;
+    const auto denied = pool.acquireReplacement(
+        /*key=*/10, /*frame=*/2, &ev, &retiredSlot);
+
+    EXPECT_FALSE(denied.valid());
+    EXPECT_EQ(ev, 0u);
+    EXPECT_EQ(retiredSlot, -1);
+    EXPECT_EQ(pool.layerBaseFor(10), original.slot);
+    EXPECT_EQ(pool.residentCount(), 1);
+    EXPECT_TRUE(pool.current(original));
+}
+
+TEST(TerrainPageLayerPool,
+     AcquireStagingKeepsPublishedMappingCurrentUntilReplacement) {
+    TerrainPageLayerPool pool = makePool(/*blockCount=*/2, /*blockLayers=*/16);
+    uint64_t ev = 0;
+    const auto published = pool.acquire(/*key=*/10, /*frame=*/1, &ev);
+    ASSERT_TRUE(published.valid());
+
+    // A free physical block is used for the unpublished upload. The old
+    // published mapping must remain current while those pixels are staged.
+    constexpr uint64_t stagingKey = UINT64_C(0xF00000000000000A);
+    const auto staging = pool.acquireStaging(
+        stagingKey,
+        /*publishedKey=*/10, /*frame=*/2, &ev);
+
+    ASSERT_TRUE(staging.valid());
+    EXPECT_NE(staging.slot, published.slot);
+    EXPECT_EQ(ev, 0u);
+    EXPECT_TRUE(pool.current(published));
+    EXPECT_TRUE(pool.current(staging));
+    EXPECT_EQ(pool.layerBaseFor(10), published.slot);
+
+    // Mark the upload as in-flight before publishing the staging key. This
+    // models an asynchronous PBO/command upload, not just a CPU copy.
+    pool.markSlotPendingUse(staging.slot);
+    EXPECT_TRUE(pool.current(published));
+    EXPECT_EQ(pool.layerBaseFor(10), published.slot);
+    int retiredSlot = -1;
+    ASSERT_TRUE(pool.replaceKey(
+        stagingKey, /*key=*/10, &retiredSlot));
+
+    EXPECT_EQ(retiredSlot, published.slot);
+    EXPECT_FALSE(pool.current(published));
+    EXPECT_TRUE(pool.current(staging));
+    EXPECT_EQ(pool.layerBaseFor(stagingKey), -1);
+    EXPECT_EQ(pool.layerBaseFor(10), staging.slot);
+}
+
+TEST(TerrainPageLayerPool,
+     ReplaceKeyRetiresPublishedMappingAndPreservesStagingPixels) {
+    TerrainPageLayerPool pool = makePool(/*blockCount=*/2, /*blockLayers=*/16);
+    uint64_t ev = 0;
+    const auto published = pool.acquire(/*key=*/10, /*frame=*/1, &ev);
+    ASSERT_TRUE(published.valid());
+    pool.markSlotPendingUse(published.slot);
+    pool.publishPendingUses(/*submittedSerial=*/21);
+
+    constexpr uint64_t stagingKey = UINT64_C(0xF00000000000000A);
+    const auto staging = pool.acquireStaging(
+        stagingKey, /*publishedKey=*/10, /*frame=*/2, &ev);
+    ASSERT_TRUE(staging.valid());
+    pool.markSlotPendingUse(staging.slot);
+
+    int retiredSlot = -1;
+    ASSERT_TRUE(pool.replaceKey(stagingKey, /*key=*/10, &retiredSlot));
+
+    EXPECT_EQ(retiredSlot, published.slot);
+    EXPECT_FALSE(pool.current(published));
+    EXPECT_TRUE(pool.current(staging));
+    EXPECT_EQ(pool.layerBaseFor(10), staging.slot);
+    EXPECT_EQ(pool.residentCount(), 1);
+
+    // The old published slice is still protected by serial 21; only the
+    // staging slice is now addressable through the published key.
+    EXPECT_FALSE(pool.acquire(/*key=*/30, /*frame=*/2, &ev).valid());
+    pool.setCompletedSerial(/*completedSerial=*/21);
+    const auto reused = pool.acquire(/*key=*/30, /*frame=*/3, &ev);
+    EXPECT_TRUE(reused.valid());
+    EXPECT_EQ(reused.slot, published.slot);
+    EXPECT_EQ(ev, 0u);
+    EXPECT_EQ(pool.layerBaseFor(10), staging.slot);
+}
+
+TEST(TerrainPageLayerPool,
+     AcquireStagingWithoutSafeSlotLeavesPublishedMappingUntouched) {
+    TerrainPageLayerPool pool = makePool(/*blockCount=*/1, /*blockLayers=*/16);
+    uint64_t ev = 123;
+    const auto published = pool.acquire(/*key=*/10, /*frame=*/1, &ev);
+    ASSERT_TRUE(published.valid());
+
+    constexpr uint64_t stagingKey = UINT64_C(0xF00000000000000A);
+    const auto denied = pool.acquireStaging(
+        stagingKey, /*publishedKey=*/10, /*frame=*/2, &ev);
+
+    EXPECT_FALSE(denied.valid());
+    EXPECT_EQ(ev, 0u);
+    EXPECT_TRUE(pool.current(published));
+    EXPECT_EQ(pool.layerBaseFor(10), published.slot);
+    EXPECT_EQ(pool.layerBaseFor(stagingKey), -1);
+    EXPECT_EQ(pool.residentCount(), 1);
 }
 
 // B2b 页粒度:blockLayers=1 → layerBase == slot index(每页一层)。LRU 逐页淘汰。
@@ -613,9 +896,721 @@ TEST(TerrainPageStore, InitializeCreatesSharedArrayTexture) {
     EXPECT_EQ(store.uploadedLayerTotal(), 0);
 }
 
+TEST(RenderDeviceSerial, MockPublishesAndControlsFrameCompletion) {
+    MockRenderDevice device;
+    device.autoAdvanceCompletion = false;
+    EXPECT_EQ(device.submittedSerial(), 0u);
+    EXPECT_EQ(device.completedSerial(), 0u);
+
+    device.beginFrame();
+    device.endFrame();
+    EXPECT_EQ(device.submittedSerial(), 1u);
+    EXPECT_EQ(device.completedSerial(), 0u);
+
+    device.completeThrough(1);
+    EXPECT_EQ(device.completedSerial(), 1u);
+}
+
+TEST(TerrainPageStoreGpuLifetime,
+     SubmittedPageLayerIsReclaimedOnlyAfterBackendCompletionSync) {
+    MockRenderDevice device;
+    device.autoAdvanceCompletion = false;
+    device.textureRegionUploadSucceeds = true;
+
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 1;
+    cfg.pageSizeTexels = 4;
+    cfg.maxUploadsPerFrame = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(
+        scheme->id(), /*maxZoom=*/2, /*tileSize=*/4);
+    imagery.returnImage = true;
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+
+    const TileKey tileKey{scheme->id(), 0, 0, 0};
+    TilesetTile terrainTile(tileKey, scheme->tileToRectangle(tileKey));
+    terrainTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    terrainTile.selectionFrameState.screenSpaceError = 0.0;
+    std::vector<TilesetTile*> visible{&terrainTile};
+    SelectorView view;
+
+    store.updateVisiblePages(
+        view, visible, pageSources({&tiles}), 16.0);
+    ASSERT_EQ(store.residentPageCount(), 1);
+    store.tick();
+    ASSERT_EQ(store.uploadedLayerTotal(), 1);
+
+    // The upload marks the image slice pending. A real endFrame issues the
+    // serial, and PageStore associates all pending slices with that serial.
+    device.beginFrame();
+    device.endFrame();
+    ASSERT_EQ(device.submittedSerial(), 1u);
+    ASSERT_EQ(device.completedSerial(), 0u);
+    store.onFrameSubmitted(device.submittedSerial());
+
+    // Domain reset removes the logical mapping but must retire, not recycle,
+    // the sole physical image layer while serial 1 is incomplete.
+    store.debugResetPageDomainForTest();
+    EXPECT_EQ(store.residentPageCount(), 0);
+    view.position = Vec3(1.0, 0.0, 0.0);
+    store.updateVisiblePages(
+        view, visible, pageSources({&tiles}), 16.0);
+    EXPECT_EQ(store.residentPageCount(), 0);
+
+    // Pulling the backend completion frontier into PageStore reclaims the
+    // retired slice; the next determination can allocate it again.
+    device.completeThrough(1);
+    store.synchronizeGpuCompletion();
+    view.position = Vec3(2.0, 0.0, 0.0);
+    store.updateVisiblePages(
+        view, visible, pageSources({&tiles}), 16.0);
+    EXPECT_EQ(store.residentPageCount(), 1);
+}
+
+TEST(TerrainPageStoreGpuLifetime,
+     HeldPresentationKeepsPendingUploadPinnedUntilARealSubmissionCompletes) {
+    MockRenderDevice device;
+    device.autoAdvanceCompletion = false;
+    device.textureRegionUploadSucceeds = true;
+
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 1;
+    cfg.pageSizeTexels = 4;
+    cfg.maxUploadsPerFrame = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(
+        scheme->id(), /*maxZoom=*/0, /*tileSize=*/4);
+    imagery.returnImage = true;
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    const TileKey tileKey{scheme->id(), 0, 0, 0};
+    const uint64_t pageKey = TerrainPageStore::packKeyForTest(tileKey);
+    TilesetTile terrainTile(tileKey, scheme->tileToRectangle(tileKey));
+    terrainTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    terrainTile.selectionFrameState.screenSpaceError = 0.0;
+    std::vector<TilesetTile*> visible{&terrainTile};
+    SelectorView view;
+
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    store.tick();
+    ASSERT_EQ(store.uploadedLayerTotal(), 1);
+    ASSERT_EQ(store.debugPageLayerForTest(pageKey), 0);
+
+    // A held presentation frame performs PageStore work but has no endFrame,
+    // so this successful upload remains pending rather than acquiring a fake
+    // logical-frame serial. Rebaking cannot overwrite the sole slice.
+    store.invalidateComposedPages();
+    view.position = Vec3(1.0, 0.0, 0.0);
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    store.tick();
+    EXPECT_EQ(store.uploadedLayerTotal(), 1);
+    EXPECT_EQ(store.debugPageLayerForTest(pageKey), 0);
+
+    // The next actual presentation publishes both the held upload and the
+    // retained draw/write references. Completion, not frame count, unlocks
+    // the in-place rewrite.
+    device.beginFrame();
+    device.endFrame();
+    store.onFrameSubmitted(device.submittedSerial());
+    store.tick();
+    EXPECT_EQ(store.uploadedLayerTotal(), 1);
+
+    device.completeThrough(1);
+    store.synchronizeGpuCompletion();
+    store.tick();
+    EXPECT_EQ(store.uploadedLayerTotal(), 2);
+    EXPECT_EQ(store.debugPageLayerForTest(pageKey), 0);
+}
+
+TEST(TerrainPageStoreGpuLifetime,
+     ImageAndIndirectionRebakeUseCopyOnWriteBeforeCompletion) {
+    MockRenderDevice device;
+    device.autoAdvanceCompletion = false;
+    device.textureRegionUploadSucceeds = true;
+
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 2;
+    cfg.pageSizeTexels = 4;
+    cfg.maxUploadsPerFrame = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(
+        scheme->id(), /*maxZoom=*/0, /*tileSize=*/4);
+    imagery.returnImage = true;
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    const TileKey tileKey{scheme->id(), 0, 0, 0};
+    const uint64_t packed = TerrainPageStore::packKeyForTest(tileKey);
+    TilesetTile terrainTile(tileKey, scheme->tileToRectangle(tileKey));
+    terrainTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    terrainTile.selectionFrameState.screenSpaceError = 0.0;
+    std::vector<TilesetTile*> visible{&terrainTile};
+    SelectorView view;
+
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    store.tick();
+    view.position = Vec3(1.0, 0.0, 0.0);
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    const int oldPageLayer = store.debugPageLayerForTest(packed);
+    const int oldIndirectionLayer = store.debugIndirectionLayerForTest(packed);
+    ASSERT_GE(oldPageLayer, 0);
+    ASSERT_GE(oldIndirectionLayer, 0);
+    const TerrainPageStore::RasterStackBinding initialBinding =
+        store.resolveTerrainBinding(terrainTile);
+    EXPECT_TRUE(initialBinding.resolution.compatible);
+    EXPECT_TRUE(initialBinding.resolution.attached);
+    EXPECT_TRUE(initialBinding.resolution.drawable);
+    EXPECT_FALSE(initialBinding.resolution.fallbackRequired);
+    EXPECT_TRUE(initialBinding.resolution.fullyResident);
+    EXPECT_EQ(initialBinding.resolution.coverage, RasterStackCoverage::Full);
+    EXPECT_EQ(initialBinding.resolution.sourceCount, 1u);
+    EXPECT_EQ(initialBinding.sample.imageArray, store.arrayTexture());
+    EXPECT_EQ(initialBinding.sample.indirectionLayer, oldIndirectionLayer);
+
+    RenderCommand command;
+    command.terrainRenderContent = true;
+    command.terrainSurfaceSource = TerrainSurfaceCommandSource::RealTerrain;
+    store.applyToTerrainCommand(command, terrainTile);
+    ASSERT_FLOAT_EQ(command.gltfUniforms.pageStoreParams[0], 1.0f);
+    device.beginFrame();
+    device.endFrame();
+    store.onFrameSubmitted(device.submittedSerial());
+    ASSERT_EQ(device.completedSerial(), 0u);
+
+    store.invalidateComposedPages();
+    view.position = Vec3(2.0, 0.0, 0.0);
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    store.tick();
+    const int newPageLayer = store.debugPageLayerForTest(packed);
+    ASSERT_GE(newPageLayer, 0);
+    EXPECT_NE(newPageLayer, oldPageLayer);
+
+    // Publishing the new image-layer id changes indirection content. Its
+    // previous physical layer is also serial 1 in-flight and must be replaced.
+    view.position = Vec3(3.0, 0.0, 0.0);
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    const int newIndirectionLayer = store.debugIndirectionLayerForTest(packed);
+    ASSERT_GE(newIndirectionLayer, 0);
+    EXPECT_NE(newIndirectionLayer, oldIndirectionLayer);
+}
+
+TEST(TerrainPageStoreGpuLifetime,
+     FieldRebakeUsesCopyOnWriteBeforeCompletion) {
+    MockRenderDevice device;
+    device.autoAdvanceCompletion = false;
+    device.textureRegionUploadSucceeds = true;
+
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 2;
+    cfg.maxFieldPages = 2;
+    cfg.pageSizeTexels = 4;
+    cfg.maxUploadsPerFrame = 4;
+    cfg.roadFieldMaxZoom = 0;
+    cfg.roadFieldRequest = [](const TileKey&, CancellationToken,
+                              std::function<void(std::vector<uint8_t>)> cb) {
+        cb(std::vector<uint8_t>(4u * 4u * 4u, 255u));
+    };
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(
+        scheme->id(), /*maxZoom=*/2, /*tileSize=*/4);
+    imagery.returnImage = true;
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    const TileKey tileKey{scheme->id(), 2, 0, 0};
+    const TileKey fieldKey{scheme->id(), 0, 0, 0};
+    const uint64_t fieldPacked =
+        TerrainPageStore::packKeyForTest(fieldKey);
+    TilesetTile terrainTile(tileKey, scheme->tileToRectangle(tileKey));
+    terrainTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    terrainTile.selectionFrameState.screenSpaceError = 0.0;
+    std::vector<TilesetTile*> visible{&terrainTile};
+    SelectorView view;
+
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    store.tick();
+    view.position = Vec3(1.0, 0.0, 0.0);
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    const int oldFieldLayer = store.debugFieldLayerForTest(fieldPacked);
+    ASSERT_GE(oldFieldLayer, 0);
+
+    RenderCommand command;
+    command.terrainRenderContent = true;
+    command.terrainSurfaceSource = TerrainSurfaceCommandSource::RealTerrain;
+    store.applyToTerrainCommand(command, terrainTile);
+    device.beginFrame();
+    device.endFrame();
+    store.onFrameSubmitted(device.submittedSerial());
+
+    store.invalidateFieldPages();
+    store.tick();
+    const int newFieldLayer = store.debugFieldLayerForTest(fieldPacked);
+    ASSERT_GE(newFieldLayer, 0);
+    EXPECT_NE(newFieldLayer, oldFieldLayer);
+}
+
+TEST(TerrainPageStoreGpuLifetime,
+     PartialIndirectionUploadFailureDoesNotImmediatelyReuseGpuSlice) {
+    MockRenderDevice device;
+    device.autoAdvanceCompletion = false;
+    device.textureRegionUploadScript = {true, false, true, true};
+
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 2;
+    cfg.maxFieldPages = 2;
+    cfg.pageSizeTexels = 4;
+    cfg.roadFieldMaxZoom = 0;
+    cfg.roadFieldRequest = [](const TileKey&, CancellationToken,
+                              std::function<void(std::vector<uint8_t>)> cb) {
+        cb(std::vector<uint8_t>(4u * 4u * 4u, 255u));
+    };
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(
+        scheme->id(), /*maxZoom=*/0, /*tileSize=*/4);
+    imagery.returnImage = true;
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    const TileKey tileKey{scheme->id(), 0, 0, 0};
+    const uint64_t packed = TerrainPageStore::packKeyForTest(tileKey);
+    TilesetTile terrainTile(tileKey, scheme->tileToRectangle(tileKey));
+    terrainTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    terrainTile.selectionFrameState.screenSpaceError = 0.0;
+    std::vector<TilesetTile*> visible{&terrainTile};
+    SelectorView view;
+
+    // Image indirection reaches slice 0, then the companion field upload
+    // fails. Even without an endFrame/submission, slice 0 may still be in a
+    // GLES PBO transfer and must retire instead of returning to the free list.
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    EXPECT_EQ(store.debugIndirectionLayerForTest(packed), -1);
+    ASSERT_EQ(device.textureRegionUpdateLayers.size(), 2u);
+    EXPECT_EQ(device.textureRegionUpdateLayers[0], 0);
+    EXPECT_EQ(device.textureRegionUpdateLayers[1], 0);
+
+    view.position = Vec3(1.0, 0.0, 0.0);
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    ASSERT_EQ(device.textureRegionUpdateLayers.size(), 4u);
+    EXPECT_EQ(device.textureRegionUpdateLayers[2], 1);
+    EXPECT_EQ(device.textureRegionUpdateLayers[3], 1);
+    EXPECT_EQ(store.debugIndirectionLayerForTest(packed), 1);
+}
+
+TEST(TerrainPageStoreFallback,
+     UploadFailureKeepsDirectPresentationUntilPageStoreCanPublish) {
+    MockRenderDevice device;
+    device.textureRegionUploadSucceeds = false;
+
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 2;
+    cfg.pageSizeTexels = 4;
+    cfg.maxUploadsPerFrame = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(
+        scheme->id(), /*maxZoom=*/0, /*tileSize=*/4);
+    imagery.returnImage = true;
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    const TileKey tileKey{scheme->id(), 0, 0, 0};
+    TilesetTile terrainTile(tileKey, scheme->tileToRectangle(tileKey));
+    terrainTile.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::HeightmapTerrain);
+    terrainTile.selectionFrameState.screenSpaceError = 0.0;
+    std::vector<TilesetTile*> visible{&terrainTile};
+    SelectorView view;
+
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    store.tick();
+    EXPECT_EQ(store.uploadedLayerTotal(), 0);
+    const TerrainPageStore::RasterStackBinding missed =
+        store.resolveTerrainBinding(terrainTile);
+    EXPECT_TRUE(missed.resolution.compatible);
+    EXPECT_FALSE(missed.resolution.attached);
+    EXPECT_FALSE(missed.resolution.drawable);
+    EXPECT_TRUE(missed.resolution.fallbackRequired);
+    EXPECT_EQ(missed.resolution.coverage, RasterStackCoverage::None);
+
+    DummyTexture directTexture(1, 1);
+    RenderCommand fallback;
+    fallback.terrainRenderContent = true;
+    fallback.terrainSurfaceSource = TerrainSurfaceCommandSource::RealTerrain;
+    fallback.textures.resize(kGltfRasterOverlayTextureBase + 1u, nullptr);
+    fallback.textures[kGltfRasterOverlayTextureBase] = &directTexture;
+    fallback.gltfRasterOverlayTextureCount = 1;
+    store.applyToTerrainCommand(fallback, terrainTile);
+    EXPECT_FLOAT_EQ(fallback.gltfUniforms.pageStoreParams[0], 0.0f);
+    EXPECT_EQ(fallback.gltfRasterOverlayTextureCount, 1);
+    EXPECT_EQ(fallback.textures[kGltfRasterOverlayTextureBase], &directTexture);
+
+    device.textureRegionUploadSucceeds = true;
+    store.tick();
+    view.position = Vec3(1.0, 0.0, 0.0);
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    RenderCommand resident;
+    resident.terrainRenderContent = true;
+    resident.terrainSurfaceSource = TerrainSurfaceCommandSource::RealTerrain;
+    store.applyToTerrainCommand(resident, terrainTile);
+    EXPECT_FLOAT_EQ(resident.gltfUniforms.pageStoreParams[0], 1.0f);
+}
+
+TEST(TerrainPageStoreFallback,
+     TerminalAndMalformedSourcesRemoveUnpublishablePages) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 2;
+    cfg.pageSizeTexels = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id(), 0, 4);
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    SelectorView view;
+    store.updateVisiblePages(view, {}, pageSources({&tiles}), 16.0);
+
+    const TileKey key{scheme->id(), 0, 0, 0};
+    const uint64_t packed = TerrainPageStore::packKeyForTest(key);
+    store.debugCreatePageForTest(packed, 0);
+    ASSERT_EQ(store.ledgerPageCount(), 1);
+    store.debugDeliverPageFailureForTest(packed, 0);
+    store.tick();
+    EXPECT_EQ(store.ledgerPageCount(), 0);
+
+    store.debugCreatePageForTest(packed, 0);
+    auto malformed = std::make_unique<DecodedImage>();
+    malformed->width = 0;
+    malformed->height = 0;
+    malformed->channels = 4;
+    store.debugDeliverDecodedImage(
+        packed, 0, 0, 0, 0, 0, std::move(malformed));
+    store.tick();
+    EXPECT_EQ(store.ledgerPageCount(), 0);
+}
+
+TEST(TerrainPageStoreFallback,
+     NonRealTerrainNeverAcquiresOrBindsPageStoreState) {
+    MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    TerrainPageStore store;
+    ASSERT_TRUE(store.initialize(&device, TerrainPageStore::Config{}));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    imagery.returnImage = true;
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    const TileKey key{scheme->id(), 0, 0, 0};
+    TilesetTile proxy(key, scheme->tileToRectangle(key));
+    proxy.content.renderContent.setSurfaceSource(
+        SurfaceDrawableSource::EllipsoidFallback);
+    std::vector<TilesetTile*> visible{&proxy};
+    SelectorView view;
+    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
+    store.tick();
+    EXPECT_EQ(store.residentPageCount(), 0);
+    EXPECT_EQ(store.debugIndirectionLayerForTest(
+                  TerrainPageStore::packKeyForTest(key)),
+              -1);
+    const TerrainPageStore::RasterStackBinding binding =
+        store.resolveTerrainBinding(proxy);
+    EXPECT_TRUE(binding.resolution.compatible);
+    EXPECT_FALSE(binding.resolution.attached);
+    EXPECT_FALSE(binding.resolution.drawable);
+    EXPECT_TRUE(binding.resolution.fallbackRequired);
+
+    DummyTexture directTexture(1, 1);
+    RenderCommand command;
+    command.terrainRenderContent = true;
+    command.terrainSurfaceSource =
+        TerrainSurfaceCommandSource::EllipsoidFallback;
+    command.textures.resize(kGltfRasterOverlayTextureBase + 1u, nullptr);
+    command.textures[kGltfRasterOverlayTextureBase] = &directTexture;
+    command.gltfRasterOverlayTextureCount = 1;
+    store.applyToTerrainCommand(command, proxy);
+    EXPECT_FLOAT_EQ(command.gltfUniforms.pageStoreParams[0], 0.0f);
+    EXPECT_EQ(command.textures[kGltfRasterOverlayTextureBase], &directTexture);
+}
+
+TEST(TerrainPageStore, SubmissionLeaseRejectsCpuMutationUntilReleased) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    ASSERT_TRUE(store.initialize(&device, TerrainPageStore::Config{}));
+    const uint64_t generation = store.pageDomainGeneration();
+    const auto originalColor = store.roadFieldStyleColor();
+
+    {
+        auto lease = store.beginSubmission(77);
+        ASSERT_TRUE(lease);
+        EXPECT_TRUE(store.submissionLeaseActive());
+        EXPECT_EQ(store.submissionLeaseFrameId(), 77u);
+        store.tick();
+        store.invalidateComposedPages();
+        store.setRoadFieldStyleUniforms(
+            {0.1f, 0.2f, 0.3f, 0.4f}, {1.0f, 2.0f, 3.0f, 4.0f});
+        EXPECT_EQ(store.pageDomainGeneration(), generation);
+        EXPECT_EQ(store.roadFieldStyleColor(), originalColor);
+        EXPECT_EQ(store.rejectedSubmissionMutationCount(), 3u);
+    }
+
+    EXPECT_FALSE(store.submissionLeaseActive());
+    store.setRoadFieldStyleUniforms(
+        {0.1f, 0.2f, 0.3f, 0.4f}, {1.0f, 2.0f, 3.0f, 4.0f});
+    EXPECT_FLOAT_EQ(store.roadFieldStyleColor()[0], 0.1f);
+}
+
 TEST(TerrainPageStoreDomain, EmptyProviderStackIsRejected) {
     EXPECT_EQ(TerrainPageStore::providerStackCompatibility({}),
               TerrainPageStore::PageDomainCompatibility::NoProvider);
+}
+
+TEST(TerrainPageStoreDomain, PageStoreRequiresCanonicalBaseImagerySource) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    auto sources = pageSources({&tiles});
+    sources.front().role = RasterOverlayRole::AnnotationOverlay;
+
+    EXPECT_EQ(
+        TerrainPageStore::pageSourceStackCompatibility(sources),
+        TerrainPageStore::PageDomainCompatibility::CanonicalSourceRoleMismatch);
+}
+
+TEST(TerrainPageStoreDomain, PageStoreRequiresOpaqueCanonicalBase) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    auto sources = pageSources({&tiles}, {0.5f});
+
+    EXPECT_EQ(
+        TerrainPageStore::pageSourceStackCompatibility(sources),
+              TerrainPageStore::PageDomainCompatibility::CanonicalBaseOpacityMismatch);
+}
+
+TEST(TerrainPageStoreDomain, CanonicalBaseAcceptsAnnotationOpacity) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider base(scheme->id());
+    PageDomainImageryProvider annotation(scheme->id());
+    RasterOverlayTileProvider baseTiles(base, *scheme);
+    RasterOverlayTileProvider annotationTiles(annotation, *scheme);
+    auto sources = pageSources({&baseTiles, &annotationTiles}, {1.0f, 0.35f});
+    sources[1].role = RasterOverlayRole::AnnotationOverlay;
+
+    EXPECT_EQ(
+        TerrainPageStore::pageSourceStackCompatibility(sources),
+        TerrainPageStore::PageDomainCompatibility::Compatible);
+}
+
+TEST(TerrainPageStoreDomain, FourSourcesFitDirectFallbackCapacity) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery0(scheme->id());
+    PageDomainImageryProvider imagery1(scheme->id());
+    PageDomainImageryProvider imagery2(scheme->id());
+    PageDomainImageryProvider imagery3(scheme->id());
+    RasterOverlayTileProvider tiles0(imagery0, *scheme);
+    RasterOverlayTileProvider tiles1(imagery1, *scheme);
+    RasterOverlayTileProvider tiles2(imagery2, *scheme);
+    RasterOverlayTileProvider tiles3(imagery3, *scheme);
+
+    EXPECT_EQ(
+        TerrainPageStore::pageSourceStackCompatibility(
+            pageSources({&tiles0, &tiles1, &tiles2, &tiles3})),
+        TerrainPageStore::PageDomainCompatibility::Compatible);
+}
+
+TEST(TerrainPageStoreDomain, FiveSourcesFailClosedBeforePageWork) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery0(scheme->id());
+    PageDomainImageryProvider imagery1(scheme->id());
+    PageDomainImageryProvider imagery2(scheme->id());
+    PageDomainImageryProvider imagery3(scheme->id());
+    PageDomainImageryProvider imagery4(scheme->id());
+    RasterOverlayTileProvider tiles0(imagery0, *scheme);
+    RasterOverlayTileProvider tiles1(imagery1, *scheme);
+    RasterOverlayTileProvider tiles2(imagery2, *scheme);
+    RasterOverlayTileProvider tiles3(imagery3, *scheme);
+    RasterOverlayTileProvider tiles4(imagery4, *scheme);
+    auto sources = pageSources(
+        {&tiles0, &tiles1, &tiles2, &tiles3, &tiles4});
+
+    SelectorView view;
+    store.updateVisiblePages(view, {}, sources, 16.0);
+
+    EXPECT_EQ(
+        store.pageDomainCompatibility(),
+        TerrainPageStore::PageDomainCompatibility::
+            TooManySourcesForDirectFallback);
+    EXPECT_EQ(store.residentPageCount(), 0);
+    EXPECT_EQ(store.ledgerPageCount(), 0);
+}
+
+TEST(TerrainPageStoreDomain, DirectFallbackStackMismatchFailsClosed) {
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+
+    EXPECT_EQ(
+        TerrainPageStore::pageSourceStackCompatibility(
+            pageSources({&tiles}), false),
+        TerrainPageStore::PageDomainCompatibility::
+            DirectFallbackStackMismatch);
+}
+
+TEST(TerrainPageStoreDomain,
+     PartialMultiSourcePageStaysHiddenUntilFullStackUploads) {
+    MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    cfg.pageSizeTexels = 4;
+    cfg.maxUploadsPerFrame = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    DeferredPageDomainImageryProvider base(scheme->id());
+    DeferredPageDomainImageryProvider annotation(scheme->id());
+    RasterOverlayTileProvider baseTiles(base, *scheme);
+    RasterOverlayTileProvider annotationTiles(annotation, *scheme);
+    auto sources = pageSources({&baseTiles, &annotationTiles});
+    sources[1].role = RasterOverlayRole::AnnotationOverlay;
+
+    SelectorView view;
+    store.updateVisiblePages(view, {}, sources, 16.0);
+    const TileKey pageTileKey{scheme->id(), 3, 2, 3};
+    const uint64_t pageKey = TerrainPageStore::packKeyForTest(pageTileKey);
+    store.debugCreatePageForTest(pageKey, 0);
+
+    auto makeImage = []() {
+        auto image = std::make_unique<DecodedImage>();
+        image->width = 4;
+        image->height = 4;
+        image->channels = 4;
+        image->pixels.assign(4u * 4u * 4u, 255u);
+        return image;
+    };
+    store.debugDeliverDecodedImage(pageKey, 0, 0, 0, 0, 0, makeImage());
+    store.tick();
+    EXPECT_FALSE(store.debugPageDisplayReadyForTest(pageKey));
+    EXPECT_EQ(device.textureRegionUpdateCount, 0);
+
+    store.debugDeliverDecodedImage(pageKey, 0, 1, 0, 0, 0, makeImage());
+    store.tick();
+    EXPECT_TRUE(store.debugPageDisplayReadyForTest(pageKey));
+    EXPECT_EQ(device.textureRegionUpdateCount, 1);
+}
+
+TEST(TerrainPageStoreDomain,
+     AnnotationOnlyUpdateFailsClosedAndLeavesPageStoreInactive) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    auto sources = pageSources({&tiles});
+    sources.front().role = RasterOverlayRole::AnnotationOverlay;
+
+    SelectorView view;
+    store.updateVisiblePages(view, {}, sources, 16.0);
+
+    EXPECT_EQ(store.pageDomainCompatibility(),
+              TerrainPageStore::PageDomainCompatibility::CanonicalSourceRoleMismatch);
+    EXPECT_EQ(store.residentPageCount(), 0);
+    EXPECT_EQ(store.ledgerPageCount(), 0);
+}
+
+TEST(TerrainPageStoreDomain,
+     TranslucentCanonicalBaseUpdateFailsClosedAndLeavesPageStoreInactive) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    auto sources = pageSources({&tiles}, {0.5f});
+
+    SelectorView view;
+    store.updateVisiblePages(view, {}, sources, 16.0);
+
+    EXPECT_EQ(store.pageDomainCompatibility(),
+              TerrainPageStore::PageDomainCompatibility::CanonicalBaseOpacityMismatch);
+    EXPECT_EQ(store.residentPageCount(), 0);
+    EXPECT_EQ(store.ledgerPageCount(), 0);
+}
+
+TEST(TerrainPageStoreDomain, ProjectionSnapshotMismatchFailsClosed) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider imagery(scheme->id());
+    RasterOverlayTileProvider tiles(imagery, *scheme);
+    auto sources = pageSources({&tiles});
+    sources.front().projection = RasterOverlayProjection::Geographic;
+
+    SelectorView view;
+    store.updateVisiblePages(view, {}, sources, 16.0);
+
+    EXPECT_EQ(store.pageDomainCompatibility(),
+              TerrainPageStore::PageDomainCompatibility::ProviderProjectionMismatch);
+    EXPECT_EQ(store.ledgerPageCount(), 0);
+}
+
+TEST(TerrainPageStoreDomain, AnnotationOpacityChangeMarksPagesForRebake) {
+    MockRenderDevice device;
+    TerrainPageStore store;
+    TerrainPageStore::Config cfg;
+    cfg.maxPages = 4;
+    ASSERT_TRUE(store.initialize(&device, cfg));
+
+    auto scheme = TileScheme::createXYZWebMercator();
+    PageDomainImageryProvider base(scheme->id());
+    PageDomainImageryProvider annotation(scheme->id());
+    RasterOverlayTileProvider baseTiles(base, *scheme);
+    RasterOverlayTileProvider annotationTiles(annotation, *scheme);
+    auto sources = pageSources({&baseTiles, &annotationTiles}, {1.0f, 0.25f});
+    sources[1].role = RasterOverlayRole::AnnotationOverlay;
+
+    SelectorView view;
+    store.updateVisiblePages(view, {}, sources, 16.0);
+    const uint64_t pageKey = TerrainPageStore::packKeyForTest(
+        TileKey{scheme->id(), 3, 2, 3});
+    store.debugCreatePageForTest(pageKey, 0);
+    EXPECT_FALSE(store.debugPageNeedsRebakeForTest(pageKey));
+
+    sources[1].opacity = 0.75f;
+    store.updateVisiblePages(view, {}, sources, 16.0);
+
+    EXPECT_TRUE(store.debugPageNeedsRebakeForTest(pageKey));
 }
 
 TEST(TerrainPageStoreDomain,
@@ -798,7 +1793,7 @@ TEST(TerrainPageStoreDomain, EmptyProviderUpdateClearsActiveDomain) {
     PageDomainImageryProvider imagery(scheme->id());
     RasterOverlayTileProvider tiles(imagery, *scheme);
     SelectorView view;
-    store.updateVisiblePages(view, {}, {&tiles}, 16.0);
+    store.updateVisiblePages(view, {}, pageSources({&tiles}), 16.0);
     ASSERT_EQ(store.pageDomainCompatibility(),
               TerrainPageStore::PageDomainCompatibility::Compatible);
     const uint64_t activeGeneration = store.pageDomainGeneration();
@@ -827,7 +1822,8 @@ TEST(TerrainPageStoreDomain, RealTerrainSchemeMustMatchCanonicalDomain) {
     SelectorView view;
     std::vector<TilesetTile*> visible{&terrainTile};
 
-    store.updateVisiblePages(view, visible, {&tiles}, 16.0);
+    store.updateVisiblePages(
+        view, visible, pageSources({&tiles}), 16.0);
 
     EXPECT_EQ(store.pageDomainCompatibility(),
               TerrainPageStore::PageDomainCompatibility::TerrainSchemeMismatch);
@@ -847,10 +1843,12 @@ TEST(TerrainPageStoreDomain, ProviderSetChangeAdvancesGeneration) {
     RasterOverlayTileProvider baseTiles(base, *scheme);
     RasterOverlayTileProvider overlayTiles(overlay, *scheme);
     SelectorView view;
-    store.updateVisiblePages(view, {}, {&baseTiles}, 16.0);
+    store.updateVisiblePages(
+        view, {}, pageSources({&baseTiles}), 16.0);
     const uint64_t oneSourceGeneration = store.pageDomainGeneration();
 
-    store.updateVisiblePages(view, {}, {&baseTiles, &overlayTiles}, 16.0);
+    store.updateVisiblePages(
+        view, {}, pageSources({&baseTiles, &overlayTiles}), 16.0);
 
     EXPECT_GT(store.pageDomainGeneration(), oneSourceGeneration);
     EXPECT_EQ(store.pageDomainCompatibility(),
@@ -868,10 +1866,12 @@ TEST(TerrainPageStoreDomain,
     RasterOverlayTileProvider tiles(imagery, *scheme);
 
     SelectorView view;
-    store.updateVisiblePages(view, {}, {&tiles}, 16.0, nullptr);
+    store.updateVisiblePages(
+        view, {}, pageSources({&tiles}), 16.0, nullptr);
     EXPECT_EQ(store.providerContentInvalidations(), 0u);
     imagery.revision = 1;
-    store.updateVisiblePages(view, {}, {&tiles}, 16.0, nullptr);
+    store.updateVisiblePages(
+        view, {}, pageSources({&tiles}), 16.0, nullptr);
     EXPECT_EQ(store.providerContentInvalidations(), 1u);
 }
 
@@ -1104,7 +2104,7 @@ TEST(PageSourceAssembler, ConcurrentOutOfOrderAcceptMatchesSequential) {
 
     // 基准:单线程按序合成。
     PageSourceAssembler sequential;
-    sequential.configure(kSources, kSide);
+    sequential.configure(std::vector<float>(kSources, 1.0f), kSide);
     for (int s = 0; s < kSources; ++s) {
         sequential.accept(s, sources[static_cast<size_t>(s)].data());
     }
@@ -1114,7 +2114,7 @@ TEST(PageSourceAssembler, ConcurrentOutOfOrderAcceptMatchesSequential) {
     // 被测:4 worker 乱序并发提交(含重复提交,验幂等),外置 mutex 序列化。
     for (int round = 0; round < 8; ++round) {
         PageSourceAssembler shared;
-        shared.configure(kSources, kSide);
+        shared.configure(std::vector<float>(kSources, 1.0f), kSide);
         std::mutex mutex;
         ThreadPool pool(4);
         std::atomic<int> pendingTasks{0};

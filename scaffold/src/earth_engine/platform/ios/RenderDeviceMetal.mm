@@ -11,6 +11,7 @@
 #include <stdexcept>
 #include <cstring>
 #include <unordered_map>
+#include <atomic>
 
 namespace earth_engine {
 
@@ -117,6 +118,11 @@ private:
 // RenderDeviceMetal::Impl
 // ============================================================
 
+struct MetalFrameSerialState {
+    std::atomic<uint64_t> submitted{0};
+    std::atomic<uint64_t> completed{0};
+};
+
 struct RenderDeviceMetal::Impl {
     id<MTLDevice> device = nil;
     id<MTLCommandQueue> commandQueue = nil;
@@ -129,6 +135,8 @@ struct RenderDeviceMetal::Impl {
     // 输入延迟累积。
     dispatch_semaphore_t inFlightSemaphore = nil;
     id<MTLTexture> depthTexture = nil;
+    std::shared_ptr<MetalFrameSerialState> frameSerials =
+        std::make_shared<MetalFrameSerialState>();
     id<MTLSamplerState> linearClampSampler = nil;
     // sampler 按配置去重(P2-15):Apple GPU 存活 sampler 有 1024/2048 硬
     // 上限,逼近时静默回落默认配置;全项目配置种类只有个位数,按打包 key
@@ -1183,19 +1191,19 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         setFragmentUniform("u_transmissionTexOffsetScale", 65);
         setFragmentUniform("u_transmissionTexRotationSinCos", 66);
         setFragmentUniform("u_transmissionTexCoordSet", 67);
-        setFragmentUniform("u_mappedRasterTextureCount", 68);
-        setFragmentUniform("u_mappedRasterTileUV0", 69);
-        setFragmentUniform("u_mappedRasterTileUV1", 70);
-        setFragmentUniform("u_mappedRasterTileUV2", 71);
-        setFragmentUniform("u_mappedRasterTileUV3", 72);
-        setFragmentUniform("u_mappedRasterOpacity0", 73);
-        setFragmentUniform("u_mappedRasterOpacity1", 74);
-        setFragmentUniform("u_mappedRasterOpacity2", 75);
-        setFragmentUniform("u_mappedRasterOpacity3", 76);
-        setFragmentUniform("u_mappedRasterTexCoordSet0", 77);
-        setFragmentUniform("u_mappedRasterTexCoordSet1", 78);
-        setFragmentUniform("u_mappedRasterTexCoordSet2", 79);
-        setFragmentUniform("u_mappedRasterTexCoordSet3", 80);
+        setFragmentUniform("u_directRasterTextureCount", 68);
+        setFragmentUniform("u_directRasterTileUV0", 69);
+        setFragmentUniform("u_directRasterTileUV1", 70);
+        setFragmentUniform("u_directRasterTileUV2", 71);
+        setFragmentUniform("u_directRasterTileUV3", 72);
+        setFragmentUniform("u_directRasterOpacity0", 73);
+        setFragmentUniform("u_directRasterOpacity1", 74);
+        setFragmentUniform("u_directRasterOpacity2", 75);
+        setFragmentUniform("u_directRasterOpacity3", 76);
+        setFragmentUniform("u_directRasterTexCoordSet0", 77);
+        setFragmentUniform("u_directRasterTexCoordSet1", 78);
+        setFragmentUniform("u_directRasterTexCoordSet2", 79);
+        setFragmentUniform("u_directRasterTexCoordSet3", 80);
         setFragmentUniform("u_gltfHasWaterMask", 81);
         setFragmentUniform("u_gltfWaterMaskTranslationScale", 82);
         setFragmentUniform("u_gltfWaterMaskState", 83);
@@ -1329,6 +1337,21 @@ void RenderDeviceMetal::endFrame() {
     }
 
     if (impl_->currentCommandBuffer) {
+        const uint64_t serial =
+            impl_->frameSerials->submitted.fetch_add(
+                1, std::memory_order_acq_rel) + 1;
+        std::shared_ptr<MetalFrameSerialState> frameSerials =
+            impl_->frameSerials;
+        [impl_->currentCommandBuffer
+            addCompletedHandler:^(id<MTLCommandBuffer>) {
+                uint64_t observed =
+                    frameSerials->completed.load(std::memory_order_acquire);
+                while (observed < serial &&
+                       !frameSerials->completed.compare_exchange_weak(
+                           observed, serial, std::memory_order_acq_rel,
+                           std::memory_order_acquire)) {
+                }
+            }];
         if (impl_->currentDrawable) {
             [impl_->currentCommandBuffer presentDrawable:impl_->currentDrawable];
         }
@@ -1337,6 +1360,14 @@ void RenderDeviceMetal::endFrame() {
         impl_->currentCommandBuffer = nil;
         impl_->currentDrawable = nil;
     }
+}
+
+uint64_t RenderDeviceMetal::submittedSerial() const {
+    return impl_->frameSerials->submitted.load(std::memory_order_acquire);
+}
+
+uint64_t RenderDeviceMetal::completedSerial() const {
+    return impl_->frameSerials->completed.load(std::memory_order_acquire);
 }
 
 // ============================================================

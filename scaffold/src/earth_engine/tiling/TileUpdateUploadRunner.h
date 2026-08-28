@@ -21,7 +21,7 @@ struct TileUpdateUploadRunResult {
     double terrainUploadMs = 0.0;
     double rasterUploadMs = 0.0;
     int rasterUploadsProcessed = 0;
-    int rasterMappedUploadsProcessed = 0;
+    int rasterDirectCompositeUploadsProcessed = 0;
     double rasterUploadMaxMs = 0.0;
     int rasterUploadMaxWidth = 0;
     int rasterUploadMaxHeight = 0;
@@ -64,7 +64,8 @@ public:
         }
         result.rasterUploadMs = perf::nowMs() - rasterUploadStartMs;
         result.rasterUploadsProcessed = rasterUploadResult.processedUploads;
-        result.rasterMappedUploadsProcessed = rasterUploadResult.mappedUploads;
+        result.rasterDirectCompositeUploadsProcessed =
+            rasterUploadResult.directCompositeUploads;
         result.rasterUploadMaxMs = rasterUploadResult.maxUploadMs;
         result.rasterUploadMaxWidth = rasterUploadResult.maxUploadWidth;
         result.rasterUploadMaxHeight = rasterUploadResult.maxUploadHeight;
@@ -85,10 +86,10 @@ public:
         if (result.rasterUploadMs > 2.0) {
             platformLog(
                 LogLevel::Info, "EarthPerf",
-                "RasterUp ms=%.1f processed=%d mapped=%d",
+                "RasterUp ms=%.1f processed=%d directComposite=%d",
                 result.rasterUploadMs,
                 result.rasterUploadsProcessed,
-                result.rasterMappedUploadsProcessed);
+                result.rasterDirectCompositeUploadsProcessed);
         }
 
         return result;

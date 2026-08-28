@@ -4,6 +4,7 @@
 #include "GpuRegionTimerGles.h"
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <mutex>
 #include <unordered_map>
@@ -126,6 +127,8 @@ public:
     void endPass() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;
+    uint64_t submittedSerial() const override { return submittedSerial_; }
+    uint64_t completedSerial() const override { return completedSerial_; }
 
     bool setGpuTimingEnabled(bool enabled) override;
     bool gpuTimingEnabled() const override { return gpuTimingEnabled_; }
@@ -238,6 +241,14 @@ private:
     };
     ReadbackSlot readbackSlots_[kReadbackRing];
     uint64_t nextReadbackTicket_ = 1;
+
+    struct FrameSerialFence {
+        void* fence = nullptr;  // GLsync, kept opaque in the header
+        uint64_t serial = 0;
+    };
+    std::deque<FrameSerialFence> frameSerialFences_;
+    uint64_t submittedSerial_ = 0;
+    uint64_t completedSerial_ = 0;
 
     // 异步上传环(数组纹理页上传去 stall):真机 V1818T 实测,拖动期
     // drainReadyUploads 的 glTexSubImage3D **直写**正被积压 GPU 采样的页数组,

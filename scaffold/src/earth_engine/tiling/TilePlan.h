@@ -171,8 +171,8 @@ struct TilePlan {
     // draw 侧按 terrainEdgeCellKey(tile.key) 查表上传。
     TerrainEdgeLutTableMap edgeLutTables;
     std::vector<std::string> frameCredits;
-    int frameMappedRasterTileCount = 0;
-    int frameMappedRasterTileLoadingCount = 0;
+    int frameDirectRasterMappingCount = 0;
+    int frameDirectRasterMappingLoadingCount = 0;
     int frameProgressTotalCount = 0;
     int frameProgressLoadingCount = 0;
     double frameLoadProgressPercentage = 100.0;

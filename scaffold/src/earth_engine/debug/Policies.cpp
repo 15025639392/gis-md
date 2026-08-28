@@ -46,11 +46,11 @@ const Expectation kExpectations[] = {
      "定义再次变得不可达(旧闸要 gridN²=1024 全驻留而全局仅 ~52 页,恒为 0)",
      "TerrainPageStore::updateVisiblePages"},
 
-    // cell 页覆盖率。差额全部回落 mappedRaster(祖先影像)= 糊。下界 0.6 而非更高:
+    // cell 页覆盖率。差额全部回落 directComposite(祖先影像)= 糊。下界 0.6 而非更高:
     // SSE 地板本来就会**故意**剔掉远景/掠射 cell,那部分回落是设计意图不是故障;
     // 真正要抓的是它整体塌下去(页 fetch 跟不上、层池不够、源不可达)。
     {0.6, 1.0,
-     "会产生片元的 cell 应多数拿到高清页;差额回落 mappedRaster 即观感变糊。"
+     "会产生片元的 cell 应多数拿到高清页;差额回落 directComposite 即观感变糊。"
      "SSE 地板故意剔远景 cell,故下界留到 0.6 —— 抓的是整体塌陷不是正常剔除",
      "TerrainPageStore::updateVisiblePages(页 fetch / 层池容量)"},
 

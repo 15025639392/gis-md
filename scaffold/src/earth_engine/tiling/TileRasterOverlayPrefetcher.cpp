@@ -1,6 +1,6 @@
 #include "TileRasterOverlayPrefetcher.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "RasterOverlayScreenSpaceMetrics.h"
 #include "TileRasterOverlayMappingPolicy.h"
 #include "TileRasterOverlaySignature.h"
@@ -29,7 +29,7 @@ bool canReuseStableUpdate(
 
     for (size_t i = 0; i < rasterOverlays.size(); ++i) {
         const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
-        const RasterMappedToTilesetTile* mapped =
+        const DirectRasterMapping* mapped =
             tile.rasterOverlayState.mappingAt(i);
         if (!activeOverlay || !activeOverlay->visible()) {
             if (mapped) {
@@ -54,7 +54,7 @@ void markStableMappingsUsed(
         if (!rasterOverlays[i] || !rasterOverlays[i]->visible()) {
             continue;
         }
-        RasterMappedToTilesetTile* mapped =
+        DirectRasterMapping* mapped =
             tile.rasterOverlayState.mappingAt(i);
         if (mapped) {
             mapped->markStableReadyTileUsed();
@@ -176,7 +176,7 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
 
         const RasterOverlayProjection projection =
             activeProvider->getProjection();
-        RasterMappedToTilesetTile& mapped =
+        DirectRasterMapping& mapped =
             tile.rasterOverlayState.ensureMapping(i);
         // 闸3:目标几何缓存(computeDesiredScreenPixels 等三角开销加载时一次)。
         // cesium-native: pass the TILESET maximumScreenSpaceError (16.0) to
@@ -206,7 +206,7 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
         // cesium-native updates RasterMappedTo3DTile before giving any
         // throttled raster request another chance to run. Keep that order so
         // loaded/failed/stale tiles are consumed before request fanout.
-        const RasterMappedToTilesetTile::MoreDetail moreDetail =
+        const DirectRasterMapping::MoreDetail moreDetail =
             mapped.update(
                 tile.key,
                 overlayDetails,
@@ -229,13 +229,13 @@ TileRasterOverlayPrefetchAction TileRasterOverlayPrefetcher::prefetch(
             return finish();
         }
 
-        if (moreDetail == RasterMappedToTilesetTile::MoreDetail::Yes &&
+        if (moreDetail == DirectRasterMapping::MoreDetail::Yes &&
             tile.rasterOverlayState.hasReadyMapping(i)) {
             if (!firstMoreDetailAvailable || i < *firstMoreDetailAvailable) {
                 firstMoreDetailAvailable = i;
             }
         } else if (
-            moreDetail == RasterMappedToTilesetTile::MoreDetail::Unknown) {
+            moreDetail == DirectRasterMapping::MoreDetail::Unknown) {
             if (!firstUnknownAvailability || i < *firstUnknownAvailability) {
                 firstUnknownAvailability = i;
             }
@@ -271,13 +271,13 @@ void TileRasterOverlayPrefetcher::advanceThrottledLoads(
         if (!activeOverlay || !activeOverlay->visible()) {
             continue;
         }
-        RasterMappedToTilesetTile* mapped =
+        DirectRasterMapping* mapped =
             tile.rasterOverlayState.mappingAt(i);
         if (!mapped) {
             continue;
         }
         // 这条泵路服务的正是「有 mapping、却到不了 Done」的瓦片,而它们拿不到
-        // mapped->update()。所以泵必须既发也收:先消费已经加载完的影像(不做
+        // DirectRasterMapping::update()。所以泵必须既发也收:先消费已经加载完的影像(不做
         // 几何解算),否则影像下载完也永远上不了屏(破洞真因,见
         // promoteLoadedTileWithoutGeometryWork)。
         if (mapped->promoteLoadedTileWithoutGeometryWork(pPrepRenderer)) {

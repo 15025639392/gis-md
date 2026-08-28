@@ -3,7 +3,7 @@
 #include "TileKey.h"
 #include "TileChildFrameMaterializer.h"
 #include "TileContentLifecycleManager.h"
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TilesetTile.h"
 
 namespace earth_engine {

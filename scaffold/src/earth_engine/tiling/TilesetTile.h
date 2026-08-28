@@ -25,7 +25,7 @@
 
 namespace earth_engine {
 
-class RasterMappedToTilesetTile;
+class DirectRasterMapping;
 class TileScheme;
 
 /// cesium-native Tile equivalent.

@@ -18,7 +18,7 @@ struct TilesetProviderDiagnosticsSnapshot {
     ProviderRequestDiagnostics rasterProviderRequests;
     int rasterOverlayTilesLoading = 0;
     int rasterSourceRequestsInFlight = 0;
-    int rasterActiveMappedSourceSets = 0;
+    int rasterActiveDirectCompositeSourceSets = 0;
     int rasterPendingSourceFallbacks = 0;
     int rasterInFlightSourceTiles = 0;
     int rasterInFlightSourceWaiters = 0;

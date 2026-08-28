@@ -2,7 +2,7 @@
 
 #include "earth_engine/content/CompositeTerrainProvider.h"
 #include "earth_engine/content/EllipsoidTerrainContentProvider.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileChildMaterializer.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TileSelectionRootPolicy.h"

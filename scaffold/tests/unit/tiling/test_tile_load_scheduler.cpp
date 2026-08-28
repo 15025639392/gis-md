@@ -4,7 +4,7 @@
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/core/resources/SceneFrameResourceArbiter.h"
 #include "earth_engine/providers/TerrainProvider.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileGltfTerrainUpsampledChildMaterializer.h"
 #include "earth_engine/tiling/TileLoadLifecycle.h"
 #include "earth_engine/tiling/TileLoadScheduler.h"

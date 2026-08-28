@@ -14,6 +14,7 @@
 #include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
 #include "../renderer/Renderer.h"
+#include "../renderer/TerrainPageStore.h"
 #include "../tiling/TerrainDisplacementTemplatePool.h"  // B:flushHeightBakes
 #include "../tiling/TileBoundsMetrics.h"
 #include "../tiling/Tileset.h"
@@ -208,6 +209,11 @@ void applyTerrainRenderEntryDiagnostics(
 
 SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
     const double renderStartMs = perf::nowMs();
+    TerrainPageStore::SubmissionLease pageStoreSubmissionLease;
+    if (TerrainPageStore* pageStore = context.renderer.terrainPageStore()) {
+        pageStoreSubmissionLease =
+            pageStore->beginSubmission(context.frameState.frameId);
+    }
     context.commands.clear();
     // 帧级资源保活集与命令列表同点清空(下一帧重建前):上一帧持有的 raster/
     // content handle 在此释放,晚于上一帧 submit → 满足 SubmitBeforeReleaseRefs。
@@ -960,7 +966,7 @@ bool SceneRenderPipeline::shouldHoldPresentationAfterCommandBuild(
                 LogLevel::Info,
                 "EarthPerf",
                 "HoldDiag cmds=%zu terrainCmds=%d noTex=%d noBaseState=%d "
-                "firstOffender[tex=%d baseState=%d mapped=%d ancDelta=%d "
+                "firstOffender[tex=%d baseState=%d direct=%d ancDelta=%d "
                 "idx=%d skirt=%d]",
                 context.commands.size(),
                 terrainCommands,
@@ -968,7 +974,7 @@ bool SceneRenderPipeline::shouldHoldPresentationAfterCommandBuild(
                 noBaseStateCount,
                 firstOffender ? firstOffender->gltfRasterOverlayTextureCount : -1,
                 firstOffender ? firstOffender->surfaceBaseRasterState : -1,
-                firstOffender ? firstOffender->surfaceBaseIsMappedRasterTile : -1,
+                firstOffender ? firstOffender->surfaceBaseUsesDirectRaster : -1,
                 firstOffender ? firstOffender->imageryAncestorLevelDelta : -1,
                 firstOffender ? firstOffender->surfaceMeshIndexCount : -1,
                 firstOffender ? firstOffender->surfaceSkirtIndexCount : -1);

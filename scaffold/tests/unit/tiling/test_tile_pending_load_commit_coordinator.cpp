@@ -20,7 +20,7 @@
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileLoadRequestDispatcher.h"
 #include "earth_engine/tiling/TileContentUnloadCoordinator.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/tiling/TilesetTileRegistry.h"
 #include "../../helpers/MockRenderDevice.h"
@@ -1449,9 +1449,9 @@ TEST(TilePendingLoadCommitCoordinatorTest,
     TileContentUploadCommitter::prepareRenderContent(
         tile,
         std::move(loadResult.content));
-    RasterMappedToTilesetTile& mapping =
+    DirectRasterMapping& mapping =
         tile.rasterOverlayState.ensureMapping(0);
-    RasterMappedToTilesetTile* const mappingBeforeFailure = &mapping;
+    DirectRasterMapping* const mappingBeforeFailure = &mapping;
 
     const TileContentUploadCommitAction action =
         TileContentUploadCommitter::finishRenderResourcePreparation(
@@ -2115,7 +2115,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         budget);
 
     EXPECT_TRUE(tile.rasterOverlayState.missingProjections().empty());
-    RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
+    DirectRasterMapping* mapped = tile.rasterOverlayState.mappingAt(0);
     ASSERT_NE(nullptr, mapped);
     ASSERT_NE(nullptr, mapped->getLoadingTile());
     EXPECT_EQ(RasterOverlayTile::LoadState::Loading,
@@ -2126,7 +2126,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     ContentEmptyTerminalReleasesMappedRasterTileReferencesLikeCesiumNative) {
+     ContentEmptyTerminalReleasesDirectCompositeTileReferencesLikeCesiumNative) {
     const TileKey key{"Geographic-TMS", 2, 1, 1};
     const std::string cacheKey = "test:empty-terminal-raster-detach";
     const Rectangle bounds = Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
@@ -2172,7 +2172,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         16.0,
         budget);
 
-    RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
+    DirectRasterMapping* mapped = tile.rasterOverlayState.mappingAt(0);
     ASSERT_NE(nullptr, mapped);
     ASSERT_NE(nullptr, mapped->getLoadingTile());
     std::shared_ptr<RasterOverlayTile> loadingTile =
@@ -2214,7 +2214,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
 }
 
 TEST(TilePendingLoadCommitCoordinatorTest,
-     RetryLaterTerminalReleasesMappedRasterReferencesButKeepsRenderContentLikeCesiumNative) {
+     RetryLaterTerminalReleasesDirectCompositeReferencesButKeepsRenderContentLikeCesiumNative) {
     const TileKey key{"Geographic-TMS", 2, 1, 1};
     const std::string cacheKey = "test:retry-terminal-raster-detach";
     const Rectangle bounds = Rectangle::fromDegrees(-10.0, -5.0, 2.0, 7.0);
@@ -2262,7 +2262,7 @@ TEST(TilePendingLoadCommitCoordinatorTest,
         16.0,
         budget);
 
-    RasterMappedToTilesetTile* mapped = tile.rasterOverlayState.mappingAt(0);
+    DirectRasterMapping* mapped = tile.rasterOverlayState.mappingAt(0);
     ASSERT_NE(nullptr, mapped);
     ASSERT_NE(nullptr, mapped->getLoadingTile());
     std::shared_ptr<RasterOverlayTile> loadingTile =

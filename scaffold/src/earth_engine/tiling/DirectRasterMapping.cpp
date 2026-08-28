@@ -1,4 +1,4 @@
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "../providers/RasterOverlayTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
 #include "../renderer/IPrepareRendererResources.h"
@@ -24,29 +24,29 @@ int32_t addProjectionToList(std::vector<RasterOverlayProjection>& projections,
     return static_cast<int32_t>(it - projections.begin());
 }
 
-RasterMappedToTilesetTile::MoreDetail toMappedMoreDetail(
+DirectRasterMapping::MoreDetail toDirectCompositeMoreDetail(
     RasterOverlayTile::MoreDetailAvailable moreDetailAvailable) {
     switch (moreDetailAvailable) {
         case RasterOverlayTile::MoreDetailAvailable::No:
-            return RasterMappedToTilesetTile::MoreDetail::No;
+            return DirectRasterMapping::MoreDetail::No;
         case RasterOverlayTile::MoreDetailAvailable::Yes:
-            return RasterMappedToTilesetTile::MoreDetail::Yes;
+            return DirectRasterMapping::MoreDetail::Yes;
         case RasterOverlayTile::MoreDetailAvailable::Unknown:
-            return RasterMappedToTilesetTile::MoreDetail::Unknown;
+            return DirectRasterMapping::MoreDetail::Unknown;
     }
-    return RasterMappedToTilesetTile::MoreDetail::Unknown;
+    return DirectRasterMapping::MoreDetail::Unknown;
 }
 
-RasterMappedToTilesetTile::SourceTileList toMappedSourceTileList(
-    RasterOverlayTileProvider::RasterSourceTileMapping&& sourceTiles) {
-    return RasterMappedToTilesetTile::SourceTileList{
-        sourceTiles.sourceZoom,
-        sourceTiles.sourceBounds,
-        std::move(sourceTiles.sourceKeys),
-        sourceTiles.minX,
-        sourceTiles.minY,
-        sourceTiles.maxX,
-        sourceTiles.maxY};
+DirectRasterMapping::SourceTileList toDirectCompositeSourceTileList(
+    RasterOverlaySourcePlan&& sourcePlan) {
+    return DirectRasterMapping::SourceTileList{
+        sourcePlan.sourceZoom,
+        sourcePlan.sourceBounds,
+        std::move(sourcePlan.sourceKeys),
+        sourcePlan.minX,
+        sourcePlan.minY,
+        sourcePlan.maxX,
+        sourcePlan.maxY};
 }
 
 bool hasSameOverlayOwner(const RasterOverlayTile& candidate,
@@ -150,10 +150,10 @@ bool isCurrentProviderTile(const std::shared_ptr<RasterOverlayTile>& tile,
 
 } // namespace
 
-RasterMappedToTilesetTile::RasterMappedToTilesetTile() = default;
-RasterMappedToTilesetTile::~RasterMappedToTilesetTile() = default;
+DirectRasterMapping::DirectRasterMapping() = default;
+DirectRasterMapping::~DirectRasterMapping() = default;
 
-RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
+DirectRasterMapping::MoreDetail DirectRasterMapping::update(
     const TileKey& geometryKey,
     const RasterOverlayDetails& overlayDetails,
     double targetScreenPixelsX,
@@ -170,7 +170,7 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     geometryKey_ = geometryKey;
     overlaySlot_ = static_cast<int32_t>(overlayIndex);
 
-    // Provider option/coverage/level changes invalidate mapped-raster cache
+    // Provider option/coverage/level changes invalidate Direct composite cache
     // entries. Existing mappings may still retain shared handles, so drop
     // stale handles before the attached fast path can keep rendering an old
     // composition indefinitely.
@@ -183,9 +183,11 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     } else if (!loadingTileCurrent) {
         _pLoadingTile = nullptr;
         loadingTileSource_ = ReadyTileSource::None;
-        mappedSourceTiles_ = {};
+        directCompositeSourceTiles_ = {};
         directRasterTile_ = false;
         originalFailed_ = false;
+        originalEmpty_ = false;
+        desiredZoom_ = -1;
         if (_pReadyTile != nullptr) {
             state_ = readyTileSource_ == ReadyTileSource::Ancestor
                 ? State::TemporarilyAttached
@@ -224,8 +226,10 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
     // _pLoadingTile,而 Step 4 的祖先替换只在 _pLoadingTile != nullptr 时才跑
     // —— 于是这张瓦再也拿不到祖先纹理,永久空白且不可恢复。
     if (_pLoadingTile != nullptr &&
+        loadingTileSource_ == ReadyTileSource::Real &&
         overlayTileCannotRenderItself(*_pLoadingTile)) {
         originalFailed_ = true;
+        originalEmpty_ = _pLoadingTile->isEmptyComposition();
     }
     if (_pLoadingTile != nullptr &&
         _pLoadingTile->getState() != RasterOverlayTile::LoadState::Placeholder) {
@@ -238,9 +242,8 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
 
     const TilesetTile* pGeomTile = parentTile;
     while (_pLoadingTile != nullptr &&
-           overlayTileCannotRenderItself(*_pLoadingTile) &&
+        overlayTileCannotRenderItself(*_pLoadingTile) &&
            pGeomTile != nullptr) {
-        originalFailed_ = true;
         std::shared_ptr<RasterOverlayTile> overlayTile =
             findParentTileOverlayPreferLoading(
                 *pGeomTile,
@@ -303,7 +306,8 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
             // so use the overlay placeholder and do not invent a projection.
             textureCoordinateID_ = -1;
             _pLoadingTile = tileProvider.getPlaceholderTile();
-            mappedSourceTiles_ = {};
+            desiredZoom_ = -1;
+            directCompositeSourceTiles_ = {};
             directRasterTile_ = false;
             loadingTileSource_ = ReadyTileSource::None;
         } else if (hasRenderContentDetails && geometryRectangle) {
@@ -317,10 +321,17 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                     targetScreenPixelsX,
                     targetScreenPixelsY);
             _pLoadingTile = mapping.tile;
-            mappedSourceTiles_ =
-                toMappedSourceTileList(std::move(mapping.sourceTiles));
+            directCompositeSourceTiles_ =
+                toDirectCompositeSourceTileList(std::move(mapping.sourceTiles));
             directRasterTile_ = mapping.directTile;
             loadingTileSource_ = ReadyTileSource::Real;
+            desiredZoom_ = directCompositeSourceTiles_.empty()
+                ? (_pLoadingTile &&
+                           _pLoadingTile->getState() !=
+                               RasterOverlayTile::LoadState::Placeholder
+                       ? _pLoadingTile->getTileID().z
+                       : -1)
+                : directCompositeSourceTiles_.sourceZoom;
         } else if (hasRenderContentDetails) {
             // Render content is loaded, but it has no texture coordinates for
             // this overlay projection. Match cesium-native by recording the
@@ -334,7 +345,8 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                     missingProjections,
                     projection);
             _pLoadingTile = tileProvider.getPlaceholderTile();
-            mappedSourceTiles_ = {};
+            desiredZoom_ = -1;
+            directCompositeSourceTiles_ = {};
             directRasterTile_ = false;
             loadingTileSource_ = ReadyTileSource::None;
         } else {
@@ -348,14 +360,22 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                         targetScreenPixelsX,
                         targetScreenPixelsY);
                 _pLoadingTile = mapping.tile;
-                mappedSourceTiles_ =
-                    toMappedSourceTileList(std::move(mapping.sourceTiles));
+                directCompositeSourceTiles_ =
+                    toDirectCompositeSourceTileList(std::move(mapping.sourceTiles));
                 directRasterTile_ = mapping.directTile;
                 loadingTileSource_ = ReadyTileSource::Real;
+                desiredZoom_ = directCompositeSourceTiles_.empty()
+                    ? (_pLoadingTile &&
+                               _pLoadingTile->getState() !=
+                                   RasterOverlayTile::LoadState::Placeholder
+                           ? _pLoadingTile->getTileID().z
+                           : -1)
+                    : directCompositeSourceTiles_.sourceZoom;
             } else {
                 // No precise rectangle yet, so return a placeholder for now.
                 _pLoadingTile = tileProvider.getPlaceholderTile();
-                mappedSourceTiles_ = {};
+                desiredZoom_ = -1;
+                directCompositeSourceTiles_ = {};
                 directRasterTile_ = false;
                 loadingTileSource_ = ReadyTileSource::None;
             }
@@ -399,8 +419,11 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
                         mappingRectangleInvertedV);
                 }
             }
-        } else if (loadState == RasterOverlayTile::LoadState::Failed) {
+        } else if (
+            loadState == RasterOverlayTile::LoadState::Failed &&
+            loadingTileSource_ == ReadyTileSource::Real) {
             originalFailed_ = true;
+            originalEmpty_ = false;
         }
     }
 
@@ -475,12 +498,12 @@ RasterMappedToTilesetTile::MoreDetail RasterMappedToTilesetTile::update(
         tileProvider.markUsed(*_pReadyTile);
     }
     if (!originalFailed_ && _pReadyTile != nullptr) {
-        return toMappedMoreDetail(_pReadyTile->isMoreDetailAvailable());
+        return toDirectCompositeMoreDetail(_pReadyTile->isMoreDetailAvailable());
     }
     return MoreDetail::No;
 }
 
-bool RasterMappedToTilesetTile::isMoreDetailAvailable() const {
+bool DirectRasterMapping::isMoreDetailAvailable() const {
     // cesium-native: !_pLoadingTile && !_originalFailed && _pReadyTile
     //   && _pReadyTile->isMoreDetailAvailable() == Yes
     if (_pLoadingTile != nullptr) return false;
@@ -490,19 +513,19 @@ bool RasterMappedToTilesetTile::isMoreDetailAvailable() const {
            RasterOverlayTile::MoreDetailAvailable::Yes;
 }
 
-bool RasterMappedToTilesetTile::hasPendingNonPlaceholderLoadingTile() const {
+bool DirectRasterMapping::hasPendingNonPlaceholderLoadingTile() const {
     return _pLoadingTile != nullptr &&
            _pLoadingTile->getState() !=
                RasterOverlayTile::LoadState::Placeholder;
 }
 
-bool RasterMappedToTilesetTile::hasStableUpdateState() const {
+bool DirectRasterMapping::hasStableUpdateState() const {
     return _pLoadingTile == nullptr &&
            _pReadyTile != nullptr &&
            state_ == State::Attached;
 }
 
-bool RasterMappedToTilesetTile::promoteLoadedTileWithoutGeometryWork(
+bool DirectRasterMapping::promoteLoadedTileWithoutGeometryWork(
     IPrepareRendererResources* pPrepRenderer) {
     if (_pLoadingTile == nullptr) {
         return false;
@@ -538,7 +561,7 @@ bool RasterMappedToTilesetTile::promoteLoadedTileWithoutGeometryWork(
     return true;
 }
 
-void RasterMappedToTilesetTile::markStableReadyTileUsed() {
+void DirectRasterMapping::markStableReadyTileUsed() {
     if (_pReadyTile == nullptr ||
         _pReadyTile->getState() ==
             RasterOverlayTile::LoadState::Placeholder) {
@@ -547,7 +570,7 @@ void RasterMappedToTilesetTile::markStableReadyTileUsed() {
     _pReadyTile->getTileProvider().markUsed(*_pReadyTile);
 }
 
-uint64_t RasterMappedToTilesetTile::runtimeStateSignature() const {
+uint64_t DirectRasterMapping::runtimeStateSignature() const {
     constexpr uint64_t kOffset = 1469598103934665603ull;
     constexpr uint64_t kPrime = 1099511628211ull;
     uint64_t signature = kOffset;
@@ -569,16 +592,17 @@ uint64_t RasterMappedToTilesetTile::runtimeStateSignature() const {
     mix(static_cast<uint64_t>(loadingTileSource_));
     mix(static_cast<uint64_t>(readyTileSource_));
     mix(static_cast<uint64_t>(originalFailed_ ? 1 : 0));
+    mix(static_cast<uint64_t>(originalEmpty_ ? 1 : 0));
     mixTile(_pLoadingTile);
     mixTile(_pReadyTile);
     return signature;
 }
 
-Texture* RasterMappedToTilesetTile::texture() const {
+Texture* DirectRasterMapping::texture() const {
     return _pReadyTile ? _pReadyTile->getTexture() : nullptr;
 }
 
-void RasterMappedToTilesetTile::detachFromTile(IPrepareRendererResources* pPrepRenderer) {
+void DirectRasterMapping::detachFromTile(IPrepareRendererResources* pPrepRenderer) {
     if (state_ == State::Unattached) return;
     if (_pReadyTile == nullptr) return;
 
@@ -593,13 +617,13 @@ void RasterMappedToTilesetTile::detachFromTile(IPrepareRendererResources* pPrepR
     state_ = State::Unattached;
 }
 
-void RasterMappedToTilesetTile::releaseTileReferences(
+void DirectRasterMapping::releaseTileReferences(
     IPrepareRendererResources* pPrepRenderer) {
     detachFromTile(pPrepRenderer);
     clearTileOwnershipState();
 }
 
-void RasterMappedToTilesetTile::attachReadyTileInMainThread(
+void DirectRasterMapping::attachReadyTileInMainThread(
     IPrepareRendererResources* pPrepRenderer) {
     if (!pPrepRenderer || _pReadyTile == nullptr ||
         state_ != State::Unattached) {
@@ -625,25 +649,27 @@ void RasterMappedToTilesetTile::attachReadyTileInMainThread(
         : State::Attached;
 }
 
-void RasterMappedToTilesetTile::clearTileOwnershipState() {
+void DirectRasterMapping::clearTileOwnershipState() {
     _pLoadingTile = nullptr;
     _pReadyTile = nullptr;
     readyTexture_ = nullptr;
     loadingTileSource_ = ReadyTileSource::None;
     readyTileSource_ = ReadyTileSource::None;
-    mappedSourceTiles_ = {};
+    directCompositeSourceTiles_ = {};
     directRasterTile_ = false;
     offsetU_ = 0.0f;
     offsetV_ = 0.0f;
     scaleU_ = 1.0f;
     scaleV_ = 1.0f;
     originalFailed_ = false;
+    originalEmpty_ = false;
+    desiredZoom_ = -1;
     textureCoordinateID_ = -1;
     overlaySlot_ = 0;
     state_ = State::Unattached;
 }
 
-bool RasterMappedToTilesetTile::loadThrottled(
+bool DirectRasterMapping::loadThrottled(
     RasterOverlayTileProvider& tileProvider,
     FrameResourceBudget* budget) {
     // cesium-native: if no loading tile, nothing to do
@@ -657,7 +683,7 @@ bool RasterMappedToTilesetTile::loadThrottled(
     return tileProvider.loadTileThrottled(*_pLoadingTile, budget);
 }
 
-void RasterMappedToTilesetTile::computeTranslationAndScale(
+void DirectRasterMapping::computeTranslationAndScale(
     const Rectangle& geometryBounds,
     const Rectangle& imageryBounds,
     bool invertedVCoordinate) {

@@ -96,7 +96,7 @@ public:
     /// V6 建筑挤出(pos+法线+色 28B,lambert 顶光)。
     ShaderProgram* vectorExtrusionShader() const;
     /// C-2c:矢量画进页存储 array 层的 20B 顶点着色器(空 = 该路径不可用,
-    /// 调用方回落 mappedRaster 上的栅格版)。
+    /// 调用方回落 directComposite 上的栅格版)。
     ShaderProgram* vectorPageMeshShader() const;
 
     /// 矢量点符号/图标 billboard shader（矢量 P5a 解析 SDF 形状 + P6c 位图

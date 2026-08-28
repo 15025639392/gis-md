@@ -107,7 +107,7 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
       renderCommands_(
           meshPreparation_,
           resourceInvalidator_,
-          rasterOverlayRuntime_.frameContext().directOverlays(),
+          rasterOverlayRuntime_.frameContext(),
           device_) {
     // 根层常驻(漏底根修,见 TileBaseCoveragePin.h):只在承担底图覆盖的
     // tileset 上开启(SDK 场景路径设 options.pinBaseCoverage=true)。
@@ -408,7 +408,8 @@ void Tileset::rotateSelectionActiveTiles(bool resetSelectionState) {
             }
             tile->selectionActiveFrameId = selectionActiveFrameId_;
             TileSelectionStateResetter::resetOne(
-                *tile, directRasterOverlays());
+                *tile,
+                rasterOverlayRuntime_.frameContext());
         };
 
         // The vector that became current is two traversals old. Reset it once
@@ -440,7 +441,8 @@ void Tileset::trackSelectionActiveTile(
         tile.selectionActiveFrameId != selectionActiveFrameId_) {
         tile.selectionActiveFrameId = selectionActiveFrameId_;
         TileSelectionStateResetter::resetOne(
-            tile, directRasterOverlays());
+            tile,
+            rasterOverlayRuntime_.frameContext());
     }
     if (tile.selectionTraversalFrameId == selectionActiveFrameId_) {
         return;
@@ -585,14 +587,15 @@ bool Tileset::requiresBaseImageryPresentationSurface() const {
         return false;
     }
 
-    for (const ActivatedRasterOverlay* activeOverlay :
-         directRasterOverlays()) {
-        if (!activeOverlay || !activeOverlay->visible()) {
+    const RasterOverlayFrameContext& rasterFrame =
+        rasterOverlayRuntime_.frameContext();
+    for (size_t i = 0; i < rasterFrame.slots().size(); ++i) {
+        const RasterOverlayFrameSlot& slot = rasterFrame.slots()[i];
+        if (!slot.directProvider || !slot.visible || slot.opacity <= 0.0f) {
             continue;
         }
-        const RasterOverlay& overlay = activeOverlay->getOverlay();
-        if (overlay.role() == RasterOverlayRole::BaseImagery &&
-            overlay.blocksCompleteRenderable()) {
+        if (slot.role == RasterOverlayRole::BaseImagery &&
+            slot.blocksCompleteRenderable) {
             return true;
         }
     }
@@ -621,13 +624,13 @@ bool Tileset::plannedRenderEntriesHaveRequiredBaseImagery() const {
         if (!TileRasterOverlayReadinessPolicy::
                 terrainSurfaceImageryDrawableReady(
                     *renderTile,
-                    directRasterOverlays())) {
+                    rasterOverlayRuntime_.frameContext())) {
             if (notDrawable++ == 0) {
                 firstNotDrawableKey = entry.renderKey;
                 firstReason =
                     TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
                         *renderTile,
-                        directRasterOverlays());
+                        rasterOverlayRuntime_.frameContext());
             }
         }
     }

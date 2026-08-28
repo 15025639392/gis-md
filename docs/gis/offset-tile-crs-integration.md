@@ -9,7 +9,7 @@
 数值守卫:`tests/unit/content/test_computed_imagery_uv_risk.cpp`(进 ctest)。
 历史脉络:`206b10bf8`(引擎侧)→ `aa99a4ac5`(页存储真机点亮)→
 `80892aca1`(四角仿射双管线)→ `f06117978`(跨界白面闸)→
-`926271866`(mappedRaster 回落路收官)。
+`926271866`(旧称 `mappedRaster`、现为 Direct raster fallback 的回落路收官)。
 
 ---
 
@@ -99,15 +99,15 @@ texcoord set 与之对齐(set 1 = 影像投影)。**任何按 `[0]` 硬取矩形
    0.001px),把"能不能这么近似"从争论变成数字。
 5. **像素证据裁决,不信日志**:特性"生效"的判定靠 20× 放大偏移量看屏幕
    是否变化——曾有 `proj=gcj-merc` 日志全对、provider 行为全对、屏幕
-   逐像素不变的完整假象(页存储绕过 mappedRaster 通路)。
+   逐像素不变的完整假象(PageStore 绕过 Direct raster fallback 通路)。
 
 ## 5. 不足与教训(诚实清单)
 
 1. **⚠️⚠️ 上屏路径枚举不完备是本案最大反复来源**。同一个"模板态 set 1
-   没 remap"的病灶,先后在 pageStore 路(aa99a4ac5 修)和 mappedRaster
-   回落路(926271866 才修)各暴露一次;中间还有一次"已修"静态误判被真机
+   没 remap"的病灶,先后在 PageStore 路(aa99a4ac5 修)和 Direct raster
+   fallback 路(926271866 才修)各暴露一次;中间还有一次"已修"静态误判被真机
    推翻——只审了主路没审回落路。**接入新系统时必须逐条过上屏路径清单**:
-   pageStore(逐瓦/实例化)、mappedRaster 回落、矢量层、fill 代理、
+   PageStore(逐瓦/实例化)、Direct raster fallback、矢量层、fill 代理、
    glTF 真实网格,× GLSL/MSL 两份。缺一条,症状就是"稳态对、某瞬间错"。
 2. **配准逻辑无单一治理点**:采样链收拢进了 `eePageStoreCompose`,但
    "UV 从哪套 set 取、要不要补窗口 remap"仍散在各 FS 手写。五次 commit

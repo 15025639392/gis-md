@@ -26,8 +26,8 @@ class Buffer;
 /// 属性流。draw 数 135 → 模板组数(~10-20)。
 ///
 /// **资格闸**(任一不满足 → 留逐 draw,零回归):真实地形 + 用共享位移模板
-/// (hasTerrainDisplacementFrame)+ pageStore 全 cell 驻留(mappedRaster
-/// fallback 必不采样 → 批 shader 丢 mappedRaster)+ 无 water mask + 无
+/// (hasTerrainDisplacementFrame)+ pageStore 全 cell 驻留(directComposite
+/// fallback 必不采样 → 批 shader 丢 directComposite)+ 无 water mask + 无
 /// baseColor 纹理 + 不 blend。粗瓦片/fill/上采样/page-in 中的瓦片天然留逐
 /// draw。批参考帧 float 化的相对量抖动 ~0.005px(见设计文档 §7),不可见。
 ///
@@ -102,7 +102,7 @@ public:
         NoDisplacementFrame,    // 未走共享位移模板
         WrongVertexStride,      // 顶点步长非 32(未走紧凑地形格式)
         PageStoreOff,           // 页存储未对该命令生效
-        NotFullyResident,       // 页未全 cell 驻留(会采 mappedRaster 回落)
+        NotFullyResident,       // 页未全 cell 驻留(会采 directComposite 回落)
         HasWaterMask,           // 带水面掩码,走别的着色路径
         HasBaseColorTexture,    // 带基色纹理
         Blended,                // 混合(淡入淡出期)

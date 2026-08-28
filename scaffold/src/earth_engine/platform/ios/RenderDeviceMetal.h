@@ -49,6 +49,8 @@ public:
     void endPass() override;
     void submit(const RenderCommandList& commands) override;
     void endFrame() override;
+    uint64_t submittedSerial() const override;
+    uint64_t completedSerial() const override;
     size_t readFramebufferPixels(Framebuffer* source,
                                  int x,
                                  int y,

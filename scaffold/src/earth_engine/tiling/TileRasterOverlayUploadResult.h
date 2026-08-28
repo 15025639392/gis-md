@@ -4,7 +4,7 @@ namespace earth_engine {
 
 struct TileRasterOverlayUploadResult {
     int processedUploads = 0;
-    int mappedUploads = 0;
+    int directCompositeUploads = 0;
     double maxUploadMs = 0.0;
     int maxUploadWidth = 0;
     int maxUploadHeight = 0;

@@ -1,6 +1,6 @@
 #include "TileLoadResultMetadataApplicator.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileRasterOverlayDetailsGenerator.h"
 #include "TileRenderContentState.h"
 #include "TilesetTile.h"

@@ -235,13 +235,11 @@ def find_glslang(explicit):
 
 def compile_one(glslang, name, stage, source):
     """返回 (ok, detail)。stage ∈ {vert, frag};同时尝试另一个 stage 兜底。"""
-    # 生产源 `R"glsl(\n#version 300 es...` 允许 #version 前有换行/注释,
-    # glslang 的 ES profile 则要求 #version 是第一个 token —— 仅编译前
-    # 归一化,不动生产文本。
-    vi = source.find("#version")
-    if vi > 0:
-        source = source[vi:]
-    source = source.lstrip()
+    # RenderDeviceGLES 会把生产字符串原样交给 glShaderSource。部分真机驱动
+    # 容忍 #version 前的空白，但 Android Emulator GLES translator 严格要求
+    # 它从源码第一个字符开始。守卫必须编译真实文本，不能再替生产源 lstrip。
+    if "#version" in source and not source.startswith("#version"):
+        return False, "#version 必须从 GLSL 源码第一个字符开始"
     tried = []
     for st in (stage, "frag" if stage == "vert" else "vert"):
         if st in tried:

@@ -2,7 +2,7 @@
 
 #include "earth_engine/core/math/Mat4.h"
 #include "earth_engine/scene/FrameState.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileSelectionInputMetrics.h"
 #include "earth_engine/tiling/TilesetTile.h"
 

@@ -10,7 +10,7 @@
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/IPrepareRendererResources.h"
 #include "earth_engine/renderer/RenderDevice.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileContentAccess.h"
 #include "earth_engine/tiling/TileContentLifecycleManager.h"
 #include "earth_engine/tiling/TileLoadState.h"
@@ -528,7 +528,7 @@ TEST(TileSelectionRootPolicyTest,
     DebugImageryProvider imagery;
     auto scheme = TileScheme::createGeographicTMS();
     RasterOverlayTileProvider rasterProvider(imagery, *scheme, nullptr);
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         levelZero->rasterOverlayState.ensureMapping(0);
     std::vector<RasterOverlayProjection> missingProjections;
     mapped.update(
@@ -551,7 +551,7 @@ TEST(TileSelectionRootPolicyTest,
         rasterProvider,
         &prep,
         missingProjections);
-    ASSERT_EQ(RasterMappedToTilesetTile::State::Attached,
+    ASSERT_EQ(DirectRasterMapping::State::Attached,
               mapped.getState());
     ASSERT_EQ(1, prep.attachCount);
 
@@ -589,7 +589,7 @@ TEST(TileSelectionRootPolicyTest,
     levelZero->content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
     levelZero->markRenderContentDone();
-    RasterMappedToTilesetTile* existingMapping =
+    DirectRasterMapping* existingMapping =
         &levelZero->rasterOverlayState.ensureMapping(0);
 
     TilesetTile* root = fixture.contentAccess.ensureTile(

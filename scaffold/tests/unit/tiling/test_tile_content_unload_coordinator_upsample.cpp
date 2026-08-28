@@ -1,7 +1,7 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/content/GltfModel.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileContentUnloadCoordinator.h"
 
 #include <memory>

@@ -14,11 +14,12 @@
 
 namespace earth_engine {
 
-class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 class RenderDevice;
 class Renderer;
 
 struct TileRenderCommandPrepareContext {
+    const RasterOverlayFrameContext& rasterFrame;
     uint64_t frameNumber = 0;
     uint64_t generation = 0;
     double currentFrameTimeSeconds = 0.0;
@@ -59,7 +60,6 @@ public:
         Renderer& renderer,
         TilesetTile& tile,
         RenderCommandList& commands,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         RenderDevice* device,
         const TileRenderCommandPrepareContext& context,
         EnsureTileMeshFn&& ensureTileMesh,
@@ -129,15 +129,15 @@ public:
                 tile.content.renderContent.isGltfRenderReady(),
                 TileSelectionRasterOverlayPreparer::isCompleteRenderable(
                     tile,
-                    rasterOverlays));
+                    context.rasterFrame));
             const double drawBuildStartMs =
                 timings ? perf::nowMs() : 0.0;
             GltfDrawCommandBuilder::build(
                 renderer,
                 tile,
-                rasterOverlays,
                 commands,
                 GltfDrawCommandBuildContext{
+                    context.rasterFrame,
                     context.frameNumber,
                     context.generation,
                     context.transitionOpacity,
@@ -170,9 +170,9 @@ public:
             GltfDrawCommandBuilder::build(
                 renderer,
                 tile,
-                rasterOverlays,
                 commands,
                 GltfDrawCommandBuildContext{
+                    context.rasterFrame,
                     context.frameNumber,
                     context.generation,
                     context.transitionOpacity,

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
+#include "earth_engine/tiling/RasterOverlayRuntime.h"
 #include "earth_engine/tiling/TileSelectionTraversalDetailsBuilder.h"
 #include "earth_engine/tiling/TileTraversalDetails.h"
 #include "earth_engine/tiling/TilesetTile.h"
@@ -101,7 +102,8 @@ TEST(
         TileSelectionState::Rendered;
 
     const TileTraversalDetails details =
-        TileSelectionTraversalDetailsBuilder::forSingleTile(parent, {});
+        TileSelectionTraversalDetailsBuilder::forSingleTile(
+            parent, RasterOverlayFrameContext{});
 
     EXPECT_TRUE(details.allAreRenderable);
     EXPECT_TRUE(details.anyWereRenderedLastFrame);
@@ -121,8 +123,8 @@ TEST(
     const TileTraversalDetails details =
         TileSelectionTraversalDetailsBuilder::forCulledTile(
             tile,
-            {},
-            true);
+            true,
+            RasterOverlayFrameContext{});
 
     EXPECT_FALSE(details.allAreRenderable);
     EXPECT_FALSE(details.anyWereRenderedLastFrame);

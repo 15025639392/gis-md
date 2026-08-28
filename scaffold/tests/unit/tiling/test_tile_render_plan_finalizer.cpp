@@ -11,13 +11,15 @@
 #include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/tiling/TileCacheKey.h"
 #include "earth_engine/tiling/TileRasterOverlayPrefetcher.h"
 #include "earth_engine/tiling/TileRasterOverlayReadinessPolicy.h"
 #include "earth_engine/tiling/TileRenderPlanFinalizer.h"
+#include "earth_engine/tiling/RasterOverlayRuntime.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "../../helpers/RasterOverlayTestFrame.h"
 
 #include <array>
 #include <cmath>
@@ -31,6 +33,109 @@ namespace {
 
 static_assert(!std::is_copy_constructible_v<TilePlan>);
 static_assert(!std::is_copy_assignable_v<TilePlan>);
+
+RasterOverlayFrameContext frozenRasterFrame(
+    const std::vector<ActivatedRasterOverlay*>& overlays) {
+    RasterOverlayRuntime runtime(overlays);
+    runtime.beginFrame(1, nullptr);
+    return runtime.frameContext();
+}
+
+bool terrainSurfaceImageryDrawableReady(
+    const TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& overlays) {
+    const RasterOverlayFrameContext frame = frozenRasterFrame(overlays);
+    return TileRasterOverlayReadinessPolicy::
+        terrainSurfaceImageryDrawableReady(tile, frame);
+}
+
+BaseImageryBlockReason baseImageryBlockReason(
+    const TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& overlays) {
+    const RasterOverlayFrameContext frame = frozenRasterFrame(overlays);
+    return TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
+        tile, frame);
+}
+
+BaseImageryNoTextureProbe probeNoReadyTexture(
+    const TilesetTile& tile,
+    const std::vector<ActivatedRasterOverlay*>& overlays) {
+    const RasterOverlayFrameContext frame = frozenRasterFrame(overlays);
+    return TileRasterOverlayReadinessPolicy::probeNoReadyTexture(tile, frame);
+}
+
+TileRenderPlanFinalizeOptions testFinalizeOptions(
+    bool interactionActive,
+    int activeInteractionRenderPrepBudget,
+    int recoveryRenderPrepBudget,
+    double maximumScreenSpaceError = 0.0,
+    int activeInteractionFirstBuildBudget = 4,
+    int recoveryFirstBuildBudget = 8) {
+    return TileRenderPlanFinalizeOptions{
+        interactionActive,
+        activeInteractionRenderPrepBudget,
+        recoveryRenderPrepBudget,
+        maximumScreenSpaceError,
+        activeInteractionFirstBuildBudget,
+        recoveryFirstBuildBudget,
+        earth_engine::testing::emptyRasterOverlayFrame()};
+}
+
+template <typename EnsureTileFn,
+          typename CacheKeyFn,
+          typename IsFallbackRenderableFn>
+void refreshRenderEntries(
+    TilePlan& plan,
+    TileRenderPlanFinalizeOptions options,
+    EnsureTileFn&& ensureTile,
+    CacheKeyFn&& cacheKey,
+    IsFallbackRenderableFn&& isFallbackRenderable) {
+    static const std::vector<ActivatedRasterOverlay*> kNoOverlays;
+    RasterOverlayRuntime runtime(kNoOverlays);
+    runtime.beginFrame(plan.frameId, nullptr);
+    const TileRenderPlanFinalizeOptions frameOptions{
+        options.interactionActive,
+        options.activeInteractionRenderPrepBudget,
+        options.recoveryRenderPrepBudget,
+        options.maximumScreenSpaceError,
+        options.activeInteractionFirstBuildBudget,
+        options.recoveryFirstBuildBudget,
+        runtime.frameContext()};
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        frameOptions,
+        std::forward<EnsureTileFn>(ensureTile),
+        std::forward<CacheKeyFn>(cacheKey),
+        std::forward<IsFallbackRenderableFn>(isFallbackRenderable));
+}
+
+template <typename EnsureTileFn,
+          typename CacheKeyFn,
+          typename IsFallbackRenderableFn>
+void refreshRenderEntries(
+    TilePlan& plan,
+    TileRenderPlanFinalizeOptions options,
+    const std::vector<ActivatedRasterOverlay*>& overlays,
+    EnsureTileFn&& ensureTile,
+    CacheKeyFn&& cacheKey,
+    IsFallbackRenderableFn&& isFallbackRenderable) {
+    RasterOverlayRuntime runtime(overlays);
+    runtime.beginFrame(plan.frameId, nullptr);
+    const TileRenderPlanFinalizeOptions frameOptions{
+        options.interactionActive,
+        options.activeInteractionRenderPrepBudget,
+        options.recoveryRenderPrepBudget,
+        options.maximumScreenSpaceError,
+        options.activeInteractionFirstBuildBudget,
+        options.recoveryFirstBuildBudget,
+        runtime.frameContext()};
+    TileRenderPlanFinalizer::refreshRenderEntries(
+        plan,
+        frameOptions,
+        std::forward<EnsureTileFn>(ensureTile),
+        std::forward<CacheKeyFn>(cacheKey),
+        std::forward<IsFallbackRenderableFn>(isFallbackRenderable));
+}
 
 class DummyBuffer final : public Buffer {
 public:
@@ -175,7 +280,7 @@ void makeDrawableBaseRaster(TilesetTile& tile,
     ASSERT_NE(nullptr, provider);
 
     std::vector<RasterOverlayProjection> missingProjections;
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         tile.rasterOverlayState.ensureMapping(0);
     mapped.update(
         tile.key,
@@ -217,13 +322,9 @@ TEST(
     plan.tilesToRenderThisFrame.push_back(&root);
     int ensureCalls = 0;
 
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&ensureCalls](const TileKey&) -> TilesetTile* {
             ++ensureCalls;
             return nullptr;
@@ -264,13 +365,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -328,13 +425,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         overlays,
         [&root](const TileKey& key) -> TilesetTile* {
             return key == root.key ? &root : nullptr;
@@ -344,8 +437,7 @@ TEST(
         },
         [&overlays](const TilesetTile& tile) {
             return isDrawableRenderContent(tile) &&
-                   TileRasterOverlayReadinessPolicy::
-                       terrainSurfaceImageryDrawableReady(tile, overlays);
+                   terrainSurfaceImageryDrawableReady(tile, overlays);
         });
 
     // never-drop:发一条自身的 base 色 entry,不 drop、不用祖先(本就没有)。
@@ -390,13 +482,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         overlays,
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
@@ -406,8 +494,7 @@ TEST(
         },
         [&overlays](const TilesetTile& tile) {
             return isDrawableRenderContent(tile) &&
-                   TileRasterOverlayReadinessPolicy::
-                       terrainSurfaceImageryDrawableReady(tile, overlays);
+                   terrainSurfaceImageryDrawableReady(tile, overlays);
         });
 
     ASSERT_EQ(plan.renderEntries.size(), 1u);
@@ -442,13 +529,9 @@ TEST(
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
     plan.visibleTiles.push_back(parentKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            false,
-            0,
-            1},
+        testFinalizeOptions(false, false, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -484,13 +567,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -534,13 +613,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -583,13 +658,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -629,13 +700,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -676,9 +743,9 @@ TEST(
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
 
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{false, true, 0, 1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -721,9 +788,9 @@ TEST(
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
 
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{false, true, 0, 1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -780,13 +847,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -818,13 +881,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&root](const TileKey& key) -> TilesetTile* {
             return key == root.key ? &root : nullptr;
         },
@@ -857,13 +916,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -886,13 +941,9 @@ TEST(TileRenderPlanFinalizerTest, CountsRootPrepOnceToAvoidBlankFrame) {
 
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&root](const TileKey& key) -> TilesetTile* {
             return key == root.key ? &root : nullptr;
         },
@@ -925,13 +976,9 @@ TEST(TileRenderPlanFinalizerTest, DefersFallbackPrepDuringInteraction) {
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -957,7 +1004,7 @@ TEST(TileRenderPlanFinalizerTest, DefersFallbackPrepDuringInteraction) {
 }
 
 // 破洞诊断第三轮:真机实测的残余 drop 形态 —— mapping 建过、影像也已 Loaded,
-// 却因为几何瓦片停在 Failed 态、再没有任何路径调用 mapped.update(),Loading→Ready
+// 却因为几何瓦片停在 Failed 态、再没有任何路径推进 Direct raster attachment,Loading→Ready
 // 的提升永远不发生。这个测试把那一帧的状态原样搭出来,钉死探针的读数含义:
 // load=Loaded / ready=空 / 祖先链一个 mapping 都没有。
 TEST(
@@ -981,7 +1028,7 @@ TEST(
         activeBase.ensureTileProvider(nullptr);
     ASSERT_NE(nullptr, provider);
     std::vector<RasterOverlayProjection> missingProjections;
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         root.rasterOverlayState.ensureMapping(0);
     mapped.update(
         rootKey,
@@ -999,13 +1046,13 @@ TEST(
     loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
 
     EXPECT_EQ(
-        TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
+        baseImageryBlockReason(
             root,
             overlays),
         BaseImageryBlockReason::NoReadyTexture);
 
     const BaseImageryNoTextureProbe probe =
-        TileRasterOverlayReadinessPolicy::probeNoReadyTexture(root, overlays);
+        probeNoReadyTexture(root, overlays);
     EXPECT_TRUE(probe.valid);
     EXPECT_EQ(probe.zoom, 0);
     EXPECT_EQ(
@@ -1019,13 +1066,9 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         overlays,
         [&root](const TileKey& key) -> TilesetTile* {
             return key == root.key ? &root : nullptr;
@@ -1035,8 +1078,7 @@ TEST(
         },
         [&overlays](const TilesetTile& tile) {
             return isDrawableRenderContent(tile) &&
-                   TileRasterOverlayReadinessPolicy::
-                       terrainSurfaceImageryDrawableReady(tile, overlays);
+                   terrainSurfaceImageryDrawableReady(tile, overlays);
         });
 
     // 探针(上面)仍读 NoReadyTexture —— 那是就绪判据,never-drop 不改它。
@@ -1072,7 +1114,7 @@ TEST(
         activeBase.ensureTileProvider(nullptr);
     ASSERT_NE(nullptr, provider);
     std::vector<RasterOverlayProjection> missingProjections;
-    RasterMappedToTilesetTile& mapped =
+    DirectRasterMapping& mapped =
         root.rasterOverlayState.ensureMapping(0);
     mapped.update(
         rootKey,
@@ -1088,11 +1130,11 @@ TEST(
     ASSERT_NE(nullptr, loadingTile);
     loadingTile->setTexture(std::make_unique<DummyTexture>(4, 4));
     ASSERT_FALSE(
-        TileRasterOverlayReadinessPolicy::terrainSurfaceImageryDrawableReady(
+        terrainSurfaceImageryDrawableReady(
             root,
             overlays));
 
-    // 泵一次 —— 这是这批瓦片唯一还会被调用到的路径,不走 mapped.update()。
+    // 泵一次 —— 这是这批瓦片唯一还会被调用到的 Direct raster 推进路径。
     FrameResourceBudget budget;
     TileRasterOverlayPrefetcher::advanceThrottledLoads(
         root,
@@ -1105,19 +1147,15 @@ TEST(
     ASSERT_NE(mapped.getReadyTile(), nullptr);
     EXPECT_NE(mapped.getReadyTile()->getTexture(), nullptr);
     EXPECT_TRUE(
-        TileRasterOverlayReadinessPolicy::terrainSurfaceImageryDrawableReady(
+        terrainSurfaceImageryDrawableReady(
             root,
             overlays));
 
     TilePlan plan;
     plan.visibleTiles.push_back(rootKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
-            false,
-            true,
-            0,
-            1},
+        testFinalizeOptions(false, true, 0, 1),
         overlays,
         [&root](const TileKey& key) -> TilesetTile* {
             return key == root.key ? &root : nullptr;
@@ -1127,8 +1165,7 @@ TEST(
         },
         [&overlays](const TilesetTile& tile) {
             return isDrawableRenderContent(tile) &&
-                   TileRasterOverlayReadinessPolicy::
-                       terrainSurfaceImageryDrawableReady(tile, overlays);
+                   terrainSurfaceImageryDrawableReady(tile, overlays);
         });
 
     EXPECT_EQ(plan.renderEntries.size(), 1u);
@@ -1155,15 +1192,15 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
+        testFinalizeOptions(
             true,   // interactionActive:用交互期首建预算
             0,
             1,
             1.0,
             0,      // activeInteractionFirstBuildBudget = 0 → 耗尽
-            8},
+            8),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },
@@ -1201,15 +1238,15 @@ TEST(
 
     TilePlan plan;
     plan.visibleTiles.push_back(childKey);
-    TileRenderPlanFinalizer::refreshRenderEntries(
+    refreshRenderEntries(
         plan,
-        TileRenderPlanFinalizeOptions{
+        testFinalizeOptions(
             true,
             0,
             1,
             1.0,
             1,      // 预算 ≥1 → 本帧直建
-            8},
+            8),
         [&tiles](const TileKey& key) {
             return findTile(tiles, key);
         },

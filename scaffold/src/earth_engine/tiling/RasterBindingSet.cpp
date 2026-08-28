@@ -2,33 +2,36 @@
 
 #include "TilesetTile.h"
 #include "../layers/ActivatedRasterOverlay.h"
+#include "RasterOverlayRuntime.h"
 
 namespace earth_engine {
 
 RasterBindingSet RasterBindingSet::resolve(
     const TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& overlays) {
+    const RasterOverlayFrameContext& frame) {
     RasterBindingSet result;
-    result.bindings_.reserve(overlays.size());
-    for (size_t i = 0; i < overlays.size(); ++i) {
-        ActivatedRasterOverlay* overlay = overlays[i];
-        const RasterMappedToTilesetTile* mapped =
+    result.bindings_.reserve(frame.slots().size());
+    for (size_t i = 0; i < frame.slots().size(); ++i) {
+        const RasterOverlayFrameSlot& slot = frame.slots()[i];
+        const DirectRasterMapping* mapped =
             tile.rasterOverlayState.mappingAt(i);
-        SurfaceRasterBinding surface = chooseSurfaceRasterBinding(mapped);
-        const bool allowedByPolicy = rasterOverlayBindingAllowedByPolicy(
-            overlay,
-            mapped,
-            surface);
-        const int32_t textureCoordinateId =
-            mapped ? mapped->getTextureCoordinateID() : -1;
+        DirectRasterBindingResolution direct =
+            resolveDirectRasterBinding(mapped);
+        RasterResolution& resolution = direct.resolution;
+        resolution.opacity = slot.opacity;
+        resolution.visible =
+            slot.directProvider != nullptr && slot.visible;
+        resolution.role = slot.role;
+        resolution.priority = slot.priority;
+        resolution.fallbackPolicy = slot.fallbackPolicy;
+        resolution.generation = slot.generation;
+        resolution.blocksCompleteRenderable = slot.blocksCompleteRenderable;
+        resolution.allowedByPolicy =
+            rasterResolutionAllowedByPolicy(resolution);
         result.bindings_.push_back(RasterBinding{
             i,
-            overlay,
-            mapped,
-            std::move(surface),
-            textureCoordinateId,
-            overlay ? overlay->opacity() : 1.0f,
-            allowedByPolicy});
+            std::move(direct.resolution),
+            std::move(direct.sample)});
     }
     return result;
 }

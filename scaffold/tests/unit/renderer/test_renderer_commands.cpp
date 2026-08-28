@@ -475,10 +475,10 @@ TEST(RendererCommandTest, GltfFragmentShaderStaysWithinGlesSamplerLimit) {
              "uniform sampler2D u_normalTexture",
              "uniform sampler2D u_occlusionTexture",
              "uniform sampler2D u_emissiveTexture",
-             "uniform sampler2D u_mappedRasterTexture0",
-             "uniform sampler2D u_mappedRasterTexture1",
-             "uniform sampler2D u_mappedRasterTexture2",
-             "uniform sampler2D u_mappedRasterTexture3",
+             "uniform sampler2D u_directRasterTexture0",
+             "uniform sampler2D u_directRasterTexture1",
+             "uniform sampler2D u_directRasterTexture2",
+             "uniform sampler2D u_directRasterTexture3",
              "uniform sampler2D u_gltfWaterMaskTexture"}) {
         EXPECT_NE(std::string::npos, glsl.find(kept))
             << "missing required GLES glTF sampler: " << kept;

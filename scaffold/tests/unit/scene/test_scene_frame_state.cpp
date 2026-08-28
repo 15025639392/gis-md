@@ -88,7 +88,7 @@ struct TilesetTestAccess {
                 tileset.directRasterOverlays());
         TileRasterOverlayPrefetcher::prefetch(
             tile,
-            tileset.directRasterOverlays(),
+            tileset.rasterOverlays(),
             overlayOrder,
             tileset.device_,
             tileset.options_.maximumScreenSpaceError,
@@ -121,7 +121,11 @@ struct TilesetTestAccess {
             tileset.directRasterOverlays(),
             TileRenderPlanFrameRefreshOptions{
                 tileset.interactionActiveForFrame_,
-                tileset.resourceSmoothingActiveForFrame_});
+                tileset.resourceSmoothingActiveForFrame_,
+                0.0,
+                false,
+                -1,
+                tileset.rasterOverlayRuntime().frameContext()});
     }
 };
 } // namespace earth_engine
@@ -1514,7 +1518,7 @@ TEST(SceneFrameStateTest, GltfTerrainDiagnosticsDoNotUseLegacySurfacePrep) {
         0.0,
         &device);
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty()
             ? nullptr
             : root->rasterOverlayState.mappings()[0].get();
@@ -1583,7 +1587,7 @@ TEST(SceneFrameStateTest, DiagnosticsRejectImageryOnlyAncestorFallback) {
     ASSERT_NE(child, nullptr);
 
     TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
-    RasterMappedToTilesetTile* rootMapped =
+    DirectRasterMapping* rootMapped =
         root->rasterOverlayState.mappings().empty()
             ? nullptr
             : root->rasterOverlayState.mappings()[0].get();

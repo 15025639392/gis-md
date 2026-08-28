@@ -30,7 +30,7 @@ using namespace earth_engine;
 //     makeModel 用 TerrainRasterOverlayProjectionResolver::forTileKey 的 projection
 //     (OpenGlobus-Earth = plain WebMercator)生成 set0,归一化于 plain-merc 矩形 r;
 //   - pageStore 高清路径明确跳过 fill(applyToTerrainCommand 非 RealTerrain return),
-//     影像留在 mappedRaster:overlayUv = tileUV.xy + uvFromSet(set0)*tileUV.zw;
+//     影像留在 directComposite:overlayUv = tileUV.xy + uvFromSet(set0)*tileUV.zw;
 //   - tileUV offset/scale = computeTranslationAndScale(R_G, T),R_G = GCJ-merc
 //     矩形(投影包围盒),T = 影像源瓦矩形(同 zoom 时 ≈ R_G)。
 //
@@ -81,7 +81,7 @@ std::pair<int, int> webMercatorTileXy(double lngRad, double latRad, int zoom) {
     return {x, y};
 }
 
-// 复现 fill 代理 mappedRaster 采样链,逐顶点量化采样位置 vs 精确 GCJ 位置。
+// 复现 fill 代理 directComposite 采样链,逐顶点量化采样位置 vs 精确 GCJ 位置。
 // @return maxErrorMeters / maxErrorPx(瓦片≈256px)/ maxErrorFraction(占瓦片比)。
 struct FillProxyError {
     double maxMeters = 0.0;

@@ -15,7 +15,7 @@
 
 namespace earth_engine {
 
-class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 
 struct TileRenderPlanFinalizeOptions {
     bool interactionActive = false;
@@ -30,6 +30,7 @@ struct TileRenderPlanFinalizeOptions {
     // 不受限直接建,防露底。扫掠前沿跨瓦边界的集中首建 burst 摊平点。
     int activeInteractionFirstBuildBudget = 4;
     int recoveryFirstBuildBudget = 8;
+    const RasterOverlayFrameContext& rasterFrame;
 };
 
 struct TileRenderPlanFinalizer {
@@ -45,8 +46,8 @@ struct TileRenderPlanFinalizer {
     /// 外拉漏底(真机 HoleQual notex dropz=1-5 实测)。
     static bool canBuildRenderEntryDirectly(
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-        DirectRenderFallbackPolicy fallbackPolicy) {
+        DirectRenderFallbackPolicy fallbackPolicy,
+        const RasterOverlayFrameContext& rasterFrame) {
         // Real terrain can replace its parent immediately. Transient
         // ellipsoid/fill surfaces are drawable, but they should only become
         // direct entries when no renderable ancestor can keep coverage.
@@ -59,7 +60,8 @@ struct TileRenderPlanFinalizer {
                 return false;
             }
             return TileRasterOverlayReadinessPolicy::
-                terrainSurfaceImageryDrawableReady(tile, rasterOverlays);
+                terrainSurfaceImageryDrawableReady(
+                    tile, rasterFrame);
         }
         return hasRenderableSurfaceForPlan(tile);
     }
@@ -70,26 +72,6 @@ struct TileRenderPlanFinalizer {
     static void refreshRenderEntries(
         TilePlan& plan,
         const TileRenderPlanFinalizeOptions& options,
-        EnsureTileFn&& ensureTile,
-        CacheKeyFn&& cacheKey,
-        IsFallbackRenderableFn&& isFallbackRenderable) {
-        static const std::vector<ActivatedRasterOverlay*> kNoRasterOverlays;
-        refreshRenderEntries(
-            plan,
-            options,
-            kNoRasterOverlays,
-            std::forward<EnsureTileFn>(ensureTile),
-            std::forward<CacheKeyFn>(cacheKey),
-            std::forward<IsFallbackRenderableFn>(isFallbackRenderable));
-    }
-
-    template <typename EnsureTileFn,
-              typename CacheKeyFn,
-              typename IsFallbackRenderableFn>
-    static void refreshRenderEntries(
-        TilePlan& plan,
-        const TileRenderPlanFinalizeOptions& options,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         EnsureTileFn&& ensureTile,
         CacheKeyFn&& cacheKey,
         IsFallbackRenderableFn&& isFallbackRenderable) {
@@ -147,9 +129,9 @@ struct TileRenderPlanFinalizer {
 
             if (!canBuildRenderEntryDirectly(
                     selectedTile,
-                    rasterOverlays,
                     DirectRenderFallbackPolicy::
-                        PreferAncestorForTransientSurface)) {
+                        PreferAncestorForTransientSurface,
+                    options.rasterFrame)) {
                 TilesetTile* renderableAncestor =
                     findNearestRenderableAncestor(
                         selectedTile,
@@ -193,15 +175,16 @@ struct TileRenderPlanFinalizer {
             }
             if (!canBuildRenderEntryDirectly(
                     *commandTile,
-                    rasterOverlays,
                     DirectRenderFallbackPolicy::
-                        AllowTransientSurfaceAsLastResort)) {
+                        AllowTransientSurfaceAsLastResort,
+                    options.rasterFrame)) {
                 if (!commandTile->content.renderContent
                          .hasDrawableResources()) {
                     // 真无几何(nogeo):无面可画,才丢弃。这是唯一还允许 drop
                     // 的成因,按桶记录用于诊断。
                     ++plan.renderEntryDropNotBuildableCount;
-                    recordDropReason(plan, *commandTile, rasterOverlays);
+                    recordDropReason(
+                        plan, *commandTile, options.rasterFrame);
                     return;
                 }
                 // 几何可画、只差 base 影像(自身与祖先都没有 ready 纹理)——
@@ -365,7 +348,7 @@ private:
     static void recordDropReason(
         TilePlan& plan,
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+        const RasterOverlayFrameContext& rasterFrame) {
         if (plan.renderEntryDropNotBuildableCount == 1) {
             plan.renderEntryDropMinZoom = tile.key.z;
             plan.renderEntryDropMaxZoom = tile.key.z;
@@ -384,14 +367,14 @@ private:
         }
         switch (TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
                     tile,
-                    rasterOverlays)) {
+                    rasterFrame)) {
             case BaseImageryBlockReason::NoMapping:
                 ++plan.renderEntryDropNoMappingCount;
                 break;
             case BaseImageryBlockReason::NoReadyTexture:
                 ++plan.renderEntryDropNoReadyTextureCount;
                 if (plan.renderEntryDropNoTexZoom < 0) {
-                    recordNoTextureProbe(plan, tile, rasterOverlays);
+                    recordNoTextureProbe(plan, tile, rasterFrame);
                 }
                 break;
             case BaseImageryBlockReason::TexcoordInvalid:
@@ -409,11 +392,11 @@ private:
     static void recordNoTextureProbe(
         TilePlan& plan,
         const TilesetTile& tile,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+        const RasterOverlayFrameContext& rasterFrame) {
         const BaseImageryNoTextureProbe probe =
             TileRasterOverlayReadinessPolicy::probeNoReadyTexture(
                 tile,
-                rasterOverlays);
+                rasterFrame);
         if (!probe.valid) {
             return;
         }

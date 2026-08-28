@@ -101,8 +101,12 @@ public:
     }
 
     bool updateTextureRegion(Texture*, int, int, int, int,
-                             const uint8_t*, size_t, int = 0) override {
+                             const uint8_t*, size_t, int layer = 0) override {
         ++textureRegionUpdateCount;
+        textureRegionUpdateLayers.push_back(layer);
+        if (textureRegionScriptIndex < textureRegionUploadScript.size()) {
+            return textureRegionUploadScript[textureRegionScriptIndex++];
+        }
         return textureRegionUploadSucceeds;
     }
     // H-S4:批量上传计数(测试边缘 LUT 批处理:多层应合并成一次调用)。
@@ -232,7 +236,17 @@ public:
         submittedCommands = commands;
         ++submitCount;
     }
-    void endFrame() override {}
+    void endFrame() override {
+        ++submittedSerialValue;
+        if (autoAdvanceCompletion) {
+            completedSerialValue = submittedSerialValue;
+        }
+    }
+    uint64_t submittedSerial() const override { return submittedSerialValue; }
+    uint64_t completedSerial() const override { return completedSerialValue; }
+    void completeThrough(uint64_t serial) {
+        completedSerialValue = std::min(serial, submittedSerialValue);
+    }
     void onSurfaceCreated() override {}
     void onSurfaceChanged(int, int) override {}
     void onSurfaceDestroyed() override {}
@@ -242,6 +256,9 @@ public:
     TextureDesc lastTextureDesc;
     int createdTextureCount = 0;
     int textureRegionUpdateCount = 0;
+    std::vector<int> textureRegionUpdateLayers;
+    std::vector<bool> textureRegionUploadScript;
+    size_t textureRegionScriptIndex = 0;
     /// region 上传结果。默认 false 是历史行为(多数用例只关心是否发起
     /// 上传);把上传成败当契约的用例(如 IconAtlas 注册 frame)置 true。
     bool textureRegionUploadSucceeds = false;
@@ -275,6 +292,9 @@ public:
     bool allowFramebufferCreation = true;
     bool supportsAsyncReadback = false;  // true → 走异步 enqueue/acquire 路径
     bool asyncAlwaysPending = false;     // true → acquire 恒未就绪(测延迟路径)
+    bool autoAdvanceCompletion = true;
+    uint64_t submittedSerialValue = 0;
+    uint64_t completedSerialValue = 0;
 
 private:
     uint64_t nextTicket_ = 1;

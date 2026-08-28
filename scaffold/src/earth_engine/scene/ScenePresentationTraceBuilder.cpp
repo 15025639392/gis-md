@@ -104,10 +104,10 @@ void appendTilesetTrace(PresentationTrace& trace, const Tileset* tileset) {
     tilesetTrace.minVisibleZoom = plan.minVisibleZoom;
     tilesetTrace.maxVisibleZoom = plan.maxVisibleZoom;
     tilesetTrace.lodSizePixels = plan.lodSizePixels;
-    tilesetTrace.frameMappedRasterTileCount =
-        plan.frameMappedRasterTileCount;
-    tilesetTrace.frameMappedRasterTileLoadingCount =
-        plan.frameMappedRasterTileLoadingCount;
+    tilesetTrace.frameDirectRasterMappingCount =
+        plan.frameDirectRasterMappingCount;
+    tilesetTrace.frameDirectRasterMappingLoadingCount =
+        plan.frameDirectRasterMappingLoadingCount;
     tilesetTrace.frameProgressTotalCount =
         plan.frameProgressTotalCount;
     tilesetTrace.frameProgressLoadingCount =
@@ -186,8 +186,8 @@ void populateCommandTrace(const RenderCommandList& renderCommands,
             command.surfaceSkirtIndexCount;
         commandTrace.surfaceBaseRasterState =
             command.surfaceBaseRasterState;
-        commandTrace.surfaceBaseIsMappedRasterTile =
-            command.surfaceBaseIsMappedRasterTile;
+        commandTrace.surfaceBaseUsesDirectRaster =
+            command.surfaceBaseUsesDirectRaster;
         commandTrace.surfaceClipEnabled = command.surfaceClipEnabled;
         commandTrace.surfaceClipUv = command.surfaceClipUv;
         commandTrace.surfaceTransitionOpacity =

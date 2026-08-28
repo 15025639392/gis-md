@@ -3,7 +3,7 @@
 #include "earth_engine/content/GltfContentProvider.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
 #include "earth_engine/providers/TerrainProvider.h"
-#include "earth_engine/tiling/RasterMappedToTilesetTile.h"
+#include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/tiling/TileEmptyContentRegistry.h"
 #include "earth_engine/tiling/TileMissingRequestScheduler.h"
 #include "earth_engine/tiling/TileSelectionRootPolicy.h"

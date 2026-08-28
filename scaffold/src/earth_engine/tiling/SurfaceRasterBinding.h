@@ -1,6 +1,6 @@
 #pragma once
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "../providers/RasterOverlayTile.h"
 
 #include <memory>
@@ -8,6 +8,7 @@
 namespace earth_engine {
 
 class ActivatedRasterOverlay;
+struct RasterOverlayFrameSlot;
 
 enum class SurfaceRasterBindingKind {
     None,
@@ -32,13 +33,18 @@ struct SurfaceRasterBinding {
 /// textures, placeholders, failed tiles, and no-texture tiles are deliberately
 /// outside this decision.
 SurfaceRasterBinding chooseSurfaceRasterBinding(
-    const RasterMappedToTilesetTile* mapped);
+    const DirectRasterMapping* mapped);
 
 bool isLegalSurfaceRasterTile(const RasterOverlayTile* tile);
 
 bool rasterOverlayBindingAllowedByPolicy(
     const ActivatedRasterOverlay* activeOverlay,
-    const RasterMappedToTilesetTile* mapped,
+    const DirectRasterMapping* mapped,
+    const SurfaceRasterBinding& binding);
+
+bool rasterOverlayBindingAllowedByPolicy(
+    const RasterOverlayFrameSlot& slot,
+    const DirectRasterMapping* mapped,
     const SurfaceRasterBinding& binding);
 
 } // namespace earth_engine

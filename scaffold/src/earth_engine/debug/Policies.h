@@ -43,7 +43,7 @@ enum class Id : uint8_t {
     /// 页驻留率 = 全 cell 驻留(=有合批资格)的瓦片数 / 参与判定的瓦片数。
     PageResidency,
     /// cell 页覆盖率 = 拿到高清页的 cell / 会产生片元的 cell(含被 SSE 地板剔的)。
-    /// 差额全部回落 mappedRaster 祖先影像 = 观感上的"糊"。
+    /// 差额全部回落 directComposite 祖先影像 = 观感上的"糊"。
     CellPageCoverage,
     /// 间接层无换租获取率 = 未触发淘汰的 acquire / 全部 acquire。
     IndirLayerAllocNoEvict,

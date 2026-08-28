@@ -1,6 +1,6 @@
 #include "TileSelectionInputMetrics.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileBoundsMetrics.h"
 #include "TilePriorityMetrics.h"
 #include "TilesetTile.h"

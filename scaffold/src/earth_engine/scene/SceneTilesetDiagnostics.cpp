@@ -386,10 +386,10 @@ SceneTilesetDiagnosticsSnapshot::fromTileset(
         static_cast<int>(std::min<int64_t>(
             loadDiag.peakRasterCachedSourceTileBytes,
             std::numeric_limits<int>::max()));
-    snapshot.frameMappedRasterTileCount =
-        plan.frameMappedRasterTileCount;
-    snapshot.frameMappedRasterTileLoadingCount =
-        plan.frameMappedRasterTileLoadingCount;
+    snapshot.frameDirectRasterMappingCount =
+        plan.frameDirectRasterMappingCount;
+    snapshot.frameDirectRasterMappingLoadingCount =
+        plan.frameDirectRasterMappingLoadingCount;
     snapshot.frameProgressTotalCount = plan.frameProgressTotalCount;
     snapshot.frameProgressLoadingCount =
         plan.frameProgressLoadingCount;
@@ -461,9 +461,9 @@ void SceneTilesetDiagnosticsSnapshot::add(
     peakRasterCachedSourceTileBytes = saturatingAddInt(
         peakRasterCachedSourceTileBytes,
         next.peakRasterCachedSourceTileBytes);
-    frameMappedRasterTileCount += next.frameMappedRasterTileCount;
-    frameMappedRasterTileLoadingCount +=
-        next.frameMappedRasterTileLoadingCount;
+    frameDirectRasterMappingCount += next.frameDirectRasterMappingCount;
+    frameDirectRasterMappingLoadingCount +=
+        next.frameDirectRasterMappingLoadingCount;
     frameProgressTotalCount += next.frameProgressTotalCount;
     frameProgressLoadingCount += next.frameProgressLoadingCount;
     frameLoadProgressPercentage =
@@ -617,9 +617,9 @@ void SceneTilesetDiagnosticsSnapshot::applyTo(Diagnostics& diag) const {
     diag.peakRasterCachedSourceTileBytes = saturatingAddInt(
         diag.peakRasterCachedSourceTileBytes,
         peakRasterCachedSourceTileBytes);
-    diag.frameMappedRasterTileCount += frameMappedRasterTileCount;
-    diag.frameMappedRasterTileLoadingCount +=
-        frameMappedRasterTileLoadingCount;
+    diag.frameDirectRasterMappingCount += frameDirectRasterMappingCount;
+    diag.frameDirectRasterMappingLoadingCount +=
+        frameDirectRasterMappingLoadingCount;
     diag.frameProgressTotalCount += frameProgressTotalCount;
     diag.frameProgressLoadingCount += frameProgressLoadingCount;
     diag.frameLoadProgressPercentage =
@@ -735,8 +735,8 @@ void SceneTilesetDiagnostics::reset(Diagnostics& diag) {
     diag.peakRasterPendingUploadBytes = 0;
     diag.rasterCachedSourceTileBytes = 0;
     diag.peakRasterCachedSourceTileBytes = 0;
-    diag.frameMappedRasterTileCount = 0;
-    diag.frameMappedRasterTileLoadingCount = 0;
+    diag.frameDirectRasterMappingCount = 0;
+    diag.frameDirectRasterMappingLoadingCount = 0;
     diag.frameProgressTotalCount = 0;
     diag.frameProgressLoadingCount = 0;
     diag.frameLoadProgressPercentage = 100.0;

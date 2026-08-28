@@ -1,6 +1,6 @@
 #include "TileSelectionTraversalDetailsBuilder.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TileSelectionHistory.h"
 #include "TileSelectionRasterOverlayPreparer.h"
 #include "TilesetTile.h"
@@ -20,10 +20,10 @@ bool wasRenderedLastFrameForTraversalDetails(const TilesetTile& tile) {
 
 TileTraversalDetails TileSelectionTraversalDetailsBuilder::forSingleTile(
     const TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    const RasterOverlayFrameContext& frame) {
     const bool renderable = TileSelectionRasterOverlayPreparer::isRenderable(
         tile,
-        rasterOverlays);
+        frame);
 
     return TileTraversalDetailsPolicy::forSingleTile(
         renderable,
@@ -32,15 +32,14 @@ TileTraversalDetails TileSelectionTraversalDetailsBuilder::forSingleTile(
 
 TileTraversalDetails TileSelectionTraversalDetailsBuilder::forCulledTile(
     const TilesetTile& tile,
-    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
-    bool forbidHoles) {
+    bool forbidHoles,
+    const RasterOverlayFrameContext& frame) {
     if (!forbidHoles || tile.refine != TileRefine::Replace) {
         return TileTraversalDetails{};
     }
 
     const bool renderable = TileSelectionRasterOverlayPreparer::isRenderable(
-        tile,
-        rasterOverlays);
+        tile, frame);
     return TileTraversalDetailsPolicy::forCulledTile(
         forbidHoles,
         tile.refine,

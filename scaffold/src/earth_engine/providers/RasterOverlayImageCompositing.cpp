@@ -741,7 +741,7 @@ RasterOverlayTileProvider::CompositeImageResult combineQuadtreeSourceImages(
     return result;
 }
 
-RasterOverlayTileProvider::CompositeImageResult composeMappedSourceImageSet(
+RasterOverlayTileProvider::CompositeImageResult composeDirectCompositeSourceImageSet(
     const TileScheme& scheme,
     const Rectangle& targetBounds,
     std::vector<RasterSourceResult>&& sources,
@@ -846,7 +846,7 @@ void decrementActiveRasterTileLoads(std::atomic<uint32_t>& activeLoads) {
 }
 
 /// 节流名额唯一释放：完成回调与 abandon/析构可能并发认领同一名额
-/// （completed 置位到回调 erase 之间条目仍在 activeMappedSourceSets），
+/// （completed 置位到回调 erase 之间条目仍在 activeDirectCompositeSourceSets），
 /// 以 exchange 决定唯一递减方，防止双重释放静默偷走其他在途名额。
 void releaseRasterThrottleSlotOnce(std::atomic<bool>& released,
                                    std::atomic<uint32_t>& activeLoads) {

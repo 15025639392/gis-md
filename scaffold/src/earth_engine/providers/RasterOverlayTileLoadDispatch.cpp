@@ -1,8 +1,8 @@
 // I-P4 第四刀 4b:load/issue 簇(从 RasterOverlayTileProvider.cpp 逐字拆出)
-// 内容=loadMappedRasterTile/pumpLoadingMappedRasterTile/loadSourceTileList/
-// loadSourceImageSet/issueMappedSourceImageSet/estimateNewSourceRequests/
-// mappedTileWouldIssueNewSourceRequests/issuePendingSourceFallbacks/
-// issueActiveMappedSourceImageSets,以及 5 个专属匿名 helper。
+// 内容=loadDirectCompositeTile/pumpLoadingDirectCompositeTile/loadSourceTileList/
+// loadSourceImageSet/issueDirectCompositeSourceImageSet/estimateNewSourceRequests/
+// directCompositeTileWouldIssueNewSourceRequests/issuePendingSourceFallbacks/
+// issueActiveDirectCompositeSourceImageSets,以及 5 个专属匿名 helper。
 // 行为逐字等价是硬约束:与拆出前逐字符一致,不夹带任何改动。
 
 #include "RasterOverlayTileProvider.h"
@@ -95,7 +95,7 @@ bool isTransientRasterSourceFailure(
 
 } // namespace
 
-bool RasterOverlayTileProvider::loadMappedRasterTile(
+bool RasterOverlayTileProvider::loadDirectCompositeTile(
     RasterOverlayTile& tile,
     FrameResourceBudget* budget) {
     if (budget && budget->sceneArbiter() != nullptr) {
@@ -108,7 +108,7 @@ bool RasterOverlayTileProvider::loadMappedRasterTile(
         case RasterOverlayTile::LoadState::Unloaded:
             break;
         case RasterOverlayTile::LoadState::Loading:
-            pumpLoadingMappedRasterTile(tile, budget);
+            pumpLoadingDirectCompositeTile(tile, budget);
             return true;
         case RasterOverlayTile::LoadState::Loaded:
         case RasterOverlayTile::LoadState::Done:
@@ -123,60 +123,52 @@ bool RasterOverlayTileProvider::loadMappedRasterTile(
     const Rectangle outputBounds = tile.getRectangle();
     const Rectangle targetBounds =
         unprojectProviderToGeographic(outputBounds, projection_);
-    RasterSourceTileMapping sourceTiles;
+    RasterOverlaySourcePlan sourceTiles;
     const Rectangle effectiveCoverage =
         effectiveCoverageRectangle(scheme_, sourceCoverageRectangle_);
-    if (tile.hasMappedSourceList() &&
-        tile.getMappedSourceBounds().computeIntersection(
+    if (tile.hasDirectCompositeSourceList() &&
+        tile.getDirectCompositeSourceBounds().computeIntersection(
             effectiveCoverage)) {
-        sourceTiles.sourceZoom = tile.getMappedSourceZoom();
-        sourceTiles.sourceBounds = tile.getMappedSourceBounds();
-        sourceTiles.sourceKeys = tile.getMappedSourceKeys();
-        sourceTiles.minX = tile.getMappedSourceMinX();
-        sourceTiles.minY = tile.getMappedSourceMinY();
-        sourceTiles.maxX = tile.getMappedSourceMaxX();
-        sourceTiles.maxY = tile.getMappedSourceMaxY();
+        sourceTiles.sourceZoom = tile.getDirectCompositeSourceZoom();
+        sourceTiles.sourceBounds = tile.getDirectCompositeSourceBounds();
+        sourceTiles.sourceKeys = tile.getDirectCompositeSourceKeys();
+        sourceTiles.minX = tile.getDirectCompositeSourceMinX();
+        sourceTiles.minY = tile.getDirectCompositeSourceMinY();
+        sourceTiles.maxX = tile.getDirectCompositeSourceMaxX();
+        sourceTiles.maxY = tile.getDirectCompositeSourceMaxY();
     } else {
-        const std::optional<Rectangle> mappedSourceBounds =
+        const std::optional<Rectangle> directCompositeSourceBounds =
             mapGeometryBoundsToImageryCoverage(
                 targetBounds,
                 effectiveCoverage,
                 shouldClampOutsideCoverage(owner_));
-        if (!mappedSourceBounds) {
+        if (!directCompositeSourceBounds) {
             logAndroidRasterPipeline("coverage-miss", ck, 0, 0);
             tile.setMoreDetailAvailable(
                 RasterOverlayTile::MoreDetailAvailable::No);
             tile.setState(RasterOverlayTile::LoadState::Failed);
             return false;
         }
-        QuadtreeSourcePlan sourcePlan = buildQuadtreeSourcePlan(
+        RasterOverlaySourcePlan sourcePlan = buildRasterOverlaySourcePlan(
             scheme_,
             provider_,
-            textureUploader_.get(),
             targetBounds,
-            *mappedSourceBounds,
+            *directCompositeSourceBounds,
             tile.getTargetScreenPixelsX(),
             tile.getTargetScreenPixelsY(),
             maximumScreenSpaceError_,
-            maximumTextureSize_,
+            effectiveMaximumTextureSize(),
             getMinimumLevel(),
             getMaximumLevel());
-        tile.setMappedSourceList(
+        tile.setDirectCompositeSourceList(
             sourcePlan.sourceZoom,
-            *mappedSourceBounds,
+            *directCompositeSourceBounds,
             sourcePlan.sourceKeys,
             sourcePlan.minX,
             sourcePlan.minY,
             sourcePlan.maxX,
             sourcePlan.maxY);
-        sourceTiles = RasterSourceTileMapping{
-            sourcePlan.sourceZoom,
-            *mappedSourceBounds,
-            sourcePlan.sourceKeys,
-            sourcePlan.minX,
-            sourcePlan.minY,
-            sourcePlan.maxX,
-            sourcePlan.maxY};
+        sourceTiles = std::move(sourcePlan);
     }
 
     if (sourceTiles.empty()) {
@@ -198,32 +190,32 @@ bool RasterOverlayTileProvider::loadMappedRasterTile(
         budget);
 }
 
-bool RasterOverlayTileProvider::pumpLoadingMappedRasterTile(
+bool RasterOverlayTileProvider::pumpLoadingDirectCompositeTile(
     RasterOverlayTile& tile,
     FrameResourceBudget* budget) {
-    if (!tile.isMappedRasterTile() ||
+    if (!tile.isDirectCompositeTile() ||
         tile.getState() != RasterOverlayTile::LoadState::Loading) {
         return false;
     }
 
-    std::shared_ptr<MappedSourceImageSet> sourceSet;
+    std::shared_ptr<DirectCompositeSourceImageSet> sourceSet;
     {
         std::unique_lock<std::mutex> lock(asyncState_->mutex);
-        auto it = asyncState_->activeMappedSourceSets.find(
+        auto it = asyncState_->activeDirectCompositeSourceSets.find(
             tile.getCacheKey());
-        if (it != asyncState_->activeMappedSourceSets.end()) {
+        if (it != asyncState_->activeDirectCompositeSourceSets.end()) {
             sourceSet = it->second;
         }
     }
     if (sourceSet && sourceSet->hasUnissuedSources()) {
-        issueMappedSourceImageSet(sourceSet, budget);
+        issueDirectCompositeSourceImageSet(sourceSet, budget);
     }
     return true;
 }
 
 bool RasterOverlayTileProvider::loadSourceTileList(
     RasterOverlayTile& tile,
-    RasterSourceTileMapping sourceTiles,
+    RasterOverlaySourcePlan sourceTiles,
     const Rectangle& targetBounds,
     const std::string& cacheKey,
     FrameResourceBudget* budget) {
@@ -240,7 +232,7 @@ bool RasterOverlayTileProvider::loadSourceTileList(
 
 bool RasterOverlayTileProvider::loadSourceImageSet(
     RasterOverlayTile& tile,
-    RasterSourceTileMapping sourceTiles,
+    RasterOverlaySourcePlan sourceTiles,
     const Rectangle& targetBounds,
     const std::string& cacheKey,
     FrameResourceBudget* budget) {
@@ -258,7 +250,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::memory_order_relaxed));
     // cesium-native SharedAssetDepot::getOrCreate returns an existing pending
     // or loaded asset without starting transport work. Preserve that budget
-    // behavior for both mapped and direct raster loads.
+    // behavior for both composite and exact single-source raster loads.
     const bool hasReusableSharedSource =
         estimatedNewSourceRequests <
             static_cast<int>(sourceTiles.sourceKeys.size());
@@ -267,7 +259,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         !hasReusableSharedSource) {
         return false;
     }
-    if (!tile.isMappedRasterTile() && estimatedNewSourceRequests > 0 &&
+    if (!tile.isDirectCompositeTile() && estimatedNewSourceRequests > 0 &&
         !hasRasterInflightCapacity(
             budget,
             asyncState_->activeRasterSourceRequests.load(
@@ -304,7 +296,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
     }
     const uint64_t sourceWaiterOwnerToken = nextSourceWaiterOwnerToken();
     const bool returnEmptyForAncestorOnly = true;
-    auto sourceSet = std::make_shared<MappedSourceImageSet>(
+    auto sourceSet = std::make_shared<DirectCompositeSourceImageSet>(
         scheme_,
         state,
         throttleSlotReleased,
@@ -315,7 +307,7 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
         projection_,
         getMaximumLevel(),
         returnEmptyForAncestorOnly,
-        !tile.isMappedRasterTile(),
+        !tile.isDirectCompositeTile(),
         [state, throttleSlotReleased, cacheKey, tileWeak,
          requestSourceDepotEpoch, sourceWaiterOwnerToken](
             std::unique_ptr<DecodedImage> composed,
@@ -328,17 +320,17 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::unique_lock<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             auto sourceSetIt =
-                state->activeMappedSourceSets.find(cacheKey);
-            if (sourceSetIt != state->activeMappedSourceSets.end()) {
+                state->activeDirectCompositeSourceSets.find(cacheKey);
+            if (sourceSetIt != state->activeDirectCompositeSourceSets.end()) {
                 retired.sourceSets.push_back(
                     std::move(sourceSetIt->second));
-                state->activeMappedSourceSets.erase(sourceSetIt);
+                state->activeDirectCompositeSourceSets.erase(sourceSetIt);
             }
             state->sourceTileDepotFallbackKeysByOwner.erase(
                 sourceWaiterOwnerToken);
-            state->activeMappedSourceOwnerTokens.erase(
+            state->activeDirectCompositeSourceOwnerTokens.erase(
                 sourceWaiterOwnerToken);
-            compactActiveMappedSourceSetOrderLocked(*state);
+            compactActiveDirectCompositeSourceSetOrderLocked(*state);
             if (!state->alive.load(std::memory_order_acquire)) {
                 releaseRasterThrottleSlotOnce(
                     *throttleSlotReleased,
@@ -402,17 +394,17 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
             std::unique_lock<std::mutex> providerLock(state->mutex);
             state->inFlightRequests.erase(cacheKey);
             auto sourceSetIt =
-                state->activeMappedSourceSets.find(cacheKey);
-            if (sourceSetIt != state->activeMappedSourceSets.end()) {
+                state->activeDirectCompositeSourceSets.find(cacheKey);
+            if (sourceSetIt != state->activeDirectCompositeSourceSets.end()) {
                 retired.sourceSets.push_back(
                     std::move(sourceSetIt->second));
-                state->activeMappedSourceSets.erase(sourceSetIt);
+                state->activeDirectCompositeSourceSets.erase(sourceSetIt);
             }
             state->sourceTileDepotFallbackKeysByOwner.erase(
                 sourceWaiterOwnerToken);
-            state->activeMappedSourceOwnerTokens.erase(
+            state->activeDirectCompositeSourceOwnerTokens.erase(
                 sourceWaiterOwnerToken);
-            compactActiveMappedSourceSetOrderLocked(*state);
+            compactActiveDirectCompositeSourceSetOrderLocked(*state);
             if (!state->alive.load(std::memory_order_acquire)) {
                 releaseRasterThrottleSlotOnce(
                     *throttleSlotReleased,
@@ -457,27 +449,27 @@ bool RasterOverlayTileProvider::loadSourceImageSet(
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         auto [it, inserted] =
-            asyncState_->activeMappedSourceSets.emplace(cacheKey, sourceSet);
+            asyncState_->activeDirectCompositeSourceSets.emplace(cacheKey, sourceSet);
         if (!inserted && it->second) {
-            asyncState_->activeMappedSourceOwnerTokens.erase(
+            asyncState_->activeDirectCompositeSourceOwnerTokens.erase(
                 it->second->getWaiterOwnerToken());
         }
-        asyncState_->activeMappedSourceOwnerTokens.insert(
+        asyncState_->activeDirectCompositeSourceOwnerTokens.insert(
             sourceWaiterOwnerToken);
         if (!inserted) {
             it->second = sourceSet;
         } else {
-            asyncState_->activeMappedSourceSetOrder.push_back(cacheKey);
+            asyncState_->activeDirectCompositeSourceSetOrder.push_back(cacheKey);
         }
     }
 
-    issueMappedSourceImageSet(sourceSet, budget);
+    issueDirectCompositeSourceImageSet(sourceSet, budget);
 
     return true;
 }
 
-int RasterOverlayTileProvider::issueMappedSourceImageSet(
-    const std::shared_ptr<MappedSourceImageSet>& sourceSet,
+int RasterOverlayTileProvider::issueDirectCompositeSourceImageSet(
+    const std::shared_ptr<DirectCompositeSourceImageSet>& sourceSet,
     FrameResourceBudget* budget) {
     if (pendingUploadBackpressureActive()) {
         return 0;
@@ -576,13 +568,13 @@ int RasterOverlayTileProvider::estimateNewSourceRequestsForSourceKeys(
     return estimated;
 }
 
-bool RasterOverlayTileProvider::mappedTileWouldIssueNewSourceRequests(
+bool RasterOverlayTileProvider::directCompositeTileWouldIssueNewSourceRequests(
     const RasterOverlayTile& tile) const {
-    if (!tile.isMappedRasterTile() || !tile.hasMappedSourceList()) {
+    if (!tile.isDirectCompositeTile() || !tile.hasDirectCompositeSourceList()) {
         return true;
     }
     return estimateNewSourceRequestsForSourceKeys(
-               tile.getMappedSourceKeys()) > 0;
+               tile.getDirectCompositeSourceKeys()) > 0;
 }
 
 int RasterOverlayTileProvider::issuePendingSourceFallbacks(
@@ -651,7 +643,7 @@ int RasterOverlayTileProvider::issuePendingSourceFallbacks(
                 std::memory_order_release);
             ownerActive =
                 fallback.ownerToken == 0 ||
-                asyncState_->activeMappedSourceOwnerTokens.count(
+                asyncState_->activeDirectCompositeSourceOwnerTokens.count(
                     fallback.ownerToken) > 0;
         }
 
@@ -706,7 +698,7 @@ int RasterOverlayTileProvider::issuePendingSourceFallbacks(
     return issued;
 }
 
-int RasterOverlayTileProvider::issueActiveMappedSourceImageSets(
+int RasterOverlayTileProvider::issueActiveDirectCompositeSourceImageSets(
     FrameResourceBudget* budget,
     double* fallbackMs,
     double* snapshotMs,
@@ -718,18 +710,18 @@ int RasterOverlayTileProvider::issueActiveMappedSourceImageSets(
     }
 
     const double snapshotStartMs = perf::nowMs();
-    std::vector<std::shared_ptr<MappedSourceImageSet>> activeSets;
+    std::vector<std::shared_ptr<DirectCompositeSourceImageSet>> activeSets;
     {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
-        activeSets.reserve(asyncState_->activeMappedSourceSetOrder.size());
-        for (const std::string& cacheKey : asyncState_->activeMappedSourceSetOrder) {
-            auto it = asyncState_->activeMappedSourceSets.find(cacheKey);
-            if (it == asyncState_->activeMappedSourceSets.end() || !it->second) {
+        activeSets.reserve(asyncState_->activeDirectCompositeSourceSetOrder.size());
+        for (const std::string& cacheKey : asyncState_->activeDirectCompositeSourceSetOrder) {
+            auto it = asyncState_->activeDirectCompositeSourceSets.find(cacheKey);
+            if (it == asyncState_->activeDirectCompositeSourceSets.end() || !it->second) {
                 continue;
             }
             activeSets.push_back(it->second);
         }
-        compactActiveMappedSourceSetOrderLocked(*asyncState_);
+        compactActiveDirectCompositeSourceSetOrderLocked(*asyncState_);
     }
     if (snapshotMs) {
         *snapshotMs += perf::nowMs() - snapshotStartMs;
@@ -740,7 +732,7 @@ int RasterOverlayTileProvider::issueActiveMappedSourceImageSets(
         if (!sourceSet || !sourceSet->hasUnissuedSources()) {
             continue;
         }
-        issued += issueMappedSourceImageSet(sourceSet, budget);
+        issued += issueDirectCompositeSourceImageSet(sourceSet, budget);
     }
     if (issueMs) {
         *issueMs += perf::nowMs() - issueStartMs;

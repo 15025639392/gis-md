@@ -1,18 +1,18 @@
 #include "TileRasterOverlayState.h"
 
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "SurfaceRasterBinding.h"
 
 namespace earth_engine {
 
-RasterMappedToTilesetTile* TileRasterOverlayState::mappingAt(size_t index) {
+DirectRasterMapping* TileRasterOverlayState::mappingAt(size_t index) {
     if (index >= mappings_.size()) {
         return nullptr;
     }
     return mappings_[index].get();
 }
 
-const RasterMappedToTilesetTile* TileRasterOverlayState::mappingAt(
+const DirectRasterMapping* TileRasterOverlayState::mappingAt(
     size_t index) const {
     if (index >= mappings_.size()) {
         return nullptr;
@@ -20,12 +20,12 @@ const RasterMappedToTilesetTile* TileRasterOverlayState::mappingAt(
     return mappings_[index].get();
 }
 
-RasterMappedToTilesetTile& TileRasterOverlayState::ensureMapping(
+DirectRasterMapping& TileRasterOverlayState::ensureMapping(
     size_t index) {
     ensureMappingSlots(index + 1);
     if (!mappings_[index]) {
         invalidateFrameUpdateCache();
-        mappings_[index] = std::make_unique<RasterMappedToTilesetTile>();
+        mappings_[index] = std::make_unique<DirectRasterMapping>();
     }
     return *mappings_[index];
 }
@@ -57,12 +57,12 @@ void TileRasterOverlayState::resizeMappingSlots(
 }
 
 bool TileRasterOverlayState::hasReadyMapping(size_t index) const {
-    const RasterMappedToTilesetTile* mapping = mappingAt(index);
+    const DirectRasterMapping* mapping = mappingAt(index);
     return mapping && mapping->getReadyTile() != nullptr;
 }
 
 bool TileRasterOverlayState::hasDrawableReadyMapping(size_t index) const {
-    const RasterMappedToTilesetTile* mapping = mappingAt(index);
+    const DirectRasterMapping* mapping = mappingAt(index);
     return chooseSurfaceRasterBinding(mapping).kind !=
            SurfaceRasterBindingKind::None;
 }

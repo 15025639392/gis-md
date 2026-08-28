@@ -878,7 +878,7 @@ static bool createEngine() {
             // 矢量面缺席不该阻塞地形瓦片判定 complete(server 不在时整场
             // 景仍按纯影像走)。
             oopts.blocksCompleteRenderable = false;
-            // ⚠️ mappedRaster 兜底路径按 overlay 自己的 georeference 喂
+            // ⚠️ Direct raster fallback 按 overlay 自己的 georeference 喂
             // key:本 provider 产出的是"GCJ 空间矩形"语义的图(见
             // gcj02SourceGrid),故声明 Gcj02 让兜底版也走同一套修正,
             // 否则页 miss 瞬间面会闪 ~500m 错位。

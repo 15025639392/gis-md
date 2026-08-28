@@ -4,7 +4,7 @@
 #include "../providers/RasterOverlayTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
 #include "GltfRenderGeometryBuilder.h"
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "TerrainRasterOverlayProjectionResolver.h"
 #include "TileRasterOverlayDetailsDeriver.h"
 #include "TileLoadTypes.h"

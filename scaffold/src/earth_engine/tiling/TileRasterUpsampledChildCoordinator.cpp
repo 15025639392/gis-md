@@ -2,7 +2,7 @@
 
 #include "TileContentAccess.h"
 #include "TileContentResourceInvalidator.h"
-#include "RasterMappedToTilesetTile.h"
+#include "DirectRasterMapping.h"
 #include "../providers/RasterOverlayTile.h"
 #include "../providers/RasterOverlayTileProvider.h"
 #include "TileRasterUpsampledChildMaterializer.h"

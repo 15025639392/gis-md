@@ -28,7 +28,7 @@ void TilesetSelectionFrameFacade::selectTiles(
             perf::shouldLog(frameState.frameId);
     }
     tileset.currentFrameTimeSeconds_ = frameState.timeSeconds;
-    const auto& directOverlays = tileset.directRasterOverlays();
+    const auto& configuredOverlays = tileset.rasterOverlays();
     TileSelectionFrameRunner::run(
         TileSelectionFrameRunInput{
             tileset.tilePlan_,
@@ -48,7 +48,7 @@ void TilesetSelectionFrameFacade::selectTiles(
         [&tileset](const TileKey& key) {
             return tileset.contentAccess_.ensureTile(key);
         },
-        [&tileset, &directOverlays, performanceTimings, pPrepRenderer](
+        [&tileset, performanceTimings, pPrepRenderer](
             TilesetTile& root,
             const SelectorFrame& selectorFrame) {
             TileSelectionTraversalContextBinding binding{
@@ -69,13 +69,13 @@ void TilesetSelectionFrameFacade::selectTiles(
                         tileset.loadQueue_,
                         tileset.selectionCounters_,
                         tileset.options_,
-                        directOverlays,
                         tileset.device_,
                         pPrepRenderer,
                         tileset.frameResourceBudget_,
                         tileset.lastCameraPosition_,
                         tileset.contentAccess_,
-                        performanceTimings},
+                        performanceTimings,
+                        tileset.rasterOverlayRuntime_.frameContext()},
                     binding);
             TileSelectionTraversalExecutor::visitTileIfNeeded(
                 traversalContext,
@@ -84,7 +84,7 @@ void TilesetSelectionFrameFacade::selectTiles(
                 0,
                 false);
         },
-        [&tileset, &directOverlays](const FrameState& finalizeFrameState) {
+        [&tileset, &configuredOverlays](const FrameState&) {
             return TileSelectionFrameFinalizationRunner::finalize(
                 TileSelectionFrameFinalizationInput{
                     tileset.tilePlan_,
@@ -93,12 +93,14 @@ void TilesetSelectionFrameFacade::selectTiles(
                     tileset.selectionActiveTilesPrev_,
                     tileset.selectionCounters_,
                     tileset.contentAccess_,
-                    directOverlays,
+                    configuredOverlays,
                     TileRenderPlanFrameRefreshOptions{
                         tileset.interactionActiveForFrame_,
                         tileset.resourceSmoothingActiveForFrame_,
                         tileset.options_.maximumScreenSpaceError,
-                        tileset.options_.seamEdgeMismatchProbe}});
+                        tileset.options_.seamEdgeMismatchProbe,
+                        -1,
+                        tileset.rasterOverlayRuntime_.frameContext()}});
         });
 }
 

@@ -55,8 +55,8 @@ struct PresentationTilesetTrace {
     int minVisibleZoom = 0;
     int maxVisibleZoom = 0;
     double lodSizePixels = 0.0;
-    int frameMappedRasterTileCount = 0;
-    int frameMappedRasterTileLoadingCount = 0;
+    int frameDirectRasterMappingCount = 0;
+    int frameDirectRasterMappingLoadingCount = 0;
     int frameProgressTotalCount = 0;
     int frameProgressLoadingCount = 0;
     double frameLoadProgressPercentage = 100.0;
@@ -87,7 +87,7 @@ struct PresentationCommandTrace {
     int surfaceNoSkirtIndexCount = 0;
     int surfaceSkirtIndexCount = 0;
     int surfaceBaseRasterState = 0;
-    int surfaceBaseIsMappedRasterTile = 0;
+    int surfaceBaseUsesDirectRaster = 0;
     float surfaceClipEnabled = 0.0f;
     std::array<float, 4> surfaceClipUv{0.0f, 0.0f, 1.0f, 1.0f};
     float surfaceTransitionOpacity = 1.0f;

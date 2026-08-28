@@ -6,6 +6,7 @@ namespace earth_engine {
 
 class TileContentAccess;
 class ActivatedRasterOverlay;
+class RasterOverlayFrameContext;
 struct TilePlan;
 
 struct TileRenderPlanFrameRefreshOptions {
@@ -18,6 +19,7 @@ struct TileRenderPlanFrameRefreshOptions {
     bool seamEdgeMismatchProbe = false;
     // H-S5:新瓦首建每帧预算覆盖值(<0 = 用 finalizer 默认常量)。
     int firstBuildBudgetOverride = -1;
+    const RasterOverlayFrameContext& rasterFrame;
 };
 
 class TileRenderPlanFrameRefresher {
@@ -25,7 +27,7 @@ public:
     static void refresh(TilePlan& tilePlan,
                         TileContentAccess& contentAccess,
                         const std::vector<ActivatedRasterOverlay*>&
-                            rasterOverlays,
+                            configuredRasterOverlays,
                         const TileRenderPlanFrameRefreshOptions& options);
 };
 

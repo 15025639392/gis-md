@@ -64,7 +64,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
         bool allowParentFallback = true) {
         if (waiterOwnerToken != 0) {
             std::lock_guard<std::mutex> lock(cacheMutex);
-            if (state->activeMappedSourceOwnerTokens.count(waiterOwnerToken) ==
+            if (state->activeDirectCompositeSourceOwnerTokens.count(waiterOwnerToken) ==
                 0) {
                 return RasterAssetAcquireStatus::AdmissionDenied;
             }
@@ -179,7 +179,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
                 {
                     std::lock_guard<std::mutex> lock(cacheMutex);
                     if (waiterOwnerToken != 0 &&
-                        state->activeMappedSourceOwnerTokens.count(
+                        state->activeDirectCompositeSourceOwnerTokens.count(
                             waiterOwnerToken) == 0) {
                         return RasterAssetAcquireStatus::AdmissionDenied;
                     }
@@ -224,7 +224,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             {
                 std::lock_guard<std::mutex> lock(cacheMutex);
                 if (waiterOwnerToken != 0 &&
-                    state->activeMappedSourceOwnerTokens.count(
+                    state->activeDirectCompositeSourceOwnerTokens.count(
                         waiterOwnerToken) == 0) {
                     return RasterAssetAcquireStatus::AdmissionDenied;
                 }
@@ -279,7 +279,7 @@ struct RasterOverlayTileProvider::QuadtreeSourceAssetDepot
             {
                 std::lock_guard<std::mutex> lock(cacheMutex);
                 if (waiterOwnerToken != 0 &&
-                    state->activeMappedSourceOwnerTokens.count(
+                    state->activeDirectCompositeSourceOwnerTokens.count(
                         waiterOwnerToken) == 0) {
                     return RasterAssetAcquireStatus::AdmissionDenied;
                 }
@@ -1024,23 +1024,23 @@ private:
     }
 };
 
-struct RasterOverlayTileProvider::MappedSourceImageSet
-    : public std::enable_shared_from_this<MappedSourceImageSet> {
-    MappedSourceImageSet(const TileScheme& tileScheme,
+struct RasterOverlayTileProvider::DirectCompositeSourceImageSet
+    : public std::enable_shared_from_this<DirectCompositeSourceImageSet> {
+    DirectCompositeSourceImageSet(const TileScheme& tileScheme,
                              std::shared_ptr<ProviderAsyncState> asyncState,
                              std::shared_ptr<std::atomic<bool>>
                                  throttleSlotReleased,
                              std::shared_ptr<QuadtreeSourceAssetDepot>
                                  sourceDepot,
                              uint64_t sourceWaiterOwnerToken,
-                             RasterSourceTileMapping sourceTileMapping,
+                             RasterOverlaySourcePlan sourceTileMapping,
                              Rectangle bounds,
                              RasterOverlayProjection outputProjection,
                              int maximumSourceLevel,
                              bool emptyWhenOnlyAncestorFallback,
                              bool allowDirectTerminalFailure,
-                             MappedSourceLoadSuccess success,
-                             MappedSourceLoadFailure failure)
+                             DirectCompositeSourceLoadSuccess success,
+                             DirectCompositeSourceLoadFailure failure)
         : scheme(createAsyncSchemeSnapshot(tileScheme))
         , state(std::move(asyncState))
         , slotReleased(std::move(throttleSlotReleased))
@@ -1262,7 +1262,7 @@ private:
 
                 try {
                     CompositeImageResult composed =
-                        composeMappedSourceImageSet(
+                        composeDirectCompositeSourceImageSet(
                             *self->scheme,
                             self->targetBounds,
                             std::move(completedSources),
@@ -1334,14 +1334,14 @@ private:
     std::shared_ptr<std::atomic<bool>> slotReleased;
     std::shared_ptr<QuadtreeSourceAssetDepot> depot;
     uint64_t waiterOwnerToken = 0;
-    RasterSourceTileMapping sourceTiles;
+    RasterOverlaySourcePlan sourceTiles;
     Rectangle targetBounds;
     RasterOverlayProjection projection;
     int maximumLevel = 0;
     bool returnEmptyForAncestorOnly = false;
     bool directTerminalFailure = false;
-    MappedSourceLoadSuccess onSuccess;
-    MappedSourceLoadFailure onFailure;
+    DirectCompositeSourceLoadSuccess onSuccess;
+    DirectCompositeSourceLoadFailure onFailure;
     mutable std::mutex mutex;
     int remaining = 0;
     std::vector<bool> sourceIssued;

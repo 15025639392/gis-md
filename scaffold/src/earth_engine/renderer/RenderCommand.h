@@ -256,8 +256,8 @@ struct RenderCommand {
     // (与高度层 epoch 同构)。档位复用 terrainHeightGridSize(模板与高度纹理同档)。
     int terrainTemplateSlot = -1;
     uint32_t terrainTemplateGeneration = 0;
-    // 合批 Step 3(CPU-only):pageStore 本瓦片全 cell 高清页驻留 → mappedRaster
-    // fallback 必不被采样 → 该命令可进实例化批(批 shader 丢 mappedRaster)。
+    // 合批 Step 3(CPU-only):pageStore 本瓦片全 cell 高清页驻留 → directComposite
+    // fallback 必不被采样 → 该命令可进实例化批(批 shader 丢 directComposite)。
     // 由 TerrainPageStore::applyToTerrainCommand 设,TerrainInstanceBatcher 读。
     bool terrainPageStoreFullyResident = false;
     // [瓦界对齐] instanced 管线专用:几何 UV(共享模板边到边 0..1)→ 源格的逐瓦
@@ -289,7 +289,7 @@ struct RenderCommand {
     int surfaceNoSkirtIndexCount = 0;
     int surfaceSkirtIndexCount = 0;
     int surfaceBaseRasterState = 0;
-    int surfaceBaseIsMappedRasterTile = 0;
+    int surfaceBaseUsesDirectRaster = 0;
 
     // glTF raster overlays use _CESIUMOVERLAY_n attributes and separate
     // material texture slots, so they cannot reuse surface overlay samplers.
