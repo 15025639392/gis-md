@@ -11,7 +11,7 @@
 namespace earth_engine {
 
 struct TileUpdateUploadRunInput {
-    std::vector<ActivatedRasterOverlay*>& rasterOverlays;
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     FrameResourceBudget& frameResourceBudget;
     bool interactionActive = false;
     bool resourceSmoothingActive = false;

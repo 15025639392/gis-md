@@ -88,6 +88,12 @@ void ActivatedRasterOverlay::trimUnusedTiles(bool cachePressure) {
     }
 }
 
+void ActivatedRasterOverlay::invalidateDirectExecutionState() {
+    if (tileProvider_) {
+        tileProvider_->invalidateDirectExecutionState();
+    }
+}
+
 int64_t ActivatedRasterOverlay::tileTextureBytesUsed() const {
     return tileProvider_ ? tileProvider_->tileTextureBytesUsed() : 0;
 }

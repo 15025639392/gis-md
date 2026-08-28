@@ -701,10 +701,10 @@ bool Engine::render(double deltaSeconds) {
                 // C-1:把**整个有序** overlay 列表交给页存储(与 mappedRaster 同序
                 // 合成)。此前只传 overlays.front(),靠后的 overlay 在页存储路径上
                 // 被静默丢弃 —— 两条合成路径语义不一致正是矢量层贴地失效的根。
+                const RasterOverlayFrameContext& rasterFrame =
+                    tileset->rasterOverlayRuntime().frameContext();
                 const std::vector<RasterOverlayTileProvider*>& providers =
-                    tileset->rasterOverlayRuntime().providersForBackend(
-                        RasterOverlayBackendKind::PageStore,
-                        device_);
+                    rasterFrame.pageStoreProviders();
                 const double uvpStartMs = perf::nowMs();
                 terrainPageStore_->updateVisiblePages(
                     frameState.selectorViews.front(),
@@ -712,7 +712,7 @@ bool Engine::render(double deltaSeconds) {
                     providers,
                     tileset->maximumScreenSpaceError(),
                     &scene_->frameResourceArbiter(),
-                    tileset->rasterOverlayRuntime().assetDepotHandle());
+                    rasterFrame.assetDepotHandle());
                 pageStoreUvpMs = perf::nowMs() - uvpStartMs;
                 pageStoreIndirMs = terrainPageStore_->lastIndirUploadMs();
             }

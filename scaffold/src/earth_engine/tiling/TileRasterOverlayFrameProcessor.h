@@ -52,7 +52,7 @@ struct TileRasterOverlayRenderPlanPrepareResult {
 class TileRasterOverlayFrameProcessor {
 public:
     static TileRasterOverlayUploadResult processPendingUploads(
-        std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         bool interactionActive,
         FrameResourceBudget& frameResourceBudget) {
         TileRasterOverlayUploadResult result;
@@ -88,7 +88,7 @@ public:
     static TileRasterOverlayPrefetchResult prefetchSelection(
         const TilePlan& tilePlan,
         const std::vector<TileLoadRequest>& loadRequests,
-        std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         const std::vector<size_t>& overlayProcessingOrder,
         RenderDevice* device,
         double maximumScreenSpaceError,
@@ -341,7 +341,7 @@ public:
               typename RefreshRenderPlanFn>
     static TileRasterOverlayRenderPlanPrepareResult prepareRenderPlan(
         TilePlan& tilePlan,
-        std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         const std::vector<size_t>& overlayProcessingOrder,
         RenderDevice* device,
         double maximumScreenSpaceError,

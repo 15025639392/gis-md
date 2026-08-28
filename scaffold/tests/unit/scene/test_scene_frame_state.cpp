@@ -85,10 +85,10 @@ struct TilesetTestAccess {
     static void prefetchRasterOverlays(Tileset& tileset, TilesetTile& tile) {
         const std::vector<size_t> overlayOrder =
             TileSelectionRasterOverlayPreparer::processingOrder(
-                tileset.rasterOverlays_);
+                tileset.directRasterOverlays());
         TileRasterOverlayPrefetcher::prefetch(
             tile,
-            tileset.rasterOverlays_,
+            tileset.directRasterOverlays(),
             overlayOrder,
             tileset.device_,
             tileset.options_.maximumScreenSpaceError,
@@ -118,7 +118,7 @@ struct TilesetTestAccess {
         TileRenderPlanFrameRefresher::refresh(
             tileset.tilePlan_,
             tileset.contentAccess_,
-            tileset.rasterOverlays_,
+            tileset.directRasterOverlays(),
             TileRenderPlanFrameRefreshOptions{
                 tileset.interactionActiveForFrame_,
                 tileset.resourceSmoothingActiveForFrame_});

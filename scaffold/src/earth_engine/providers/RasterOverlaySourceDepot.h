@@ -846,7 +846,9 @@ private:
         }
         const int64_t cacheBudgetBytes = std::max<int64_t>(
             0,
-            state->subTileCacheBytes - state->pendingUploadBytes);
+            state->subTileCacheBytes - state->pendingUploadBytes -
+                RasterOverlayTileProvider::externalOnlyResidentBytesLocked(
+                    *state));
         if (cacheBudgetBytes <= 0) {
             RasterOverlayTileProvider::clearSourceDepotCacheLocked(
                 *state,
@@ -909,7 +911,9 @@ private:
         }
         const int64_t cacheBudgetBytes = std::max<int64_t>(
             0,
-            state->subTileCacheBytes - state->pendingUploadBytes);
+            state->subTileCacheBytes - state->pendingUploadBytes -
+                RasterOverlayTileProvider::externalOnlyResidentBytesLocked(
+                    *state));
         if (cacheBudgetBytes <= 0) {
             RasterOverlayTileProvider::clearSourceDepotCacheLocked(
                 *state,

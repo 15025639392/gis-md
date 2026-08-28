@@ -10,10 +10,21 @@ RasterAssetAcquireResult RasterAssetDepot::acquireExactSource(
     const TileKey& sourceKey,
     std::function<bool()> tryAdmitTransport,
     std::function<void(RasterAssetResponse)> onReady) {
+    auto retainExternal = provider.externalSourceImageRetainer();
     RasterAssetAcquireResult result = provider.acquireExactSource(
         sourceKey,
         std::move(tryAdmitTransport),
-        std::move(onReady));
+        [retainExternal = std::move(retainExternal),
+         onReady = std::move(onReady)](
+            RasterAssetResponse response) mutable {
+            if (response.asset && response.asset->image) {
+                response.asset->image = retainExternal(
+                    response.asset->image);
+            }
+            if (onReady) {
+                onReady(std::move(response));
+            }
+        });
     record(consumer, result.status);
     return result;
 }
@@ -26,6 +37,7 @@ RasterAssetDepot::tryGetCachedExactSource(
     std::optional<RasterAssetSnapshot> asset =
         provider.tryGetCachedExactSource(sourceKey);
     if (asset) {
+        asset->image = provider.retainExternalSourceImage(asset->image);
         counters_[consumerIndex(consumer)].cacheHits.fetch_add(
             1, std::memory_order_relaxed);
     }

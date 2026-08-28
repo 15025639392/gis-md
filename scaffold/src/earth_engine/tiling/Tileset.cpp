@@ -66,7 +66,6 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
     : terrainProviders_(std::move(terrainProviders)),
       tileScheme_(std::move(tileScheme)),
       rasterOverlayRuntime_(std::move(rasterOverlays)),
-      rasterOverlays_(rasterOverlayRuntime_.overlays()),
       device_(device),
       options_(std::move(options)),
       resourceInvalidator_(
@@ -89,7 +88,7 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
           contentLifecycle_,
           loadQueue_,
           tileRegistry_.tiles(),
-          rasterOverlayRuntime_.overlays(),
+          rasterOverlayRuntime_.configuredOverlays(),
           resourceSmoothingActiveForFrame_,
           options_.maximumCachedBytes,
           options_.tileCacheUnloadTimeLimit,
@@ -98,12 +97,8 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
           contentAccess_,
           resourceInvalidator_),
       meshPreparation_(
-          contentLifecycle_,
           resourceInvalidator_,
-          loadQueue_,
-          terrainProviders_.hasTerrainQuadtree(),
-          device_,
-          rasterOverlayRuntime_.overlays()),
+          loadQueue_),
       contentRuntime_(
           contentLifecycle_,
           contentAccess_,
@@ -112,7 +107,7 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
       renderCommands_(
           meshPreparation_,
           resourceInvalidator_,
-          rasterOverlayRuntime_.overlays(),
+          rasterOverlayRuntime_.frameContext().directOverlays(),
           device_) {
     // 根层常驻(漏底根修,见 TileBaseCoveragePin.h):只在承担底图覆盖的
     // tileset 上开启(SDK 场景路径设 options.pinBaseCoverage=true)。
@@ -120,7 +115,7 @@ Tileset::Tileset(TilesetTerrainProviders terrainProviders,
     frameResourceBudget_.beginFrame(
         0,
         makeFrameResourceBudgetConfig(options_, false, false));
-    rasterOverlayRuntime_.ensureProviders(device_);
+    rasterOverlayRuntime_.beginFrame(0, device_);
 }
 
 Tileset::Tileset(
@@ -261,7 +256,7 @@ TilesetLoadDiagnostics Tileset::loadDiagnostics() const {
         tileRegistry_.tiles());
     TilesetProviderDiagnosticsCollector::collectContentAndRaster(
         terrainProviders_.contentProvider(),
-        rasterOverlayRuntime_.overlays())
+        rasterOverlays())
         .applyTo(diagnostics);
     diagnostics.lastRequestOutcome = lastRequestOutcome_;
     return diagnostics;
@@ -271,7 +266,7 @@ TileContentRuntimeRequestFrame
 Tileset::makeContentRuntimeRequestFrame(
     IPrepareRendererResources* pPrepRenderer) {
     TileContentRuntimeRequestFrame frame{
-        rasterOverlayRuntime_.overlays(),
+        directRasterOverlays(),
         tileRegistry_.tiles()};
     frame.contentProvider = terrainProviders_.contentProvider();
     frame.device = device_;
@@ -294,7 +289,7 @@ Tileset::makeContentRuntimeRequestFrame(
 TileContentRuntimeUploadFrame Tileset::makeContentRuntimeUploadFrame(
     IPrepareRendererResources* pPrepRenderer) {
     TileContentRuntimeUploadFrame frame{
-        rasterOverlayRuntime_.overlays()};
+        directRasterOverlays()};
     frame.contentProvider = terrainProviders_.contentProvider();
     frame.device = device_;
     frame.pPrepRenderer = pPrepRenderer;
@@ -413,7 +408,7 @@ void Tileset::rotateSelectionActiveTiles(bool resetSelectionState) {
             }
             tile->selectionActiveFrameId = selectionActiveFrameId_;
             TileSelectionStateResetter::resetOne(
-                *tile, rasterOverlayRuntime_.overlays());
+                *tile, directRasterOverlays());
         };
 
         // The vector that became current is two traversals old. Reset it once
@@ -445,7 +440,7 @@ void Tileset::trackSelectionActiveTile(
         tile.selectionActiveFrameId != selectionActiveFrameId_) {
         tile.selectionActiveFrameId = selectionActiveFrameId_;
         TileSelectionStateResetter::resetOne(
-            tile, rasterOverlayRuntime_.overlays());
+            tile, directRasterOverlays());
     }
     if (tile.selectionTraversalFrameId == selectionActiveFrameId_) {
         return;
@@ -539,7 +534,7 @@ void Tileset::buildRenderCommands(Renderer& renderer,
         TileRenderFrameContext{
             TileRenderFrameCoordinatorInput{
                 tilePlan_,
-                rasterOverlayRuntime_.overlays(),
+                directRasterOverlays(),
                 commandFrameNumber,
                 lastCameraPosition_,
                 options_.fogDensityTable,
@@ -591,7 +586,7 @@ bool Tileset::requiresBaseImageryPresentationSurface() const {
     }
 
     for (const ActivatedRasterOverlay* activeOverlay :
-         rasterOverlayRuntime_.overlays()) {
+         directRasterOverlays()) {
         if (!activeOverlay || !activeOverlay->visible()) {
             continue;
         }
@@ -626,13 +621,13 @@ bool Tileset::plannedRenderEntriesHaveRequiredBaseImagery() const {
         if (!TileRasterOverlayReadinessPolicy::
                 terrainSurfaceImageryDrawableReady(
                     *renderTile,
-                    rasterOverlayRuntime_.overlays())) {
+                    directRasterOverlays())) {
             if (notDrawable++ == 0) {
                 firstNotDrawableKey = entry.renderKey;
                 firstReason =
                     TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
                         *renderTile,
-                        rasterOverlayRuntime_.overlays());
+                        directRasterOverlays());
             }
         }
     }

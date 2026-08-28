@@ -49,6 +49,7 @@ public:
     uint64_t revision() const;
     void setFrameNumber(uint64_t frameNumber);
     void trimUnusedTiles(bool cachePressure = false);
+    void invalidateDirectExecutionState();
     int64_t tileTextureBytesUsed() const;
     int getCachedTileCount() const;
 

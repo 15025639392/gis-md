@@ -112,11 +112,13 @@ instance-deferred 观察值；它进入 snapshot 与下一帧 hint，但不污�
 实现 Tileset 实例级轮转；Scene 总量不会按实例放大，但先后顺序仍可能影响实例间
 延迟。
 
-统一的是帧级 admission，不是生命周期或缓存实现：provider inflight、MVT cache、
+统一的是帧级 admission 与 producer 间公平，不是等成本预算、生命周期或缓存实现：provider inflight、MVT cache、
 PageStore 页池/compose 上限、GPU FIFO 等局部约束仍保留。被拒绝的工作必须留在
 原队列下一帧重试；`GpuUpload` 的单位是逻辑事务，不是字节、耗时或 driver call：
 一次 MVT 原子 LOD 置换可提交多个 child，PageStore 的 image/field indirection 事务
-也可能包含多次 GPU 写入。各路径都在事务真正提交前扣款。PageStore 在没有 compose
+也可能包含多次 GPU 写入，256² PageStore upload 与 2048² raster upload 也都只记
+一个 unit。因此 unit cap 能限制准入次数并防饿死，不能单独证明帧时间、GPU/网络
+字节或功耗有硬上界；性能 A/B 必须同时记录 units、bytes 与 elapsed ms。各路径都在事务真正提交前扣款。PageStore 在没有 compose
 worker 的测试/同步 fallback 中会就地执行，不消费 `ComposeDispatch`，生产异步路径
 则受该 stage admission。`Scene`/`Engine` 暴露
 `frameResourceArbiterSnapshot()`，可按 producer×stage×priority 观察 demand、

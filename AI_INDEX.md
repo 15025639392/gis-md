@@ -583,9 +583,9 @@ cesium-native `Tileset` equivalent. Owns a unified quadtree of terrain + raster-
 | --- | --- | --- |
 | ctor (scheme, overlays, device, options) | .h:95-98 | Primary ctor; delegates to private ctor with `TilesetTerrainProviders(nullptr)` (.cpp:41-50) |
 | ctor (+ contentProvider) | .h:99-103 | 3D-Tiles content path; wraps provider in `TilesetTerrainProviders` (.cpp:115-126) |
-| `update(FrameState, IPrepareRendererResources*)` | .h:106-107 / .cpp:495-506 | Per-frame entry; delegates to `TilesetUpdateFrameFacade::update`; logs if >5ms |
-| `buildRenderCommands(Renderer&, RenderCommandList&)` | .h:108 / .cpp:514-553 | `++frameNumber_`, `renderCommands_.beginFrame(...)`, then `TilesetRenderFrameExecutor::buildRenderCommands` over `tilePlan_` |
-| `releaseRenderReferences()` | .h:125 / .cpp:659-666 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
+| `update(FrameState, IPrepareRendererResources*)` | .h:106-107 / .cpp:499-516 | Per-frame entry; delegates to `TilesetUpdateFrameFacade::update`; logs if >5ms |
+| `buildRenderCommands(Renderer&, RenderCommandList&)` | .h:108 / .cpp:518-556 | `++frameNumber_`, `renderCommands_.beginFrame(...)`, then `TilesetRenderFrameExecutor::buildRenderCommands` over `tilePlan_` |
+| `releaseRenderReferences()` | .h:125 / .cpp:664-670 | Called by Scene after `renderer_->submit()`; drops the ref added in buildRenderCommands via `TileRenderReferenceReleaser::release` |
 | `tilePlan()` / `tileScheme()` | .h:110-111 | Const accessors to the frame selection result |
 | `sampleHeight(lngRad, latRad)` | .h:120 / .cpp:481-493 | Best-loaded terrain height in meters (0 if none); via `LoadedTerrainHeightSampler` |
 | `setOcclusionCallback` / `clearOcclusionCallback` | .h:131-132 / .cpp:247-254 | cesium-native `TileOcclusionRendererProxyPool` input hook |
@@ -1220,7 +1220,7 @@ The 32-byte `TerrainGpuVertex` async upload path is end-to-end (2026-07-01): pro
 | `useTerrainVertexFormat` (32 vs 120 selector) | TileRenderContentState.h:111 | set in coordinator (.h:176) |
 | Async push/upload/drain | TilesetContentLifecycleCoordinator.h:143-261 | upload side done |
 | DRAW side wired (2026-07-01) | `GltfDrawCommandBuilder.cpp:71` branches on `useTerrainVertexFormat` → `renderer.makeTerrainPrimitiveCommand` (stride 32, `kind=GltfPrimitive`, `shader=terrainShader`) | **done** (compiles + unit-tested both backends; pixel-verify pending a reachable QM terrain server) |
-| `Renderer::terrainShader()` defined + terrain shaders added | `terrainShader()` getter (Renderer.cpp:4362-4367) returns `kTerrainVertex/FragmentGLSL`, `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23) + `makeTerrainPrimitiveCommand` | **done** |
+| `Renderer::terrainShader()` defined + terrain shaders added | `terrainShader()` getter (Renderer.cpp:4486-4488) returns `kTerrainVertex/FragmentGLSL`, `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23) + `makeTerrainPrimitiveCommand` | **done** |
 
 Files read and verified: all listed content-lifecycle files under `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/tiling/`, plus `content/GltfModel.h` and `renderer/Renderer.h`. Line numbers above are current as read.
 
@@ -1317,6 +1317,22 @@ cesium-native `RasterMappedTo3DTile` equivalent — links one geometry tile to o
 | `textureCoordinateID_` / `overlaySlot_` | .h:204,208 | Per-projection texcoord index (cesium `_textureCoordinateID`) vs. resource-notification layer slot — distinct identities |
 
 Free helpers (.cpp:15-134): `addProjectionToList` (dedup append), `findLoadedTileOverlay` (ancestor ready lookup, same-owner check via `hasSameOverlayOwner`), `findParentTileOverlayPreferLoading`, `findRectangleForProjection`, `isCurrentProviderTile`.
+
+### RasterOverlayRuntime.h / .cpp
+
+Tileset-owned migration boundary for the ordered raster overlay stack. It owns the sole configured overlay order, freezes a slot-preserving frame view, owns independent Direct/PageStore generations, normalizes backend provider subsets back to SDK order, and exposes the shared decoded-source access point through that frame view. The former Tileset overlay alias and pre-frame provider/depot convenience APIs are removed.
+
+| Item | Lines | Description |
+| --- | --- | --- |
+| `RasterOverlayFrameSlot` / `RasterOverlayFrameContext` | .h:21-70 | Stable `runtimeSlot`; Direct exclusions remain null slots; frame/generation/provider/depot views are published together. Overlay option values are not copied yet, so this is not a strict value snapshot. |
+| `configuredOverlays` | .h:104-107 | Stable Runtime-owned configuration stack for Scene convergence, diagnostics and cache accounting; it is distinct from a backend's frame view. |
+| `providersForBackend` | .cpp:74-120 | Private publication helper: calls the selected provider-view strategy, removes foreign/duplicate providers, and restores Runtime order without instantiating excluded overlays. Execution consumers cannot use it to bypass the frame snapshot. |
+| `beginFrame` | .cpp:127-204 | Publishes both backend views/generations. Initial generation does not invalidate pre-existing Direct work; later Direct changes release mapping/direct state before the new view is consumed. |
+| `setBackend` / `setBackendEnabled` | .cpp:206-247 | Replaces or toggles one phase-one provider-view strategy; changes become visible at the next `beginFrame`. This is not yet a full selection/request/upload/render executor contract. |
+
+### RasterBindingSet.h / .cpp
+
+Single resolver for Direct render bindings, indexed by Runtime slot. `resolve` (.cpp:8-33) captures the mapped relation, real/ancestor surface tile, texture-coordinate id, opacity and fallback-policy legality. Readiness and draw construction use this resolver, but currently create separate instances; a later stage must share one frozen per-frame/per-tile result if option mutation between phases must be impossible.
 
 ### SurfaceRasterBinding.h / .cpp
 
@@ -1673,6 +1689,10 @@ Abstract imagery interface. cesium-native imagery data-source equivalent: builds
 | `requestTile` | .h:66-70 | Async; takes `CancellationToken`, `HttpRequestPriority` (default Normal) |
 | `decodeTile` | .h:77-78 | Sync decode of raw bytes (test/debug) |
 
+### RasterAssetDepot.h / .cpp
+
+Runtime-owned consumer-neutral facade for decoded raster assets. `acquireExactSource` (.cpp:7-30) and `tryGetCachedExactSource` (.cpp:32-45) route Direct/PageStore to the same provider source depot and wrap returned images in accounted external leases; `stats` / `record` (.cpp:47-75) expose cache-hit, joined-inflight, started-transport and admission-denied counters by consumer. Physical cache/inflight ownership remains provider-local, so this is a shared access/de-duplication boundary rather than a cross-provider global asset hash.
+
 ### XYZImageryProvider.h / .cpp
 
 Standard XYZ/`{z}{x}{y}{s}` provider; base class for TMS/WMS/WMTS/Bing/Google. HTTP GET → stb_image RGBA decode. Uses `PlatformBridge` when set (Android native curl), else `CurlMultiRequestScheduler::shared()` (.cpp:382-506).
@@ -1812,9 +1832,9 @@ Networkless debug provider; synthesizes deterministic checkerboard tiles with z/
 |---|---|---|
 | `Assembly` | .cpp:35-47 | 一次 requestTile 聚合态:holders 为 Feature 列表,样式按值快照 |
 | `runAssembly` | .cpp:49-73 | 取消仍回调 nullptr;收集 Polygon → `rasterizeFeaturePolygonsRect` |
-| `completeIfReady` | .cpp:75-85 | weak pool lock enqueue / 失败就地 |
-| `requestTile` | .cpp:109-164 | 页矩形→4326 coverage→逐 slot cache;超 maxSourceTiles 透明图 |
-| `decodeTile` | .cpp:166-180 | 同步解码 type2 + 整 unit 平面栅格化 |
+| `completeIfReady` | .cpp:80-91 | weak pool lock enqueue / 失败就地 |
+| `requestTile` | .cpp:117-173 | 页矩形→4326 coverage→逐 slot cache;超 maxSourceTiles 透明图 |
+| `decodeTile` | .cpp:174-196 | 同步解码 type2 + 整 unit 平面栅格化 |
 
 
 ### RoadFieldSource.h / .cpp
@@ -1957,16 +1977,16 @@ geomorph 高度差计算(288 行)。为 LOD 过渡把子瓦片顶点的 heightDe
 | 项 | 行 | 说明 |
 |---|---|---|
 | `cacheKey` | .cpp:30-32 | TileKey + 参数 → 模板缓存键 |
-| `acquire` | .cpp:54-138 | 取(或建)一份模板几何;命中比对建模方 schemeId(T-P5 看门) |
-| `heightCacheKey` | .cpp:199-211 | 高度纹理缓存键 |
-| `findHeightArray` / `ensureHeightArray` | .cpp:212-217 / :218-251 | 按 gridSize 取/建高度 texture array |
-| `bakeTerrainHeightNormalTexels` | .cpp:252-387 | 烘高度 + **切空间法线到 B/A 通道** |
-| `acquireHeightTexture` | .cpp:388-506 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
-| `ensureBakeResources` | .cpp:507-523 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
-| `flushHeightBakes` | .cpp:524-611 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer)。burst(>1)时打 `HeightBakeFlush` 诊断(2026-08-21 GPU swap 尖刺排查;真机已排除烘焙为尖刺源)。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
-| `updateEdgeLutRows` | .cpp:612-639 | 写本帧边吸附的邻居高度差表(①-1)。**H-B1+H-S4(2026-08-21):字节 diff 相同跳过;变化者只入池(不再立即上传),帧末 `flushEdgeLutUploads` 批量灌入**—— 运动期 frameState 6.8-14.6ms 的逐层小上传被摊成每 array 一次调用。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
-| `enqueueEdgeLutUpload` / `flushEdgeLutUploads` | .cpp:640-656 / :657-752 | H-S4 批量上传:本帧待传层按 array 拼成连续内存(中间未变层用缓存/差值 0 填充),每 array 一次 `updateTextureArrayRegion`(GLES depth=层数单次 PBO)。失败保留旧缓存,下一帧字节 diff 自动重试 |
-| `touchHeightTexture` | .cpp:753-762 | LRU 触碰 |
+| `acquire` | .cpp:73-238 | 取(或建)一份模板几何;命中比对建模方 schemeId(T-P5 看门) |
+| `heightCacheKey` | .cpp:261-273 | 高度纹理缓存键 |
+| `findHeightArray` / `ensureHeightArray` | .cpp:274-279 / :280-312 | 按 gridSize 取/建高度 texture array |
+| `bakeTerrainHeightNormalTexels` | .cpp:313-448 | 烘高度 + **切空间法线到 B/A 通道** |
+| `acquireHeightTexture` | .cpp:449-568 | 取高度纹理层。⚠️ 末尾 4 行是边 LUT(①-1),acquire 时必须初始化成「差值 0」——层是 LRU 复用的,且**全零字节不是差值 0**(0 落在 ±2048m 量程中点 q=32768)。B 方案开启时(GLES only)不在此做 CPU 烘焙,改把源打包 push 进 `pendingBakes_` 延后 GPU 烘 |
+| `ensureBakeResources` | .cpp:569-585 | B 方案 GPU 烘焙的懒初始化:建烘焙 shader(`TerrainHeightBakeShader.h`)+ 全屏 quad;首次 `flushHeightBakes` 前调用 |
+| `flushHeightBakes` | .cpp:586-673 | B 方案:每帧 `SceneRenderPipeline` 在 `buildLayerCommands` 后调用,把 `pendingBakes_` 逐个 RTT 烘进 height/normal texture2DArray 层(externalColorTarget + setFramebufferColorLayer)。burst(>1)时打 `HeightBakeFlush` 诊断(2026-08-21 GPU swap 尖刺排查;真机已排除烘焙为尖刺源)。仅 GLES 走此路,Metal/Vulkan 由后端守卫回退 CPU |
+| `updateEdgeLutRows` | .cpp:674-701 | 写本帧边吸附的邻居高度差表(①-1)。**H-B1+H-S4(2026-08-21):字节 diff 相同跳过;变化者只入池(不再立即上传),帧末 `flushEdgeLutUploads` 批量灌入**—— 运动期 frameState 6.8-14.6ms 的逐层小上传被摊成每 array 一次调用。瓦片不在该档驻留时返回 false,调用方据此清 lutValid 位 |
+| `enqueueEdgeLutUpload` / `flushEdgeLutUploads` | .cpp:702-718 / :719-814 | H-S4 批量上传:本帧待传层按 array 拼成连续内存(中间未变层用缓存/差值 0 填充),每 array 一次 `updateTextureArrayRegion`(GLES depth=层数单次 PBO)。失败保留旧缓存,下一帧字节 diff 自动重试 |
+| `touchHeightTexture` | .cpp:815-824 | LRU 触碰 |
 
 ### HeightmapTerrainContentProvider.h / .cpp
 
@@ -2478,8 +2498,8 @@ Owns the vector-layer list; initializes on render device; applies feature state 
 
 | Item | Lines | Description |
 |---|---|---|
-| `addVectorLayer`/`removeVectorLayer` | .cpp:22-41 | Init layer with device; erase by `id()` |
-| `applyFeatureState` | .cpp:65-88 | Maps FeatureState→"hover"/"selected" string, calls `layer->setFeatureState` |
+| `addVectorLayer`/`removeVectorLayer` | .cpp:27-47 | Init layer with device; erase by `id()` |
+| `applyFeatureState` | .cpp:69-94 | Maps FeatureState→"hover"/"selected" string, calls `layer->setFeatureState` |
 
 ### ScenePickingCoordinator.h / .cpp
 
@@ -2622,17 +2642,16 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 
 | Method | Lines | Notes |
 | --- | --- | --- |
-| `initialize()` (no-arg) | .h:34, .cpp:4123-4296 | Compiles **13** shaders: gltf (.cpp:4121), terrain (.cpp:4138), terrainDepth (.cpp:4151), gltfInstanced (.cpp:4163), terrainInstanced (.cpp:4179), terrainDepthInstanced (.cpp:4191), color (.cpp:4210), and 6 vector shaders (fill/pageMesh/line/lineStencil/point/label, .cpp:4219-4296). Builds a 1×1 neutral placeholder tex {174,184,170,255} (.cpp:4123-4114). Treats gltf/gltfInstanced link failure as **non-fatal on both backends** (.cpp:4121-4137, :4163-4178) — a PBR link failure must not blank the globe; terrain still renders via `terrainShader`. |
-| `submit` | .cpp:4293-4297 | Forwards to `device->submit` if initialized. |
-| `dispose` | .cpp:4298-4323 | Resets the shader/texture resources. |
-| Shared-resource getters | .cpp:4324-4329 | `terrainDepthShader`/`terrainDepthInstancedShader` (.cpp:4324-4329), `colorShader` (:4083), 6 vector getters (:4084-4102), `glyphAtlas`/`iconAtlas` (:4103, :4105), `tileIndexBuffer`/`tileIndexCount` (:4276-4277), `surfacePlaceholderTexture` (:4106), `gltfShader`/`gltfInstancedShader` (:4109-4113), `terrainShader` (:4115-4117), `terrainInstancedShader` (:4219-4221). The `globeShader`/`globeVertexBuffer`/`globeIndexBuffer`/`globeIndexCount` getters are **removed**. |
-| `terrainShader()` | .h:123 / **.cpp:4362 defined** | 32-byte terrain vertex, no PBR extensions. DRAW side wired: `GltfDrawCommandBuilder.cpp:134` calls `makeTerrainPrimitiveCommand` (.cpp:4394). ⚠️ This row previously read "declared, NO definition, linking would fail" — false since at least 2026-07-01; corrected 2026-08-06. |
-| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4368-4393 | `GltfPrimitive`, **`vertexStride`=120** POSITION/NORMAL + TEXCOORD_0..7 + COLOR_0(16) + TANGENT(16) (.cpp:4368), sets `hasGltfUniforms`. ⚠️ It no longer seeds the PBR uniforms inline (the old row described ~130 lines of factor/tex-transform defaults): those defaults now live in `GltfUniformBlock` member initializers and are ready at construction. The factory carries an explicit contract — **must not write the `uniforms` string-map** (hot-path zero-heap-allocation, .cpp:4368-4393). |
-| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4394-4422 | The live QM-terrain draw command. **Kind stays `GltfPrimitive`** — backends disambiguate on `vertexStride`: GLES keys the vertex layout on it, Metal keys the PSO on the `terrainVertex`/`terrainFragment` entry points. **`vertexStride`=32** = POSITION f32(12) + NORMAL snorm16+pad(8) + TEXCOORD_0/1 unorm16(8) + geomorph heightDelta f32(4) (.cpp:4394). `shader=terrainShader`, `hasGltfUniforms` (terrain shader consumes the subset it declares). Called from `GltfDrawCommandBuilder.cpp:134`. |
-| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4423-4443 | glTF **model** instancing (EXT_mesh_gpu_instancing). Delegates to `makeGltfPrimitiveCommand`, then sets `GltfPrimitiveInstanced`, `gltfInstancedShader`, `instanceBuffer`/`instanceCount`, **`instanceStride`=`kGltfInstanceMatrixStride`=100** (mat4 relative model 64B + mat3 normal 36B) (.cpp:4423). Live, called from `GltfDrawCommandBuilder.cpp:121`. ⚠️ This row previously carried "Current-branch WIP: surface instancing GPU batch path" — **misattributed**: that is the terrain batcher below, a different function with a different stride. Corrected 2026-08-06. |
-| `makeTerrainInstancedCommand(...)` | .cpp:4392-4217 | **Terrain batching** (the 合批 path, live since 1c913d68b). Delegates to `makeTerrainPrimitiveCommand` (32B shared displacement template), then swaps kind/shader/instance stream: `terrainInstancedShader`, UInt32 indices (template IBO is always uint32), **`instanceStride`=`kTerrainInstanceStride`=128** (RenderCommand.h:38) = 8×vec4 — rel×3, dispMorph, clipUv, layers, pageUv(页 cell 定位,单位=源瓦片), pageAux(祖先寻址相位). Shares `RenderCommandKind::GltfPrimitiveInstanced` with the row above; backends disambiguate on `vertexStride==32 && instanceStride==kTerrainInstanceStride` (RenderDeviceGLES.cpp:1073-1051). |
-| `earthModelMatrix()` (static) | .cpp:4470-4479 | Scale by **`kEarthRadius`** = 6378137.0f (.cpp:4470); unit sphere → ECEF meters. |
-| `attachRasterInMainThread` / `detachRasterInMainThread` | .cpp:4480-4490 / :4491-4497 | No-op notification hooks; raster ownership stays in `RasterMappedToTilesetTile` / `SurfaceRasterBinding`. |
+| `initialize()` (no-arg) | .h:34, .cpp:4168-4404 | Builds the neutral placeholder and compiles the terrain/glTF/vector shader set. glTF shader failure is non-fatal; terrain shader failure is fatal. |
+| `submit` | .cpp:4406-4409 | Forwards to `device->submit` if initialized. |
+| `dispose` | .cpp:4411-4429 | Resets the shader/texture resources. |
+| Shared-resource getters | .cpp:4439-4488 | Depth/color/vector/atlas/placeholder/glTF/terrain resource accessors. Removed globe-resource getters remain absent. |
+| `terrainShader()` | .h:123 / .cpp:4486-4488 | 32-byte terrain vertex, no PBR extensions; the draw side calls `makeTerrainPrimitiveCommand`. |
+| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4492-4516 | `GltfPrimitive`, **`vertexStride`=120**; defaults live in `GltfUniformBlock` and the factory does not populate the string-map. |
+| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4518-4546 | Live compact-terrain command with **`vertexStride`=32**, `terrainShader`, and glTF uniform block enabled. |
+| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4547-4567 | EXT_mesh_gpu_instancing path; delegates to the glTF command then installs the instance stream. |
+| `makeTerrainInstancedCommand(...)` | .cpp:4568-4589 | Terrain batching path; delegates to the compact command then installs the terrain instance stream/shader. |
+| `attachRasterInMainThread` / `detachRasterInMainThread` | .cpp:4604-4620 | No-op notification hooks; raster ownership stays in `RasterMappedToTilesetTile` / `SurfaceRasterBinding`. |
 
 `makeTileGeometry` (.cpp:3892-3873) builds a UV-only grid VBO (`TileVertex{{u,v}}`) + `uint32_t` index buffer.
 
@@ -2653,14 +2672,14 @@ Only the IBO survives — `initialize()` discards the vertices (per-tile VBOs re
 | 方法 | 行 | 说明 |
 |---|---|---|
 | `providerStackCompatibility` / `pageDomainCompatibilityName` | .cpp:371-432 | PageStore mixed-scheme 运行期契约:同一 compose group 必须共享 canonical page-facing scheme 与有效 projection；异构组整组 fail-closed |
-| `initialize(device, Config)` | .cpp:1559-1645 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512(≈128MB VRAM 上限,实际按 LRU 只驻留可见 ~125-185 页)、`maxUploadsPerFrame`=3(涓流,勿在拖动期冻结)、`maxComposeDispatchesPerFrame`=8(每帧 compose 入队上限,2026-08-20 派发门) |
-| `resetPageDomainState` / `rejectPageDomain` | .cpp:1646-1713 | canonical provider/scheme/projection 切换或拒绝时推进 generation，清空 scheme-less 页账本/层池/间接纹理；迟到异步结果由 generation 闸丢弃 |
+| `initialize(device, Config)` | .cpp:1583-1669 | 建 `texture2DArray` + 间接纹理。**Config**:`pageSizeTexels`=256、`maxPages`=512、`maxUploadsPerFrame`=3、`maxComposeDispatchesPerFrame`=8 |
+| `resetPageDomainState` / `rejectPageDomain` | .cpp:1670-1738 | canonical provider/scheme/projection 切换或拒绝时推进 generation，清空 scheme-less 页账本/层池/间接纹理；迟到异步结果由 generation 闸丢弃 |
 | `updateVisiblePages(view, ...)` | .cpp:749-1536 | **核心**。先做 provider/terrain page-domain 兼容性闸，再遍历可见瓦片 → 枚举 cell → 缺页则 `kickPageFetches` → 写间接纹理。合批资格闸也在这里(见下)。静止帧(视图签名+可见瓦片指纹+状态脏版本均未变)整段跳过 |
-| `applyToTerrainCommand(cmd, tile)` | .cpp:1807-1901 | 仅 active+compatible domain 把该瓦片的间接层号/页参数写进地形 RenderCommand；拒绝态保留 mappedRaster |
-| `tick()` | .cpp:1902-1967 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
+| `applyToTerrainCommand(cmd, tile)` | .cpp:1832-1926 | 仅 active+compatible domain 把该瓦片的间接层号/页参数写进地形 RenderCommand；拒绝态保留 mappedRaster |
+| `tick()` | .cpp:1927-1992 | 每帧驱动:`drainInbox`(派发合成)+ `drainReadyUploads`(预算上传) |
 | `drainInbox` / `kickPageFetches` | .cpp:2103-2255 / :1998-2052 | 解码结果派发 worker 合成，异步生产路径消费 PageStore `ComposeDispatch` grant；无 worker 的测试/同步 fallback 就地执行。页 fetch 消费 PageStore `NetworkRequest` grant，拒绝后保留待重试；两段均携带 page-domain generation |
-| `drainReadyUploads` | .cpp:2286-2436 | worker 快照按本地预算与 PageStore `GpuUpload` grant 上传；上传前校验 page-domain generation + key + layer；`uploadedSources` 在此推进。grant 单位是逻辑事务，不等于底层写调用数 |
-| `erasePageEntry` | .cpp:1791-1806 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
+| `drainReadyUploads` | .cpp:2366-2516 | worker 快照按本地预算与 PageStore `GpuUpload` grant 上传；上传前校验 page-domain generation + key + layer；`uploadedSources` 在此推进。grant 单位是逻辑事务，不等于底层写调用数 |
+| `erasePageEntry` | .cpp:1816-1831 | 页换租/淘汰:cancel 在途 fetch + 移除账本 + **同步通知 decorator 释放**(不通知则被换租页的源数据成僵尸) |
 | `resamplePageSource` | .cpp:433-501 | 源影像重采样进页(跨 zoom 档的 scale-bias) |
 | `subtileGridN` / `enumerateSubtileKeys` (static) | .cpp:548-555 / :694-714 | 瓦片 z 与源 zoom → 每边 cell 数;枚举 cell key |
 | `placeTileInSourceGrid` (static) | .cpp:556-651 | 几何瓦片在**影像源瓦片网格**中的落位(x0/y0/cells + origin/span,单位=源瓦片)。cell 网格由几何等分改为源网格,让 GCJ-02 这类源网格不对齐的 overlay 也能走页存储;标准 overlay 恒退化成 `origin=0, span=gridN`(`isDegenerate`)= 零回归判据 |
@@ -3051,11 +3070,12 @@ cesium-native `ActivatedRasterOverlay` equivalent. Wraps a `RasterOverlay&` (mus
 | `processPendingUploads(bool, FrameResourceBudget*)` | .h:42 / .cpp:59-67 | syncs then forwards to provider; 0 if no provider |
 | `hasPendingWork` / `revision` | .h:44-45 / .cpp:69-75 | forward provider or false/0 |
 | `setFrameNumber` / `trimUnusedTiles` / `getCachedTileCount` | .h:46-48 / .cpp:77-97 | sync + forward |
-| `setMaximumSimultaneousTileLoads(int)` | .h:52 / .cpp:99-109 | `n>0 ? n : 20`; applies to both providers |
-| `getThrottledTilesCurrentlyLoading` | .h:53 / .cpp:111-114 | forward, 0 if none |
-| `visible` / `opacity` | .h:55-56 / .cpp:116-122 | delegate to `overlay_` |
-| `getProjection()` | .h:70 / .cpp:122-128 | **生效**采样投影(读 provider,不读 config)。georeference 会被 scheme 闸口拒掉,请求值不可信 |
-| `syncProviderOptionsFromOverlay` (private) | .h:65 / .cpp:129-146 | re-derives throttle from overlay (`>0 ? : 20`), calls `applyOwnerOptions()` on both providers |
+| `invalidateDirectExecutionState()` | .h:49 / .cpp:91-95 | backend generation 变化时取消 Direct waiter/source-set 并清理 mapped/direct tile 与 pending upload；保留 backend-neutral exact source cache |
+| `setMaximumSimultaneousTileLoads(int)` | .h:52 / .cpp:105-115 | `n>0 ? n : 20`; applies to both providers |
+| `getThrottledTilesCurrentlyLoading` | .h:53 / .cpp:117-120 | forward, 0 if none |
+| `visible` / `opacity` | .h:55-56 / .cpp:122-128 | delegate to `overlay_` |
+| `getProjection()` | .h:70 / .cpp:130-135 | **生效**采样投影(读 provider,不读 config)。georeference 会被 scheme 闸口拒掉,请求值不可信 |
+| `syncProviderOptionsFromOverlay` (private) | .h:65 / .cpp:137-152 | re-derives throttle from overlay (`>0 ? : 20`), calls `applyOwnerOptions()` on both providers |
 
 Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 
@@ -3181,9 +3201,9 @@ Free helpers (.cpp): `geoToECEF` via `Ellipsoid::WGS84().cartographicToCartesian
 | 项 | 行 | 说明 |
 |---|---|---|
 | `initialize` / `dispose` | .cpp:10 / :26 | |
-| `ensureFramebuffer` | .cpp:35 | 半分辨率深度 FBO |
-| `extractTerrainCommands` | .cpp:68 | 从主命令表抽地形命令(复用地形 VS + 空片元) |
-| `depthTexture` | .cpp:108 | 供符号 shader 采样 |
+| `ensureFramebuffer` | .cpp:44-76 | 半分辨率深度 FBO |
+| `extractTerrainCommands` | .cpp:77-123 | 从主命令表抽地形命令(复用地形 VS + 空片元) |
+| `depthTexture` | .cpp:124-128 | 供符号 shader 采样 |
 
 ### GlyphAtlas.h / .cpp / IconAtlas.h / .cpp
 
@@ -3265,9 +3285,9 @@ MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDr
 
 | Item | Lines | Description |
 |---|---|---|
-| `State` | .cpp:22-42 | LRU list+map、inflight waiters、命中/拉取计数、**失败账本(retryNotBeforeMs+次数,满 2048 挤最旧)**;shared_ptr 持有 |
-| `request` | .cpp:142-294 | 失败账本闸(退避中/用尽→同步失败回调不发网络) / L1 命中 touch+同步回调 / 在途搭车 / **L2 字节命中→池上重解码** / 发起 fetch(decode 后广播 waiters,成功瓦入 LRU + 复位账本,失败记账本) |
-| `stats` | .cpp:295-304 | 累计命中/拉取/**重复拉取**/常驻瓦数与近似字节/**失败跳过**快照(P2 容量与 V18 内存有界的共同判据) |
+| `State` | .h:110-195 | LRU list+map、inflight waiters、命中/拉取计数、失败账本；shared_ptr 持有。`.cpp` 仅保留空 TU，模板实现都在头文件。 |
+| `request` | .h:366-604 | 失败账本闸 / L1 命中 / 在途搭车 / L2 字节重解码 / 发起 fetch，并在完成后广播 waiters。 |
+| `stats` | .h:608-615 | 累计命中、拉取、重复拉取、常驻瓦/字节和失败跳过快照。 |
 
 ### VectorTileRasterizer.h / .cpp
 
@@ -3290,20 +3310,36 @@ MVT 数据瓦 fetch+decode 的共享缓存(LRU + 在途合并),刀2 从 VectorDr
 
 `FeatureStore` 为中心的要素数据层 + MVT 底图管线。总设计见矢量系统系列记录。
 
+### AmapGeometry.h / .cpp
+
+高德 Nebula 解码几何到引擎 Feature 的规范化层。`AmapDecodedTileDecodeTraits::approxBytes` 给缓存预算近似值；`amapNormalizeEvenOddWinding` (.cpp:248-349) 统一 canonical top-down 环与 even-odd 嵌套；`amapClipPolygonRing` (.cpp:350-413) 裁剪越界环；`amapDecodedPartToFeatures` (.cpp:414-845) 完成坐标、属性、面/线/点转换；`amapBytesToFeatures` (.cpp:846-889) 是字节入口。
+
+### AmapVectorTile.h / .cpp
+
+高德 gzip/protobuf 容器解码。`inflateContainer` (.cpp:52-96) 校验长度头并解压；`decodeInflatedContainer` (.cpp:240-405) 解析 layer/feature/geometry；`decodeAmapTile` (.cpp:417-422) 提供通用 type1/2/3/4 入口；`decodeAmapPoiTile` (.cpp:424-696) 在同一次 inflate 上追加权威 POI label 解码并过滤通用解码产生的伪 type-0 part。
+
+### AmapTileManifest.h / .cpp
+
+高德 manifest 协议与 tile URL 选择。`amapDataZoom` (.cpp:29-37) 把 canonical zoom 吸附到服务档位；`buildGetTileBody` (.cpp:43-68) 生成表单请求；`parseTileUrls` (.cpp:70-112) 解析服务返回；`selectAmapTileUrl` (.cpp:114-144) 按 request type/group/id 严格选 URL；`fetchAmapTileUrls` (.cpp:178-198) 串起版本探测和 POST。
+
+### AmapVectorSource.h / .cpp
+
+把共享 `AmapDecodedTile` 路由到 regions/main/water/POI 四类 `VectorTileSourceT` 的 traits 与别名；过滤在消费阶段发生，使多个 source 共享同一份 gzip/protobuf 解码结果。`.cpp` 只定义 `amapTileRectangle` (.cpp:14-23)，按高德 4326 等距圆柱 2:1 网格返回弧度矩形。
+
 | 文件 | 关键项 | 说明 |
 |---|---|---|
 | `FeatureStore` (90) | `computeBoundsFromRings` (FeatureStore.cpp:8)、`addFeature` (FeatureStore.cpp:27)、`removeFeature` (FeatureStore.cpp:45)、`updateFeature` (FeatureStore.cpp:54)、`getFeature` (FeatureStore.cpp:74)、`queryVisible` (FeatureStore.cpp:79) | **要素数据源**,矢量系统的中心 |
 | `FeatureBucketGrid` (105) | `packCell` (FeatureBucketGrid.cpp:20)、`cellX`/`cellY` (FeatureBucketGrid.cpp:25/:29)、`bucketFor` (FeatureBucketGrid.cpp:33) | 按格分桶(桶 = GPU 上传粒度) |
 | `FeatureClusterIndex` (255) | `build` (FeatureClusterIndex.cpp:36)、`levelIndexForZoom` (FeatureClusterIndex.cpp:157)、`toCluster` (FeatureClusterIndex.cpp:169)、`query` (FeatureClusterIndex.cpp:183) | 点聚合。**只出索引,渲染归应用层**(269 个点 → 12 个簇) |
 | `FeatureSnapQuery` (121) | `closestPointOnSegment` (FeatureSnapQuery.cpp:16)、`nearest` (FeatureSnapQuery.cpp:32) | 编辑吸附 |
-| `PolygonTessellator` (349) | `quantize`/`coordKey` (PolygonTessellator.cpp:22/:26)、`tessellate` (PolygonTessellator.cpp:60) | 面镶嵌(lng/lat CDT → ECEF;`maxEdgeMeters>0` 时边弧细分+内部 Steiner) |
+| `PolygonTessellator` (349) | `quantize`/`coordKey` (PolygonTessellator.cpp:22/:26)、`tessellate` (PolygonTessellator.cpp:65) | 面镶嵌(lng/lat CDT → ECEF;`maxEdgeMeters>0` 时边弧细分+内部 Steiner) |
 | `LineTessellator` (94) | `dist3` (LineTessellator.cpp:12)、`tessellate` (LineTessellator.cpp:19) | 线镶嵌 |
 | `StyleExpression` (207) | `literal` (StyleExpression.cpp:29/:36)、`literalString` (StyleExpression.cpp:44)、`get` (StyleExpression.cpp:51)、`zoom` (StyleExpression.cpp:58)、`match` (StyleExpression.cpp:64)、`lerpValues` (StyleExpression.cpp:11) | 样式表达式树。⚠️ `String` 必须用**独立命名**的 `literalString`,重载会歧义 |
 | `StyleFilter` (169) | `compare` (StyleFilter.cpp:31/:41)、`in` (StyleFilter.cpp:54)、`zoomCompare` (StyleFilter.cpp:63)、`SourceLayerRule` (.h:80) | 运行期过滤 —— 分级取舍搬回样式侧,瓦片不再靠切图时 `-j` 预筛 |
 | `GeoJsonParser` (230) | `parseRing` (GeoJsonParser.cpp:44)、`parseGeometry` (GeoJsonParser.cpp:61)、`parseFeature` (GeoJsonParser.cpp:167)、`parseFeatureCollection` (GeoJsonParser.cpp:195)、`parse` (GeoJsonParser.cpp:219) | GeoJSON 解析 |
 | `GeoJsonImporter` (39) | `mapType` (GeoJsonImporter.cpp:9)、`importInto` (GeoJsonImporter.cpp:20) | 解析结果 → `FeatureStore` |
-| `MvtVectorSource` (291) | `horizonViewRectangle` (MvtVectorSource.cpp:22)、`update` (MvtVectorSource.cpp:62)、`setLayerRules` (MvtVectorSource.cpp:251)、`ingestInbox` (MvtVectorSource.cpp:267) | MVT 源:按视口拉瓦片;R* 置换单元原子换手(占位者与替换内容同帧换手,无空窗无重影) |
-| `VectorTileTree` (305) | `splitAntimeridian` (VectorTileTree.cpp:11)、`zoomForCameraHeight` (VectorTileTree.cpp:40)、`update` (VectorTileTree.cpp:48)、`provide` (VectorTileTree.cpp:227)、`provideShared` (VectorTileTree.cpp:231)、`markFailed` (VectorTileTree.cpp:248) | 瓦片树,R* 置换式细化(全有全无回退,renderTiles=精确覆盖)。⚠️ 必须缓存 `MvtTile` 而非网格,否则"重入零重拉取"会丢 |
+| `MvtVectorSource` | `horizonViewRectangle` (MvtVectorSource.h:348)、`update` (MvtVectorSource.h:392)、`setLayerRules` (MvtVectorSource.h:796)、`ingestTileInbox` (MvtVectorSource.h:841) | 模板实现位于头文件；按视口拉瓦片并原子换手渲染集。 |
+| `VectorTileTree` | `splitAntimeridian` (VectorTileTree.h:26)、`update` (VectorTileTree.h:147)、`provide` (VectorTileTree.h:526)、`provideShared` (VectorTileTree.h:532)、`markFailed` (VectorTileTree.h:550)、`zoomForCameraHeight` (VectorTileTree.h:601) | 模板瓦片树；R* 置换式细化，全有全无回退，renderTiles 保持精确覆盖。 |
 | `MvtFeatureConverter` (89) | `mvtToCartographic` (MvtFeatureConverter.cpp:13)、`mvtLayerToFeatures` (MvtFeatureConverter.cpp:34)、`mvtTileRectangle` (MvtFeatureConverter.cpp:26,瓦片地理矩形,贴地高度范围按块取局部值用) | MVT → `Feature` |
 | `VectorTileMeshBuilder` (207) | `pushVertex` (VectorTileMeshBuilder.cpp:23)、`pushQuad` (VectorTileMeshBuilder.cpp:37)、`appendPolygonFill` (VectorTileMeshBuilder.cpp:50)、`appendStrokedPath` (VectorTileMeshBuilder.cpp:101)、`buildVectorTileMesh` (VectorTileMeshBuilder.cpp:139) | 瓦片网格镶嵌(**在 worker 上跑**,E1) |
 
@@ -3590,19 +3626,19 @@ Top-level platform-facing API: lifecycle + input router. Owns exactly one `Scene
 | `onSurfaceChanged(w,h,dpr=1)` | .h:48, .cpp:76-82 | Forwards to `device_->onSurfaceChanged` + `scene_->setViewport`. |
 | `onSurfaceDestroyed()` | .h:51, .cpp:83-120 | `scene_->setRenderDevice(nullptr)` + `device_->onSurfaceDestroyed()`. |
 | `render(deltaSeconds=0)` | .h:57, .cpp:556-1155 | Per-frame driver. Guards `surfaceCreated_ && isReady()`, auto-computes delta via `steady_clock` when ≤0, then times `device_->beginFrame` → `scene_->update` → PageStore pump → `scene_->render` → `device_->endFrame`. The PageStore pump receives the same Scene arbiter used by terrain/raster/MVT. |
-| `onInputEvent(InputEvent)` | .h:62, .cpp:1156-1159 | Forward to `scene_->onInputEvent`. |
+| `onInputEvent(InputEvent)` | .h:62, .cpp:1149-1152 | Forward to `scene_->onInputEvent`. |
 | `onDragStart/Move/End` | .h:65-67, .cpp:1160-1183 | Legacy compat: build `InputEvent` (PointerDown/Move/Up, `PointerType::Touch`) and call `onInputEvent`. |
 | `addVectorLayer / removeVectorLayer / vectorLayerCount` | .h:72-78, .cpp:149-159 | Forward to scene_. |
-| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1256-1259 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
-| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1264-1267 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
+| `setTileset(unique_ptr<Tileset>)` | .h:81, .cpp:1249-1252 | cesium-native aligned: unified terrain Tileset → `scene_->setTileset`. |
+| `addTileset(unique_ptr<Tileset>)` | .h:83, .cpp:1257-1260 | Parallel 3D Tiles / glTF content Tileset; not terrain-sampled. |
 | `setSelectorViewOverride / clearSelectorViewOverride` | .h:87-89, .cpp:169-176 | Override selector frustum list; empty ⇒ no selectable view this frame. |
 | `setOcclusionCallback / clearOcclusionCallback` | .h:90-91, .cpp:178-184 | Forward `TileOcclusionCallback`. |
-| `hasTerrain()` | .h:94, .cpp:1285-1290 | `scene_->hasTerrain()`. |
+| `hasTerrain()` | .h:94, .cpp:1278-1283 | `scene_->hasTerrain()`. |
 | `pick / onHover / onSelect / clearSelection` | .h:99-108, .cpp:929-945 | Picking + selection forwards. |
 | `setTime / time / advanceTime / sunDirection` | .h:113-119 | Environment system time + sun forwards to the scene. |
 | `getClearColor` | .cpp:1367-1374 | Reads `frameState().clearR/G/B/A`. |
 | `diagnostics() / presentationTrace()` | .h:124-126, .cpp:1375-1385 | Runtime `Diagnostics` + per-frame `PresentationTrace`; `frameResourceArbiterSnapshot()` sits between them and exposes producer×stage accounting. |
-| `camera() / isReady()` | .h:130-131, .cpp:1185-1188, 1387-1391 | `isReady` = `scene_ && scene_->isReady()`. |
+| `camera() / isReady()` | .h:130-131, .cpp:1178-1181, 1380-1384 | `isReady` = `scene_ && scene_->isReady()`. |
 | `setBlackFrameProbeEnabled` | .h:252, .cpp:700-748 | 黑块探针(漏底/黑块诊断):swap **前**逐帧降采样回读,近黑(RGB 全 ≤8)占比 ≥0.5% 逐帧 Warning,300 帧心跳报活。⚠️为什么必须逐帧:截图/录屏抽样会漏帧,"抽查没看到"证明不了"没有";机制信号(HoleQual drop)量的是「选中未建条」,黑块还可能来自「画了但纹理黑」,两者正交。回读不可用时**显式关闭并告警**,不静默降级(ShadowVerify 踩过:瞎掉的守卫伪装成绿色)。含同步回读 ~1-2ms/帧,仅诊断会话开 |
 | members | .h:134-137 | `RenderDevice* device_` (non-owning), `unique_ptr<Scene> scene_`, `double lastRenderTime_`, `bool surfaceCreated_`. |
 
@@ -3615,14 +3651,14 @@ Thin SDK entry point: `installScene(EarthSceneConfig)` builds providers/overlays
 | Item | Lines | Description |
 | --- | --- | --- |
 | ctor `(Engine&, RenderDevice&, PlatformBridge&)` | .h:27-29, .cpp:169-174 | Stores references only. |
-| `installScene(EarthSceneConfig)` | .h:37, .cpp:285-746 | Move-stores config_, `resetCamera()`, clears overlay vectors, builds raster stack, creates unified Tileset, optional glTF Tileset, sets sim time. See per-kind rows below. |
-| `resetCamera()` | .h:39, .cpp:748-823 | Rebuilds camera from `initialCamera` via `Ellipsoid::WGS84().cartographicToCartesian` + `geodeticSurfaceNormal`; `camera().lookAt(camEcef, targetEcef, up)`. No source rebuild. |
+| `installScene(EarthSceneConfig)` | .h:37, .cpp:460-929 | Move-stores config_, `resetCamera()`, clears overlay vectors, builds raster stack, creates unified Tileset, optional glTF Tileset, sets sim time. See per-kind rows below. |
+| `resetCamera()` | .h:39, .cpp:935-1018 | Rebuilds camera from `initialCamera` via `Ellipsoid::WGS84().cartographicToCartesian` + `geodeticSurfaceNormal`; `camera().lookAt(camEcef, targetEcef, up)`. No source rebuild. |
 | `config()` | .h:41 | Const accessor for stored `EarthSceneConfig`. |
 | `installMvtSource` / `installMvtSources` | .cpp:318-429 | Builds source-specific fetch/cache/pools plus a `FeatureRenderLayer`, then transfers the bundle to Engine/Scene. |
 | `addMvtSource` / `removeMvtSource` | .h:43-45, .cpp:431-456 | Runtime SDK lifecycle API; updates stored config and routes teardown through Scene's source-aware removal protocol. |
-| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:786-802 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
+| `addActivatedRasterOverlay(...)` | .h:44-48, .cpp:1028-1044 | Wraps provider+scheme+options into `RasterOverlay`, then `ActivatedRasterOverlay`; pushes raw ptr into selection vector + owns both uniques. |
 
-Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:285-746):
+Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:460-929):
 
 | Kind | Lines | Notes |
 | --- | --- | --- |
@@ -3631,17 +3667,17 @@ Overlay dispatch inside `installScene` (by `ImagerySourceKind`, .cpp:285-746):
 | WebMapService | .cpp:281-330 | **Blocking** GetCapabilities fetch (.cpp:299) + `validateWebMapServiceCapabilities`; Geographic-TMS scheme. |
 | WebMapTileService | .cpp:332-372 | Scheme = Geographic-TMS if `wmtsSchemeId=="Geographic-TMS"` else XYZ-WebMercator (.cpp:367-369). No blocking fetch. |
 | BingMaps | .cpp:374-442 | Two paths: explicit `urlTemplate` (no fetch, .cpp:375-400) or **blocking** metadata fetch (.cpp:408) + `parseBingMapsMetadata`. |
-| GoogleMapTiles | .cpp:402-481 | If no session, **blocking POST** `createSession` via `postBlocking` (.cpp:95) + `parseGoogleMapTilesCreateSessionResponse`; else reuse configured session. Default maxLevel 28 (.cpp:95). |
+| GoogleMapTiles | `installScene` .cpp:690-768 | If no session, **blocking POST** `createSession` via `postBlocking` (.cpp:124) + `parseGoogleMapTilesCreateSessionResponse`; else reuse configured session. Default maxLevel 28. |
 | Xyz (default/fallback) | .cpp:535-546 | `XYZImageryProvider` + XYZ-WebMercator. |
 
 | Helper | Lines | Description |
 | --- | --- | --- |
-| `makeSceneTilesetOptions` | .cpp:49-63 | Maps `SceneTilesetConfig` → `TilesetOptions` (main-thread + cache-unload time limits). |
-| `makeRasterOverlayOptions` | .cpp:65-80 | `RasterOverlaySourceConfig` → `RasterOverlay::Options` (loads/SSE/zoom/opacity/role/priority/fallback/blocks). |
-| `postBlocking(...)` | .cpp:95-136 | **Blocking HTTP POST**: `PlatformBridge::post` + mutex/condition_variable, default timeout 20s (.cpp:100); cancels request on timeout. Same blocking pattern as `fetchBlocking` — setup runs synchronously and stalls the caller thread. |
-| `applyConfiguredZoomRange` | .cpp:139-148 | Provider `setZoomRange`; no-op if both zooms ≤0. |
-| `createTileSchemeForId` | .cpp:150-156 | `"XYZ-WebMercator"` → XYZWebMercator else GeographicTMS. |
-| `SceneTerrainRuntimeSources` / `createTerrainRuntimeSources` | .cpp:164-260 | Terrain sources struct. None ⇒ empty (ellipsoid fallback handled by the engine default); Heightmap builds `HeightmapTerrainProvider` wrapped in `HeightmapTerrainContentProvider`, and — if `config.ellipsoidFallback` — further wraps that in `CompositeTerrainProvider` alongside an `EllipsoidTerrainContentProvider` sharing the same tiling scheme (uncovered regions floor to smooth ellipsoid up to `ellipsoidFallbackMaxZoom`). |
+| `makeSceneTilesetOptions` | .cpp:77-94 | Maps `SceneTilesetConfig` → `TilesetOptions` (main-thread + cache-unload time limits). |
+| `makeRasterOverlayOptions` | .cpp:95-115 | `RasterOverlaySourceConfig` → `RasterOverlay::Options` (loads/SSE/zoom/opacity/role/priority/fallback/blocks). |
+| `postBlocking(...)` | .cpp:124-167 | **Blocking HTTP POST**: `PlatformBridge::post` + mutex/condition_variable, default timeout 20s; cancels request on timeout. |
+| `applyConfiguredZoomRange` | .cpp:168-178 | Provider `setZoomRange`; no-op if both zooms ≤0. |
+| `createTileSchemeForId` | .cpp:179-234 | `"XYZ-WebMercator"` → XYZWebMercator else GeographicTMS. |
+| `SceneTerrainRuntimeSources` / `createTerrainRuntimeSources` | .cpp:235-304 | Terrain sources struct. None ⇒ empty; Heightmap builds the terrain provider/content chain and optional ellipsoid fallback. |
 | Unified Tileset build | .cpp:556-567 | `new Tileset(tileScheme, rasterOverlays, &renderDevice_, options, contentProvider)` → `engine_.setTileset`. |
 | glTF Tileset build | .cpp:569-594 | If `config_.gltf.enabled`: `SingleGltfContentProvider` at `TileKey{schemeId,level,x,y}`, `setEastNorthUpPlacementDegrees(lon,lat,height,scale)`; empty overlay list; `engine_.addTileset`. |
 | sim time | .cpp:596 | `engine_.setTime(config_.fixedSimulationJulianDate)`. |
@@ -3706,7 +3742,7 @@ Per-kind fixed render state (defaults set in the Renderer command factories, enf
 | `makeGltfPrimitiveInstancedCommand` | GltfPrimitiveInstanced, delegates to `makeGltfPrimitiveCommand` then sets `instanceStride=kGltfInstanceMatrixStride`=**100** (mat4 64B + mat3 36B) | .cpp:4154-4173 |
 | `makeTerrainInstancedCommand` | GltfPrimitiveInstanced **but vertexStride=32**, delegates to `makeTerrainPrimitiveCommand` then sets `terrainInstancedShader` + `instanceStride=kTerrainInstanceStride`=**96** (6×vec4) | .cpp:4175-4195 |
 
-`terrainShader()` is **defined** (getter Renderer.h:123 / Renderer.cpp:4362; `kTerrainVertex/FragmentGLSL` + `kTerrainVertex/FragmentMSL`, Metal buffers ≤23). The draw side is wired: `GltfDrawCommandBuilder::build` branches at GltfDrawCommandBuilder.cpp:120-140 — `instanceCount>0` → `makeGltfPrimitiveInstancedCommand` (:120), else `useTerrainVertexFormat` → `makeTerrainPrimitiveCommand` (:133), else the stride-120 glTF path. Per-command `terrainRenderContent`/`surfaceClipUv`/raster-overlay population is shared across all three; ellipsoid-fallback terrain still routes through the stride-120 path.
+`terrainShader()` is **defined** (getter Renderer.h:123 / Renderer.cpp:4486; `kTerrainVertex/FragmentGLSL` + `kTerrainVertex/FragmentMSL`, Metal buffers ≤23). The draw side is wired: `GltfDrawCommandBuilder::build` branches at GltfDrawCommandBuilder.cpp:120-140 — `instanceCount>0` → `makeGltfPrimitiveInstancedCommand` (:120), else `useTerrainVertexFormat` → `makeTerrainPrimitiveCommand` (:133), else the stride-120 glTF path. Per-command `terrainRenderContent`/`surfaceClipUv`/raster-overlay population is shared across all three; ellipsoid-fallback terrain still routes through the stride-120 path.
 
 ### Reverse-Z convention
 
@@ -3824,7 +3860,7 @@ Zero lane-specific limits fall back to the shared default. They remain Tileset-l
 | **`TerrainGpuVertex`** | **32 B** (`static_assert`) | POS(12) + NRM(12) + TEXCOORD_0(8) | .h:31-39 |
 | `GltfGpuInstance` | 100 B (16 model + 9 normal floats) | matches `kGltfInstanceMatrixStride`=100 (RenderCommand.h:19) | .h:41-44 |
 
-Draw-side strides mirror these: glTF=**120** (`makeGltfPrimitiveCommand`, Renderer.cpp:4368), instance=**100** (`makeGltfPrimitiveInstancedCommand`, Renderer.cpp:4423). `GpuReadyData.vertexStride` documents `32 (TerrainGpuVertex) or 120 (GltfGpuVertex)` (GpuReadyData.h:17). `TerrainGpuVertex` is produced/uploaded (GltfRenderGeometryBuilder.cpp:225-229, GltfRenderResourcePreparer.cpp:492-501,622-624) **and drawn** via `terrainShader` / `makeTerrainPrimitiveCommand`. ⚠️ The former "never drawn — stride-32 draw path unwired" claim here was false; corrected 2026-08-06.
+Draw-side strides mirror these: glTF=**120** (`makeGltfPrimitiveCommand`, Renderer.cpp:4492), instance=**100** (`makeGltfPrimitiveInstancedCommand`, Renderer.cpp:4547). `GpuReadyData.vertexStride` documents `32 (TerrainGpuVertex) or 120 (GltfGpuVertex)` (GpuReadyData.h:17). `TerrainGpuVertex` is produced/uploaded (GltfRenderGeometryBuilder.cpp:225-229, GltfRenderResourcePreparer.cpp:492-501,622-624) **and drawn** via `terrainShader` / `makeTerrainPrimitiveCommand`. ⚠️ The former "never drawn — stride-32 draw path unwired" claim here was false; corrected 2026-08-06.
 
 ### Upload / reverse-Z constants
 

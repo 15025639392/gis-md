@@ -92,12 +92,13 @@ void TilesetUpdateFrameRuntime::runBaseCoveragePreload(
         platformLog(LogLevel::Info, "BaseCoverage",
                     "preload seeded z0..%d", kBaseCoveragePreloadMaxZoom);
     }
-    if (tileset.rasterOverlays_.empty()) {
+    const auto& directOverlays = tileset.directRasterOverlays();
+    if (directOverlays.empty()) {
         return;
     }
     const std::vector<size_t> overlayOrder =
         TileSelectionRasterOverlayPreparer::processingOrder(
-            tileset.rasterOverlays_);
+            directOverlays);
     int pumped = 0;
     for (int z = 0; z <= kBaseCoveragePreloadMaxZoom; ++z) {
         for (int x = 0; x < scheme.tileCountX(z); ++x) {
@@ -109,12 +110,12 @@ void TilesetUpdateFrameRuntime::runBaseCoveragePreload(
                 }
                 if (TileRasterOverlayReadinessPolicy::
                         requiredBaseImageryDrawableReady(
-                            *tile, tileset.rasterOverlays_)) {
+                            *tile, directOverlays)) {
                     continue;
                 }
                 TileRasterOverlayPrefetcher::prefetch(
                     *tile,
-                    tileset.rasterOverlays_,
+                    directOverlays,
                     overlayOrder,
                     tileset.device_,
                     tileset.options_.maximumScreenSpaceError,
@@ -135,6 +136,25 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     IPrepareRendererResources* pPrepRenderer,
     SceneFrameResourceArbiter* resourceArbiter) {
     tileset.frameResourceBudget_.attachSceneArbiter(resourceArbiter);
+    // Freeze one slot-preserving Direct/PageStore execution view before any
+    // content request, selection, mapping, upload or render-plan work reads
+    // the overlay stack. A Direct backend generation change invalidates the
+    // old per-tile mappings as one transaction; the next stages can only see
+    // the new frame context.
+    if (tileset.rasterOverlayRuntime_.beginFrame(
+            frameState.frameId,
+            tileset.device_)) {
+        for (auto& [_, tile] : tileset.tileRegistry_.tiles()) {
+            if (!tile) {
+                continue;
+            }
+            tile->rasterOverlayState.releaseAndClearReferences(
+                pPrepRenderer);
+        }
+        tileset.resourceInvalidator_.markResourcesChanged();
+    }
+    const auto& directOverlays = tileset.directRasterOverlays();
+    const auto& configuredOverlays = tileset.rasterOverlays();
     // cesium-native: increment generation each frame so that
     // RenderCommand validator (non-zero check) accepts terrain commands.
     ++tileset.generation_;
@@ -145,7 +165,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.loadQueue_,
             tileset.selectionCounters_,
             tileset.selectionReuseState_,
-            tileset.rasterOverlays_,
+            directOverlays,
             tileset.frameResourceBudget_,
             tileset.device_,
             frameState,
@@ -153,7 +173,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
             tileset.options_.maximumSimultaneousTileLoads,
             TilesetProviderDiagnosticsCollector::collectContentAndRaster(
                 tileset.terrainProviders_.contentProvider(),
-                tileset.rasterOverlays_)
+                configuredOverlays)
                 .maximumTransportActiveRequests(
                     TileFrameResourceBudgetPlanInput::
                         kDefaultMaximumTransportActiveRequests),
@@ -192,11 +212,11 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
         [&tileset]() {
             return tileset.contentLifecycle_.hasPendingWork();
         },
-        [&tileset]() {
+        [&tileset, &directOverlays]() {
             TileRenderPlanFrameRefresher::refresh(
                 tileset.tilePlan_,
                 tileset.contentAccess_,
-                tileset.rasterOverlays_,
+                directOverlays,
                 TileRenderPlanFrameRefreshOptions{
                     tileset.interactionActiveForFrame_,
                     tileset.resourceSmoothingActiveForFrame_,
@@ -279,7 +299,7 @@ TilesetUpdateFrameRuntimeResult TilesetUpdateFrameRuntime::run(
     const TilesetProviderDiagnosticsSnapshot rasterDiagnostics =
         TilesetProviderDiagnosticsCollector::collectContentAndRaster(
             tileset.terrainProviders_.contentProvider(),
-            tileset.rasterOverlays_);
+            configuredOverlays);
     return TilesetUpdateFrameRuntimeResult{
         TileUpdateDebugLogInput{
             tileset.tilePlan_.visibleTiles.size(),

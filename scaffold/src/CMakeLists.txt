@@ -310,6 +310,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/SurfaceTile.h
     earth_engine/tiling/SurfaceRasterBinding.h
     earth_engine/tiling/SurfaceRasterBinding.cpp
+    earth_engine/tiling/RasterBindingSet.h
+    earth_engine/tiling/RasterBindingSet.cpp
     earth_engine/tiling/TileSurface.h
     earth_engine/tiling/TileSurface.cpp
     earth_engine/tiling/TilePlan.h

@@ -4,6 +4,7 @@
 #include "earth_engine/providers/ImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
 #include "earth_engine/providers/RasterAsset.h"
+#include "earth_engine/providers/RasterAssetDepot.h"
 #include "earth_engine/providers/RasterTextureUploader.h"
 #include "earth_engine/providers/XYZImageryProvider.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
@@ -3142,6 +3143,151 @@ TEST(RasterOverlayLifecycleTest, ExactCachedSourceFacadeReturnsImmutableSnapshot
         TileKey{scheme->id(), 3, 3, 3}).has_value());
 }
 
+TEST(RasterAssetDepotTest,
+     ExternalImageLeasesRemainAccountedAfterSourceCacheEviction) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(3, 3);
+    const TileKey key{scheme->id(), 3, 2, 3};
+
+    RasterAssetDepot depot;
+    std::optional<RasterAssetSnapshot> firstLease;
+    auto acquired = depot.acquireExactSource(
+        RasterAssetConsumer::PageStore,
+        provider,
+        key,
+        []() { return true; },
+        [&firstLease](RasterAssetResponse response) {
+            ASSERT_TRUE(response.asset.has_value());
+            firstLease = std::move(response.asset);
+        });
+    ASSERT_EQ(acquired.status, RasterAssetAcquireStatus::StartedTransport);
+    ASSERT_TRUE(firstLease.has_value());
+
+    const int64_t imageBytes = provider.getCachedSourceTileBytes();
+    ASSERT_EQ(imageBytes, 2 * 2 * 4);
+    ASSERT_EQ(provider.getSourceDepotResidentBytes(), imageBytes);
+
+    auto secondLease = depot.tryGetCachedExactSource(
+        RasterAssetConsumer::PageStore,
+        provider,
+        key);
+    ASSERT_TRUE(secondLease.has_value());
+    ASSERT_NE(firstLease->image, nullptr);
+    ASSERT_EQ(firstLease->image.get(), secondLease->image.get());
+    EXPECT_EQ(provider.getExternalPinnedSourceBytes(), imageBytes);
+    EXPECT_EQ(provider.getSourceDepotResidentBytes(), imageBytes)
+        << "cache and multiple external leases must count one physical image";
+
+    provider.setSubTileCacheBytes(0);
+    EXPECT_EQ(provider.getCachedSourceTileBytes(), 0);
+    EXPECT_EQ(provider.getExternalPinnedSourceBytes(), imageBytes);
+    EXPECT_EQ(provider.getSourceDepotResidentBytes(), imageBytes)
+        << "PageStore ownership must remain visible after cache eviction";
+
+    firstLease.reset();
+    EXPECT_EQ(provider.getExternalPinnedSourceBytes(), imageBytes);
+    EXPECT_EQ(provider.getSourceDepotResidentBytes(), imageBytes);
+
+    secondLease.reset();
+    EXPECT_EQ(provider.getExternalPinnedSourceBytes(), 0);
+    EXPECT_EQ(provider.getSourceDepotResidentBytes(), 0);
+}
+
+TEST(RasterAssetDepotTest,
+     ExternalOnlyResidencyReducesSubsequentSourceCacheBudget) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    RasterOverlayTileProvider provider(imagery, *scheme);
+    provider.setLevelRange(3, 3);
+    const TileKey firstKey{scheme->id(), 3, 2, 3};
+    const TileKey secondKey{scheme->id(), 3, 3, 3};
+
+    RasterAssetDepot depot;
+    std::optional<RasterAssetSnapshot> retainedLease;
+    auto first = depot.acquireExactSource(
+        RasterAssetConsumer::PageStore,
+        provider,
+        firstKey,
+        []() { return true; },
+        [&retainedLease](RasterAssetResponse response) {
+            ASSERT_TRUE(response.asset.has_value());
+            retainedLease = std::move(response.asset);
+        });
+    ASSERT_EQ(first.status, RasterAssetAcquireStatus::StartedTransport);
+    ASSERT_TRUE(retainedLease.has_value());
+
+    const int64_t imageBytes = provider.getCachedSourceTileBytes();
+    ASSERT_EQ(imageBytes, 2 * 2 * 4);
+    provider.setSubTileCacheBytes(0);
+    ASSERT_EQ(provider.getCachedSourceTileBytes(), 0);
+    ASSERT_EQ(provider.getSourceDepotResidentBytes(), imageBytes);
+
+    provider.setSubTileCacheBytes(imageBytes);
+    int secondReady = 0;
+    auto second = depot.acquireExactSource(
+        RasterAssetConsumer::PageStore,
+        provider,
+        secondKey,
+        []() { return true; },
+        [&secondReady](RasterAssetResponse response) {
+            ASSERT_TRUE(response.asset.has_value());
+            ++secondReady;
+        });
+    EXPECT_EQ(second.status, RasterAssetAcquireStatus::StartedTransport);
+    EXPECT_EQ(secondReady, 1);
+    EXPECT_FALSE(provider.tryGetCachedExactSource(secondKey).has_value())
+        << "an external-only image must consume the source cache budget";
+    EXPECT_EQ(provider.getCachedSourceTileBytes(), 0);
+    EXPECT_EQ(provider.getSourceDepotResidentBytes(), imageBytes)
+        << "the second callback lease is transient and must not leave the "
+           "provider above its physical decoded-image budget";
+
+    retainedLease.reset();
+    EXPECT_EQ(provider.getSourceDepotResidentBytes(), 0);
+}
+
+TEST(RasterAssetDepotTest,
+     DirectInvalidationPreservesSharedExactSourceAndExternalLease) {
+    ImmediateImageryProvider imagery;
+    auto scheme = TileScheme::createXYZWebMercator();
+    auto uploader = std::make_unique<CountingRasterUploader>();
+    RasterOverlayTileProvider provider(imagery, *scheme, std::move(uploader));
+    provider.setLevelRange(3, 3);
+    const TileKey key{scheme->id(), 3, 2, 3};
+    auto tile = provider.getTile(key);
+    ASSERT_NE(tile, nullptr);
+    ASSERT_TRUE(provider.loadTile(*tile));
+    ASSERT_EQ(processPendingUploadsUntil(provider, 1), 1);
+    ASSERT_EQ(provider.getCachedTileCount(), 1);
+
+    RasterAssetDepot depot;
+    auto pageStoreLease = depot.tryGetCachedExactSource(
+        RasterAssetConsumer::PageStore,
+        provider,
+        key);
+    ASSERT_TRUE(pageStoreLease.has_value());
+    const int64_t sourceBytes = provider.getSourceDepotResidentBytes();
+    ASSERT_GT(sourceBytes, 0);
+
+    const uint64_t mappingRevision = provider.mappingRevision();
+    provider.invalidateDirectExecutionState();
+
+    EXPECT_GT(provider.mappingRevision(), mappingRevision);
+    EXPECT_EQ(provider.getCachedTileCount(), 0)
+        << "old Direct GPU/cache state must not survive backend replacement";
+    EXPECT_TRUE(provider.tryGetCachedExactSource(key).has_value())
+        << "backend-neutral decoded source cache remains shareable";
+    EXPECT_EQ(provider.getSourceDepotResidentBytes(), sourceBytes);
+    EXPECT_EQ(provider.getExternalPinnedSourceBytes(), sourceBytes);
+
+    pageStoreLease.reset();
+    EXPECT_EQ(provider.getExternalPinnedSourceBytes(), 0);
+    EXPECT_EQ(provider.getSourceDepotResidentBytes(), sourceBytes)
+        << "the provider source cache still owns the decoded image";
+}
+
 TEST(RasterOverlayLifecycleTest,
      BackendAssetAcquireSharesInflightAndCancelsOnlyOneLease) {
     DeferredImageryProvider imagery;
@@ -3489,16 +3635,16 @@ TEST(RasterOverlayRuntimeTest, PreservesConfiguredOverlayOrder) {
     ActivatedRasterOverlay first(firstOverlay);
     ActivatedRasterOverlay second(secondOverlay);
     RasterOverlayRuntime runtime({&first, &second});
-    ASSERT_EQ(runtime.overlays().size(), 2u);
-    EXPECT_EQ(runtime.overlays()[0], &first);
-    EXPECT_EQ(runtime.overlays()[1], &second);
-    const auto& direct = runtime.providersForBackend(
-        RasterOverlayBackendKind::Direct, nullptr);
+    EXPECT_TRUE(runtime.beginFrame(1, nullptr));
+    const auto& frame = runtime.frameContext();
+    ASSERT_EQ(frame.slots().size(), 2u);
+    EXPECT_EQ(frame.slots()[0].overlay, &first);
+    EXPECT_EQ(frame.slots()[1].overlay, &second);
+    const auto& direct = frame.directProviders();
     ASSERT_EQ(direct.size(), 2u);
     EXPECT_EQ(direct[0], first.getTileProvider());
     EXPECT_EQ(direct[1], second.getTileProvider());
-    const auto& pageStore = runtime.providersForBackend(
-        RasterOverlayBackendKind::PageStore, nullptr);
+    const auto& pageStore = frame.pageStoreProviders();
     ASSERT_EQ(pageStore.size(), 2u);
     EXPECT_EQ(pageStore[0], first.getTileProvider());
     EXPECT_EQ(pageStore[1], second.getTileProvider());
@@ -3512,20 +3658,14 @@ TEST(RasterOverlayRuntimeTest, BackendEnablementSelectsFailClosedView) {
     ActivatedRasterOverlay activated(overlay);
     RasterOverlayRuntime runtime({&activated});
 
-    ASSERT_EQ(runtime.providersForBackend(
-                  RasterOverlayBackendKind::PageStore, nullptr)
-                  .size(),
-              1u);
+    ASSERT_TRUE(runtime.beginFrame(1, nullptr));
+    ASSERT_EQ(runtime.frameContext().pageStoreProviders().size(), 1u);
     runtime.setBackendEnabled(RasterOverlayBackendKind::PageStore, false);
     EXPECT_FALSE(runtime.backendEnabled(RasterOverlayBackendKind::PageStore));
-    EXPECT_TRUE(runtime.providersForBackend(
-                    RasterOverlayBackendKind::PageStore, nullptr)
-                    .empty());
+    EXPECT_FALSE(runtime.beginFrame(2, nullptr));
+    EXPECT_TRUE(runtime.frameContext().pageStoreProviders().empty());
     EXPECT_TRUE(runtime.backendEnabled(RasterOverlayBackendKind::Direct));
-    EXPECT_EQ(runtime.providersForBackend(
-                  RasterOverlayBackendKind::Direct, nullptr)
-                  .size(),
-              1u);
+    EXPECT_EQ(runtime.frameContext().directProviders().size(), 1u);
 }
 
 namespace {
@@ -3576,15 +3716,16 @@ TEST(RasterOverlayRuntimeTest, BackendReplacementIsBehaviorallySelected) {
     ASSERT_TRUE(runtime.setBackend(RasterOverlayBackendKind::PageStore,
                                    std::move(replacement)));
 
-    const auto& selected = runtime.providersForBackend(
-        RasterOverlayBackendKind::PageStore, nullptr);
+    ASSERT_TRUE(runtime.beginFrame(1, nullptr));
+    const auto& selected = runtime.frameContext().pageStoreProviders();
     ASSERT_EQ(selected.size(), 1u);
     EXPECT_EQ(selected.front(), provider);
     EXPECT_EQ(replacementPtr->calls, 1);
     ASSERT_NE(runtime.backend(RasterOverlayBackendKind::PageStore), nullptr);
     EXPECT_EQ(runtime.backend(RasterOverlayBackendKind::PageStore)->kind(),
               RasterOverlayBackendKind::PageStore);
-    EXPECT_EQ(provider->assetDepot().get(), runtime.assetDepotHandle().get());
+    EXPECT_EQ(provider->assetDepot().get(),
+              runtime.frameContext().assetDepotHandle().get());
 
     auto wrongKind = std::make_unique<TestRasterOverlayBackend>(
         RasterOverlayBackendKind::Direct, provider);
@@ -3595,10 +3736,8 @@ TEST(RasterOverlayRuntimeTest, BackendReplacementIsBehaviorallySelected) {
 
     ASSERT_TRUE(runtime.setBackend(
         RasterOverlayBackendKind::PageStore, nullptr));
-    EXPECT_EQ(runtime.providersForBackend(
-                  RasterOverlayBackendKind::PageStore, nullptr)
-                  .size(),
-              1u);
+    EXPECT_FALSE(runtime.beginFrame(2, nullptr));
+    EXPECT_EQ(runtime.frameContext().pageStoreProviders().size(), 1u);
 }
 
 TEST(RasterOverlayRuntimeTest, BackendProviderViewIsNormalizedToRuntimeOrder) {
@@ -3659,16 +3798,171 @@ TEST(RasterOverlayRuntimeTest, BackendProviderViewIsNormalizedToRuntimeOrder) {
         RasterOverlayBackendKind::PageStore,
         std::make_unique<ReorderingBackend>(
             firstProvider, secondProvider, foreignProvider)));
-    const auto& providers = runtime.providersForBackend(
-        RasterOverlayBackendKind::PageStore, nullptr);
+    ASSERT_TRUE(runtime.beginFrame(1, nullptr));
+    const auto& providers = runtime.frameContext().pageStoreProviders();
     ASSERT_EQ(providers.size(), 2u);
     EXPECT_EQ(providers[0], firstProvider);
     EXPECT_EQ(providers[1], secondProvider);
 
     runtime.setBackendEnabled(RasterOverlayBackendKind::PageStore, false);
-    EXPECT_TRUE(runtime.providersForBackend(
-                    RasterOverlayBackendKind::PageStore, nullptr)
-                    .empty());
+    EXPECT_FALSE(runtime.beginFrame(2, nullptr));
+    EXPECT_TRUE(runtime.frameContext().pageStoreProviders().empty());
+}
+
+TEST(RasterOverlayRuntimeTest,
+     FrameContextPreservesRuntimeSlotsForFilteredDirectBackend) {
+    RasterOverlay::Options options;
+    RasterOverlay firstOverlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    RasterOverlay secondOverlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    ActivatedRasterOverlay first(firstOverlay);
+    ActivatedRasterOverlay second(secondOverlay);
+    RasterOverlayRuntime runtime({&first, &second});
+    RasterOverlayTileProvider* firstProvider =
+        first.ensureTileProvider(nullptr);
+    RasterOverlayTileProvider* secondProvider =
+        second.ensureTileProvider(nullptr);
+
+    ASSERT_TRUE(runtime.setBackend(
+        RasterOverlayBackendKind::Direct,
+        std::make_unique<TestRasterOverlayBackend>(
+            RasterOverlayBackendKind::Direct,
+            secondProvider)));
+    EXPECT_TRUE(runtime.beginFrame(17, nullptr));
+
+    const RasterOverlayFrameContext& frame = runtime.frameContext();
+    EXPECT_EQ(frame.frameNumber(), 17u);
+    ASSERT_EQ(frame.slots().size(), 2u);
+    ASSERT_EQ(frame.directOverlays().size(), 2u);
+    ASSERT_EQ(frame.directProviders().size(), 1u);
+    EXPECT_EQ(frame.slots()[0].runtimeSlot, 0u);
+    EXPECT_EQ(frame.slots()[0].overlay, &first);
+    EXPECT_EQ(frame.slots()[0].directProvider, nullptr);
+    EXPECT_EQ(frame.directOverlays()[0], nullptr);
+    EXPECT_EQ(frame.slots()[1].runtimeSlot, 1u);
+    EXPECT_EQ(frame.slots()[1].overlay, &second);
+    EXPECT_EQ(frame.slots()[1].directProvider, secondProvider);
+    EXPECT_EQ(frame.directOverlays()[1], &second);
+    EXPECT_EQ(frame.directProviders()[0], secondProvider);
+    EXPECT_EQ(firstProvider->assetDepot().get(), frame.assetDepotHandle().get());
+    EXPECT_EQ(secondProvider->assetDepot().get(), frame.assetDepotHandle().get());
+
+    const uint64_t generation = frame.generation();
+    const uint64_t directGeneration = frame.directGeneration();
+    EXPECT_FALSE(runtime.beginFrame(18, nullptr));
+    EXPECT_EQ(runtime.frameContext().generation(), generation);
+    EXPECT_EQ(runtime.frameContext().directGeneration(), directGeneration);
+}
+
+TEST(RasterOverlayRuntimeTest,
+     DirectBackendReplacementAdvancesGenerationAndInvalidatesMappedState) {
+    RasterOverlay::Options options;
+    RasterOverlay overlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    ActivatedRasterOverlay activated(overlay);
+    RasterOverlayRuntime runtime({&activated});
+    RasterOverlayTileProvider* provider =
+        activated.ensureTileProvider(nullptr);
+    ASSERT_TRUE(runtime.beginFrame(1, nullptr));
+
+    auto geometryScheme = TileScheme::createGeographicTMS();
+    const TileKey geometryKey{geometryScheme->id(), 2, 4, 2};
+    const Rectangle geometryBounds =
+        geometryScheme->tileToRectangle(geometryKey);
+    auto mapped = provider->mapRasterTilesToGeometryTile(
+        projectForProvider(*provider, geometryBounds),
+        512.0,
+        512.0).tile;
+    ASSERT_NE(mapped, nullptr);
+    ASSERT_TRUE(mapped->isMappedRasterTile());
+    ASSERT_GT(provider->getCachedTileCount(), 0);
+    const uint64_t mappingRevision = provider->mappingRevision();
+    const uint64_t directGeneration =
+        runtime.frameContext().directGeneration();
+
+    ASSERT_TRUE(runtime.setBackend(
+        RasterOverlayBackendKind::Direct,
+        std::make_unique<TestRasterOverlayBackend>(
+            RasterOverlayBackendKind::Direct,
+            nullptr)));
+    EXPECT_TRUE(runtime.beginFrame(2, nullptr));
+    EXPECT_GT(runtime.frameContext().directGeneration(), directGeneration);
+    EXPECT_GT(provider->mappingRevision(), mappingRevision);
+    EXPECT_EQ(provider->getCachedTileCount(), 0);
+    ASSERT_EQ(runtime.frameContext().directOverlays().size(), 1u);
+    EXPECT_EQ(runtime.frameContext().directOverlays()[0], nullptr);
+    ASSERT_EQ(runtime.frameContext().slots().size(), 1u);
+    EXPECT_EQ(runtime.frameContext().slots()[0].runtimeSlot, 0u);
+    EXPECT_EQ(runtime.frameContext().slots()[0].directProvider, nullptr);
+}
+
+TEST(RasterOverlayRuntimeTest,
+     InitialFramePublishesGenerationWithoutInvalidatingExistingDirectWork) {
+    RasterOverlay::Options options;
+    RasterOverlay overlay(
+        std::make_unique<ImmediateImageryProvider>(),
+        TileScheme::createXYZWebMercator(), options);
+    ActivatedRasterOverlay activated(overlay);
+    RasterOverlayTileProvider* provider =
+        activated.ensureTileProvider(nullptr);
+    const TileKey key{"XYZ-WebMercator", 1, 0, 0};
+    auto tile = provider->getTile(key);
+    ASSERT_NE(tile, nullptr);
+    ASSERT_TRUE(provider->loadTile(*tile));
+    ASSERT_EQ(provider->getPendingUploadCount(), 1);
+    const uint64_t mappingRevision = provider->mappingRevision();
+
+    RasterOverlayRuntime runtime({&activated});
+    EXPECT_TRUE(runtime.beginFrame(0, nullptr));
+
+    EXPECT_EQ(provider->getPendingUploadCount(), 1);
+    EXPECT_EQ(provider->mappingRevision(), mappingRevision);
+    ASSERT_EQ(runtime.frameContext().directOverlays().size(), 1u);
+    EXPECT_EQ(runtime.frameContext().directOverlays()[0], &activated);
+}
+
+TEST(RasterOverlayRuntimeTest,
+     DirectBackendReplacementRejectsLateExactTileUpload) {
+    auto imagery = std::make_unique<DeferredImageryProvider>();
+    DeferredImageryProvider* imageryPtr = imagery.get();
+    RasterOverlay::Options options;
+    RasterOverlay overlay(
+        std::move(imagery),
+        TileScheme::createXYZWebMercator(), options);
+    ActivatedRasterOverlay activated(overlay);
+    RasterOverlayRuntime runtime({&activated});
+    RasterOverlayTileProvider* provider =
+        activated.ensureTileProvider(nullptr);
+    ASSERT_TRUE(runtime.beginFrame(1, nullptr));
+
+    const TileKey key{"XYZ-WebMercator", 3, 2, 3};
+    auto tile = provider->getTile(key);
+    ASSERT_NE(tile, nullptr);
+    ASSERT_TRUE(provider->loadTile(*tile));
+    ASSERT_EQ(imageryPtr->pending.size(), 1u);
+    ASSERT_EQ(provider->getActiveMappedSourceSetOrderCount(), 1);
+
+    ASSERT_TRUE(runtime.setBackend(
+        RasterOverlayBackendKind::Direct,
+        std::make_unique<TestRasterOverlayBackend>(
+            RasterOverlayBackendKind::Direct,
+            nullptr)));
+    ASSERT_TRUE(runtime.beginFrame(2, nullptr));
+    EXPECT_EQ(provider->getActiveMappedSourceSetOrderCount(), 0);
+    EXPECT_EQ(provider->getPendingUploadCount(), 0);
+
+    imageryPtr->completeNext();
+
+    EXPECT_EQ(provider->getPendingUploadCount(), 0);
+    EXPECT_EQ(provider->getInFlightSourceWaiterCount(), 0);
+    EXPECT_EQ(provider->getActiveMappedSourceSetOrderCount(), 0);
+    EXPECT_FALSE(provider->hasPendingWork());
+    EXPECT_TRUE(provider->tryGetCachedExactSource(key).has_value())
+        << "late transport may remain useful to the shared Asset Depot";
 }
 
 TEST(RasterOverlayRuntimeTest,
@@ -3685,6 +3979,14 @@ TEST(RasterOverlayRuntimeTest,
     RasterOverlayRuntime runtime({&first, &second});
     RasterOverlayTileProvider* secondProvider =
         second.ensureTileProvider(nullptr);
+
+    // Frame publication evaluates both consumers. Keep Direct filtered too,
+    // otherwise its default provider stack would legitimately instantiate the
+    // first overlay before this PageStore-specific assertion runs.
+    ASSERT_TRUE(runtime.setBackend(
+        RasterOverlayBackendKind::Direct,
+        std::make_unique<TestRasterOverlayBackend>(
+            RasterOverlayBackendKind::Direct, nullptr)));
 
     class SingleProviderBackend final : public RasterOverlayBackend {
     public:
@@ -3711,8 +4013,8 @@ TEST(RasterOverlayRuntimeTest,
     ASSERT_TRUE(runtime.setBackend(
         RasterOverlayBackendKind::PageStore,
         std::make_unique<SingleProviderBackend>(secondProvider)));
-    const auto& providers = runtime.providersForBackend(
-        RasterOverlayBackendKind::PageStore, nullptr);
+    ASSERT_TRUE(runtime.beginFrame(1, nullptr));
+    const auto& providers = runtime.frameContext().pageStoreProviders();
     ASSERT_EQ(providers.size(), 1u);
     EXPECT_EQ(providers.front(), secondProvider);
     EXPECT_EQ(first.getTileProvider(), nullptr);
@@ -8018,19 +8320,11 @@ TEST(RasterOverlayLifecycleTest,
         activated.ensureTileProvider(nullptr);
     ASSERT_NE(nullptr, provider);
 
-    TileContentLifecycleManager lifecycle;
     TileContentCacheManager cache;
     uint64_t resourceRevision = 1;
     TileContentResourceInvalidator invalidator(resourceRevision, cache);
     TileLoadQueue loadQueue;
-    std::vector<ActivatedRasterOverlay*> overlays;
-    TileMeshPreparationManager manager(
-        lifecycle,
-        invalidator,
-        loadQueue,
-        true,
-        nullptr,
-        overlays);
+    TileMeshPreparationManager manager(invalidator, loadQueue);
 
     TilesetTile parent(
         TileKey{"Geographic-TMS", 0, 0, 0},

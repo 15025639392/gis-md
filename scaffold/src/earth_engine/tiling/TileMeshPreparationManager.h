@@ -12,7 +12,6 @@ namespace earth_engine {
 class ActivatedRasterOverlay;
 class IPrepareRendererResources;
 class RenderDevice;
-class TileContentLifecycleManager;
 class TileContentResourceInvalidator;
 class TileLoadQueue;
 struct TilesetTile;
@@ -20,12 +19,8 @@ struct TilesetTile;
 class TileMeshPreparationManager {
 public:
     TileMeshPreparationManager(
-        TileContentLifecycleManager& contentLifecycle,
         TileContentResourceInvalidator& resourceInvalidator,
-        TileLoadQueue& loadQueue,
-        bool hasTerrainQuadtree,
-        RenderDevice* device,
-        const std::vector<ActivatedRasterOverlay*>& rasterOverlays);
+        TileLoadQueue& loadQueue);
 
     void prepareRenderableTile(
         TilesetTile& tile,
@@ -44,7 +39,6 @@ private:
                        TileLoadPriorityGroup group,
                        double priority);
 
-    TileContentLifecycleManager& contentLifecycle_;
     TileContentResourceInvalidator& resourceInvalidator_;
     TileLoadQueue& loadQueue_;
 };

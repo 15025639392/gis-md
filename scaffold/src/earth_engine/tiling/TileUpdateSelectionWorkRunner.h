@@ -30,7 +30,7 @@ struct TileUpdateSelectionWorkInput {
     TileLoadQueue& loadQueue;
     TileSelectionCounters& selectionCounters;
     TileSelectionReuseState& selectionReuseState;
-    std::vector<ActivatedRasterOverlay*>& rasterOverlays;
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     FrameResourceBudget& frameResourceBudget;
     RenderDevice* device = nullptr;
     const FrameState& frameState;

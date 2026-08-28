@@ -58,14 +58,17 @@ RasterOverlayRuntime::RasterOverlayRuntime(
     , assetDepot_(std::make_shared<RasterAssetDepot>())
     , directBackend_(makeDefaultBackend(RasterOverlayBackendKind::Direct))
     , pageStoreBackend_(
-          makeDefaultBackend(RasterOverlayBackendKind::PageStore)) {}
+          makeDefaultBackend(RasterOverlayBackendKind::PageStore)) {
+    frameContext_.assetDepot_ = assetDepot_;
+    frameContext_.directOverlays_ = overlays_;
+    frameContext_.slots_.resize(overlays_.size());
+    for (size_t i = 0; i < overlays_.size(); ++i) {
+        frameContext_.slots_[i].runtimeSlot = i;
+        frameContext_.slots_[i].overlay = overlays_[i];
+    }
+}
 
 RasterOverlayRuntime::~RasterOverlayRuntime() = default;
-
-const std::vector<RasterOverlayTileProvider*>&
-RasterOverlayRuntime::ensureProviders(RenderDevice* device) {
-    return providersForBackend(RasterOverlayBackendKind::Direct, device);
-}
 
 const std::vector<RasterOverlayTileProvider*>&
 RasterOverlayRuntime::providersForBackend(
@@ -116,6 +119,85 @@ RasterOverlayRuntime::providersForBackend(
     return orderedProviders;
 }
 
+bool RasterOverlayRuntime::beginFrame(
+    uint64_t frameNumber,
+    RenderDevice* device) {
+    const std::vector<ActivatedRasterOverlay*> previousDirect =
+        frameContext_.directOverlays_;
+    const std::vector<RasterOverlayTileProvider*> previousPageStore =
+        frameContext_.pageStoreProviders_;
+    const uint64_t previousDirectGeneration = directGeneration_;
+    const bool directWasDirty = directFrameDirty_;
+    const bool hasPublishedDirectGeneration = directGeneration_ != 0;
+
+    if (directWasDirty && hasPublishedDirectGeneration) {
+        for (ActivatedRasterOverlay* overlay : overlays_) {
+            if (overlay) {
+                overlay->invalidateDirectExecutionState();
+            }
+        }
+    }
+
+    const auto& direct = providersForBackend(
+        RasterOverlayBackendKind::Direct, device);
+    const auto& pageStore = providersForBackend(
+        RasterOverlayBackendKind::PageStore, device);
+
+    frameContext_.frameNumber_ = frameNumber;
+    frameContext_.assetDepot_ = assetDepot_;
+    frameContext_.slots_.clear();
+    frameContext_.slots_.resize(overlays_.size());
+    frameContext_.directOverlays_.assign(overlays_.size(), nullptr);
+    frameContext_.directProviders_ = direct;
+    frameContext_.pageStoreProviders_ = pageStore;
+
+    std::unordered_set<RasterOverlayTileProvider*> directSet(
+        direct.begin(), direct.end());
+    std::unordered_set<RasterOverlayTileProvider*> pageStoreSet(
+        pageStore.begin(), pageStore.end());
+    for (size_t i = 0; i < overlays_.size(); ++i) {
+        ActivatedRasterOverlay* overlay = overlays_[i];
+        RasterOverlayTileProvider* provider =
+            overlay ? overlay->getTileProvider() : nullptr;
+        RasterOverlayFrameSlot& slot = frameContext_.slots_[i];
+        slot.runtimeSlot = i;
+        slot.overlay = overlay;
+        if (provider && directSet.count(provider) != 0) {
+            slot.directProvider = provider;
+            frameContext_.directOverlays_[i] = overlay;
+        }
+        if (provider && pageStoreSet.count(provider) != 0) {
+            slot.pageStoreProvider = provider;
+        }
+    }
+
+    if (directFrameDirty_ ||
+        previousDirect != frameContext_.directOverlays_) {
+        if (!directWasDirty) {
+            for (ActivatedRasterOverlay* overlay : overlays_) {
+                if (overlay) {
+                    overlay->invalidateDirectExecutionState();
+                }
+            }
+        }
+        ++directGeneration_;
+        directFrameDirty_ = false;
+    }
+    if (pageStoreFrameDirty_ ||
+        previousPageStore != frameContext_.pageStoreProviders_) {
+        ++pageStoreGeneration_;
+        pageStoreFrameDirty_ = false;
+    }
+    if (frameContext_.directGeneration_ != directGeneration_ ||
+        frameContext_.pageStoreGeneration_ != pageStoreGeneration_) {
+        ++generation_;
+    }
+    frameContext_.generation_ = generation_;
+    frameContext_.directGeneration_ = directGeneration_;
+    frameContext_.pageStoreGeneration_ = pageStoreGeneration_;
+    return previousDirectGeneration != directGeneration_;
+}
+
 bool RasterOverlayRuntime::setBackend(
     RasterOverlayBackendKind kind,
     std::unique_ptr<RasterOverlayBackend> backend) {
@@ -128,9 +210,11 @@ bool RasterOverlayRuntime::setBackend(
     switch (kind) {
         case RasterOverlayBackendKind::Direct:
             directBackend_ = std::move(backend);
+            directFrameDirty_ = true;
             return true;
         case RasterOverlayBackendKind::PageStore:
             pageStoreBackend_ = std::move(backend);
+            pageStoreFrameDirty_ = true;
             return true;
     }
     return false;
@@ -148,8 +232,13 @@ void RasterOverlayRuntime::setBackendEnabled(
     RasterOverlayBackend* selected = backend == RasterOverlayBackendKind::Direct
         ? directBackend_.get()
         : pageStoreBackend_.get();
-    if (selected) {
+    if (selected && selected->enabled() != enabled) {
         selected->setEnabled(enabled);
+        if (backend == RasterOverlayBackendKind::Direct) {
+            directFrameDirty_ = true;
+        } else {
+            pageStoreFrameDirty_ = true;
+        }
     }
 }
 

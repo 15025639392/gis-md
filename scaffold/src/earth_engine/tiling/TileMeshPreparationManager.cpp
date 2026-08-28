@@ -9,14 +9,9 @@
 namespace earth_engine {
 
 TileMeshPreparationManager::TileMeshPreparationManager(
-    TileContentLifecycleManager& contentLifecycle,
     TileContentResourceInvalidator& resourceInvalidator,
-    TileLoadQueue& loadQueue,
-    bool /*hasTerrainQuadtree*/,
-    RenderDevice* /*device*/,
-    const std::vector<ActivatedRasterOverlay*>& /*rasterOverlays*/)
-    : contentLifecycle_(contentLifecycle),
-      resourceInvalidator_(resourceInvalidator),
+    TileLoadQueue& loadQueue)
+    : resourceInvalidator_(resourceInvalidator),
       loadQueue_(loadQueue) {}
 
 void TileMeshPreparationManager::prepareRenderableTile(

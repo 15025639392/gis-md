@@ -3,6 +3,7 @@
 #include "../providers/RasterAssetDepot.h"
 
 #include <memory>
+#include <cstdint>
 #include <vector>
 
 namespace earth_engine {
@@ -14,6 +15,56 @@ class RasterOverlayTileProvider;
 enum class RasterOverlayBackendKind {
     Direct,
     PageStore
+};
+
+struct RasterOverlayFrameSlot {
+    size_t runtimeSlot = 0;
+    ActivatedRasterOverlay* overlay = nullptr;
+    RasterOverlayTileProvider* directProvider = nullptr;
+    RasterOverlayTileProvider* pageStoreProvider = nullptr;
+};
+
+/// Immutable-for-the-frame execution snapshot shared by every raster stage.
+///
+/// directOverlays() always preserves the Runtime-owned slot count and order;
+/// a backend-filtered slot is represented by nullptr instead of compacting the
+/// vector. This keeps TileRasterOverlayState mapping indices, generated
+/// texcoord identities and render binding order coherent across the frame.
+class RasterOverlayFrameContext {
+public:
+    uint64_t frameNumber() const { return frameNumber_; }
+    uint64_t generation() const { return generation_; }
+    uint64_t directGeneration() const { return directGeneration_; }
+    uint64_t pageStoreGeneration() const { return pageStoreGeneration_; }
+
+    const std::vector<RasterOverlayFrameSlot>& slots() const {
+        return slots_;
+    }
+    const std::vector<ActivatedRasterOverlay*>& directOverlays() const {
+        return directOverlays_;
+    }
+    const std::vector<RasterOverlayTileProvider*>& directProviders() const {
+        return directProviders_;
+    }
+    const std::vector<RasterOverlayTileProvider*>& pageStoreProviders() const {
+        return pageStoreProviders_;
+    }
+    std::shared_ptr<RasterAssetDepot> assetDepotHandle() const {
+        return assetDepot_;
+    }
+
+private:
+    uint64_t frameNumber_ = 0;
+    uint64_t generation_ = 0;
+    uint64_t directGeneration_ = 0;
+    uint64_t pageStoreGeneration_ = 0;
+    std::vector<RasterOverlayFrameSlot> slots_;
+    std::vector<ActivatedRasterOverlay*> directOverlays_;
+    std::vector<RasterOverlayTileProvider*> directProviders_;
+    std::vector<RasterOverlayTileProvider*> pageStoreProviders_;
+    std::shared_ptr<RasterAssetDepot> assetDepot_;
+
+    friend class RasterOverlayRuntime;
 };
 
 /// Phase-one replaceable provider-view strategy for one overlay consumer.
@@ -49,40 +100,28 @@ public:
     RasterOverlayRuntime(const RasterOverlayRuntime&) = delete;
     RasterOverlayRuntime& operator=(const RasterOverlayRuntime&) = delete;
 
-    const std::vector<ActivatedRasterOverlay*>& overlays() const {
+    /// Runtime-owned configuration order. This is not a backend view and is
+    /// therefore stable even when Direct or PageStore filters a slot.
+    const std::vector<ActivatedRasterOverlay*>& configuredOverlays() const {
         return overlays_;
     }
-    std::vector<ActivatedRasterOverlay*>& overlays() { return overlays_; }
 
-    /// Ensure all configured overlays have a provider and return the ordered
-    /// provider stack. Null overlays/providers are omitted from the view.
-    const std::vector<RasterOverlayTileProvider*>& ensureProviders(
-        RenderDevice* device);
+    /// Freeze backend selection and canonical slot identity for one frame.
+    /// Returns true when the Direct execution generation changed and existing
+    /// per-tile mappings must be released before consuming the new snapshot.
+    bool beginFrame(uint64_t frameNumber, RenderDevice* device);
 
-    /// Backend provider-view seam for the migration. Returned providers are
-    /// always a canonical-order subset of overlays(); backend-provided order,
-    /// duplicates, and foreign providers never change runtime slot identity.
-    const std::vector<RasterOverlayTileProvider*>& providersForBackend(
-        RasterOverlayBackendKind backend,
-        RenderDevice* device);
+    const RasterOverlayFrameContext& frameContext() const {
+        return frameContext_;
+    }
 
     /// Install a phase-one provider-view strategy for one consumer. Passing
     /// nullptr restores the default strategy. This does not yet replace the
-    /// consumer's selection/load/render executor; that requires the future
-    /// frame-level RasterBindingSet boundary.
+    /// consumer's complete selection/request/upload/render lifecycle.
     bool setBackend(RasterOverlayBackendKind kind,
                     std::unique_ptr<RasterOverlayBackend> backend);
 
     const RasterOverlayBackend* backend(RasterOverlayBackendKind kind) const;
-
-    /// Shared decoded-source access point used by every backend in this
-    /// tileset. Provider-specific caches stay behind this consumer-neutral
-    /// boundary during the first migration phase.
-    RasterAssetDepot& assetDepot() { return *assetDepot_; }
-    const RasterAssetDepot& assetDepot() const { return *assetDepot_; }
-    std::shared_ptr<RasterAssetDepot> assetDepotHandle() const {
-        return assetDepot_;
-    }
 
     /// Enable/disable one backend without changing overlay ownership. A
     /// disabled PageStore returns an empty provider view, which makes its
@@ -91,12 +130,23 @@ public:
     bool backendEnabled(RasterOverlayBackendKind backend) const;
 
 private:
+    const std::vector<RasterOverlayTileProvider*>& providersForBackend(
+        RasterOverlayBackendKind backend,
+        RenderDevice* device);
+
     std::vector<ActivatedRasterOverlay*> overlays_;
     std::shared_ptr<RasterAssetDepot> assetDepot_;
     std::unique_ptr<RasterOverlayBackend> directBackend_;
     std::unique_ptr<RasterOverlayBackend> pageStoreBackend_;
     std::vector<RasterOverlayTileProvider*> directProviders_;
     std::vector<RasterOverlayTileProvider*> pageStoreProviders_;
+    RasterOverlayFrameContext frameContext_;
+    uint64_t generation_ = 0;
+    uint64_t directGeneration_ = 0;
+    uint64_t pageStoreGeneration_ = 0;
+    bool directFrameDirty_ = true;
+    bool pageStoreFrameDirty_ = true;
+
 };
 
 } // namespace earth_engine

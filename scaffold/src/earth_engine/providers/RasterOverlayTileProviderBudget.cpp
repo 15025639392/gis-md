@@ -15,6 +15,17 @@
 #include <vector>
 
 namespace earth_engine {
+int64_t RasterOverlayTileProvider::externalOnlyResidentBytesLocked(
+    const ProviderAsyncState& state) {
+    int64_t bytes = 0;
+    for (const auto& [_, refs] : state.sharedRasterImageRefs) {
+        if (refs.externalPinRefs > 0 && refs.sourceCacheRefs == 0 &&
+            refs.pendingUploadRefs == 0) {
+            bytes += refs.sizeBytes;
+        }
+    }
+    return bytes;
+}
 
 int64_t RasterOverlayTileProvider::pendingUploadSizeBytes(
     const PendingUpload& upload) {
@@ -84,11 +95,19 @@ void RasterOverlayTileProvider::releasePendingUploadImageBytesLocked(
     if (refs.pendingUploadRefs > 0) {
         --refs.pendingUploadRefs;
     }
-    if (refs.pendingUploadRefs == 0 && refs.sourceCacheRefs == 0) {
+    if (refs.pendingUploadRefs == 0 && refs.sourceCacheRefs == 0 &&
+        refs.externalPinRefs == 0) {
         state.pendingUploadBytes = std::max<int64_t>(
             0,
             state.pendingUploadBytes - refs.sizeBytes);
         state.sharedRasterImageRefs.erase(it);
+    } else if (refs.pendingUploadRefs == 0 && refs.sourceCacheRefs == 0) {
+        // The bytes remain physically resident through an external consumer
+        // pin. pendingUploadBytes no longer owns the category, but the unique
+        // resident total still sees this image through sharedRasterImageRefs.
+        state.pendingUploadBytes = std::max<int64_t>(
+            0,
+            state.pendingUploadBytes - refs.sizeBytes);
     }
     trackPendingUploadBudgetPeakLocked(state);
 }
@@ -161,7 +180,8 @@ void RasterOverlayTileProvider::releaseSourceCacheImageBytesLocked(
                 state.peakPendingUploadBytes);
         }
     }
-    if (refs.sourceCacheRefs == 0 && refs.pendingUploadRefs == 0) {
+    if (refs.sourceCacheRefs == 0 && refs.pendingUploadRefs == 0 &&
+        refs.externalPinRefs == 0) {
         state.sharedRasterImageRefs.erase(it);
     }
     trackPendingUploadBudgetPeakLocked(state);
@@ -184,7 +204,8 @@ void RasterOverlayTileProvider::clearPendingUploadsLocked(
 void RasterOverlayTileProvider::trackPendingUploadBudgetPeakLocked(
     ProviderAsyncState& state) {
     trackPeakBytes(
-        state.pendingUploadBytes + state.pinnedSharedPendingUploadBytes,
+        state.pendingUploadBytes + state.pinnedSharedPendingUploadBytes +
+            externalOnlyResidentBytesLocked(state),
         state.peakPendingUploadBudgetBytes);
     updatePendingUploadBackpressureLocked(state);
 }
@@ -194,7 +215,8 @@ void RasterOverlayTileProvider::updatePendingUploadBackpressureLocked(
     const bool active =
         state.subTileCacheBytes > 0 &&
         state.pendingUploadBytes +
-                state.pinnedSharedPendingUploadBytes >=
+                state.pinnedSharedPendingUploadBytes +
+                externalOnlyResidentBytesLocked(state) >=
             state.subTileCacheBytes;
     state.pendingUploadBackpressure.store(
         active,
@@ -223,7 +245,8 @@ void RasterOverlayTileProvider::enforceSourceDepotBudgetLocked(
     const int64_t totalBudgetBytes = std::max<int64_t>(0, state.subTileCacheBytes);
     const int64_t sourceBudgetBytes = std::max<int64_t>(
         0,
-        totalBudgetBytes - state.pendingUploadBytes);
+        totalBudgetBytes - state.pendingUploadBytes -
+            externalOnlyResidentBytesLocked(state));
     while (state.sourceTileDepotCacheBytes > sourceBudgetBytes &&
            !state.sourceTileDepotCacheLru.empty()) {
         auto [key, generation] = state.sourceTileDepotCacheLru.front();

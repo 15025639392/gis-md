@@ -2,6 +2,7 @@
 
 #include "RasterMappedToTilesetTile.h"
 #include "SurfaceRasterBinding.h"
+#include "RasterBindingSet.h"
 #include "TileLoadState.h"
 #include "TilesetTile.h"
 
@@ -41,6 +42,8 @@ BaseImageryBlockReason
 TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
     const TilesetTile& tile,
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays) {
+    const RasterBindingSet bindings =
+        RasterBindingSet::resolve(tile, rasterOverlays);
     for (size_t i = 0; i < rasterOverlays.size(); ++i) {
         const ActivatedRasterOverlay* activeOverlay = rasterOverlays[i];
         if (!activeOverlay || !activeOverlay->visible()) {
@@ -51,20 +54,16 @@ TileRasterOverlayReadinessPolicy::baseImageryBlockReason(
             !overlay.blocksCompleteRenderable()) {
             continue;
         }
+        const RasterBinding* resolved = bindings.bindingAtRuntimeSlot(i);
         const RasterMappedToTilesetTile* mapped =
-            tile.rasterOverlayState.mappingAt(i);
-        const SurfaceRasterBinding binding =
-            chooseSurfaceRasterBinding(mapped);
-        if (!rasterOverlayBindingAllowedByPolicy(
-                activeOverlay,
-                mapped,
-                binding)) {
+            resolved ? resolved->mapped : nullptr;
+        if (!resolved || !resolved->allowedByPolicy) {
             return mapped
                 ? BaseImageryBlockReason::NoReadyTexture
                 : BaseImageryBlockReason::NoMapping;
         }
         const int32_t textureCoordinateID =
-            mapped ? mapped->getTextureCoordinateID() : -1;
+            resolved->textureCoordinateId;
         if (textureCoordinateID < 0 ||
             textureCoordinateID >= static_cast<int32_t>(kGltfMaxTexCoordSets)) {
             return BaseImageryBlockReason::TexcoordInvalid;

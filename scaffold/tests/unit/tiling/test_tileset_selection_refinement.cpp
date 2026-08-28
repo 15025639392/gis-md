@@ -49,7 +49,7 @@ struct TilesetTestAccess {
     static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
         return TileSelectionRasterOverlayPreparer::isRenderable(
             tile,
-            tileset.rasterOverlays_);
+            tileset.directRasterOverlays());
     }
 
     static bool canRefine(Tileset& tileset, const TilesetTile& tile) {

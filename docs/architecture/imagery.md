@@ -18,27 +18,45 @@
 
 **不含**矢量渲染——但 `VectorDrapeImageryProvider` 是例外:它把矢量面数据**伪装成影像 provider**接入这同一条通路(见扩展点)。
 
-### Overlay Runtime 迁移边界（2026-08-28，第一阶段）
+### Overlay Runtime 迁移边界（2026-08-28，帧级上下文阶段）
 
 每个 `Tileset` 现在持有一个 `RasterOverlayRuntime`，由它统一托管：
 
 ```text
 RasterOverlay 配置 / ActivatedRasterOverlay 顺序
   → RasterOverlayRuntime
-       ├─ Direct backend（现 mappedRaster 映射、祖先回退、逐瓦绑定）
-       ├─ PageStore backend（canonical page domain、合成页、间接纹理）
-       └─ RasterAssetDepot（backend-neutral decoded source acquire）
+       ├─ RasterOverlayFrameContext（每帧冻结 slot / provider view / generation）
+       │    ├─ Direct view（保留原 slot，过滤项为 nullptr）
+       │    └─ PageStore provider view（canonical-order 紧凑 provider 列表）
+       ├─ RasterBindingSet（统一解析 ready/ancestor/UV/opacity/policy）
+       └─ RasterAssetDepot（backend-neutral decoded source acquire + lease）
              → RasterOverlayTileProvider source depot
                   cache + in-flight + waiter lease + transport + decoded image
 ```
 
-- `RasterOverlayBackend` 是第一阶段可替换的 provider-view 策略接口；Runtime 按 `Direct` / `PageStore` 槽位持有实现，启停和替换不改变 Scene/SDK 的 overlay 配置所有权与顺序。Runtime 会把 backend 返回的 provider 重新规范为配置顺序的子集，禁止重复、乱序或外部 provider 改变 runtime slot。
+- `RasterOverlayBackend` 仍是 provider-view 策略接口；Runtime 按 `Direct` / `PageStore` 持有实现，启停和替换不改变 Scene/SDK 的 overlay 配置所有权与顺序。Runtime 会把 backend 返回的 provider 重新规范为配置顺序的子集，禁止重复、乱序或外部 provider 改变 runtime slot。
+- `RasterOverlayFrameContext` 在 Tileset 每帧所有 content request、selection、mapping、upload 和 render-plan 工作开始前冻结。Direct view 的 vector 长度永远等于 Runtime overlay 数；backend 排除的层用 `nullptr` 占位，而不是压紧下标。这样 `TileRasterOverlayState::mappings_[i]`、projection texcoord、样式与最终绑定始终使用同一个 runtime slot。
+- 迁移期的 `Tileset::rasterOverlays_` 引用 alias、`RasterOverlayRuntime::ensureProviders()`、可变 `overlays()` 和 Runtime 顶层 Depot handle 已删除。Direct 的 selection/request/upload/readiness/draw 统一从 `frameContext().directOverlays()` 取值；Scene 收敛、diagnostics 与 cache accounting 则显式读取 `configuredOverlays()`，不再混用“配置栈”和“本帧 backend view”。backend provider 解析只在 Runtime 内部用于发布下一帧快照，执行链无法再绕过帧上下文。
+- Direct/PageStore 分别有 generation。backend 替换、启停或 provider view 变化只在下一次 `beginFrame()` 生效；Direct generation 变化会先释放 tileset 上的旧 mapping，并清理 provider 的 Direct mapped/direct tile、在途 mapping owner 与待上传状态。backend-neutral exact source cache 不随 Direct 失效清除，PageStore 已持有的 decoded source 也不会被误杀。
+- `RasterBindingSet` 把 mapped tile、真实/祖先 ready tile、texture-coordinate ID、opacity 和 fallback policy 合法性解析成一个按 runtime slot 排列的结果。readiness 与 draw command 已共用同一个 resolver，避免两套推导规则继续漂移；但两阶段目前仍各自调用 `resolve()`，尚未共享同一个冻结实例。
 - `RasterAssetDepot` 是 Tileset Runtime 持有的统一访问边界。PageStore 不再直接调用 `ImageryProvider::requestTile()`，而是通过 exact-only acquire 加入 provider source depot；Direct mappedRaster 仍使用同一个 provider source depot，因此同 key 只产生一次 transport / decode。
 - cache hit 和 join in-flight 不消耗新的 Scene network grant；consumer lease 取消只摘自己的 waiter，不取消其他 backend 正在共享的请求。
 - `RasterAssetKey` 包含 provider instance、content revision、depot epoch、scheme、projection 和 source key，防止换源、换样式、mixed-scheme 或 provider 重建后串图。
-- PageStore 只接 exact source，不继承 Direct 的祖先回退；source 失败或 malformed 时 PageStore 保持 miss，继续显示 mappedRaster fallback。共享在途请求只代表一次 exact transport，失败后的 resolution policy 按 waiter 独立执行：ExactOnly 在子瓦失败处结束，Direct waiter 仍可进入父级链；因此两者的结果不再依赖谁先发起请求。
+- PageStore 只接 exact source，不继承 Direct 的祖先回退；source 失败或 malformed 时 PageStore 保持 miss，继续显示 mappedRaster fallback。共享在途请求只代表一次 exact transport，失败后的 resolution policy 按 waiter 独立执行：ExactOnly 在子瓦失败处结束，Direct waiter 仍可进入父级链；因此两者的结果不再依赖谁先发起请求。切换 Direct backend 会清理当前 Direct mapping/direct tile 与 pending upload；这是安全的代际隔离，但即使新旧 provider 集合逻辑等价，也可能造成重新请求/上传 churn，当前没有端到端请求数 A/B 证据。
+- PageStore 从 Depot 获得的 decoded image 是 accounted aliasing lease。即使 source cache 已淘汰，只要 compose/worker 仍持有 image，其物理 CPU 字节仍计入 `externalPinnedSourceBytes`；`getSourceDepotResidentBytes()` 对 cache、pending upload 和多个 external lease 按 `DecodedImage*` 去重，只算一次实际驻留。source cache 再填充也会先扣除 external-only residency，避免“缓存已驱逐但外部仍持有 A”时又缓存 B 而越过同一 `subTileCacheBytes` 物理预算。
 
-第一阶段仍保留两层边界：decoded cache/in-flight 的物理状态仍按 provider endpoint 分区，Runtime depot 负责统一访问和生命周期持有；Direct 的 geometry mapping / fallback / shader binding 也仍分布在既有 tiling/render 链。因此当前 backend replacement 是稳定 seam，不是完整 executor 替换：要让自定义 Direct backend 接管 selection、mapping、upload、projection details 和 render binding，下一阶段需要帧级 `RasterOverlayFrameContext` / `RasterBindingSet`。当前不能据此删除 `mappedRaster`。
+当前迁移已清除旧 overlay 容器 alias 和公开绕行入口，但仍保留两层正式架构边界：decoded cache/in-flight 的物理状态继续按 provider endpoint 分区，Runtime Depot 是统一访问 facade，不是一份跨 provider 的物理资产哈希仓；Direct 的 geometry mapping、祖先 resolution 和 phase executor 仍位于既有 tiling 链。帧上下文冻结了 slot、provider view 和 generation，但 slot 中仍是 overlay 指针，没有复制 `visible`、`opacity`、`role`、`fallbackPolicy`、`blocksCompleteRenderable` 的值语义。`RasterOverlayBackend` 也尚未拥有 content request、projection generation、trim、diagnostics 和取消协议的完整虚函数合同。因此现在是“单一 Runtime 配置所有权 + 强制帧上下文消费 + generation fence + 统一 binding resolver”，还不能声称完整 executor 可插拔，也不能据此删除 `mappedRaster`。
+
+下一阶段的 parity 合同是：把上述 overlay 元数据写入 `RasterOverlayFrameSlot` 值快照；PageStore 按 slot 消费可见性、透明度、角色和 fallback policy，并强制 canonical provider 对应 `BaseImagery`；readiness 与 draw 共享同一帧/同一瓦的 `RasterBindingSet`；对 5 层及以上配置明确统一 PageStore compose set 与 Direct fallback set。在这些条件落成前，Annotation-only provider stack 可能被 PageStore 当作 canonical，运行期 option 在 readiness/draw 之间变化也仍可能得到不同结果。
+
+### 通用性、叠加层与 MVT 配合边界
+
+- 普通 raster overlay、WMS/WMTS/TMS/XYZ、GCJ adapter 和“矢量先栅格化”的 MVT 面 drape 都可以复用 Runtime + Depot；关键条件是 provider 最终产出带明确 scheme/projection 的 `DecodedImage`。
+- MVT 面接入点是 `VectorDrapeImageryProvider` 一类 adapter：MVT 获取/解码仍属于矢量 source，adapter 把指定面层栅格化成 canonical page image，再参与 PageStore 或 mappedRaster。PageStore 不直接理解 MVT extent、source-layer 或原生瓦片坐标。
+- MVT 点/标注/几何线继续走 Scene 托管的 `MvtVectorSource → FeatureRenderLayer`，不应塞入 raster overlay runtime；两条系统只在 Scene 帧级资源仲裁和最终地形/深度语义上协作。
+- ⚠️ **MVT 道路线场即将废弃。** `RoadFieldSource → LineFieldRasterizer → TerrainPageStore road-field plane` 仅保留兼容与回归，不得作为 Overlay Runtime、Asset Depot 或 PageStore backend 的新扩展入口。此标记不影响 MVT 面 drape、MVT 点/标注和 `FeatureRenderLayer` 几何线。
+
+“最多 4 overlay”只限制 mappedRaster/glTF draw command 的**同时采样槽位**：`RenderCommand` 固定有 `kMaxGltfRasterOverlays == 4` 组纹理、UV scale-bias、texcoord 与 opacity。Runtime/SDK 可以配置超过 4 层，PageStore 也可以预合成更多 compatible source，但一旦 PageStore miss 或 fail-closed 回到 mappedRaster，Direct 路径只会上屏按策略筛选后的前 4 个合法 binding。它不是 Runtime 只能管理 4 层，也不是 PageStore 只能合成 4 层；当前超过 4 层时两路的可见层集合可能不同，严格 parity 尚未实现。需要严格一致的接入应暂时限制层数，或先在 PageStore/adapter 合成为不超过 4 个 Direct fallback 单元。
 
 ---
 
@@ -133,7 +151,11 @@ ImageryProvider::requestTile (HTTP/bridge)
 | mapping 失效靠 epoch | `mappedRasterTileEpoch_`/`mappingRevision_`,`isCurrentProviderTile` 据此清陈旧 handle |
 | PageStore 单域合成 | 同一 compose group 共享 canonical scheme/projection；异构组整组回退 `mappedRaster`，domain generation 隔离迟到结果 |
 | backend 替换不改配置所有权 | `RasterOverlayRuntime` 永远持有唯一有序 overlay 栈；backend 只能选择/消费 provider view，不得复制或重排 SDK 配置 |
+| Direct slot 不压紧 | `RasterOverlayFrameContext::directOverlays()` 与配置栈等长；过滤层必须是 `nullptr`，不可改变后续 mapping/texcoord/binding 下标 |
+| backend 切换有代际栅栏 | Direct view 变化先清旧 mapping/direct tile，再推进 generation；PageStore generation 独立，不让一条后端的启停误杀另一条后端的 source lease |
 | source 请求只发一次 | Direct/PageStore 对同 provider/source key 共享 source depot；cache hit / join 不重复占用网络 grant |
+| decoded 物理字节只算一次 | source cache、pending upload、PageStore external lease 可以重叠；`getSourceDepotResidentBytes()` 按 image identity 去重，cache eviction 后外部持有仍记账 |
+| mappedRaster 仍是权威回退 | mixed-scheme、非真实地形、PageStore cold miss/failure/admission rejection 和祖先回退仍由 mappedRaster 覆盖；在这些契约被新 backend 等价实现前不得删除 |
 
 ---
 

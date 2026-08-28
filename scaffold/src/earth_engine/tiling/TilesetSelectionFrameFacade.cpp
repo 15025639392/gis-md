@@ -28,6 +28,7 @@ void TilesetSelectionFrameFacade::selectTiles(
             perf::shouldLog(frameState.frameId);
     }
     tileset.currentFrameTimeSeconds_ = frameState.timeSeconds;
+    const auto& directOverlays = tileset.directRasterOverlays();
     TileSelectionFrameRunner::run(
         TileSelectionFrameRunInput{
             tileset.tilePlan_,
@@ -47,7 +48,7 @@ void TilesetSelectionFrameFacade::selectTiles(
         [&tileset](const TileKey& key) {
             return tileset.contentAccess_.ensureTile(key);
         },
-        [&tileset, performanceTimings, pPrepRenderer](
+        [&tileset, &directOverlays, performanceTimings, pPrepRenderer](
             TilesetTile& root,
             const SelectorFrame& selectorFrame) {
             TileSelectionTraversalContextBinding binding{
@@ -68,7 +69,7 @@ void TilesetSelectionFrameFacade::selectTiles(
                         tileset.loadQueue_,
                         tileset.selectionCounters_,
                         tileset.options_,
-                        tileset.rasterOverlays_,
+                        directOverlays,
                         tileset.device_,
                         pPrepRenderer,
                         tileset.frameResourceBudget_,
@@ -83,7 +84,7 @@ void TilesetSelectionFrameFacade::selectTiles(
                 0,
                 false);
         },
-        [&tileset](const FrameState& finalizeFrameState) {
+        [&tileset, &directOverlays](const FrameState& finalizeFrameState) {
             return TileSelectionFrameFinalizationRunner::finalize(
                 TileSelectionFrameFinalizationInput{
                     tileset.tilePlan_,
@@ -92,7 +93,7 @@ void TilesetSelectionFrameFacade::selectTiles(
                     tileset.selectionActiveTilesPrev_,
                     tileset.selectionCounters_,
                     tileset.contentAccess_,
-                    tileset.rasterOverlays_,
+                    directOverlays,
                     TileRenderPlanFrameRefreshOptions{
                         tileset.interactionActiveForFrame_,
                         tileset.resourceSmoothingActiveForFrame_,

@@ -373,7 +373,7 @@ struct TilesetTestAccess {
     static bool isTileRenderable(Tileset& tileset, const TilesetTile& tile) {
         return TileSelectionRasterOverlayPreparer::isRenderable(
             tile,
-            tileset.rasterOverlays_);
+            tileset.directRasterOverlays());
     }
 
     static void clearChildrenRecursively(Tileset& tileset, TilesetTile& tile) {

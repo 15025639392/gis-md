@@ -157,9 +157,15 @@ public:
     double maximumScreenSpaceError() const {
         return options_.maximumScreenSpaceError;
     }
-    // 北极星 SVT B2a:页面 determination 需读影像 provider(front()->getTileProvider())。
+    /// Current slot-preserving Direct backend view for this frame.
+    const std::vector<ActivatedRasterOverlay*>& directRasterOverlays() const {
+        return rasterOverlayRuntime_.frameContext().directOverlays();
+    }
+    /// Full Runtime-owned overlay configuration, independent of backend
+    /// filtering. Use this for diagnostics, cache accounting and Scene-level
+    /// convergence checks.
     const std::vector<ActivatedRasterOverlay*>& rasterOverlays() const {
-        return rasterOverlayRuntime_.overlays();
+        return rasterOverlayRuntime_.configuredOverlays();
     }
     RasterOverlayRuntime& rasterOverlayRuntime() {
         return rasterOverlayRuntime_;
@@ -363,9 +369,6 @@ private:
     TilesetTerrainProviders terrainProviders_;
     std::unique_ptr<TileScheme> tileScheme_;
     RasterOverlayRuntime rasterOverlayRuntime_;
-    // Compatibility view for existing frame facades/tests. This is not a
-    // second owner; overlay ordering is owned by rasterOverlayRuntime_.
-    std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
     RenderDevice* device_ = nullptr;
     TilesetOptions options_;
 

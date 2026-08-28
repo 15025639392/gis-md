@@ -910,6 +910,106 @@ RasterAssetKey RasterOverlayTileProvider::rasterAssetKey(
         sourceKey};
 }
 
+std::shared_ptr<const DecodedImage>
+RasterOverlayTileProvider::pinDecodedImage(
+    const std::shared_ptr<const DecodedImage>& image) {
+    return pinDecodedImage(asyncState_, image);
+}
+
+std::shared_ptr<const DecodedImage>
+RasterOverlayTileProvider::pinDecodedImage(
+    const std::shared_ptr<ProviderAsyncState>& state,
+    const std::shared_ptr<const DecodedImage>& image) {
+    if (!image) {
+        return {};
+    }
+
+    // The aliasing shared_ptr keeps the original decoded image alive through
+    // the pin object. The pin object owns the accounting transition, so the
+    // source cache may evict its entry without making the physical bytes
+    // disappear from diagnostics while PageStore still composes them.
+    struct ExternalImagePin {
+        std::shared_ptr<const DecodedImage> retainedImage;
+        std::shared_ptr<ProviderAsyncState> state;
+        const DecodedImage* imageKey = nullptr;
+
+        ~ExternalImagePin() {
+            if (!state || !imageKey) {
+                return;
+            }
+            std::lock_guard<std::mutex> lock(state->mutex);
+            auto it = state->sharedRasterImageRefs.find(imageKey);
+            if (it == state->sharedRasterImageRefs.end()) {
+                return;
+            }
+            auto& refs = it->second;
+            if (refs.externalPinRefs > 0) {
+                --refs.externalPinRefs;
+            }
+            if (refs.externalPinRefs == 0) {
+                state->externalPinnedSourceBytes = std::max<int64_t>(
+                    0,
+                    state->externalPinnedSourceBytes - refs.sizeBytes);
+            }
+            if (refs.sourceCacheRefs == 0 && refs.pendingUploadRefs == 0 &&
+                refs.externalPinRefs == 0) {
+                state->sharedRasterImageRefs.erase(it);
+            }
+            int64_t externalOnlyBytes = 0;
+            for (const auto& [_, tracked] :
+                 state->sharedRasterImageRefs) {
+                if (tracked.externalPinRefs > 0 &&
+                    tracked.sourceCacheRefs == 0 &&
+                    tracked.pendingUploadRefs == 0) {
+                    externalOnlyBytes += tracked.sizeBytes;
+                }
+            }
+            state->pendingUploadBackpressure.store(
+                state->subTileCacheBytes > 0 &&
+                    state->pendingUploadBytes +
+                            state->pinnedSharedPendingUploadBytes +
+                            externalOnlyBytes >=
+                        state->subTileCacheBytes,
+                std::memory_order_release);
+        }
+    };
+
+    const DecodedImage* imageKey = image.get();
+    const int64_t sizeBytes = decodedImageSizeBytes(*image);
+    {
+        std::lock_guard<std::mutex> lock(state->mutex);
+        auto& refs = state->sharedRasterImageRefs[imageKey];
+        if (refs.sizeBytes <= 0) {
+            refs.sizeBytes = sizeBytes;
+        }
+        if (refs.externalPinRefs == 0) {
+            state->externalPinnedSourceBytes += refs.sizeBytes;
+        }
+        ++refs.externalPinRefs;
+    }
+
+    auto pin = std::make_shared<ExternalImagePin>();
+    pin->retainedImage = image;
+    pin->state = state;
+    pin->imageKey = imageKey;
+    return std::shared_ptr<const DecodedImage>(std::move(pin), imageKey);
+}
+
+std::shared_ptr<const DecodedImage>
+RasterOverlayTileProvider::retainExternalSourceImage(
+    const std::shared_ptr<const DecodedImage>& image) {
+    return pinDecodedImage(image);
+}
+
+RasterOverlayTileProvider::ExternalSourceImageRetainer
+RasterOverlayTileProvider::externalSourceImageRetainer() const {
+    std::shared_ptr<ProviderAsyncState> state = asyncState_;
+    return [state = std::move(state)](
+               const std::shared_ptr<const DecodedImage>& image) {
+        return RasterOverlayTileProvider::pinDecodedImage(state, image);
+    };
+}
+
 std::optional<RasterAssetSnapshot>
 RasterOverlayTileProvider::tryGetCachedExactSource(
     const TileKey& sourceKey) {
@@ -1125,6 +1225,16 @@ void RasterOverlayTileProvider::invalidateMappedRasterTileCache() {
             return isMappedRasterCacheKey(cacheKey);
         });
     asyncState_->revision.fetch_add(1, std::memory_order_relaxed);
+}
+
+void RasterOverlayTileProvider::invalidateDirectExecutionState() {
+    // A backend generation fence owns every Direct mapping request, including
+    // aligned exact tiles. Detach their waiters before clearing tile/upload
+    // state so a late transport may still populate the backend-neutral source
+    // cache for PageStore, but cannot resurrect an old Direct PendingUpload.
+    abandonActiveSourceSets(false);
+    invalidateMappedRasterTileCache();
+    invalidateDirectRasterTileCache();
 }
 
 void RasterOverlayTileProvider::invalidateDirectRasterTileCache() {
@@ -1591,7 +1701,8 @@ int64_t RasterOverlayTileProvider::getPeakPendingUploadBytes() const {
 int64_t RasterOverlayTileProvider::getPendingUploadBudgetBytes() const {
     std::lock_guard<std::mutex> lock(asyncState_->mutex);
     return asyncState_->pendingUploadBytes +
-           asyncState_->pinnedSharedPendingUploadBytes;
+           asyncState_->pinnedSharedPendingUploadBytes +
+           externalOnlyResidentBytesLocked(*asyncState_);
 }
 
 int64_t RasterOverlayTileProvider::getPeakPendingUploadBudgetBytes() const {

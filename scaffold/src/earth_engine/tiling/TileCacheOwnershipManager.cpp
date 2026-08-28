@@ -20,7 +20,7 @@ TileCacheOwnershipManager::TileCacheOwnershipManager(
     TileContentLifecycleManager& contentLifecycle,
     TileLoadQueue& loadQueue,
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
-    std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
     bool& resourceSmoothingActiveForFrame,
     int64_t& maximumCachedBytes,
     double& tileCacheUnloadTimeLimit,

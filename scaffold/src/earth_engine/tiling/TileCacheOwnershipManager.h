@@ -25,7 +25,7 @@ public:
         TileContentLifecycleManager& contentLifecycle,
         TileLoadQueue& loadQueue,
         std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles,
-        std::vector<ActivatedRasterOverlay*>& rasterOverlays,
+        const std::vector<ActivatedRasterOverlay*>& rasterOverlays,
         bool& resourceSmoothingActiveForFrame,
         int64_t& maximumCachedBytes,
         double& tileCacheUnloadTimeLimit,
@@ -56,7 +56,7 @@ private:
     TileContentLifecycleManager& contentLifecycle_;
     TileLoadQueue& loadQueue_;
     std::unordered_map<std::string, std::unique_ptr<TilesetTile>>& tiles_;
-    std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays_;
     bool& resourceSmoothingActiveForFrame_;
     int64_t& maximumCachedBytes_;
     double& tileCacheUnloadTimeLimit_;

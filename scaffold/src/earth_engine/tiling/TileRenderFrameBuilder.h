@@ -27,7 +27,7 @@ struct FogDensityAtHeight;
 
 struct TileRenderFrameBuildInput {
     TilePlan& tilePlan;
-    std::vector<ActivatedRasterOverlay*>& rasterOverlays;
+    const std::vector<ActivatedRasterOverlay*>& rasterOverlays;
     uint64_t frameNumber = 0;
     Vec3 lastCameraPosition;
     const std::vector<FogDensityAtHeight>& fogDensityTable;

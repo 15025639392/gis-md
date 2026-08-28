@@ -45,6 +45,9 @@ class RasterOverlayTileProvider {
 public:
     using TilePtr = std::shared_ptr<RasterOverlayTile>;
     using ConstTilePtr = std::shared_ptr<const RasterOverlayTile>;
+    using ExternalSourceImageRetainer = std::function<
+        std::shared_ptr<const DecodedImage>(
+            const std::shared_ptr<const DecodedImage>&)>;
 
     // TileLoadedCallback removed — textures are now owned directly by
     // RasterOverlayTile (unique_ptr<Texture>). No external callback needed.
@@ -196,6 +199,16 @@ public:
     std::optional<RasterAssetSnapshot> tryGetCachedExactSource(
         const TileKey& sourceKey);
 
+    /// Return an aliasing image pointer whose lifetime is charged as an
+    /// external consumer pin. The provider itself remains the accounting
+    /// owner; callers must retain the returned pointer for the duration of
+    /// their decoded-image use.
+    std::shared_ptr<const DecodedImage> retainExternalSourceImage(
+        const std::shared_ptr<const DecodedImage>& image);
+    /// Lifetime-safe retainer for asynchronous depot callbacks. The returned
+    /// closure captures only ProviderAsyncState, never the provider object.
+    ExternalSourceImageRetainer externalSourceImageRetainer() const;
+
     /// Acquire one exact source through the provider's shared decoded-asset
     /// depot. Direct and PageStore callers join the same in-flight transport.
     /// Only a newly started transport invokes tryAdmitTransport; cache hits
@@ -254,6 +267,29 @@ public:
     int64_t getCachedSourceTileBytes() const {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
         return asyncState_->sourceTileDepotCacheBytes;
+    }
+    /// CPU bytes retained by decoded source assets that are still pinned by a
+    /// consumer (for example PageStore composition) after the source cache
+    /// entry has been evicted. This is a category metric, not an additive
+    /// budget: use getSourceDepotResidentBytes() for unique physical bytes.
+    int64_t getExternalPinnedSourceBytes() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        return asyncState_->externalPinnedSourceBytes;
+    }
+    /// Unique decoded-image bytes still physically resident through the
+    /// provider depot, including source-cache, pending-upload and external
+    /// consumer pins. A shared image is counted once even when several
+    /// lifetimes overlap.
+    int64_t getSourceDepotResidentBytes() const {
+        std::lock_guard<std::mutex> lock(asyncState_->mutex);
+        int64_t bytes = 0;
+        for (const auto& [_, refs] : asyncState_->sharedRasterImageRefs) {
+            if (refs.sourceCacheRefs > 0 || refs.pendingUploadRefs > 0 ||
+                refs.externalPinRefs > 0) {
+                bytes += refs.sizeBytes;
+            }
+        }
+        return bytes;
     }
     int64_t getPeakCachedSourceTileBytes() const {
         std::lock_guard<std::mutex> lock(asyncState_->mutex);
@@ -353,6 +389,12 @@ public:
     /// Called once per frame from Tileset::buildRenderCommands,
     /// AFTER all tile access for the frame is complete.
     void trimUnusedTiles(bool cachePressure = false);
+
+    /// Generation fence for a Direct backend replacement. Cancels mapped
+    /// source sets, drops mapped and direct uploads/tiles and advances
+    /// mappingRevision, while preserving backend-neutral exact-source cache
+    /// entries that a PageStore consumer may still be using.
+    void invalidateDirectExecutionState();
 
     // Texture ownership: RasterOverlayTile owns its GPU texture
     // via unique_ptr<Texture>. No external callback needed.
@@ -560,6 +602,7 @@ private:
             int64_t sizeBytes = 0;
             uint32_t sourceCacheRefs = 0;
             uint32_t pendingUploadRefs = 0;
+            uint32_t externalPinRefs = 0;
         };
         std::deque<PendingUpload> pendingUploads;
         mutable std::mutex mutex;
@@ -590,6 +633,10 @@ private:
             sourceTileDepotCacheLru;
         std::unordered_map<const DecodedImage*, SharedRasterImageRefs>
             sharedRasterImageRefs;
+        // Category metric for images retained by a consumer lease. It may
+        // overlap sourceTileDepotCacheBytes while the cache entry is live;
+        // getSourceDepotResidentBytes() performs unique-image accounting.
+        int64_t externalPinnedSourceBytes = 0;
         int64_t pendingUploadBytes = 0;
         int64_t pinnedSharedPendingUploadBytes = 0;
         int64_t peakPendingUploadBytes = 0;
@@ -673,6 +720,13 @@ private:
         const std::shared_ptr<const DecodedImage>& image);
     static void releaseSourceCacheImageBytesLocked(
         ProviderAsyncState& state,
+        const std::shared_ptr<const DecodedImage>& image);
+    static int64_t externalOnlyResidentBytesLocked(
+        const ProviderAsyncState& state);
+    std::shared_ptr<const DecodedImage> pinDecodedImage(
+        const std::shared_ptr<const DecodedImage>& image);
+    static std::shared_ptr<const DecodedImage> pinDecodedImage(
+        const std::shared_ptr<ProviderAsyncState>& state,
         const std::shared_ptr<const DecodedImage>& image);
     static void trackPendingUploadBudgetPeakLocked(ProviderAsyncState& state);
     static void updatePendingUploadBackpressureLocked(

@@ -2,6 +2,7 @@
 
 #include "RasterMappedToTilesetTile.h"
 #include "SurfaceRasterBinding.h"
+#include "RasterBindingSet.h"
 #include "TileCacheKey.h"
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TilesetTile.h"
@@ -752,25 +753,19 @@ void applyPerFrameCommandState(
     int rasterOverlayTextureCount = 0;
     cmd.surfaceBaseRasterState = 0;
     cmd.surfaceBaseIsMappedRasterTile = 0;
-    for (size_t i = 0;
-         i < overlays.size() && i < tile.rasterOverlayState.mappingCount();
-         ++i) {
+    const RasterBindingSet rasterBindings =
+        RasterBindingSet::resolve(tile, overlays);
+    for (const RasterBinding& resolved : rasterBindings.bindings()) {
+        if (!resolved.allowedByPolicy) {
+            continue;
+        }
         if (rasterOverlayTextureCount >= kMaxGltfRasterOverlays) {
             break;
         }
-        ActivatedRasterOverlay* activeOverlay = overlays[i];
-        const RasterMappedToTilesetTile* mapped =
-            tile.rasterOverlayState.mappingAt(i);
-        const SurfaceRasterBinding binding =
-            chooseSurfaceRasterBinding(mapped);
-        if (!rasterOverlayBindingAllowedByPolicy(
-                activeOverlay,
-                mapped,
-                binding)) {
-            continue;
-        }
-        const int32_t textureCoordinateID =
-            mapped ? mapped->getTextureCoordinateID() : -1;
+        ActivatedRasterOverlay* activeOverlay = resolved.overlay;
+        const RasterMappedToTilesetTile* mapped = resolved.mapped;
+        const SurfaceRasterBinding& binding = resolved.surface;
+        const int32_t textureCoordinateID = resolved.textureCoordinateId;
         if (textureCoordinateID < 0 ||
             textureCoordinateID >= static_cast<int32_t>(kGltfMaxTexCoordSets)) {
             continue;
@@ -797,7 +792,7 @@ void applyPerFrameCommandState(
             binding.scaleU,
             binding.scaleV};
         cmd.gltfRasterOverlayOpacities[rasterOverlayTextureCount] =
-            activeOverlay ? activeOverlay->opacity() : 1.0f;
+            resolved.opacity;
         cmd.gltfRasterOverlayTexCoordSets[rasterOverlayTextureCount] =
             static_cast<float>(textureCoordinateID);
         if (activeOverlay &&
