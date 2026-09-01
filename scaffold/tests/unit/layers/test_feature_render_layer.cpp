@@ -5147,6 +5147,93 @@ TEST_F(FeatureRenderLayerTest,
     EXPECT_NEAR(anchorHeight(), 700.0, 1.0);
 }
 
+TEST_F(FeatureRenderLayerTest,
+       HeightOnlyReclampPreservesSelectionAndUpdatesHeights) {
+    // ① height-only:地形 revision 变 → 只重采高度 + 重物化,不重选中/重
+    // resolve。判定:锚点高度跟随新地形,而 symbolSelectionSignature(选中集
+    // 签名)不变 —— 证明重钳走的是缓存 activeResolvedSymbols_,非全量 rebuild。
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty() ||
+        !renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "no host TrueType font";
+    }
+    const std::vector<uint8_t> iconPixels(64 * 64 * 4, 255);
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage(
+        "official-heightonly-icon", 64, 64, iconPixels));
+
+    auto height = std::make_shared<float>(100.0f);
+    FeatureRenderLayer layer("official-heightonly-poi", &device_,
+                             Ellipsoid::WGS84());
+    layer.installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    FeatureRenderStyle poiStyle =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Poi);
+    installTestOfficialLabelStyle(poiStyle);
+    poiStyle.pointStylePropertyA = "amap_class";
+    poiStyle.pointStylePropertyB = "amap_subkey";
+    poiStyle.pointStyleResolver = [](const std::string& cls,
+                                     const std::string& sub,
+                                     const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle out;
+        if (cls != "12024" || sub != "854") return out;
+        out.enabled = true;
+        out.image = "official-heightonly-icon";
+        out.sizePx = 20.0f;
+        out.labelLayout.emplace();
+        out.labelLayout->iconWidthPx = 20.0f;
+        out.labelLayout->iconHeightPx = 20.0f;
+        return out;
+    };
+    layer.setStyleForContractTest(poiStyle);
+    layer.setTerrainSampling(makeGenerationSampling(height));
+
+    Feature point;
+    point.type = GeometryType::Point;
+    point.rings = {{Cartographic(6.001 * kDeg, 29.001 * kDeg)}};
+    point.properties = {{"name", "heightonly label"},
+                        {"amap_class", "12024"},
+                        {"amap_subkey", "854"}};
+    addOfficialMetadata(point, "12024", "854", "90");
+    const TileKey key{SchemeId("XYZ-WebMercator"), 14, 102, 200};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer.workerTessellationContext(), {point});
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer.commitTileMesh(key, std::move(mesh)));
+
+    auto build = [&](double dt) {
+        frame_.deltaSeconds = dt;
+        RenderCommandList commands;
+        layer.buildRenderCommands(frame_, *renderer_, commands);
+    };
+    const auto anchorHeight = [&]() -> double {
+        const auto s = layer.terrainReclampSnapshotForTest();
+        return s.firstLabelAnchorHeightMeters.value_or(
+            std::numeric_limits<double>::quiet_NaN());
+    };
+
+    // 首轮全量 build(选中集签名定稿)。
+    for (int i = 0; i < 8; ++i) build(1.0 / 60.0);
+    const uint64_t sigBefore =
+        layer.terrainReclampSnapshotForTest().symbolSelectionSignature;
+    ASSERT_NE(0u, sigBefore);
+    EXPECT_NEAR(anchorHeight(), 100.0, 1.0);
+
+    // 地形变高 → height-only 重钳:高度更新、选中集签名不变。
+    *height = 700.0f;
+    TileRenderContentState generationSource;
+    auto changedHeightmap = std::make_unique<DecodedHeightmap>();
+    changedHeightmap->tileSize = 1;
+    changedHeightmap->assignHeights(std::vector<float>{700.0f});
+    generationSource.setRetainedHeightmap(std::move(changedHeightmap));
+    for (int i = 0; i < 8; ++i) build(1.0 / 60.0);
+
+    const auto after = layer.terrainReclampSnapshotForTest();
+    EXPECT_NEAR(anchorHeight(), 700.0, 1.0);
+    EXPECT_EQ(sigBefore, after.symbolSelectionSignature);
+    EXPECT_EQ(0u, after.pendingBuckets);
+}
+
 namespace {
 
 /// 闭合性断言:体积网格的每条**有向**边,其反向边引用次数必须相等

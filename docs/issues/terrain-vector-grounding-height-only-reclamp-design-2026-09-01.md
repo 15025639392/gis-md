@@ -1,7 +1,11 @@
 # 矢量贴地 height-only 重钳重构 — 设计
 
 > 冻结设计(写完即归档)。代码落点在 `scaffold/src/earth_engine/layers/FeatureRenderLayer.{h,cpp}`。
-> 状态:2026-09-01 会话拍板「完整重构」;实施作为聚焦会话专项,需真机验像素。
+> **2026-09-01 已实施**:`buildTileSymbolGpu` 拆成 `resolveTileSymbols`(样式/图集/选中,
+> 缓存 `activeResolvedSymbols_`)+ `materializeTileSymbols`(采当刻地形高 + 点/标签物化);
+> `reclampTileBucketSymbols` 改 height-only —— 复用缓存 resolved 重物化,不重 resolve,
+> 保留 crossTile id、失效标签重烘但不重启 placement。host 新增
+> `HeightOnlyReclampPreservesSelectionAndUpdatesHeights` 锁「高度更新 + 选中集签名不变」。
 
 ## 背景与目标
 

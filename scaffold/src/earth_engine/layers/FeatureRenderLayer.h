@@ -745,6 +745,22 @@ private:
     };
 
     /// 单桶常驻 GPU 几何。fill/line/point 任一可空(indexCount=0)。
+    /// height-only 重钳的中间态:active 符号副本 + 已解析外观。resolve 一次、
+    /// materialize 每次采高重物化复用 —— 重钳(地形 revision 变,选中/样式/
+    /// 图集不变)不再重跑样式解析 / 图集查询 / top-N 选中。
+    struct ResolvedTileSymbol {
+        TileSymbolCpu src;             ///< active 符号副本(锚点 lon/lat、name 等)
+        bool enabled = true;           ///< = providerArtworkReady(continue 门);false 跳过
+        bool iconEnabled = true;
+        std::string icon;
+        float colorPacked = 0.0f;
+        float sizeScale = 1.0f;
+        bool officialCanCovered = false;
+        bool providerZoomOverride = false;
+        std::optional<FeatureRenderStyle::ProviderLabelLayout> providerLayout;
+        int minZoom = 0;               ///< 解析后窗口(provider override → 0/30)
+        int maxZoom = 30;
+    };
     struct BucketGpu {
         struct PaintRangeGpu {
             int paintOrder = 0;
@@ -840,6 +856,9 @@ private:
         /// 掉(硬件深度 + T2 判定都读它),表现为"标记点闪一下就没"。
         /// store 桶靠 rebuildBucket 重钳,瓦片桶没有重镶路径,靠它。
         std::vector<TileSymbolCpu> tileSymbolSources;
+        /// 当前 active top-N 的已解析符号(appearance + 锚点源)。commit/zoom
+        /// 换档时 resolve 一次;height-only 重钳只 materialize 复用,不重 resolve。
+        std::vector<ResolvedTileSymbol> activeResolvedSymbols_;
         /// source 所属瓦片 zoom（cross-tile id 量化容差输入）与当前已物化
         /// 的整数 view zoom。commit 保留完整 source；build 每个 zoom 档
         /// 只把 active top-N 展开成 point/label GPU 派生数据。
@@ -1148,6 +1167,9 @@ public:
     struct TerrainReclampSnapshotForTest {
         uint64_t appliedRevision = 0;
         size_t pendingBuckets = 0;
+        /// 首个 tileBucket 的选中集签名。height-only 重钳应保持它不变(证明
+        /// 重钳未重选中/重 resolve)。
+        uint64_t symbolSelectionSignature = 0;
         const Buffer* fillVertexBuffer = nullptr;
         const Buffer* lineVertexBuffer = nullptr;
         const Buffer* pointVertexBuffer = nullptr;
@@ -1203,13 +1225,22 @@ public:
 
     /// **渲染线程**:符号实例表 → 点 quad + 标签烘焙源(采地面高 + 图集
     /// 解析)。commit 与重钳共用一份 —— 两处各写一遍必然错位。
-    void buildTileSymbolGpu(const std::vector<TileSymbolCpu>& symbols,
-                            const Vec3& origin, int tileZ,
-                            double viewZoom, float officialScale,
-                            std::vector<float>& pointVerts,
-                            std::vector<uint32_t>& pointIndices,
-                            std::vector<PaintRange>& pointRanges,
-                            std::vector<BucketGpu::TileLabelSource>& labelSrc);
+    /// **渲染线程**:符号实例表 → 已解析 active 集(appearance + 锚点源)。
+    /// 只做样式/图集/选中相关解析,不采样高度 —— 高度在 materialize 时按
+    /// 当刻地形采。选中集不变时(地形 revision 变)不重跑,直接复用缓存。
+    std::vector<ResolvedTileSymbol> resolveTileSymbols(
+        const std::vector<TileSymbolCpu>& symbols,
+        double viewZoom, float officialScale);
+    /// **渲染线程**:已解析符号 → 点 quad + 标签烘焙源(采地面高 + 图集)。
+    /// height-only 重钳只重跑这一段(用缓存 activeResolvedSymbols_),不重
+    /// resolve —— 采样当刻地形,天然跟随 revision。
+    void materializeTileSymbols(
+        const std::vector<ResolvedTileSymbol>& resolved,
+        const Vec3& origin, int tileZ, double viewZoom, float officialScale,
+        std::vector<float>& pointVerts,
+        std::vector<uint32_t>& pointIndices,
+        std::vector<PaintRange>& pointRanges,
+        std::vector<BucketGpu::TileLabelSource>& labelSrc);
     bool rebuildTileBucketSymbolsForZoom(BucketGpu& gpu,
                                          int viewZoomBucket,
                                          bool force = false);

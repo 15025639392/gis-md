@@ -3854,26 +3854,24 @@ TileMeshCommitResult FeatureRenderLayer::commitTileMesh(
     return TileMeshCommitResult::Committed;
 }
 
-void FeatureRenderLayer::buildTileSymbolGpu(
-    const std::vector<TileSymbolCpu>& symbols, const Vec3& origin, int tileZ,
-    double viewZoom, float officialScale,
-    std::vector<float>& pointVerts, std::vector<uint32_t>& pointIndices,
-    std::vector<PaintRange>& pointRanges,
-    std::vector<BucketGpu::TileLabelSource>& labelSrc) {
-    pointVerts.reserve(symbols.size() * 4 * kPointVertexFloats);
-    pointIndices.reserve(symbols.size() * 6);
-    // 贴地:锚点落到地面(采样器覆盖全部锚点的 bbox)。采样不可用
-    // (地形未注入/瓦片未驻留)退回原始几何高。⚠️ 高度是**采样当刻**的
-    // 地形代次:冷启动时地形还粗,细化后山体升上来会把锚点埋掉(硬件深度
-    // 与 T2 判定都读它)。故地形代次变化必须重钳 —— 见
-    // reclampTileBucketSymbols,别再指望"瓦片换代重 commit 时自愈"
-    // (瓦片换代只有缩放才触发,静止加载期不会发生)。
-    using SymbolGroupKey = std::tuple<int, int, int>;
-    std::map<SymbolGroupKey, std::vector<const TileSymbolCpu*>> groups;
+std::vector<FeatureRenderLayer::ResolvedTileSymbol>
+FeatureRenderLayer::resolveTileSymbols(
+    const std::vector<TileSymbolCpu>& symbols, double viewZoom,
+    float officialScale) {
+    // 只做样式/图集/选中解析,不采样高度。选中集不变(地形 revision 变)时
+    // 复用本函数产物(缓存 activeResolvedSymbols_),height-only 重钳不再重跑。
+    std::vector<ResolvedTileSymbol> out;
+    out.reserve(symbols.size());
     for (const TileSymbolCpu& s : symbols) {
-        const int paintOrder = s.paintOrder;
-        int minZoom = s.minZoom;
-        int maxZoom = s.maxZoom;
+        ResolvedTileSymbol r;
+        r.src = s;
+        r.minZoom = s.minZoom;
+        r.maxZoom = s.maxZoom;
+        r.iconEnabled = s.genericVisual ? s.genericVisual->iconEnabled : false;
+        if (s.genericVisual) {
+            r.icon = s.genericVisual->icon;
+            r.colorPacked = s.genericVisual->colorPacked;
+        }
         if (style_.requiresOfficial(
                 FeatureRenderStyle::OfficialRequirement::PointIdentity) &&
             style_.pointStyleResolver && !s.pointStyleKeyA.empty() &&
@@ -3881,34 +3879,85 @@ void FeatureRenderLayer::buildTileSymbolGpu(
             const auto resolved = style_.pointStyleResolver(
                 s.pointStyleKeyA, s.pointStyleKeyB, s.name, viewZoom,
                 officialScale);
-            if (resolved.minZoom && resolved.maxZoom) {
-                if (viewZoom < *resolved.minZoom ||
-                    viewZoom >= *resolved.maxZoom) continue;
-                minZoom = 0;
-                maxZoom = 30;
+            r.iconEnabled = resolved.enabled;
+            r.icon = resolved.image;
+            r.colorPacked = packColorFloat(resolved.color);
+            r.officialCanCovered = resolved.officialCanCovered;
+            r.providerZoomOverride =
+                resolved.minZoom.has_value() && resolved.maxZoom.has_value();
+            r.providerLayout = resolved.labelLayout;
+            if (officialIconAtlasDemand_) {
+                if (resolved.officialIconAtlas > 0)
+                    officialIconAtlasDemand_(resolved.officialIconAtlas);
+                if (resolved.officialDynamicBackgroundAtlas > 0)
+                    officialIconAtlasDemand_(
+                        resolved.officialDynamicBackgroundAtlas);
             }
+            r.sizeScale = resolved.sizePx;
+            if (r.providerZoomOverride) {
+                r.minZoom = 0;
+                r.maxZoom = 30;
+            }
+            // providerArtworkReady 门:图标/动态背景图集帧未就绪 → 整符号跳过。
+            r.enabled = true;
+            if (r.iconEnabled) {
+                r.enabled =
+                    resolveOfficialAtlasSymbol(r.icon, iconAtlas_).has_value();
+            }
+            if (r.enabled && r.providerLayout &&
+                !r.providerLayout->dynamicBackgroundImage.empty()) {
+                r.enabled = iconAtlas_ &&
+                            iconAtlas_->frame(
+                                r.providerLayout->dynamicBackgroundImage);
+            }
+        } else if (style_.requiresOfficial(
+                       FeatureRenderStyle::OfficialRequirement::PointIdentity)) {
+            // Provider-owned identity is atomic: no generic fallback.
+            r.iconEnabled = false;
         }
-        groups[{paintOrder, minZoom, maxZoom}].push_back(&s);
+        out.push_back(std::move(r));
     }
+    return out;
+}
+
+void FeatureRenderLayer::materializeTileSymbols(
+    const std::vector<ResolvedTileSymbol>& resolved, const Vec3& origin,
+    int tileZ, double viewZoom, float officialScale,
+    std::vector<float>& pointVerts, std::vector<uint32_t>& pointIndices,
+    std::vector<PaintRange>& pointRanges,
+    std::vector<BucketGpu::TileLabelSource>& labelSrc) {
+    // 外观已在 resolveTileSymbols 解析;viewZoom/officialScale 在 materialize 无
+    // 用(样式解析不在此重跑),仅保留以对齐 resolve 的签名。
+    (void)viewZoom;
+    (void)officialScale;
+    pointVerts.reserve(resolved.size() * 4 * kPointVertexFloats);
+    pointIndices.reserve(resolved.size() * 6);
+    // 分组键与 resolve 同一(解析后 paintOrder/minZoom/maxZoom)。enabled 门在
+    // 此过滤(providerArtworkReady=false 整符号跳过)。
+    using SymbolGroupKey = std::tuple<int, int, int>;
+    std::map<SymbolGroupKey, std::vector<const ResolvedTileSymbol*>> groups;
+    for (const ResolvedTileSymbol& r : resolved) {
+        if (!r.enabled) continue;
+        groups[{r.src.paintOrder, r.minZoom, r.maxZoom}].push_back(&r);
+    }
+    // 采样器 bbox:全部 enabled 符号锚点 + 折线标签路径(仅 min/max 包围盒)。
     std::vector<std::vector<Cartographic>> anchorRing(1);
-    anchorRing[0].reserve(symbols.size());
-    for (const auto& entry : groups) {
-        const auto& group = entry.second;
-        for (const TileSymbolCpu* s : group) {
-            anchorRing[0].emplace_back(s->lonRad, s->latRad, 0.0);
-            for (const auto& point : s->labelPathCartographic) {
-                anchorRing[0].emplace_back(point[0], point[1], 0.0);
-            }
+    for (const ResolvedTileSymbol& r : resolved) {
+        if (!r.enabled) continue;
+        anchorRing[0].emplace_back(r.src.lonRad, r.src.latRad, 0.0);
+        for (const auto& point : r.src.labelPathCartographic) {
+            anchorRing[0].emplace_back(point[0], point[1], 0.0);
         }
     }
     const AreaSampleFn groundSample = makeClampSampler(anchorRing);
-    // [V29 刀2] 本瓦 commit = 一次匹配 pass 的认领集(语义见 crossTileIdFor)。
+    // [V29 刀2] 本瓦一次匹配 pass 的认领集(语义见 crossTileIdFor)。
     std::unordered_set<uint64_t> claimedIds;
     for (const auto& [groupKey, group] : groups) {
         const auto [paintOrder, minZoom, maxZoom] = groupKey;
         const uint32_t indexOffset = static_cast<uint32_t>(pointIndices.size());
-        for (const TileSymbolCpu* sp : group) {
-            const TileSymbolCpu& s = *sp;
+        for (const ResolvedTileSymbol* rp : group) {
+            const ResolvedTileSymbol& r = *rp;
+            const TileSymbolCpu& s = r.src;
             double h = s.heightM;
             if (groundSample) {
                 const auto ground = groundSample(s.lonRad, s.latRad);
@@ -3924,7 +3973,8 @@ void FeatureRenderLayer::buildTileSymbolGpu(
                 const double east = std::cos(s.labelAngleRad) * kTangentMeters;
                 const double north = std::sin(s.labelAngleRad) * kTangentMeters;
                 const double lat = s.latRad + north / radius;
-                const double cosLat = std::max(1e-6, std::abs(std::cos(s.latRad)));
+                const double cosLat =
+                    std::max(1e-6, std::abs(std::cos(s.latRad)));
                 const double lon = s.lonRad + east / (radius * cosLat);
                 double tangentHeight = h;
                 if (groundSample) {
@@ -3944,72 +3994,20 @@ void FeatureRenderLayer::buildTileSymbolGpu(
                 static_cast<float>(tangentRelD.x()),
                 static_cast<float>(tangentRelD.y()),
                 static_cast<float>(tangentRelD.z())};
-            bool iconEnabled = s.genericVisual && s.genericVisual->iconEnabled;
-            std::string icon = s.genericVisual ? s.genericVisual->icon
-                                               : std::string();
-            float colorPacked = s.genericVisual
-                ? s.genericVisual->colorPacked
-                : 0.0f;
-            float sizeScale = 1.0f;
-            bool officialCanCovered = false;
-            bool providerZoomOverride = false;
-            bool providerArtworkReady = true;
-            std::optional<FeatureRenderStyle::ProviderLabelLayout>
-                providerLayout;
-            if (style_.requiresOfficial(
-                    FeatureRenderStyle::OfficialRequirement::PointIdentity) &&
-                style_.pointStyleResolver && !s.pointStyleKeyA.empty() &&
-                !s.pointStyleKeyB.empty()) {
-                const auto resolved = style_.pointStyleResolver(
-                    s.pointStyleKeyA, s.pointStyleKeyB, s.name, viewZoom,
-                    officialScale);
-                iconEnabled = resolved.enabled;
-                icon = resolved.image;
-                colorPacked = packColorFloat(resolved.color);
-                officialCanCovered = resolved.officialCanCovered;
-                providerZoomOverride =
-                    resolved.minZoom.has_value() && resolved.maxZoom.has_value();
-                providerLayout = resolved.labelLayout;
-                if (officialIconAtlasDemand_) {
-                    if (resolved.officialIconAtlas > 0)
-                        officialIconAtlasDemand_(resolved.officialIconAtlas);
-                    if (resolved.officialDynamicBackgroundAtlas > 0)
-                        officialIconAtlasDemand_(
-                            resolved.officialDynamicBackgroundAtlas);
-                }
-                // Provider sizes are absolute CSS pixels. The point command
-                // uniform carries DPR only, so the official size is applied
-                // exactly once and never depends on a generic layer scalar.
-                sizeScale = resolved.sizePx;
-                // Official point artwork and text form one provider-owned
-                // symbol. Request missing atlases above, but publish neither
-                // half until every exact referenced frame is present. This
-                // prevents a transient text-only/synthetic representation
-                // that does not exist in the official contract.
-                if (iconEnabled) {
-                    providerArtworkReady =
-                        resolveOfficialAtlasSymbol(icon, iconAtlas_)
-                            .has_value();
-                }
-                if (providerArtworkReady && providerLayout &&
-                    !providerLayout->dynamicBackgroundImage.empty()) {
-                    providerArtworkReady =
-                        iconAtlas_ &&
-                        iconAtlas_->frame(
-                            providerLayout->dynamicBackgroundImage);
-                }
-            } else if (style_.requiresOfficial(
-                           FeatureRenderStyle::OfficialRequirement::PointIdentity)) {
-                // Provider-owned identity is atomic. A missing half is not
-                // permission to revive the generic pointImage path.
-                iconEnabled = false;
-            }
-            if (!providerArtworkReady) continue;
+            // 外观来自已解析 r,不再调 pointStyleResolver。
+            const bool iconEnabled = r.iconEnabled;
+            const std::string& icon = r.icon;
+            const float colorPacked = r.colorPacked;
+            const float sizeScale = r.sizeScale;
+            const bool officialCanCovered = r.officialCanCovered;
+            const bool providerZoomOverride = r.providerZoomOverride;
+            const std::optional<FeatureRenderStyle::ProviderLabelLayout>&
+                providerLayout = r.providerLayout;
             if (iconEnabled) {
                 if (style_.requiresOfficial(
                         FeatureRenderStyle::OfficialRequirement::PointIdentity)) {
-                    const auto sym = resolveOfficialAtlasSymbol(
-                        icon, iconAtlas_);
+                    const auto sym =
+                        resolveOfficialAtlasSymbol(icon, iconAtlas_);
                     if (sym && providerLayout &&
                         providerLayout->iconWidthPx > 0.0f &&
                         providerLayout->iconHeightPx > 0.0f) {
@@ -4024,16 +4022,12 @@ void FeatureRenderLayer::buildTileSymbolGpu(
                                      pointVerts, pointIndices);
                 }
             }
-            // 符号刀B/C:带 name 的实例记标签源(烘焙推迟到
-            // bakeTileBucketLabels —— 字体可能晚于 commit 就绪)。id 经
-            // crossTileIdFor 跨瓦继承 —— 瓦片换代(z13→z14 同一 POI,MVT
-            // 逐瓦量化坐标略异)时 placement 的 fade/避让账本连续,不闪。
             if (!s.name.empty() &&
-                (!style_.requiresOfficial(FeatureRenderStyle::OfficialRequirement::LabelIdentity) ||
+                (!style_.requiresOfficial(
+                     FeatureRenderStyle::OfficialRequirement::LabelIdentity) ||
                  s.labelStyleGroup != 0)) {
                 const int labelPaintOrder = s.labelPaintOrder;
-                const int labelStyleGroup =
-                    s.labelStyleGroup;
+                const int labelStyleGroup = s.labelStyleGroup;
                 const uint64_t id = crossTileIdFor(
                     s.name, s.lonRad, s.latRad, tileZ, &claimedIds);
                 std::vector<std::array<double, 3>> labelPath =
@@ -4058,15 +4052,10 @@ void FeatureRenderLayer::buildTileSymbolGpu(
                               s.genericVisual->labelSizePx,
                               s.genericVisual->labelOffsetPx}}
                         : std::nullopt,
-                    s.labelRepeatGroup,
-                    s.labelRepeatDistancePx, s.labelAngleRad,
-                    s.labelLetterSpacingEm, s.labelPaddingXPx,
-                    s.labelPaddingYPx,
-                    std::move(providerLayout),
-                    relF, anchor,
-                    tangentRelF,
-                    tangent, std::move(labelPath), id, s.name,
-                    s.labelSplitIndicesUtf16,
+                    s.labelRepeatGroup, s.labelRepeatDistancePx, s.labelAngleRad,
+                    s.labelLetterSpacingEm, s.labelPaddingXPx, s.labelPaddingYPx,
+                    providerLayout, relF, anchor, tangentRelF, tangent,
+                    std::move(labelPath), id, s.name, s.labelSplitIndicesUtf16,
                     officialCanCovered});
             }
         }
@@ -4176,14 +4165,17 @@ bool FeatureRenderLayer::rebuildTileBucketSymbolsForZoom(
     for (size_t index : selected) {
         active.push_back(gpu.tileSymbolSources[index]);
     }
+    std::vector<ResolvedTileSymbol> resolved = resolveTileSymbols(
+        active, static_cast<double>(viewZoomBucket), lastStylePixelRatio_);
+    gpu.activeResolvedSymbols_ = resolved;
     std::vector<float> pointVerts;
     std::vector<uint32_t> pointIndices;
     std::vector<PaintRange> pointRanges;
     std::vector<BucketGpu::TileLabelSource> labelSrc;
-    buildTileSymbolGpu(active, gpu.origin, gpu.sourceTileZoom,
-                       static_cast<double>(viewZoomBucket),
-                       lastStylePixelRatio_, pointVerts,
-                       pointIndices, pointRanges, labelSrc);
+    materializeTileSymbols(resolved, gpu.origin, gpu.sourceTileZoom,
+                           static_cast<double>(viewZoomBucket),
+                           lastStylePixelRatio_, pointVerts,
+                           pointIndices, pointRanges, labelSrc);
     if (force && labelSrc.size() == gpu.tileLabelSources.size()) {
         for (size_t i = 0; i < labelSrc.size(); ++i) {
             if (labelSrc[i].name == gpu.tileLabelSources[i].name) {
@@ -4227,14 +4219,53 @@ bool FeatureRenderLayer::rebuildTileBucketSymbolsForZoom(
 }
 
 void FeatureRenderLayer::reclampTileBucketSymbols(BucketGpu& gpu) {
-    if (gpu.tileSymbolSources.empty() || !renderDevice_ ||
+    // ① height-only:选中集/样式/图集不变,只重采高度 + 重物化点/标签。
+    // 复用缓存 activeResolvedSymbols_(resolve 产物),不再 resolve/选中/图集。
+    if (gpu.activeResolvedSymbols_.empty() || !renderDevice_ ||
         gpu.symbolViewZoomBucket < 0) {
         return;
     }
-    // 只重建当前 active top-N；完整 source 保留，zoom 换档再按新窗口物化。
-    // force=true 即使选择集合不变也会重采地形高度并失效标签锚点。
-    (void)rebuildTileBucketSymbolsForZoom(
-        gpu, gpu.symbolViewZoomBucket, true);
+    std::vector<float> pointVerts;
+    std::vector<uint32_t> pointIndices;
+    std::vector<PaintRange> pointRanges;
+    std::vector<BucketGpu::TileLabelSource> labelSrc;
+    materializeTileSymbols(
+        gpu.activeResolvedSymbols_, gpu.origin, gpu.sourceTileZoom,
+        static_cast<double>(gpu.symbolViewZoomBucket), lastStylePixelRatio_,
+        pointVerts, pointIndices, pointRanges, labelSrc);
+    // 保留 crossTile id(featureId),placement/fade 账本按 id 连续不重启。
+    if (labelSrc.size() == gpu.tileLabelSources.size()) {
+        for (size_t i = 0; i < labelSrc.size(); ++i) {
+            if (labelSrc[i].name == gpu.tileLabelSources[i].name) {
+                labelSrc[i].featureId = gpu.tileLabelSources[i].featureId;
+            }
+        }
+    }
+    std::unique_ptr<Buffer> vb;
+    std::unique_ptr<Buffer> ib;
+    if (!pointIndices.empty()) {
+        vb = makeBuffer(renderDevice_, pointVerts.data(),
+                        pointVerts.size() * sizeof(float),
+                        BufferDesc::Type::Vertex);
+        ib = makeBuffer(renderDevice_, pointIndices.data(),
+                        pointIndices.size() * sizeof(uint32_t),
+                        BufferDesc::Type::Index);
+        if (!vb || !ib) return;
+    }
+    gpu.pointVertexBuffer = std::move(vb);
+    gpu.pointIndexBuffer = std::move(ib);
+    gpu.pointIndexCount = static_cast<int>(pointIndices.size());
+    gpu.pointRanges.clear();
+    for (const PaintRange& range : pointRanges) {
+        gpu.pointRanges.push_back(BucketGpu::PaintRangeGpu{
+            range.paintOrder, static_cast<int>(range.indexOffset),
+            static_cast<int>(range.indexCount), range.minZoom,
+            range.maxZoom});
+    }
+    gpu.tileLabelSources = std::move(labelSrc);
+    // 标签锚点/rel 变了 → 失效重烘(位置跟随新高度);不置 labelsAwaitingPlacement_
+    // (碰撞结果亚像素不变,placement/fade 不重启,见 bake 循环语义)。
+    invalidateTileBucketLabels(gpu);
 }
 
 void FeatureRenderLayer::invalidateTileBucketLabels(BucketGpu& gpu) {
@@ -5006,6 +5037,9 @@ FeatureRenderLayer::terrainReclampSnapshotForTest() const {
         }
         if (!out.pointVertexBuffer) {
             out.pointVertexBuffer = bucket.pointVertexBuffer.get();
+        }
+        if (!out.symbolSelectionSignature) {
+            out.symbolSelectionSignature = bucket.symbolSelectionSignature;
         }
         if (!out.labelVertexBuffer) {
             out.labelVertexBuffer = bucket.labelVertexBuffer.get();
