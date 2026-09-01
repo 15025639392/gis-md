@@ -83,7 +83,9 @@ private:
                             double& vectorCommandsMs) const;
     void prepareTerrainFillMasks(
         Context& context,
-        const std::vector<TileRenderEntry>& entries) const;
+        const std::vector<TileRenderEntry>& entries,
+        double* requestMsOut = nullptr,
+        double* uploadMsOut = nullptr) const;
     void assembleTerrainBatches(Context& context, double& batchMs) const;
     void applyMvpUniforms(Context& context, double& mvpUniformsMs) const;
     void sortAndValidate(Context& context,

@@ -2534,14 +2534,14 @@ Render flow in `render()` (.cpp:214-364):
 | 1 | ~~`buildStableLayerCommands`~~ | — | ⚠️ **已撤销,函数不存在**。此行原描述 stable-key streaming(prefixes `terrain:` / `content:N:`,经 `tileCommandSet_.update`)—— 该机制连同两个成员一起已从代码里移除;瓦片命令现由第 4 步 `buildLayerCommands` 直接插入。(2026-08-06 复核) |
 | 2 | `buildSkyCommands` | .cpp:390-429 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
 | 3 | `buildAtmosphereCommands` | .cpp:430-458 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
-| 4 | `buildLayerCommands` | .cpp:459-751 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
-| 5 | `applyMvpUniforms` | .cpp:852-860 | `SceneRenderCommandUniformUpdater::apply` |
-| 6 | `sortAndValidate` | .cpp:861-906 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
-| 5.5 | `assembleTerrainBatches` | .cpp:801-851 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
-| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:907-936 / :822-870 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
+| 4 | `buildLayerCommands` | .cpp:459-790 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读)。2026-09 热点④:拖动带新瓦时成本在 `prepareTerrainFillMasks` 的 `store->request`(锁/snapshot/LRU prune,真机 62-150ms),非纹理上传(2ms)——已就绪纹理的瓦跳过 request(见 `prepareTerrainFillMasks` 行) |
+| 5 | `applyMvpUniforms` | .cpp:909-917 | `SceneRenderCommandUniformUpdater::apply` |
+| 6 | `sortAndValidate` | .cpp:918-963 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:858-908 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:964-993 / :994-1076 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
 | 7 | `aggregateDiagnostics` | .cpp:49-56 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
-| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:1020-1104 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
-| — | beforeSubmit → submit | .cpp:291-306 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:1105-1143) |
+| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:1077-1161 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
+| — | beforeSubmit → submit | .cpp:291-306 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:1162-1200) |
 
 Terrain surface = `GltfPrimitive` cmds carrying `terrainRenderContent` (`isTerrainSurfaceCommand`, .cpp:38-48). QM terrain now draws via the 32-byte `TerrainGpuVertex` path (`makeTerrainPrimitiveCommand`, stride 32, `terrainShader`; 2026-07-01); ellipsoid-fallback terrain still uses the 120-byte `GltfGpuVertex` glTF path. `Renderer::terrainShader()` is defined (`kTerrainVertex/FragmentGLSL` + MSL).
 
