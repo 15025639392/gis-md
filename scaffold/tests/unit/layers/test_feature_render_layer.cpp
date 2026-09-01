@@ -5058,6 +5058,95 @@ TEST_F(FeatureRenderLayerTest,
     EXPECT_NEAR(*poiAt700.firstLabelAnchorHeightMeters, 700.0, 1.0);
 }
 
+TEST_F(FeatureRenderLayerTest,
+       ReclampTriggersImmediatelyWithoutWallClockCooldown) {
+    // ② 回归:删 2s 时间冷却后,revision 一变(即便 dt 极小)应立即触发重钳。
+    // 旧实现:首轮触发后 cooldown=2s,随后的 revision 变化在 dt<2s 内不会触发
+    // → 锚点停在旧高度(最长 2s 陈旧窗口)。新实现:事件驱动,revision 落后且
+    // 队列空即起新一轮,无任何 wall-clock 依赖。
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty() ||
+        !renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "no host TrueType font";
+    }
+    const std::vector<uint8_t> iconPixels(64 * 64 * 4, 255);
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage(
+        "official-reclamp-icon", 64, 64, iconPixels));
+
+    auto height = std::make_shared<float>(100.0f);
+    FeatureRenderLayer layer("official-reclamp-poi", &device_,
+                             Ellipsoid::WGS84());
+    layer.installAmapClassicProfile(FeatureRenderLayer::AmapClassicProfile::Poi);
+    FeatureRenderStyle poiStyle =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Poi);
+    installTestOfficialLabelStyle(poiStyle);
+    poiStyle.pointStylePropertyA = "amap_class";
+    poiStyle.pointStylePropertyB = "amap_subkey";
+    poiStyle.pointStyleResolver = [](const std::string& cls,
+                                     const std::string& sub,
+                                     const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle out;
+        if (cls != "12024" || sub != "854") return out;
+        out.enabled = true;
+        out.image = "official-reclamp-icon";
+        out.sizePx = 20.0f;
+        out.labelLayout.emplace();
+        out.labelLayout->iconWidthPx = 20.0f;
+        out.labelLayout->iconHeightPx = 20.0f;
+        return out;
+    };
+    layer.setStyleForContractTest(poiStyle);
+    layer.setTerrainSampling(makeGenerationSampling(height));
+
+    Feature point;
+    point.type = GeometryType::Point;
+    point.rings = {{Cartographic(6.001 * kDeg, 29.001 * kDeg)}};
+    point.properties = {{"name", "reclamp label"},
+                        {"amap_class", "12024"},
+                        {"amap_subkey", "854"}};
+    addOfficialMetadata(point, "12024", "854", "90");
+    const TileKey key{SchemeId("XYZ-WebMercator"), 14, 102, 200};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer.workerTessellationContext(), {point});
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer.commitTileMesh(key, std::move(mesh)));
+
+    auto build = [&](double dt) {
+        frame_.deltaSeconds = dt;
+        RenderCommandList commands;
+        layer.buildRenderCommands(frame_, *renderer_, commands);
+    };
+    const auto anchorHeight = [&]() -> double {
+        const auto snap = layer.terrainReclampSnapshotForTest();
+        if (!snap.firstLabelAnchorHeightMeters.has_value()) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        return *snap.firstLabelAnchorHeightMeters;
+    };
+
+    // 首轮:任意 dt 触发第一次(rev != 0)。
+    for (int i = 0; i < 8; ++i) build(1.0 / 60.0);
+    EXPECT_NEAR(anchorHeight(), 100.0, 1.0);
+
+    // 地形变高 + revision 变,仅 1/60s(dt 极小,旧 2s 冷却下不会触发第二轮)。
+    *height = 700.0f;
+    TileRenderContentState generationSource;
+    auto changedHeightmap = std::make_unique<DecodedHeightmap>();
+    changedHeightmap->tileSize = 1;
+    changedHeightmap->assignHeights(std::vector<float>{700.0f});
+    generationSource.setRetainedHeightmap(std::move(changedHeightmap));
+    const uint64_t changedGeneration =
+        TerrainHeightService::heightmapGeneration();
+
+    // 全程 dt=1/60,无 2s 流逝 → 证明重钳由 revision 事件驱动,与时间解耦。
+    for (int i = 0; i < 8; ++i) build(1.0 / 60.0);
+    EXPECT_EQ(changedGeneration,
+              layer.terrainReclampSnapshotForTest().appliedRevision);
+    EXPECT_EQ(0u, layer.terrainReclampSnapshotForTest().pendingBuckets);
+    EXPECT_NEAR(anchorHeight(), 700.0, 1.0);
+}
+
 namespace {
 
 /// 闭合性断言:体积网格的每条**有向**边,其反向边引用次数必须相等

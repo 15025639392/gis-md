@@ -1464,10 +1464,9 @@ private:
 
     // ---- 贴地(P3 方案 A) ----
     FeatureTerrainSampling terrainSampling_;
+    /// 已触发的重钳目标 revision。上一轮 drain 排空后若 revision 仍落后,
+    /// 立即再起新一轮;谓词据此在「落后且队列空」时继续供帧。无时间冷却。
     uint64_t lastClampRevision_ = 0;
-    /// [V27 家族] 重钳时间节流(2s)。帧数节流在按需渲染下会饿死(冷启动
-    /// 几十帧即 idle,120 帧永远到不了),故按 wall-clock。
-    double reclampCooldownSeconds_ = 0.0;
 
     // ---- 文字标注(P5b) ----
     // buildRenderCommands 每帧缓存(编辑预览/重镶路径无 Renderer 引用);

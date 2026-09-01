@@ -462,7 +462,10 @@ TEST_F(FeatureEditQueriesTest, ClampDensifiesEdgesAndAddsInteriorPoints) {
     }
 }
 
-TEST_F(FeatureEditQueriesTest, ClampReclampsOnRevisionChangeThrottled) {
+TEST_F(FeatureEditQueriesTest, ClampReclampsImmediatelyOnRevisionChange) {
+    // ② 2026-09-01:删 2s 时间冷却,改事件驱动连续追赶。revision 一变即立即
+    // 重钳(即便 dt 极小);代次稳定后不再重钳。旧实现(dt 在 2s 窗内不变 → 不
+    // 重钳)已被移除,本测试随根修改判据(原钉 2s 窗的 Throttled 版本作废)。
     device_.stencilClassificationSupported = false;  // 锁方案 A 路径
     uint64_t revision = 1;
     double slope = 1.0e4;
@@ -482,30 +485,22 @@ TEST_F(FeatureEditQueriesTest, ClampReclampsOnRevisionChangeThrottled) {
     layer_->setStyle(style);
     layer_->store().addFeature(smallSquare());
 
-    // 节流已改 wall-clock 2s(V27 家族:帧数节流在按需渲染下会饿死,
-    // 18dbe0b92)——本测试原钉 120 帧窗,随根修改判据为时间窗。
     frame_.frameId = 200;
     frame_.deltaSeconds = 0.016;
     RenderCommandList first = build();
     ASSERT_EQ(2u, first.size());
     const int buffersAfterFirst = device_.createdBufferCount;
 
-    // 代次变化但 2s 时间窗内 → 不重钳
+    // 代次变化 → 立即重钳(dt=0.016,无 2s 窗也触发)
     slope = 2.0e4;
     revision = 2;
     frame_.frameId = 250;
-    frame_.deltaSeconds = 0.5;
+    frame_.deltaSeconds = 0.016;
     build();
-    EXPECT_EQ(buffersAfterFirst, device_.createdBufferCount);
-
-    // 累计过 2s 窗 → 重钳(新 buffer)
-    frame_.frameId = 400;
-    frame_.deltaSeconds = 2.5;
-    build();
-    const int buffersAfterReclamp = device_.createdBufferCount;
-    EXPECT_GT(buffersAfterReclamp, buffersAfterFirst);
+    EXPECT_GT(device_.createdBufferCount, buffersAfterFirst);
 
     // 代次不再变化 → 稳定,不再重钳(时间再走多久都不动)
+    const int buffersAfterReclamp = device_.createdBufferCount;
     frame_.frameId = 600;
     frame_.deltaSeconds = 5.0;
     build();

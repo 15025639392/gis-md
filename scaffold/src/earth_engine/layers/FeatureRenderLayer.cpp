@@ -5295,23 +5295,21 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         reclampMs = perf::nowMs() - startMs;
     }
 
-    // 贴地重钳(P3 方案 A 过渡态):地形代次变化 → 节流重镶全部桶
-    // (LOD 细化/加载会改高度;不重钳则要素浮沉)。节流防加载期重镶风暴;
-    // 万级桶规模需配可见性门控(后续)。
-    // [V27 家族第四缺口] 节流由"120 帧"改**时间 2s**:帧数节流在按需渲染下
-    // 语义破产——冷启动帧门控只出几十帧就 idle,frameId 永远到不了 120,
-    // 重钳一次都没跑过(真机 lastClampRev 恒 0 而 terrRev 涨到 45),锚点
-    // 停在粗地形高度被细化后的山体埋掉 → T2 遮挡压到 0.2 = 冷启动 POI
-    // "applied=1 却无像素"。"代次落后"已进 hasPendingLabelWork 谓词供帧,
-    // 此处只管节流不管唤醒。
+    // 贴地重钳(P3 方案 A 过渡态):地形代次变化 → 事件驱动连续追赶排水。
+    // 上一轮 drain 排空后,若 revision 仍落后,立即再起新一轮,直到追平;
+    // drain 时用**当刻**采样器重采 → 中途换代自然被后续桶吸收,无需按
+    // 桶记账 revision。
+    // 无时间/帧数冷却:两者在按需渲染下都不可靠(帧数节流冷启动几十帧即
+    // idle、120 帧永远到不了;时间冷却让 revision 已在窗口内变过却不重钳,
+    // 留最长 2s 锚点陈旧窗口)。防风暴靠每帧预算(kReclampBucketsPerFrame),
+    // 不靠时间闸。hasPendingLabelWork 谓词的 `pendingReclamp_.empty()` 与
+    // `revision() != lastClampRevision_` 两项在 drain 期间持续供帧,不会饿死。
     if (style_.altitudeMode == FeatureAltitudeMode::ClampToGround &&
-        terrainSampling_.revision) {
+        terrainSampling_.revision && pendingReclamp_.empty()) {
         const double startMs = perf::nowMs();
-        reclampCooldownSeconds_ -= frameState.deltaSeconds;
         const uint64_t rev = terrainSampling_.revision();
-        if (rev != lastClampRevision_ && reclampCooldownSeconds_ <= 0.0) {
+        if (rev != lastClampRevision_) {
             lastClampRevision_ = rev;
-            reclampCooldownSeconds_ = 2.0;
             std::vector<BucketKey> keys;
             keys.reserve(buckets_.size());
             for (const auto& entry : buckets_) keys.push_back(entry.first);
@@ -5321,7 +5319,6 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
             // 硬件深度与 T2 判定一起吃掉符号 = "标记点闪一下就没";而
             // 缩放会触发瓦片换代重 commit,于是"缩放后又出现"。两个现象
             // 同一个因。(V24/B.6)
-            pendingReclamp_.clear();
             pendingReclamp_.reserve(tileBuckets_.size());
             for (const auto& entry : tileBuckets_) {
                 pendingReclamp_.push_back(entry.first);
@@ -5799,7 +5796,7 @@ std::string FeatureRenderLayer::dumpLabelLifecycle(
     std::snprintf(
         buf, sizeof(buf),
         "LabelDump layer=%s vis=%d pending=%d await=%d fades=%d reclampQ=%zu "
-        "clampRev=%llu/%llu cdPlace=%.2f cdReclamp=%.2f atlas=%d "
+        "clampRev=%llu/%llu cdPlace=%.2f atlas=%d "
         "glyphJobs=%zu unsettled=%zu xt=%zu cand=%d placed=%d col=%d rep=%d "
         "horiz=%d proj=%d\n",
         layerId_.c_str(), visible_ ? 1 : 0, hasPendingLabelWork() ? 1 : 0,
@@ -5807,7 +5804,7 @@ std::string FeatureRenderLayer::dumpLabelLifecycle(
         labelPlacement_.hasPendingFades() ? 1 : 0, pendingReclamp_.size(),
         static_cast<unsigned long long>(clampRevCur),
         static_cast<unsigned long long>(lastClampRevision_),
-        placementCooldownSeconds_, reclampCooldownSeconds_,
+        placementCooldownSeconds_,
         (glyphAtlas_ && glyphAtlas_->ready()) ? 1 : 0,
         glyphAtlas_ ? glyphAtlas_->pendingGlyphRasterCount() : 0,
         unsettledBuckets, crossTileEntryCount_, st.candidates, st.placed,
