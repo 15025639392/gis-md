@@ -3,6 +3,7 @@ add_library(earth_engine_core STATIC)
 
 target_include_directories(earth_engine_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
+    ${CMAKE_CURRENT_SOURCE_DIR}/../third_party/cdt/include
 )
 
 # ============================================================

@@ -254,10 +254,9 @@ TEST(PolygonTessellatorTest, DiagnosticsDoNotChangeGeometry) {
     EXPECT_GT(diagnostics.initialConstraints, 0u);
     EXPECT_GT(diagnostics.densifiedPoints, 0u);
     EXPECT_GT(diagnostics.triangleCount, 0u);
-    EXPECT_GT(diagnostics.cdtPointTriangleTests, 0u);
-    EXPECT_GT(diagnostics.cdtPointBadTriangles, 0u);
-    EXPECT_GT(diagnostics.cdtConstraintsAlreadyPresent +
-                  diagnostics.cdtConstraintsInserted,
-              0u);
-    EXPECT_GT(diagnostics.cdtPeakTriangles, 0u);
+    // NOTE: the cdt* internal counters (pointTriangleTests / pointBadTriangles /
+    // constraintsInserted / peakTriangles) were specific to the old in-house
+    // Bowyer-Watson CDT. The vendored artem-ogre/CDT library manages its own
+    // incremental structure and does not expose those internals, so those
+    // assertions were removed when the CDT backend was swapped.
 }

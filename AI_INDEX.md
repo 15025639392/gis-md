@@ -3532,14 +3532,12 @@ Mapbox Vector Tile 解码器(537 行)。P4 矢量底图的入口。
 
 ### data/ConstrainedDelaunay.h / .cpp
 
-约束 Delaunay 三角剖分(330 行)。面要素镶嵌用。
+约束 Delaunay 三角剖分(52 行)。面要素镶嵌用。
 
-| 项 | 行 | 说明 |
-|---|---|---|
-| `orient2d` / `inCircleDet` / `inCircleUnsigned` | .cpp:25-29 / :30-39 / :40-47 | 几何谓词 |
-| `segmentsProperlyCross` | .cpp:48-57 | 线段真相交 |
-| `edgeKey` | .cpp:58 | 无向边键 |
-| `triangulate` | .cpp:478-486 | **主入口** |
+`triangulate` (.cpp:15-52) 是**主入口**,后端为 vendored artem-ogre/CDT 库
+(`scaffold/third_party/cdt`,MPL-2.0 AND BSD-3-Clause):O(n log n) 增量 CDT,KDTree
+点定位 + Shewchuk 谓词,替代旧 O(n²) brute-force Bowyer-Watson(后者在 VectorFill
+球面细分喂上千点时冻结)。几何谓词/自交预分裂逻辑现在由库内部处理。
 
 ⚠️ 破碎多边形三因之一是 **CDT 自交**,需在入口做预分裂(另两因:山体穿面 → P3
 贴地根治;pick 椭球抬高)。

@@ -196,21 +196,19 @@ TEST(ConstrainedDelaunayTest, RandomConvexPolygons) {
     }
 }
 
-TEST(ConstrainedDelaunayTest, ReservedStorageAvoidsGrowthOnLargeInput) {
-    // Large enough to cross several default-vector growth thresholds while
-    // remaining suitable for the intentionally O(n²) reference algorithm.
+TEST(ConstrainedDelaunayTest, LargeInputProducesValidConstrainedTriangulation) {
+    // O(n log n) CDTD (vendored artem-ogre/CDT) must stay fast and correct on a
+    // large input: non-empty, every index valid, and area conserved (the
+    // 512 interior points triangulate the unit square without gaps/overlaps).
     constexpr uint32_t n = 512;
     std::vector<Vec2> pts{{0, 0}, {1, 0}, {1, 1}, {0, 1}};
     pts.reserve(n);
     std::mt19937 rng(20260830);
     std::uniform_real_distribution<double> unit(0.001, 0.999);
     while (pts.size() < n) pts.emplace_back(unit(rng), unit(rng));
-    ConstrainedDelaunayDiagnostics diagnostics;
-    const auto tris = ConstrainedDelaunay::triangulate(
-        pts, ringEdges(0, 4), &diagnostics);
+    const auto tris = ConstrainedDelaunay::triangulate(pts, ringEdges(0, 4));
     ASSERT_FALSE(tris.empty());
-    EXPECT_GE(diagnostics.initialPointCapacity, n + 3u);
-    EXPECT_GE(diagnostics.initialTriangleCapacity, 2u * (n + 3u));
-    EXPECT_EQ(0u, diagnostics.pointCapacityGrowths);
-    EXPECT_EQ(0u, diagnostics.triangleCapacityGrowths);
+    for (uint32_t idx : tris) EXPECT_LT(idx, n) << "invalid triangle index";
+    EXPECT_NEAR(1.0, sumTriArea(pts, tris), 1e-6)
+        << "triangulation must tile the unit square without gaps/overlaps";
 }
