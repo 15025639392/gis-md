@@ -26,17 +26,9 @@
 
 using namespace earth_engine;
 
-namespace {
-
-constexpr const char* kGaodeSatelliteTemplate =
-    "https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
-constexpr bool kUseGaodeSatelliteForDemo = true;
-
 // PlatformBridge 现由引擎提供：earth_engine::IosPlatformBridge
 // （NSURLSession 网络 / ImageIO 解码 / Keychain 鉴权 / UIKit 设备信息）。
 // 原先此处的 IosDemoPlatformBridge 内联桩已移除。
-
-} // namespace
 
 @implementation MetalView {
     CADisplayLink *_displayLink;
@@ -102,26 +94,11 @@ constexpr bool kUseGaodeSatelliteForDemo = true;
               _engine->camera().position().y(),
               _engine->camera().position().z());
 
-        std::unique_ptr<ImageryProvider> provider;
-        std::unique_ptr<TileScheme> scheme;
-        if (kUseGaodeSatelliteForDemo) {
-            _platformBridge = std::make_unique<IosPlatformBridge>();
-            auto xyz = std::make_unique<XYZImageryProvider>(
-                kGaodeSatelliteTemplate,
-                "Gaode/Amap satellite imagery");
-            xyz->setZoomRange(0, 18);
-            xyz->setOpenGlobusGroupedY(true);
-            xyz->setOpenGlobusPolarGroupsEnabled(false);
-            xyz->setPlatformBridge(_platformBridge.get());
-            provider = std::move(xyz);
-            scheme = TileScheme::createOpenGlobusEarth();
-            NSLog(@"Gaode satellite provider enabled: %s", kGaodeSatelliteTemplate);
-            NSLog(@"Gaode/Amap tiles are GCJ-02 aligned; this demo is visual only, not WGS84 control-point acceptance");
-        } else {
-            provider = std::make_unique<DebugImageryProvider>();
-            scheme = TileScheme::createXYZWebMercator();
-            NSLog(@"Debug standard XYZ WebMercator provider enabled");
-        }
+        std::unique_ptr<ImageryProvider> provider =
+            std::make_unique<DebugImageryProvider>();
+        std::unique_ptr<TileScheme> scheme =
+            TileScheme::createXYZWebMercator();
+        NSLog(@"Debug standard XYZ WebMercator provider enabled");
 
         _rasterOverlays.clear();
         _activatedRasterOverlays.clear();

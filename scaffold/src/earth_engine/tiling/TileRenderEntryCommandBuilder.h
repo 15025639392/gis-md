@@ -1,6 +1,7 @@
 #pragma once
 
 #include "DirectRasterMapping.h"
+#include "TerrainDisplacementTemplatePool.h"
 #include "TilePlan.h"
 #include "TilesetTile.h"
 
@@ -13,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <type_traits>
 
 namespace earth_engine {
 
@@ -97,16 +99,40 @@ public:
                         ? std::optional<std::array<float, 4>>(
                               entry.surfaceClipUv)
                         : std::nullopt;
-                buildTileDrawCommand(
-                    renderer,
-                    *commandTile,
-                    commands,
-                    entry.opacity,
-                    entry.allowSynchronousMeshPrep,
-                    surfaceClipUv,
-                    // 机制 A:clip 上下文携带后代瓦片,盖章期换成后代模板
-                    // 几何 + 祖先高度子矩形采样(资源未就绪回落 discard)。
-                    surfaceClipUv ? entry.selectedTile : nullptr);
+                const TilesetTile* clipDescendant =
+                    surfaceClipUv ? entry.selectedTile : nullptr;
+                if constexpr (std::is_invocable_v<
+                                  BuildTileDrawCommandFn&,
+                                  Renderer&,
+                                  TilesetTile&,
+                                  RenderCommandList&,
+                                  float,
+                                  bool,
+                                  const std::optional<std::array<float, 4>>&,
+                                  const TilesetTile*,
+                                  const TilesetTile*>) {
+                    // The selected tile owns the exact-footprint page even
+                    // when commandTile is an ancestor. Keep that identity
+                    // separate from the height-remap descendant.
+                    buildTileDrawCommand(
+                        renderer,
+                        *commandTile,
+                        commands,
+                        entry.opacity,
+                        entry.allowSynchronousMeshPrep,
+                        surfaceClipUv,
+                        entry.selectedTile,
+                        clipDescendant);
+                } else {
+                    buildTileDrawCommand(
+                        renderer,
+                        *commandTile,
+                        commands,
+                        entry.opacity,
+                        entry.allowSynchronousMeshPrep,
+                        surfaceClipUv,
+                        clipDescendant);
+                }
             } else {
                 ++stats.deferredEntries;
             }
@@ -114,6 +140,36 @@ public:
                 ++stats.meshReadyTiles;
             }
             if (commands.size() > before) {
+                for (size_t i = before; i < commands.size(); ++i) {
+                    RenderCommand& command = commands[i];
+                    if (!command.terrainRenderContent) continue;
+                    command.terrainVisibleSurfaceValid = true;
+                    command.terrainVisibleSelectedZ = entry.selectedKey.z;
+                    command.terrainVisibleSelectedX = entry.selectedKey.x;
+                    command.terrainVisibleSelectedY = entry.selectedKey.y;
+                    command.terrainVisibleRenderZ = entry.renderKey.z;
+                    command.terrainVisibleRenderX = entry.renderKey.x;
+                    command.terrainVisibleRenderY = entry.renderKey.y;
+                    command.terrainVisibleSelectedPass =
+                        entry.selectedThisFrame;
+                    command.terrainVisibleSelectedTileIdentity =
+                        entry.selectedTile;
+                    command.terrainVisibleRenderTileIdentity =
+                        entry.renderTile;
+                    command.terrainVisibleGridSize =
+                        command.terrainHeightGridSize > 0
+                            ? command.terrainHeightGridSize
+                            : kTerrainDisplacementGridSize;
+                    command.terrainVisibleMorph =
+                        command.gltfUniforms.geomorphUpFactor[3];
+                    command.terrainVisibleClipMode =
+                        command.gltfUniforms.clipEnabled;
+                    command.terrainVisibleClipUv =
+                        command.gltfUniforms.clipUv;
+                    if (!command.hasTerrainDisplacementFrame) {
+                        command.terrainVisibleFade = 1.0f;
+                    }
+                }
                 // 非 clip 命令的 stableKey 由 tile 常驻缓存一次性生成
                 // (cacheKey + "#i",见 GltfDrawCommandBuilder)。同一渲染瓦片
                 // 的多个 clip 实例可在一帧内共存,必须在 key 里保留被选中

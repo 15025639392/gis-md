@@ -8,6 +8,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -47,6 +48,16 @@ public:
         std::lock_guard<std::mutex> lock(mutex_);
         responses_[url] = std::move(body);
     }
+    void setPostResponseContaining(const std::string& bodyToken,
+                                   std::vector<uint8_t> body) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        postResponses_.push_back({bodyToken, std::move(body)});
+    }
+    void setPostResponder(
+        std::function<std::vector<uint8_t>(const std::string&)> responder) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        postResponder_ = std::move(responder);
+    }
 
     // ---- 系统信号 ----
     void onEnterBackground() override {}
@@ -56,20 +67,70 @@ public:
     std::unique_ptr<HttpRequest> get(
         const std::string& url,
         std::function<void(int, std::vector<uint8_t>)> callback,
-        HttpRequestOptions = {}) override {
-        std::lock_guard<std::mutex> lock(mutex_);
-        ++requestCount_;
-        requestedUrls_.push_back(url);
-        if (hangRequests_) {
-            return std::make_unique<PendingHttpRequest>(
-                &cancelCount_, std::move(callback));
+        HttpRequestOptions options = {}) override {
+        std::vector<uint8_t> response;
+        bool found = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++requestCount_;
+            requestedUrls_.push_back(url);
+            requests_.push_back({"GET", url, {}, options.headers});
+            if (hangRequests_) {
+                return std::make_unique<PendingHttpRequest>(
+                    &cancelCount_, std::move(callback));
+            }
+            auto it = responses_.find(url);
+            if (it != responses_.end()) {
+                response = it->second;
+                found = true;
+            }
         }
-        auto it = responses_.find(url);
-        if (it != responses_.end() && callback) {
-            callback(200, it->second);
-        } else if (callback) {
-            callback(404, {});
+        if (callback) callback(found ? 200 : 404, std::move(response));
+        return nullptr;
+    }
+
+    std::unique_ptr<HttpRequest> post(
+        const std::string& url,
+        std::vector<uint8_t> body,
+        const std::string& contentType,
+        std::function<void(int, std::vector<uint8_t>)> callback,
+        HttpRequestOptions options = {}) override {
+        std::vector<uint8_t> response;
+        bool found = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ++requestCount_;
+            requestedUrls_.push_back(url);
+            requests_.push_back({"POST", url, std::move(body),
+                                 options.headers});
+            requests_.back().headers.emplace_back("Content-Type", contentType);
+            if (hangRequests_) {
+                return std::make_unique<PendingHttpRequest>(
+                    &cancelCount_, std::move(callback));
+            }
+            const std::string requestBody(requests_.back().body.begin(),
+                                          requests_.back().body.end());
+            if (postResponder_) {
+                response = postResponder_(requestBody);
+                found = !response.empty();
+            }
+            for (const auto& candidate : postResponses_) {
+                if (found) break;
+                if (requestBody.find(candidate.first) != std::string::npos) {
+                    response = candidate.second;
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                auto it = responses_.find(url);
+                if (it != responses_.end()) {
+                    response = it->second;
+                    found = true;
+                }
+            }
         }
+        if (callback) callback(found ? 200 : 404, std::move(response));
         return nullptr;
     }
 
@@ -80,7 +141,13 @@ public:
     // ---- 图片解码 ----
     std::unique_ptr<DecodedImage> decodeImage(
         const uint8_t*, size_t) override {
-        return nullptr;
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (!decodedImage_) return nullptr;
+        return std::make_unique<DecodedImage>(*decodedImage_);
+    }
+    void setDecodedImage(DecodedImage image) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        decodedImage_ = std::move(image);
     }
 
     // ---- 日志 ----
@@ -104,11 +171,26 @@ public:
         return requestedUrls_;
     }
 
+    struct RequestRecord {
+        std::string method;
+        std::string url;
+        std::vector<uint8_t> body;
+        std::vector<std::pair<std::string, std::string>> headers;
+    };
+    std::vector<RequestRecord> requests() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return requests_;
+    }
+
 private:
     mutable std::mutex mutex_;
     std::map<std::string, std::vector<uint8_t>> responses_;
+    std::optional<DecodedImage> decodedImage_;
+    std::vector<std::pair<std::string, std::vector<uint8_t>>> postResponses_;
+    std::function<std::vector<uint8_t>(const std::string&)> postResponder_;
     int requestCount_ = 0;
     std::vector<std::string> requestedUrls_;
+    std::vector<RequestRecord> requests_;
     bool hangRequests_ = false;
     std::atomic<int> cancelCount_{0};
 };

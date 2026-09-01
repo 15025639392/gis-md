@@ -10,6 +10,35 @@
 namespace earth_engine {
 
 struct TileSurfaceClip {
+    static RasterOverlayProjection projectionFor(
+        const TilesetTile& commandTile) {
+        const TileFillGeometrySignature* fillSignature =
+            commandTile.content.renderContent.fillGeometrySignature();
+        if (commandTile.content.renderContent.drawsFill() && fillSignature) {
+            return fillSignature->projection;
+        }
+        if (commandTile.content.renderContent
+                .hasRasterOverlayDetailsContent()) {
+            const RasterOverlayDetails& details =
+                commandTile.content.renderContent.rasterOverlayDetails();
+            if (!details.rasterOverlayProjections.empty() &&
+                !details.rasterOverlayRectangles.empty() &&
+                !details.rasterOverlayRectangles[0].isEmpty()) {
+                return details.rasterOverlayProjections[0];
+            }
+        }
+        return RasterOverlayProjection::Geographic;
+    }
+
+    static bool supportsTerrainHeightRemap(
+        const TilesetTile& commandTile) {
+        // Height textures are sampled in the retained DEM's geographic UV.
+        // A WebMercator clip UV is valid for imagery/discard, but reusing it
+        // for height lookup selects the wrong latitude interval.
+        return projectionFor(commandTile) ==
+               RasterOverlayProjection::Geographic;
+    }
+
     static std::optional<std::array<float, 4>> forDescendantBounds(
         const TilesetTile& commandTile,
         const Rectangle& descendantBounds) {
@@ -17,13 +46,12 @@ struct TileSurfaceClip {
             3.14159265358979323846264338327950288 * 2.0;
 
         Rectangle texcoordRect = commandTile.bounds;
-        RasterOverlayProjection projection =
-            RasterOverlayProjection::Geographic;
+        const RasterOverlayProjection projection =
+            projectionFor(commandTile);
         const TileFillGeometrySignature* fillSignature =
             commandTile.content.renderContent.fillGeometrySignature();
         if (commandTile.content.renderContent.drawsFill() &&
             fillSignature) {
-            projection = fillSignature->projection;
             texcoordRect =
                 projectWorldRectangleForRasterOverlay(
                     fillSignature->bounds.splitAtAntimeridian().first,
@@ -36,7 +64,6 @@ struct TileSurfaceClip {
             if (!details.rasterOverlayProjections.empty() &&
                 !details.rasterOverlayRectangles.empty() &&
                 !details.rasterOverlayRectangles[0].isEmpty()) {
-                projection = details.rasterOverlayProjections[0];
                 texcoordRect = details.rasterOverlayRectangles[0];
             }
         }

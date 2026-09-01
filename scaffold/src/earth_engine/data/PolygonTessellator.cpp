@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <chrono>
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
@@ -67,7 +68,14 @@ TessellatedFill PolygonTessellator::tessellate(
     const Ellipsoid& ellipsoid,
     double heightOffset,
     const std::vector<Cartographic>* steinerPoints,
-    double maxEdgeMeters) {
+    double maxEdgeMeters,
+    PolygonTessellationDiagnostics* diagnostics) {
+    using Clock = std::chrono::steady_clock;
+    auto elapsedMs = [](Clock::time_point start) {
+        return std::chrono::duration<double, std::milli>(Clock::now() - start)
+            .count();
+    };
+    const auto setupStart = Clock::now();
     TessellatedFill out;
     if (feature.type != GeometryType::Polygon || feature.rings.empty()) {
         return out;
@@ -116,8 +124,14 @@ TessellatedFill PolygonTessellator::tessellate(
             outline.push_back(v);
         }
     }
+    if (diagnostics) {
+        diagnostics->inputPoints += points2D.size();
+        diagnostics->initialConstraints += constraints.size();
+        diagnostics->setupMs += elapsedMs(setupStart);
+    }
 
     // 地球网格:约束边按椭球弦长切开,再在面内撒 Steiner。不做的话 CDT
+    const auto densifyStart = Clock::now();
     // 对角线可以跨过整个水面/地块,斜视近裁就是射线。
     if (maxEdgeMeters > 0.0 && !constraints.empty()) {
         std::vector<ConstrainedDelaunay::Edge> split;
@@ -209,6 +223,10 @@ TessellatedFill PolygonTessellator::tessellate(
             }
         }
     }
+    if (diagnostics) {
+        diagnostics->densifiedPoints += points2D.size();
+        diagnostics->globeDensifyMs += elapsedMs(densifyStart);
+    }
 
     if (points2D.size() < 3 || constraints.empty()) return out;
 
@@ -220,6 +238,7 @@ TessellatedFill PolygonTessellator::tessellate(
     // 按互相包含的端点分裂;逐边按参数排序重建子段。分裂后 flood-fill 的
     // 奇偶计数即 even-odd 填充语义(蝴蝶结两叶都填)。子段仍在原线段上,
     // 不产生新交叉,单趟即收敛。O(E²) 对编辑尺度(几十~几百边)可忽略。
+    const auto intersectionStart = Clock::now();
     {
         // 交点的 Cartographic 沿边端点线性插值(容差尺度下误差可忽略)。
         auto internLerp = [&](const ConstrainedDelaunay::Edge& e,
@@ -238,6 +257,26 @@ TessellatedFill PolygonTessellator::tessellate(
         // 每条边的分裂点:(沿边参数 t, 唯一点索引)。
         std::vector<std::vector<std::pair<double, uint32_t>>> cuts(
             constraints.size());
+        struct EdgeBounds {
+            double minX;
+            double minY;
+            double maxX;
+            double maxY;
+        };
+        std::vector<EdgeBounds> bounds;
+        bounds.reserve(constraints.size());
+        constexpr double kIntersectionBoundsPadding = 2.0 * kQuantum;
+        for (const auto& edge : constraints) {
+            const glm::dvec2 a = points2D[edge.first];
+            const glm::dvec2 b = points2D[edge.second];
+            bounds.push_back({
+                std::min(a.x, b.x) - kIntersectionBoundsPadding,
+                std::min(a.y, b.y) - kIntersectionBoundsPadding,
+                std::max(a.x, b.x) + kIntersectionBoundsPadding,
+                std::max(a.y, b.y) + kIntersectionBoundsPadding});
+        }
+        size_t pairCount = 0;
+        size_t candidatePairCount = 0;
         for (size_t i = 0; i < constraints.size(); ++i) {
             const glm::dvec2 a1 = points2D[constraints[i].first];
             const glm::dvec2 a2 = points2D[constraints[i].second];
@@ -248,6 +287,16 @@ TessellatedFill PolygonTessellator::tessellate(
             // 不足一个量化格 → 视为端点接触,不分裂。
             const double tEps = 2.0 * kQuantum / std::sqrt(rLen2);
             for (size_t j = i + 1; j < constraints.size(); ++j) {
+                ++pairCount;
+                const EdgeBounds& aBounds = bounds[i];
+                const EdgeBounds& bBounds = bounds[j];
+                if (aBounds.maxX < bBounds.minX ||
+                    bBounds.maxX < aBounds.minX ||
+                    aBounds.maxY < bBounds.minY ||
+                    bBounds.maxY < aBounds.minY) {
+                    continue;
+                }
+                ++candidatePairCount;
                 const bool shareEndpoint =
                     constraints[i].first == constraints[j].first ||
                     constraints[i].first == constraints[j].second ||
@@ -334,6 +383,10 @@ TessellatedFill PolygonTessellator::tessellate(
             }
         }
         constraints = std::move(splitConstraints);
+        if (diagnostics) {
+            diagnostics->intersectionPairs += pairCount;
+            diagnostics->intersectionCandidatePairs += candidatePairCount;
+        }
     }
 
     // The flood fill implements even-odd fill, so coincident constraint
@@ -363,12 +416,46 @@ TessellatedFill PolygonTessellator::tessellate(
         }
         constraints = std::move(oddConstraints);
     }
+    if (diagnostics) {
+        diagnostics->intersectionConstraints += constraints.size();
+        diagnostics->intersectionMs += elapsedMs(intersectionStart);
+    }
 
+    const auto cdtStart = Clock::now();
+    ConstrainedDelaunayDiagnostics cdtDiagnostics;
     std::vector<uint32_t> tris =
-        ConstrainedDelaunay::triangulate(points2D, constraints);
+        ConstrainedDelaunay::triangulate(
+            points2D, constraints, diagnostics ? &cdtDiagnostics : nullptr);
+    if (diagnostics) {
+        diagnostics->triangleCount += tris.size() / 3;
+        diagnostics->cdtMs += elapsedMs(cdtStart);
+        diagnostics->cdtSuperTriangleMs += cdtDiagnostics.superTriangleMs;
+        diagnostics->cdtPointInsertMs += cdtDiagnostics.pointInsertMs;
+        diagnostics->cdtConstraintInsertMs +=
+            cdtDiagnostics.constraintInsertMs;
+        diagnostics->cdtExtractInsideMs += cdtDiagnostics.extractInsideMs;
+        diagnostics->cdtPointTriangleTests +=
+            cdtDiagnostics.pointTriangleTests;
+        diagnostics->cdtPointBadTriangles += cdtDiagnostics.pointBadTriangles;
+        diagnostics->cdtConstraintEdgeTests +=
+            cdtDiagnostics.constraintEdgeLookups;
+        diagnostics->cdtConstraintCrossTests +=
+            cdtDiagnostics.constraintCrossTriangleTests;
+        diagnostics->cdtConstraintsAlreadyPresent +=
+            cdtDiagnostics.constraintsAlreadyPresent;
+        diagnostics->cdtConstraintsInserted +=
+            cdtDiagnostics.constraintsInserted;
+        diagnostics->cdtPeakTriangles = std::max(
+            diagnostics->cdtPeakTriangles, cdtDiagnostics.peakTriangles);
+        diagnostics->cdtPointCapacityGrowths +=
+            cdtDiagnostics.pointCapacityGrowths;
+        diagnostics->cdtTriangleCapacityGrowths +=
+            cdtDiagnostics.triangleCapacityGrowths;
+    }
     if (tris.empty()) return out;
 
     // 唯一点 → ECEF 顶点。
+    const auto ecefStart = Clock::now();
     out.positions.reserve(uniqueCart.size());
     for (const auto& c : uniqueCart) {
         Cartographic ch(c.longitude(), c.latitude(), c.height() + heightOffset);
@@ -376,6 +463,7 @@ TessellatedFill PolygonTessellator::tessellate(
     }
     out.fillIndices = std::move(tris);
     out.outlineIndices = std::move(outline);
+    if (diagnostics) diagnostics->ecefMs += elapsedMs(ecefStart);
     return out;
 }
 

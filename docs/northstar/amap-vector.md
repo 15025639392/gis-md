@@ -30,7 +30,7 @@
 ### 本文范围
 
 - 高德 `web/init` → `web_map/get_tile` → 签名 `tile_url` → 容器解压/解码 → Feature → tessellation → render-thread commit 的完整闭环。
-- `regions`、`water12`、`main`、`POI` 四个高德消费源，及它们共享/隔离的 cache、worker pool 和样式层级。
+- `regions`、`main`、`POI` 三个高德消费源，及它们共享/隔离的 cache、worker pool 和样式层级。
 - 高德 4326 等距圆柱瓦片、离散数据 zoom、raw Y 方向、坐标转换、环拓扑和瓦片边界处理。
 - 全球高空、地平线/斜视、近景、连续缩放、快速平移、网络失败和样式/视野换代。
 
@@ -38,7 +38,7 @@
 
 - 通用 MVT/FeatureStore 产品体验（看 `docs/northstar/vector.md`）。
 - 高德服务端协议的长期兼容承诺；manifest/POI schema 仍需随服务端版本样本回归。
-- MVT 道路线场（`RoadFieldSource` → D2/`TerrainPageStore`）的新功能扩展。该路径已标记“即将废弃”，只保留兼容和回归用途；新高德线功能走 `FeatureRenderLayer` 几何路径或另立表示方案。
+- 历史 MVT 道路线场（`RoadFieldSource` → D2/`TerrainPageStore`）已完整物理删除；高德线只走 sealed official `FeatureRenderLayer` 几何路径。
 - 将本地仓库中“Cesium 对齐候选”写成已经逐行核实的上游结论。当前约定的 `/Users/ldy/Desktop/work/cesium-native` 不存在，相关内容必须标为待上游复核。
 
 ## 当前判据水位
@@ -48,7 +48,7 @@
 | **A-V1** | 全球高空视野使用完整粗档覆盖，不退化为中心孤岛 | 机制+观感 | ⚠️ | 机制✅：高空 canonical zoom 映射到 z3，Amap 4326 在 z3 为 `8×8=64` 瓦；`AmapGlobalLodUsesCoarseTiersInsteadOfCenterIsland`。PHK110 观感曾验，但原始日志/截图未作为仓库资产保存，需固定场景复验后转全绿。 |
 | **A-V2** | 相邻瓦片在经纬度、Y 方向和 GCJ 转换后无横向/纵向错位 | 机制+观感 | ⚠️ | raw Y 翻转、坐标缩放、GCJ 及 manifest 精确选 URL 已有测试；全球反经线/极区和真实 amap.com 逐视角回归尚未自动化。 |
 | **A-V3** | 多边形孔洞、凹面、独立环和越界裁剪不破碎、不填反 | 机制 | ✅ | `EvenOddWinding*`、`Concave*`、`DisjointRings*`、`CompoundMask*`、真实样本三角形边界测试。 |
-| **A-V4** | 水系、植被、地块、建筑、道路和 POI 压盖顺序正确 | 机制+观感 | ⚠️ | `water12` 独占近景 30001，`main` 过滤 30001，水/绿地与 main 地块、建筑、道路的交错 paint order 已固定；真实服务端新类别/新版本层级仍需回归。 |
+| **A-V4** | 水系、植被、地块、建筑、道路和 POI 压盖顺序正确 | 机制+观感 | ⚠️ | z12+ 的完整 type2 payload 由 `main` 原样消费，视觉身份与层级只由官方 class/subKey/style record/drawOrder 决定；已删除本地水体 identity 分流。真实服务端新类别/新版本层级仍需回归。 |
 | **A-V5** | 点/线/面保持同一地理位置，不出现“工业园在江里/篮球场在江里” | 机制+观感 | ⚠️ | 统一 Amap scheme、raw Y、scale、GCJ 路径已锁；需要持续用 POI/道路/水系交叉样本做空间关系回归。 |
 | **A-V6** | 细化与回退无空洞；连续几何不父子同框重叠 | 机制 | ✅ | `GeometryReplace`、R* 原子换手、`LodSwapIsAtomicNoHoleNoOverlap`、`GeometryReplaceRenderSetHasNoAncestorPairs`。 |
 | **A-V7** | 单个瓦片失败不毒化无关层，旧覆盖留在屏上，重试可收敛 | 机制 | ✅ | 失败回调、指数退避、旧 active 保活、`RetryableCommitFailureDoesNotActivateAndRetriesMesh`、`TemporaryFailureRetriesAndRecovers`。 |
@@ -59,7 +59,7 @@
 | **A-L4** | 父/祖先覆盖在 replacement 子树完整前继续顶住，交接同帧完成 | 机制 | ✅ | R* 置换单元要求全部 ready，再 commit 新瓦并 drop 占位者；失败保留旧占位者。 |
 | **A-L5** | 渲染线程只做有界 finalize/upload，且预算覆盖全部高德 source | 机制 | ⚠️ | 当前 `maxTileCommitsPerUpdate=4` 是每个 source 独立计数；R* 单元不可拆时可超额，尚无全链 `commitMs` gate。 |
 | **A-L6** | 取消解除真实成本并保证 exactly-once；不能制造 `pending=0` 假收敛 | 机制 | ⚠️ | 当前只有逻辑取消：旧 key 从 pending/视野中移除，迟到 mesh 由 `viewEpoch` 丢弃；HTTP、已排队 decode/tess 尚不能真正 cancel。 |
-| **A-P1** | 同一 inflight/缓存驻留期内，相同数据 key 网络只取一次，跨 regions/main/water12 共享 type1 raw 与 decoded payload | 机制 | ✅ | 三个 source 共用同一个 `gAmapRegionCache` typed cache，在途合并、L1 decoded 和 L2 raw 均可复用；raw L2 淘汰后允许重新联网。 |
+| **A-P1** | 同一 inflight/缓存驻留期内，相同数据 key 网络只取一次，跨 regions/main 共享 type1 raw 与 decoded payload | 机制 | ✅ | 两个 source 共用同一个 `gAmapRegionCache` typed cache，在途合并、L1 decoded 和 L2 raw 均可复用；raw L2 淘汰后允许重新联网。 |
 | **A-P2** | 解码不被几何镶嵌的 FIFO 队头阻塞，POI 独立前进 | 机制+性能 | ✅ | type1 decode、POI decode、tess 分池；`BlockedTessellationDoesNotStarveDecode`。 |
 | **A-P3** | 设备自适应只约束后台并发，不削减全球覆盖或必要细节 | 机制 | ✅ | 预算只按核心数/内存计算；无 `PHK110/V1818T` 型号特判。按当前函数，8 核且 >12GiB 自动推导 type1 decode=2、POI decode=1、tess=3；启动属性可覆盖，真机必须以 `MvtWorkers` 日志为准。 |
 | **A-P4** | 高空全球收敛成本由可测阶段组成，不把网络等待误判成渲染瓶颈 | 性能 | ⚠️ | 现有聚合日志覆盖 cache、decode pool、tess pool、tree、commit；尚无 version/manifest/signed GET 三段耗时。基线提交 `679845a7` 前后的 PHK110 固定全球 64 瓦对照约为 68s→1.75s，但原始日志未入仓，复测前不能当稳定 SLA。 |
@@ -73,8 +73,7 @@
 相机/ECEF
   └─ horizonViewRectangle + cameraHeight
       └─ amapViewZoom（连续相机 zoom）
-          ├─ regions     ≤ 11.5：z3/6/8/10 粗区域
-          ├─ water12     > 11.5：固定 z12 水/绿地底板
+          ├─ regions     < 12：z3/6/8/10 粗区域
           ├─ main        z3/6/8/10/12/14：道路/建筑/轨道/地块
           └─ POI         z3/6/8/10/12/14：type-0 点标签
               └─ VectorTileTree
@@ -115,13 +114,12 @@
 
 worker 结果必须先入 inbox，再释放 Landing 票；否则按需渲染可能已经被唤醒却看不到产物。`suspend()` 必须排空 inbox、推进 epoch、释放 active/ready，并同步 Pumped 票。
 
-## 四个高德 source 的职责和唯一数据归属
+## 三个高德 source 的职责和唯一数据归属
 
 | source | 请求/载荷 | 选择范围 | 过滤/表示 | 层级策略 |
 |---|---|---|---|---|
-| `amap-regions` | request type 1；完整 `AmapDecodedTile` | z3/6/8/10，视图 zoom ≤11.5 | 只取 decoded part `type=2` 区域；远景粗水/绿地/地块 | 远景连续粗底，GeometryReplace，paint order 约 10–30 |
-| `amap-water12` | 与 regions/main 共用 type1 raw/decoded | 固定 z12，视图 zoom >11.5 | 只取 `classCode=30001` 水/绿地 | 近景水系接缝底板；绿地约 20、水约 50，处于地块 30 与建筑/道路 60+ 的交错顺序中，不是全球常显层 |
-| `amap-main` | request type 1；完整 type1 payload | z3/6/8/10/12/14 | type1 线、type3 建筑、type4 轨道；z12+ type2 只保留非 30001（例如 30002 地块） | 道路/建筑/细地块；30001/30003 透明，避免水系重复和错误压盖 |
+| `amap-regions` | request type 1；完整 `AmapDecodedTile` | z3/6/8/10，视图 zoom <12 | 只取 decoded part `type=2` 区域；远景粗水/绿地/地块 | 远景连续粗底，GeometryReplace；视觉层级取官方 drawOrder/style record |
+| `amap-main` | request type 1；完整 type1 payload | z3/6/8/10/12/14 | type1 线、type3 建筑、type4 轨道；z12+ 完整保留 type2，不按本地 identity 过滤 | 道路/建筑/细地块/水绿地；视觉身份与层级只取官方合同 |
 | `amap-poi` | request type 2；POI 专用解码 | z3/6/8/10/12/14 | 只取 decoded part `type=0` 点标签；独立 `gAmapPoiDecodePool` | billboard + label，paint order 100，点位保留经纬度锚定 |
 
 ### 两个“type”不能混淆
@@ -130,7 +128,7 @@ worker 结果必须先入 inbox，再释放 Landing 票；否则按需渲染可�
 |---|---|---|
 | **请求 type** | manifest 组：1=`building_region_road_transit`，2=`poi_region_road_transit` | `amapFetchTile(key, 1/2)` |
 | **decoded part.type** | 容器内部几何类型：0=POI、1=线、2=区域、3=建筑、4=轨道/区域混合 | `AmapRegionsToFeatures` 只收 part 2；`AmapPoiToFeatures` 只收 part 0 |
-| **classCode/kind** | 样式、过滤和压盖语义，不是几何类型 | 30001 水/绿地、30002 地块、90001/200xx 建筑/道路类别 |
+| **classCode/subKey/kind** | `classCode/subKey` 是官方视觉身份，`kind` 仅保留官方几何分类；都不是几何类型 | 30001 水/绿地、30002 地块、55001 建筑、200xx 道路类别 |
 
 任何将 `classCode` 当作几何类型、把 decoded part 2 当成线、或把 request type 2 的 POI 容器走通用线面解析，都是“篮球场在江里/线面错位/多边形破碎”的高风险改动。
 
@@ -202,16 +200,13 @@ worker 结果必须先入 inbox，再释放 Landing 票；否则按需渲染可�
 
 | 内容 | 唯一责任源 | 规则 |
 |---|---|---|
-| 远景水/绿地/连续区域 | `regions` | z3/6/8/10，视图 zoom ≤11.5 |
-| 近景水/绿地接缝底板 | `water12` | 固定 z12，视图 zoom >11.5；绿地约 20、水约 50，地块 30、建筑/道路 60+ |
-| 近景地块 | `main` | z12+ 保留 30002；30001 透明 |
+| 远景水/绿地/连续区域 | `regions` | z3/6/8/10，视图 zoom <12 |
+| 近景全部区域 | `main` | z12+ 完整保留官方 type2 payload，不做人为 identity 分流 |
 | 道路/建筑/轨道 | `main` | 按 geometry type 先判，再按 class/kind 排序 |
 | POI/文字 | `POI` | 独立点/标注 draw，paint order 100 |
 
 硬规则：
 
-- 水系 30001 不能由 `main` 的 z14 细面再次上色；这会把服务端 z14 局部空档放大为平行双带和瓦片横向错位。
-- `water12` 只近景启用；全球固定 z12 + 256 瓦会重新形成“重庆中心水面岛”。
 - `regions` 近景 suspend；否则 z10 粗面会盖住 z12/z14 细面，产生粗像素块和破碎边缘。
 - 未知 class 默认透明或明确记录，不得默认当作陆地色覆盖水系。type3 建筑的 geometry type 优先于共享 classCode。
 - `GeometryReplace` 的 render set 不允许 active 同时出现 ancestor/descendant 连续几何；R* 只允许旧占位者暂时留场，不允许新旧连续面同框。
@@ -272,7 +267,7 @@ requestTiles → pending
 AmapType1Cache fetch/refetch/hit/rawHit/resident/rawBytes
 MvtPool type1Decode/poiDecode/tess: threads, queued, active, done,
         queueAvg/queueMax, workAvg/workMax
-AmapSource regions/water12/main/poi:
+AmapSource regions/main/poi:
         z, desired, scanned, render, request, pending, tess, ready,
         active, ancestorPairs, treeMs, commitMs
 ```
@@ -300,7 +295,7 @@ AmapSource regions/water12/main/poi:
 |---|---|---|---|
 | 横向错位、瓦片拼接成条带 | H1：scheme/Y/scale/GCJ 或 manifest 绑错 key | 邻瓦边界整体平移、同一 class 与 amap.com 位置差常量 | 打印 `{request key, manifest group/id, tile rect, rawY, scale, lng/lat}`；用相邻瓦共享边界点做数值对拍 |
 | 部分多边形破碎/孔洞填反 | H2：环方向、canonical Y、越界 CDT/clip 不一致 | 破损集中在孔洞、凹面、跨瓦边界或复杂大面 | 运行 even-odd/concave/disjoint/real-sample triangle centroid tests；比较 CDT 前后 mask |
-| 水系被公园/植被盖住 | H3：source 责任或 paint order 重复 | 30001 同时来自 main 与 water/regions，或未知 class 默认陆地色 | dump 每层 `{source,class,kind,paintOrder,z}`；确认 main 30001 透明、water12 仍 active |
+| 水系被公园/植被盖住 | H3：官方 identity/drawOrder/style record 解析错误 | 同一 main payload 内 class/subKey 样式错配，或未知 class 被错误赋色 | dump `{source,class,subKey,kind,drawOrder,z}`；核对官方 style PBF/runtime record，未知 identity 必须 fail-closed |
 | 工业园/篮球场在江里 | H4：点/线与面使用了不同 Y/scale/GCJ，或 part type 被误判 | 点/线偏移量与邻瓦或同瓦水面一致 | 用同一个 tile key 导出 POI、道路、水面首尾经纬度；先验证坐标，再验证样式/遮挡 |
 | 拉远时空洞或父子重影 | H5：replacement 单元不完整即交接，或 render set 有 ancestor pair | activeAncestorPairs>0 或旧 active 先 drop | `LodSwapIsAtomicNoHoleNoOverlap` + 逐帧 `{render,active,ready,pairs}`；旧占位者必须在 unit ready 前保留 |
 | 高空交互卡顿/收敛慢 | H6：网络两跳、decode/tess 队列、重复工作或 commit 堵塞 | `commit≈0` 而 tess queue/work 高，或 raw fetch/refetch 异常 | 固定相机采集七阶段指标；分别 A/B worker，不减少全球瓦/LOD；先证明瓶颈再改 |
@@ -342,7 +337,7 @@ cd /Users/yan/Desktop/work/gis-md/scaffold
 ### PHK110 真机
 
 - 只用 PHK110 作为本轮高德真机证据；V1818T 的低内存行为另记，不能用旧 APK 或另一设备日志替代。
-- 至少验收：全球高空完整覆盖、重庆近景 water12/main/POI 全部收敛、连续缩放无洞无重影、快速平移旧 mesh 不回写、失败/恢复不连坐。
+- 至少验收：全球高空完整覆盖、重庆近景 regions/main/POI 按显示级正确换手并全部收敛、连续缩放无洞无重影、快速平移旧 mesh 不回写、失败/恢复不连坐。
 - 确认一行 `MvtWorkers split ... model=...` 和每 120 帧 `AmapSource`/`MvtPool` 汇总；没有这些日志的“变快/不卡”结论不入北极星。
 - 视觉异常仍需截图时只截当前视野和固定机位；已有 host 数值测试能确定的问题不要求截图。
 
@@ -383,7 +378,7 @@ cd /Users/yan/Desktop/work/gis-md/scaffold
 - [source update、inbox、epoch 闸、tessellation 和 R* commit](../../scaffold/src/earth_engine/data/MvtVectorSource.h)
 - [Nebula 解码字段、POI 替换和 type/part 语义](../../scaffold/src/earth_engine/data/AmapVectorTile.cpp)
 - [scale、Y flip、GCJ、ring normalize、clip 和 Feature 转换](../../scaffold/src/earth_engine/data/AmapGeometry.cpp)
-- [regions/main/water12/POI 的过滤和 source 类型](../../scaffold/src/earth_engine/data/AmapVectorSource.h)
+- [regions/main/POI 的过滤和 source 类型](../../scaffold/src/earth_engine/data/AmapVectorSource.h)
 
 ### 行为规格与测试
 

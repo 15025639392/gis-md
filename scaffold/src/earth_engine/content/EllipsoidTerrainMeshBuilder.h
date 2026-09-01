@@ -93,6 +93,7 @@ public:
     static RasterOverlayDetails makeRasterOverlayDetails(
         const Rectangle& geographicRectangle,
         const std::vector<RasterOverlayProjection>& projections);
+
 };
 
 } // namespace earth_engine

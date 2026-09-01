@@ -33,6 +33,7 @@ struct TileRenderFrameContext {
         float transitionOpacity,
         bool allowSynchronousMeshPrep,
         const std::optional<std::array<float, 4>>& surfaceClipUv,
+        const TilesetTile* terrainFillMaskOwner = nullptr,
         const TilesetTile* surfaceClipDescendant = nullptr) const;
     const TileRenderCommandPerformanceTimings&
     renderCommandTimings() const;

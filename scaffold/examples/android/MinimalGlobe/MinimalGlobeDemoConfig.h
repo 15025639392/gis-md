@@ -1,6 +1,5 @@
 #pragma once
 
-#include "earth_engine/data/VectorRasterStyle.h"
 
 #include "earth_engine/sdk/EarthSceneConfig.h"
 
@@ -10,7 +9,7 @@
 
 namespace earth_engine::minimal_globe_demo {
 
-struct MvtWorkerBudget {
+struct AmapWorkerBudget {
     size_t decodeThreads = 1;
     size_t poiDecodeThreads = 1;
     size_t tessellationThreads = 1;
@@ -19,183 +18,45 @@ struct MvtWorkerBudget {
 /// 为手机保留渲染/系统核心，并按内存约束限制同时存活的解码/网格临时对象。
 /// 低内存机并发保守，但 type1/POI 解码仍有独立通道；
 /// 8 核高内存机使用 2+1+3，总后台线程不超过扣除前台保留后的预算。
-MvtWorkerBudget chooseMvtWorkerBudget(int cpuCores,
-                                      int64_t totalMemoryBytes);
+AmapWorkerBudget chooseAmapWorkerBudget(int cpuCores,
+                                        int64_t totalMemoryBytes);
 
-// 唯一地形源 = 规则栅格 raster-DEM 高度图地形（CPU 烘焙，TerrainSourceKind::Heightmap）。
-// 65×65 顶点对齐 Mapbox Terrain-RGB PNG（dem_test build_raster_dem_grid65.py 生成）。
-// QuantizedMesh / Cesium ion 路径已退役——heightmap 必须本地瓦片，**瓦片交付**（择一）：
-//   ① 本地服务器：serve_tiles.py 起在 8091 + adb reverse tcp:8091，用下方 http 模板；
-//   ② adb push + file://：把瓦片推到 app 可读目录，模板改 file:///<路径>/{z}/{x}/{y}.png。
-// 本地自产 FABDEM raster-DEM(grid65 顶点栅格,仅覆盖重庆 ~700km 见方)。
-// 需 serve_tiles.py@8091 + adb reverse tcp:8091。
-constexpr const char* kHeightmapTerrainTemplate =
-    "http://127.0.0.1:8091/{z}/{x}/{y}.png";
-
-// 全球 NASA/Mapbox Terrain-RGB(514×514,cell-registered + 1px 重叠环,z6-12,
-// 全球大部分覆盖)。直连 HTTPS(CA bundle 已内嵌),无需 adb reverse。用于测掠视/
-// 大范围移动的加载体验——本地 FABDEM 覆盖太小,掠视视野大半落在数据外污染测量。
-// 切换见 kUseGlobalTerrainSource。
-constexpr const char* kGlobalTerrainTemplate =
-    "https://mapoverlay.xinzhi.space/3dterrain/nasa/tiles/{z}/{x}/{y}.png";
-
-// true = 用全球 NASA 源(测掠视加载体验);false = 本地重庆 FABDEM(默认生产/离线)。
-constexpr bool kUseGlobalTerrainSource = true;
-
-constexpr const char* kGaodeSatelliteTemplate =
-    "http://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
-constexpr const char* kGaodeRoadNetTemplate =
-    "http://webst0{s}.is.autonavi.com/appmaptile?style=8&x={x}&y={y}&z={z}";
-constexpr const char* kRobotExpressiveGlbUrl =
-    "https://maptalks.org/maptalks.three/demo/data/RobotExpressive.glb";
-
-// 实例化性能基线(默认关,见 kEnableInstancedI3dmDemo):Cesium 官方
-// 3d-tiles-samples 的 tree.i3dm(gltfFormat=1 内嵌 glb, EAST_NORTH_UP, 树干
-// OPAQUE + 树叶 BLEND)。经 SingleGltfContentProvider 的 .i3dm 解码 →
-// GltfPrimitiveInstanced 实例化绘制,验证 blend 实例化走 alpha-to-coverage 单
-// draw(不退化成逐实例 draw 爆炸)。境外网络受限设备上测量时,改指 adb reverse
-// 的 localhost(http://127.0.0.1:8091/treeN.i3dm,scratchpad 按 N 生成缩放变体)。
-constexpr const char* kTreeI3dmUrl =
-    "https://raw.githubusercontent.com/CesiumGS/3d-tiles-samples/main/"
-    "1.0/TilesetWithTreeBillboards/tree.i3dm";
-
-// 矢量 demo 图层(P1 面/线 + P5b 标注 + P5a 编辑手柄 + P6c 300 点聚合)。
-// 排查**地形本身**的加载/接缝观感时置 false —— 这些图层是贴地钳制的
-// (ClampToGround),地形一重钳它们也跟着动,屏幕上的"接缝/跳变"未必是地形;
-// 且 refreshClusterDisplay() 每帧跑一次聚合与标注避让,占主线程。
-// 排除干扰是判因的前提,不是洁癖。
-constexpr bool kEnableVectorDemoLayers = false;
 
 // 海拔着色轨迹 demo(2026-08-23):一条带椭球高的 LineString 轨迹
 // (FeatureStore 数据),按顶点海拔线性渐变烘进既有 a_color,复用
 // VectorLine48 顶点布局与 shader(无新属性/着色器),lengthSoFar 照常
 // 携带(dash 语义不变)。独立开关且默认开,不依赖上面整套 feature demo
 // 图层 —— 排查地形时若嫌画面多一条线,置 false 即可。
-constexpr bool kEnableElevationTrajectoryDemo = true;
+constexpr bool kEnableElevationTrajectoryDemo = false;
 
-// 矢量 P4 MVT 只读底图(**几何通路**)。本地 tippecanoe 自制重庆 OSM
-// mbtiles,serve_mvt_tiles.py 起 8092 + adb reverse tcp:8092。
-// 刀1(面→drape)后只承载线;刀2(线→SDF 场+地形 FS 解算)落地后线也
-// 退役(2026-08-13)。**符号刀A(2026-08-14)复活本链为点符号通路**:
-// layerRules 只放行 poi 层 → worker 出 TileSymbolCpu 实例表,准入定型
-// billboard。至此三分工闭环:面=drape 页合成 / 线=SDF 场 / 点=本链。
-// 要 A/B 对拍旧路网几何路径:includeLayers 加回 "roads" + roads 分级规则
-// 塞回 layerRules(见 GLESView;⚠️ 整层白名单是 includeLayers,layerRules
-// 未列出的层是全收)。获取层已与 drape/场共享 MvtTileFetchCache(刀A.5),
-// 同一数据瓦网络/解码/内存恰一份。
-constexpr bool kEnableMvtBasemap = false;
-
-// 矢量**面** drape 底图:MVT 面要素动态栅格化冒充影像,进 TerrainPageStore
-// 页合成(与卫星影像同轨,GPU 边际成本≈0)。E4 原版影像通路曾于 2026-08-07
-// 整链删除(页纹素封顶,近景**线**糊成栅格块);本版按"面 drape/线 SDF"
-// 新分工复活,overzoom 现画不再封顶,见 VectorDrapeImageryProvider.h。
-// Metal 红利:drape 不依赖 stencil,iOS 首次获得贴地面能力。
-constexpr bool kEnableMvtDrapeBasemap = false;
-
-// 刀2 路网线 SDF 场:逐页 R8 距离场(CPU scatter 烘焙,worker)+ 地形 FS
-// 内解算(smoothstep+fwidth 解析 AA,寄生地形 FS 边际成本≈0 —— S2 场税
-// 探针实测增量在噪声内;独立 overlay pass 同数学 25-30ms,勿走回头路)。
-// 与面 drape 共享 MvtTileFetchCache(同一批 z14 祖先瓦零重复 fetch)。
-// 复刻 amap 观感组合(A):高德栅格路网 overlay 打开后,本地 MVT 矢量栈
-// (D2 场 / E 几何路网 / POI)关掉避免同瓦双画 —— 画面 = 高德卫星 + 高德
-// 渲染路网,纯 amap 2D 观感。B 阶段(交互矢量层)随时翻回 kEnableEPlanRoadRibbon。
-constexpr bool kEnableMvtRoadField = false;
-/// E 方案路网几何通道(P1+P2 已落地:ribbon 单 pass + commit 同源采样贴地
-/// + 地形代次重钳)。置 true 时与 D2 场互斥 —— RoadFieldSource 自动跳过;
-/// 真机验证通过后再执行 P3(D2 场物理退役)。
-constexpr bool kEnableEPlanRoadRibbon = false;
-
-// 贴地体的高度范围不在这里配:SceneRenderPipeline 每帧从**可见地形瓦片的
-// 包围体**汇总(O(可见瓦片数),零采样),相机飞到哪都对。
-
-/// 面 drape 通路的栅格样式(water/building 色块)。颜色与几何通路退役前的
-/// fillColorExpr 对齐;线不在此配(走下方场解算样式)。
-VectorRasterStyle makeMvtDrapeStyle();
-/// 高德 type2 面 drape 样式:地块 / 绿地 / 水系,配色对齐 GLESView 几何通路
-/// 退役前的 fillColorExpr(@xinzhi/amap-style palette)。
-VectorRasterStyle makeAmapDrapeStyle();
-
-/// 刀2 场解算的线样式(只消费 line 通道):highway 分级 + 线宽随页 zoom
-/// 分档(styleZoom=页 z,跟屏幕清晰度走)。线色在 FS uniform 统一给出,
-/// 见 kMvtRoadFieldColor。
-VectorRasterStyle makeMvtRoadFieldStyle();
-/// 场解算线色(RGBA 0-1,非预乘):对齐几何通路退役前的 bs.lineColor
-/// (0.95,0.95,0.90,0.85),交接观感不变。
-constexpr std::array<float, 4> kMvtRoadFieldColor{0.95f, 0.95f, 0.90f,
-                                                  0.85f};
-
-/// V26 一期换肤验证:夜间面样式(**调日版改色**,分级/filter 与日版同源,
-/// 不复制 —— test_mvt_basemap_grading 锁的分级自动共享)。
-VectorRasterStyle makeMvtDrapeStyleNight();
-/// 夜间路网线色(亮琥珀):Uniform 成本类,经 setRoadFieldStyleUniforms
-/// 零重烘切换。米白(日)↔琥珀(夜)肉眼即判。
-constexpr std::array<float, 4> kMvtRoadFieldColorNight{1.00f, 0.72f, 0.20f,
-                                                       0.90f};
-// 路网场分级宽度 ramp (z0, halfPx0, z1, halfPx1):FS 在局部 zoom 上线性
-// 插值线半宽(设备px),两端 clamp。宽度=0.6→1.8 CSS px × dpr 3.5 ÷ 2。
-// zoom 基准=影像页 zoom(比地图直觉 zoom 高 ~2-3 档,30km 俯瞰全屏约
-// 13→17,见 PageStoreSamplingGLSL.h),停点 12→16 让分级落在可见区间。
-constexpr std::array<float, 4> kMvtRoadFieldWidthRampPx{12.0f, 1.05f,
-                                                        16.0f, 3.15f};
-// 场页 zoom 封顶 = max(MVT 数据 maxZoom=14, 样式最后一个 zoom 分级档=15
-// (z>=15 catch-all 放开末梢路))。封小了末梢路整体消失(真机踩过封 14)。
-constexpr int kMvtRoadFieldMaxZoom = 15;
-constexpr const char* kMvtBasemapUrlTemplate =
-    "http://127.0.0.1:8092/{z}/{x}/{y}.pbf";
-constexpr int kMvtBasemapMinZoom = 0;
-constexpr int kMvtBasemapMaxZoom = 14;
-
-// MVT 数据瓦缓存两层容量(P2 结清,2026-08-15。实测:解码瓦 ~450KB/张、
+// 官方 AMap type-1/type-2 数据瓦缓存两层容量。实测:解码瓦 ~450KB/张、
 // 压缩字节 ~33KB/张,13.6× 差)。
 //   L1 = 48:够在途合并与热复用(三消费方并发要同一批祖先瓦),再大就是
 //            每张 450KB 地烧内存 —— 48 张实测常驻 ~20-23MB。
 //   L2 = 256:按"绕城一圈的工作集"取,~8.5MB。够大才能让网络重拉归零,
 //            而这正是加 L1 容量买不起的那件事(同样覆盖要 ~115MB)。
-constexpr size_t kMvtTileCacheDecoded = 48;
-constexpr size_t kMvtTileCacheRaw = 256;
-// MVT/高德后台工作预算。解码和镶嵌使用独立池，避免前面的几何镶嵌
+constexpr size_t kAmapTileCacheDecoded = 48;
+constexpr size_t kAmapTileCacheRaw = 256;
+// 官方 AMap 后台工作预算。解码和镶嵌使用独立池，避免前面的几何镶嵌
 // 把后续 POI/底图解码挡在 FIFO 后面。这里是无设备信息时的保守回退；
-// Android 真机按 cpu 核数/内存动态计算，并允许 debug.ee.mvtdecode /
-// debug.ee.mvttess 做冷启动 A/B 覆盖。两池合计有界，不减少可见瓦片。
-constexpr size_t kMvtDecodeThreadsFallback = 2;
-constexpr size_t kMvtTessellationThreadsFallback = 2;
+// Android 真机按 cpu 核数/内存动态计算。两池合计有界，不减少可见瓦片。
+constexpr size_t kAmapType1DecodeThreadsFallback = 2;
+constexpr size_t kAmapTessellationThreadsFallback = 2;
 
 // 用户指示先隐藏卫星底图,避免卫星盖住矢量层造成的误导。
 // 地形暂保留(amap 复刻平面语义最终要关,但关地形会触发另一个
 // 启动即卡问题,单独排查后再切)。
-constexpr bool kEnableTerrainForDemo = false;
-// 测试配置：启用完整高德底图组合。矢量四源仍由 kEnableAmapVectorDemo
-// 控制；这里补上公开 XYZ 卫星(style=6)与路网/注记(style=8)栅格层。
-constexpr bool kUseGaodeSatelliteForDemo = true;
-constexpr bool kEnableGaodeRoadNetOverlayForDemo = true;
 /// 仅用于诊断 fill 层级的临时 A/B 开关。生产默认显示建筑；隐藏仍保留
 /// 下载/解码成本，因此不能作为性能策略。
-constexpr bool kHideAmapBuildingsForCompare = false;
-/// 高德矢量:type2 面走 VectorFill(z10 粗源,V30 地球网格);drape overlay
-/// 仍注册但无地形页则不出。type1/3 路网+建筑走主源 FeatureRenderLayer。
-constexpr bool kEnableAmapVectorDemo = true;
-// z10 regions 的球面三角边上限。10km 足以把源瓦片切成贴球弦面，同时比
-// 曾出过碎网格/worker 爆量的 400m 密度低约 625 倍（三角面积口径）。
-constexpr double kAmapRegionsGlobeFillMaxEdgeMeters = 10000.0;
-/// 高德 web key(dev;产品换 key 只改这里,referer 白名单见
-/// kAmapReferer)。
+// amap.com 默认二维日间底图不以建筑体块为主视觉。隐藏深色建筑填充，
+// 让道路、行政边界、水系和标注建立主要信息层级。
+/// 高德矢量:type2 面走 VectorFill(z10 粗源,V30 地球网格)，type1/3
+/// 路网+建筑走主源 FeatureRenderLayer。MinimalGlobe 只提供这一套官方
+/// pure-vector basemap 合同，不保留关闭 runtime 后落入通用路径的开关。
+/// 高德 web key(dev;产品换 key 只改这里)。Referer 由官方 runtime 固定，
+/// 应用层不能覆盖 transport 合同。
 constexpr const char* kAmapWebKey =
     "14656ce3418e226459ecead9f67c7681";
-constexpr const char* kAmapReferer = "https://www.amap.com/";
-constexpr bool kEnableRobotExpressiveGltfDemo = false;
-// 开启后 config.gltf 指向 tree.i3dm(覆盖 RobotExpressive),用于实例化基线测量。
-// tree.i3dm 是世界锚定内容,相机随之移到样本真实位置(宾州)低空俯视。
-// 默认关:依赖 localhost 服务器+生成变体,非独立可跑;开启前先起 http.server。
-constexpr bool kEnableInstancedI3dmDemo = false;
-// tree.i3dm 25 实例质心的真实经纬度(绝对 ECEF 反算, 簇径~180m)。
-constexpr double kTreeI3dmLongitudeDegrees = -75.612094;
-constexpr double kTreeI3dmLatitudeDegrees = 40.042531;
-// 低空俯视: 180m 簇在此高度铺满可观屏幕面积, 保证实例化 fragment 开销可测。
-constexpr double kTreeI3dmCameraHeightMeters = 350.0;
-
-constexpr double kDemoCameraLongitudeDegrees = 106.508;
-constexpr double kDemoCameraLatitudeDegrees = 29.617;
-constexpr double kDemoCameraHeightMeters = 30000.0;
 
 // === 北极星测量台:编译期钉死相机(改 kMeasure* 常量→重建→采一个 stop)。
 // 同一点(重庆)变高度做 zoom 梯度 + 改影像 maxZoom 做耦合/去耦对拍。
@@ -217,8 +78,12 @@ constexpr double kDemoCameraHeightMeters = 30000.0;
 //   同一相机位姿下 z18 vs z12 对拍 = 干净测出耦合浪费。生产默认 18。
 constexpr double kMeasureLongitudeDegrees = 106.508;
 constexpr double kMeasureLatitudeDegrees = 29.617;
-constexpr double kMeasureHeightMeters = 1500.0;
-constexpr double kMeasureObliqueElevationDegrees = 45.0;
+// 城市级视野便于与 amap.com 默认重庆页面直接比较；1500m 只覆盖园区，
+// 无法评价城市地名、干线路网和水系层级。
+constexpr double kMeasureHeightMeters = 30000.0;
+// amap.com 是二维正俯视地图；纯矢量验收默认使用接近 nadir 的视角，
+// 避免 3D 地球的倾斜透视成为与官网的主要差异。
+constexpr double kMeasureObliqueElevationDegrees = 89.0;
 constexpr int kMeasureImageryMaxZoom = 18;
 
 // kMeasureFreezeCamera:测量台冻结相机。true = 初始位姿设定后
@@ -372,33 +237,6 @@ constexpr bool kShadowVerifyIdle = true;   // debug / dev:开(帧收敛漏报捕
 // 上界参考:高度角 ≥51°(NdotL≥0.778)即重新进入饱和,勿再调回。
 constexpr double kFixedSimulationJulianDate = 2461188.75 + 0.12;
 
-// ---- V26 尾项:数据源 URL 启动期外置(2026-08-18) ----
-//
-// 设备侧 sources.json(与 style-*.json 同目录约定)覆盖编译期 URL 模板,
-// 换城市/换源不再重编译。**只在启动装配时读一次**——运行期热切源刻意
-// 不做(provider 重建 + 缓存失效 + V28 换手扩面,是独立专项的体量)。
-// zoom 范围等源参数仍归编译期(fail-loud:文档出现未知键整份拒收)。
-//
-// JSON 形态(全部键可选,缺 = 用内置):
-//   { "mvtUrlTemplate":     "http://127.0.0.1:8092/{z}/{x}/{y}.pbf",
-//     "imageryUrlTemplate":  "...{x}...{y}...{z}...",
-//     "terrainUrlTemplate":  "...{z}/{x}/{y}.png" }
-struct DemoSourceOverrides {
-    std::string mvtUrlTemplate;      ///< 空 = 内置 kMvtBasemapUrlTemplate
-    std::string imageryUrlTemplate;  ///< 空 = 内置(高德/本地按既有 flag)
-    std::string terrainUrlTemplate;  ///< 空 = 内置(全球/本地按既有 flag)
-};
-
-/// 解析 sources.json。fail-loud 同 StyleDocument 课:未知键 / 非字符串值 /
-/// 坏 JSON → 返回 false 且 outError 给人话,out 不动(调用方回落内置)。
-bool parseDemoSourceOverrides(const std::string& jsonText,
-                              DemoSourceOverrides& out,
-                              std::string& outError);
-
-/// overrides 非空字段覆盖 terrain/imagery URL;传 nullptr = 全内置。
-/// (MVT URL 的消费点在 GLESView 的 fetch 闭包,不经 SceneConfig,由
-/// 调用方自取 mvtUrlTemplate。)
-earth_engine::EarthSceneConfig makeDefaultDemoSceneConfig(
-    const DemoSourceOverrides* overrides = nullptr);
+earth_engine::EarthSceneConfig makeDefaultDemoSceneConfig();
 
 } // namespace earth_engine::minimal_globe_demo

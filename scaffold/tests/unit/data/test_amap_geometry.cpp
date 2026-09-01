@@ -1,17 +1,24 @@
 #include <gtest/gtest.h>
+#include "../../helpers/AmapOfficialTestAdapters.h"
 
 #include "earth_engine/data/AmapGeometry.h"
 #include "earth_engine/data/AmapVectorTile.h"
+#include "earth_engine/data/AmapVectorSource.h"
 #include "earth_engine/data/PolygonTessellator.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
+#include "earth_engine/core/geodesy/WebMercatorProjection.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
+#include <map>
+#include <string>
 #include <vector>
 
 using namespace earth_engine;
+using namespace earth_engine::testing;
 
 namespace {
 
@@ -49,8 +56,51 @@ TEST(AmapGeometryTest, CoordScalePerType) {
     // type2 大区域 kind 60/80 走 line-grid。
     EXPECT_EQ(2.0, amapCoordScale(2, 14, 60));
     EXPECT_EQ(4.0, amapCoordScale(2, 10, 80));
-    EXPECT_NEAR(1.0 / 16.0, amapCoordScale(3, 14), 1e-9);
+    EXPECT_EQ(4.0, amapCoordScale(3, 14, 0, 12));
+    EXPECT_EQ(2.0, amapCoordScale(3, 14, 0, 13));
+    EXPECT_NEAR(1.0 / 16.0, amapCoordScale(3, 14, 0, 18), 1e-9);
+    EXPECT_TRUE(amapBuildingResolutionIsValid(14, 12));
+    EXPECT_TRUE(amapBuildingResolutionIsValid(15, 18));
+    EXPECT_FALSE(amapBuildingResolutionIsValid(14, 0));
+    EXPECT_FALSE(amapBuildingResolutionIsValid(14, 20));
+    EXPECT_EQ(0.0, amapCoordScale(3, 14, 0, 20));
     EXPECT_EQ(2.0, amapCoordScale(4, 14));
+}
+
+TEST(AmapGeometryTest, InvalidBuildingResolutionFailsClosedBeforeGeometry) {
+    AmapDecodedLayerPart part;
+    part.z = 14;
+    part.x = 13038;
+    part.y = 5505;
+    part.type = 3;
+    AmapDecodedFeature building;
+    building.classCode = 55001;
+    building.subKey = 1;
+    building.buildingResolution = 20;
+    building.rings = {{{0, 0}, {64, 0}, {64, 64}, {0, 64}}};
+    part.features.push_back(std::move(building));
+
+    EXPECT_TRUE(amapDecodedPartToFeatures(part, false).empty());
+}
+
+TEST(AmapGeometryTest, ExplicitNonPositiveBuildingHeightIsPreserved) {
+    AmapDecodedLayerPart part;
+    part.z = 14;
+    part.x = 13038;
+    part.y = 5505;
+    part.type = 3;
+    AmapDecodedFeature building;
+    building.classCode = 55001;
+    building.subKey = 1;
+    building.buildingResolution = 12;
+    building.height = 0.0;
+    building.hasHeight = true;
+    building.rings = {{{0, 0}, {64, 0}, {64, 64}, {0, 64}}};
+    part.features.push_back(std::move(building));
+
+    const auto features = amapDecodedPartToFeatures(part, false);
+    ASSERT_EQ(1u, features.size());
+    EXPECT_EQ("0.000000", features[0].properties.at("amap_height"));
 }
 
 TEST(AmapGeometryTest, PoiZ14AnchorUsesFullLabelGrid) {
@@ -61,10 +111,16 @@ TEST(AmapGeometryTest, PoiZ14AnchorUsesFullLabelGrid) {
     part.type = 0;
     AmapDecodedFeature f;
     f.classCode = 12024;
+    f.subKey = 1;
+    f.pointGeometry = true;
+    f.coordScale = 4.0;
+    f.hasDrawOrder = true;
     f.name = "center";
     f.rank = 7;
     f.minZoom = 15;
     f.maxZoom = 21;
+    f.hasMinZoom = true;
+    f.hasMaxZoom = true;
     // Native POI extent is 2048×1024.  The center must remain the tile
     // center after scale 4 + bottom-up Y flip; the old line scale 2 moved it
     // to (2048,3072), i.e. one quarter tile west and one quarter south.
@@ -74,7 +130,9 @@ TEST(AmapGeometryTest, PoiZ14AnchorUsesFullLabelGrid) {
     const auto features = amapDecodedPartToFeatures(part, false);
     ASSERT_EQ(1u, features.size());
     ASSERT_EQ(GeometryType::Point, features[0].type);
-    EXPECT_EQ("-7", features[0].properties.at("rank"));
+    EXPECT_EQ("7", features[0].properties.at("amap_rank"));
+    EXPECT_EQ(features[0].properties.end(),
+              features[0].properties.find("rank"));
     EXPECT_EQ("15", features[0].properties.at("amap_minzoom"));
     EXPECT_EQ("21", features[0].properties.at("amap_maxzoom"));
     EXPECT_EQ("0", features[0].properties.at("amap_type"));
@@ -88,8 +146,8 @@ TEST(AmapGeometryTest, PoiZ14AnchorUsesFullLabelGrid) {
                 features[0].rings[0][0].latitude() * kRadToDeg, 1e-9);
 }
 
-TEST(AmapGeometryTest, TileLocalToLngLatFlipY) {
-    // z0 单瓦:flipY → 左上 (-180, 90)、右下 (180, -90)。
+TEST(AmapGeometryTest, TileLocalToLngLatUsesCanonicalTopDownY) {
+    // z0 单瓦:canonical top-down → 左上 (-180, 90)、右下 (180, -90)。
     Cartographic tl = amapTileLocalToLngLat(0, 0, 0, 0.0, 0.0);
     EXPECT_NEAR(-180.0, tl.longitude() * kRadToDeg, 1e-6);
     EXPECT_NEAR(90.0, tl.latitude() * kRadToDeg, 1e-6);
@@ -114,6 +172,7 @@ TEST(AmapGeometryTest, DecodedPartToFeaturesLandsInChongqing) {
     ASSERT_EQ(1u, features.size());
     EXPECT_EQ(GeometryType::LineString, features[0].type);
     EXPECT_EQ("20009", features[0].properties.at("amap_class"));
+    EXPECT_EQ("14", features[0].properties.at("amap_zoom"));
     ASSERT_EQ(1u, features[0].rings.size());
     ASSERT_EQ(3u, features[0].rings[0].size());
     const double lon =
@@ -149,6 +208,219 @@ TEST(AmapGeometryTest, DecodedLineConvertsBottomUpBlobYToNorthDownLat) {
     EXPECT_NEAR(90.0, lastLat, 1e-9);
 }
 
+TEST(AmapGeometryTest, OrdinaryRoadGeometryDoesNotPublishLabelState) {
+    AmapDecodedLayerPart part;
+    part.z = 14; part.x = 13038; part.y = 5505; part.type = 1;
+    AmapDecodedFeature f;
+    f.classCode = 20001; f.name = "Main Road"; f.rank = 37;
+    f.rings = {{{0.0, 0.0}, {100.0, 100.0}}};
+    part.features.push_back(std::move(f));
+    const auto features = amapDecodedPartToFeatures(part, false);
+    ASSERT_EQ(1u, features.size());
+    EXPECT_EQ(features[0].properties.end(), features[0].properties.find("name"));
+    EXPECT_EQ(features[0].properties.end(), features[0].properties.find("rank"));
+
+    part.features[0].classCode = 20004;
+    const auto otherClass = amapDecodedPartToFeatures(part, false);
+    ASSERT_EQ(1u, otherClass.size());
+    EXPECT_EQ(otherClass[0].properties.end(),
+              otherClass[0].properties.find("name"));
+    EXPECT_EQ(otherClass[0].properties.end(),
+              otherClass[0].properties.find("rank"));
+}
+
+TEST(AmapGeometryTest, DedicatedRoadNameGeometryPublishesOfficialLabelState) {
+    AmapDecodedLayerPart part;
+    part.z = 14; part.x = 13038; part.y = 5505; part.type = 1;
+    AmapDecodedFeature f;
+    f.classCode = 20001;
+    f.subKey = 1;
+    f.name = "Main Road";
+    f.rank = 37;
+    f.roadNameGeometry = true;
+    f.rings = {{{0.0, 0.0}, {100.0, 100.0}}};
+    part.features.push_back(std::move(f));
+
+    const auto features = amapDecodedPartToFeatures(part, false);
+    ASSERT_EQ(1u, features.size());
+    EXPECT_EQ(features[0].properties.end(),
+              features[0].properties.find("amap_payload_role"));
+    EXPECT_EQ("Main Road", features[0].properties.at("name"));
+    EXPECT_EQ("37", features[0].properties.at("amap_rank"));
+    EXPECT_EQ(features[0].properties.end(),
+              features[0].properties.find("rank"));
+}
+
+TEST(AmapGeometryTest, RoadShieldBecomesOfficialCenteredGuidePointOnly) {
+    AmapDecodedLayerPart part;
+    part.z = 10; part.x = 843; part.y = 284; part.type = 1;
+    AmapDecodedFeature f;
+    f.classCode = 20001;
+    f.subKey = 1;
+    f.name = "Expressway";
+    f.shield = "G4501";
+    f.shieldType = 110100;
+    f.rank = 7;
+    f.roadNameGeometry = true;
+    f.hasMinZoom = true;
+    f.hasMaxZoom = true;
+    f.minZoom = 9;
+    f.maxZoom = 30;
+    f.rings = {{{0.0, 0.0}, {100.0, 100.0}, {200.0, 100.0}}};
+    part.features.push_back(std::move(f));
+
+    const auto features = amapDecodedPartToFeatures(part, false);
+    ASSERT_EQ(1u, features.size());
+    EXPECT_EQ(GeometryType::Point, features[0].type);
+    EXPECT_EQ("40001", features[0].properties.at("amap_class"));
+    EXPECT_EQ("110100", features[0].properties.at("amap_subkey"));
+    EXPECT_EQ("G4501", features[0].properties.at("name"));
+    EXPECT_EQ("7", features[0].properties.at("amap_rank"));
+    EXPECT_EQ("9", features[0].properties.at("amap_minzoom"));
+    EXPECT_EQ("30", features[0].properties.at("amap_maxzoom"));
+
+    const Cartographic expected =
+        amapTileLocalToLngLat(part.x, part.y, part.z,
+                              100.0 * amapCoordScale(part.type, part.z),
+                              4096.0 -
+                                  100.0 * amapCoordScale(part.type, part.z));
+    ASSERT_EQ(1u, features[0].rings.size());
+    ASSERT_EQ(1u, features[0].rings[0].size());
+    EXPECT_DOUBLE_EQ(expected.longitude(),
+                     features[0].rings[0][0].longitude());
+    EXPECT_DOUBLE_EQ(expected.latitude(),
+                     features[0].rings[0][0].latitude());
+}
+
+TEST(AmapGeometryTest, RoadShieldEvenPathUsesOfficialProjectedScalarPair) {
+    AmapDecodedLayerPart part;
+    part.z = 10; part.x = 843; part.y = 284; part.type = 1;
+    AmapDecodedFeature f;
+    f.classCode = 20001;
+    f.subKey = 1;
+    f.shield = "X201";
+    f.shieldType = 110100;
+    f.roadNameGeometry = true;
+    f.rings = {{{10.0, 20.0}, {30.0, 40.0},
+                {50.0, 60.0}, {70.0, 80.0}}};
+    part.features.push_back(std::move(f));
+
+    const auto features = amapDecodedPartToFeatures(part, false);
+    ASSERT_EQ(1u, features.size());
+    ASSERT_EQ(1u, features[0].rings.size());
+    ASSERT_EQ(1u, features[0].rings[0].size());
+
+    // z10 is below LocalZoom, so official position is the crossed projected
+    // scalar pair [project(P1).y, project(P2).x].
+    const double scale = amapCoordScale(part.type, part.z);
+    const Cartographic p1 = amapTileLocalToLngLat(
+        part.x, part.y, part.z, 30.0 * scale, 4096.0 - 40.0 * scale);
+    const Cartographic p2 = amapTileLocalToLngLat(
+        part.x, part.y, part.z, 50.0 * scale, 4096.0 - 60.0 * scale);
+    const WebMercatorProjection projection(Ellipsoid::WGS84());
+    const Vec3 q1 = projection.project(p1);
+    const Vec3 q2 = projection.project(p2);
+    const Cartographic expected =
+        projection.unproject(glm::dvec2(q1.y(), q2.x()));
+    EXPECT_DOUBLE_EQ(expected.longitude(),
+                     features[0].rings[0][0].longitude());
+    EXPECT_DOUBLE_EQ(expected.latitude(),
+                     features[0].rings[0][0].latitude());
+}
+
+TEST(AmapGeometryTest, RoadShieldEvenPathRestoresOfficialHighZoomLcsFrame) {
+    AmapDecodedLayerPart part;
+    // y=5503 crosses a 128x128 LCS latitude-cell boundary: north is cell 11,
+    // south is cell 10. This catches the official NW-vs-SW frame choice.
+    part.z = 14; part.x = 13038; part.y = 5503; part.type = 1;
+    AmapDecodedFeature f;
+    f.classCode = 20001;
+    f.subKey = 1;
+    f.shield = "X201";
+    f.shieldType = 110100;
+    f.roadNameGeometry = true;
+    f.rings = {{{10.0, 20.0}, {30.0, 40.0},
+                {50.0, 60.0}, {70.0, 80.0}}};
+    part.features.push_back(std::move(f));
+
+    const auto features = amapDecodedPartToFeatures(part, false);
+    ASSERT_EQ(1u, features.size());
+    const double scale = amapCoordScale(part.type, part.z);
+    const WebMercatorProjection projection(Ellipsoid::WGS84());
+    const Vec3 q1 = projection.project(amapTileLocalToLngLat(
+        part.x, part.y, part.z, 30.0 * scale, 4096.0 - 40.0 * scale));
+    const Vec3 q2 = projection.project(amapTileLocalToLngLat(
+        part.x, part.y, part.z, 50.0 * scale, 4096.0 - 60.0 * scale));
+    const Vec3 nw = projection.project(amapTileLocalToLngLat(
+        part.x, part.y, part.z, 0.0, 0.0));
+    constexpr double cell = 40075016.685578488 / 128.0;
+    const double cx = (std::floor(nw.x() / cell) + 0.5) * cell;
+    const double cy = (std::floor(nw.y() / cell) + 0.5) * cell;
+    const Cartographic expected = projection.unproject(
+        glm::dvec2(cx + q1.y() - cy, cy + q2.x() - cx));
+    EXPECT_DOUBLE_EQ(expected.longitude(),
+                     features[0].rings[0][0].longitude());
+    EXPECT_DOUBLE_EQ(expected.latitude(),
+                     features[0].rings[0][0].latitude());
+}
+
+TEST(AmapGeometryTest, RealOfficialFixtureUsesOddAndEvenShieldContracts) {
+    const std::filesystem::path path =
+        std::filesystem::path(AMAP_TEST_FIXTURE_ROOT) /
+        "cross-region/beijing_843_284_10_t2.pbf";
+    FILE* file = std::fopen(path.c_str(), "rb");
+    ASSERT_NE(nullptr, file);
+    std::fseek(file, 0, SEEK_END);
+    const long length = std::ftell(file);
+    std::rewind(file);
+    ASSERT_GT(length, 0L);
+    std::vector<uint8_t> bytes(static_cast<size_t>(length));
+    ASSERT_EQ(length, static_cast<long>(
+                          std::fread(bytes.data(), 1, bytes.size(), file)));
+    std::fclose(file);
+
+    std::vector<AmapDecodedLayerPart> parts;
+    std::string error;
+    ASSERT_TRUE(decodeAmapPoiTile(bytes.data(), bytes.size(), parts, &error))
+        << error;
+    bool sawOdd = false;
+    bool sawEven = false;
+    for (const auto& part : parts) {
+        const double scale = amapCoordScale(part.type, part.z);
+        for (const auto& decoded : part.features) {
+            if (decoded.shield.empty() || decoded.rings.empty()) continue;
+            const auto output = amapDecodedPartToFeatures(part, false);
+            const auto found = std::find_if(
+                output.begin(), output.end(), [&](const Feature& feature) {
+                    const auto it = feature.properties.find("name");
+                    return it != feature.properties.end() &&
+                           it->second == decoded.shield;
+                });
+            ASSERT_NE(output.end(), found) << decoded.shield;
+            if ((decoded.rings.front().size() & 1u) != 0u) {
+                const auto& p = decoded.rings.front()[
+                    decoded.rings.front().size() / 2];
+                const Cartographic expected = amapTileLocalToLngLat(
+                    part.x, part.y, part.z, p.first * scale,
+                    4096.0 - p.second * scale);
+                EXPECT_DOUBLE_EQ(expected.longitude(),
+                                 found->rings[0][0].longitude());
+                EXPECT_DOUBLE_EQ(expected.latitude(),
+                                 found->rings[0][0].latitude());
+                sawOdd = true;
+            } else {
+                // The real X201 four-point case proves that even paths are no
+                // longer silently dropped or replaced by a segment midpoint.
+                EXPECT_TRUE(std::isfinite(found->rings[0][0].longitude()));
+                EXPECT_TRUE(std::isfinite(found->rings[0][0].latitude()));
+                sawEven = true;
+            }
+        }
+    }
+    EXPECT_TRUE(sawOdd);
+    EXPECT_TRUE(sawEven);
+}
+
 TEST(AmapGeometryTest, GeometryTypeDisambiguatesSharedClassCode) {
     AmapDecodedLayerPart buildingPart;
     buildingPart.z = 14;
@@ -156,7 +428,9 @@ TEST(AmapGeometryTest, GeometryTypeDisambiguatesSharedClassCode) {
     buildingPart.y = 5505;
     buildingPart.type = 3;
     AmapDecodedFeature building;
-    building.classCode = 20009;  // Real samples also use this for roads.
+    building.classCode = 55001;
+    building.subKey = 1;
+    building.buildingResolution = 12;
     building.rings = {{{0, 0}, {64, 0}, {64, 64}, {0, 64}}};
     buildingPart.features.push_back(building);
 
@@ -164,12 +438,27 @@ TEST(AmapGeometryTest, GeometryTypeDisambiguatesSharedClassCode) {
         amapDecodedPartToFeatures(buildingPart, /*toWgs84=*/false);
     ASSERT_EQ(1u, buildingFeatures.size());
     EXPECT_EQ(GeometryType::Polygon, buildingFeatures[0].type);
-    EXPECT_EQ("20009", buildingFeatures[0].properties.at("amap_class"));
+    EXPECT_EQ("55001", buildingFeatures[0].properties.at("amap_class"));
+    EXPECT_EQ("1", buildingFeatures[0].properties.at("amap_subkey"));
+    EXPECT_EQ("6.000000", buildingFeatures[0].properties.at("amap_height"));
+    EXPECT_EQ("12", buildingFeatures[0].properties.at(
+                        "amap_building_resolution"));
     EXPECT_EQ("3", buildingFeatures[0].properties.at("amap_type"));
+    EXPECT_EQ("14", buildingFeatures[0].properties.at("amap_zoom"));
+
+    const double tileWidthRadians = 2.0 * 3.14159265358979323846 /
+                                    std::exp2(14.0);
+    const double expectedDelta = tileWidthRadians * (64.0 * 4.0 / 8192.0);
+    EXPECT_NEAR(expectedDelta,
+                buildingFeatures[0].rings[0][1].longitude() -
+                    buildingFeatures[0].rings[0][0].longitude(),
+                1e-12);
 
     AmapDecodedLayerPart roadPart = buildingPart;
     roadPart.type = 1;
     AmapDecodedFeature road = building;
+    road.classCode = 20009;
+    road.subKey = 0;
     road.polygonGeometry = false;
     road.rings = {{{0, 0}, {64, 64}}};
     roadPart.features.clear();
@@ -181,6 +470,7 @@ TEST(AmapGeometryTest, GeometryTypeDisambiguatesSharedClassCode) {
     EXPECT_EQ(GeometryType::LineString, roadFeatures[0].type);
     EXPECT_EQ("20009", roadFeatures[0].properties.at("amap_class"));
     EXPECT_EQ("1", roadFeatures[0].properties.at("amap_type"));
+    EXPECT_EQ("14", roadFeatures[0].properties.at("amap_zoom"));
 }
 
 TEST(AmapGeometryTest, AdjacentRowsShareLatitudeAfterRawYFlip) {
@@ -398,6 +688,8 @@ TEST(AmapGeometryTest, ConcaveHoleUsesInteriorPointInsteadOfBoundsCenter) {
     part.type = 2;
     AmapDecodedFeature f;
     f.classCode = 30001;
+    f.drawOrder = 47;
+    f.hasDrawOrder = true;
     f.geomType = 3;
     f.rings = {
         // 外 U:底带 y=[100,350]，左右臂延伸到 y=900。
@@ -426,6 +718,8 @@ TEST(AmapGeometryTest, DisjointRingsStaySeparatePolygons) {
     part.type = 2;
     AmapDecodedFeature f;
     f.classCode = 30001;
+    f.drawOrder = 47;
+    f.hasDrawOrder = true;
     f.geomType = 3;
     f.rings = {
         // 第一个独立面(正绕向):canonical x∈[2000,7200], y∈[496,3696]。
@@ -443,6 +737,8 @@ TEST(AmapGeometryTest, DisjointRingsStaySeparatePolygons) {
     EXPECT_EQ(GeometryType::Polygon, features[1].type);
     EXPECT_EQ(1u, features[0].rings.size());
     EXPECT_EQ(1u, features[1].rings.size());
+    EXPECT_EQ("47", features[0].properties.at("amap_draworder"));
+    EXPECT_EQ("47", features[1].properties.at("amap_draworder"));
 }
 
 // 第二个环为负绕向凹 U，其 bbox 中心落在第一个小方块内，但 U 的真实
@@ -501,6 +797,39 @@ TEST(AmapGeometryTest, CompoundMaskTrianglesStayInsideSourceEvenOddMask) {
     EXPECT_GT(triangles, 0u);
 }
 
+// Detailed kind surfaces are one provider-level even-odd mask.  Splitting a
+// many-ring mask into independently tessellated Features loses parity across
+// touching/nested fragments; keep all normalized rings in one Feature so the
+// render tessellator performs the global modulo-two solve exactly once.
+TEST(AmapGeometryTest, DetailedKindCompoundMaskKeepsOneParityFeature) {
+    AmapDecodedLayerPart part;
+    part.z = 12;
+    part.x = 3260;
+    part.y = 1375;
+    part.type = 2;
+    AmapDecodedFeature f;
+    f.classCode = 30001;
+    f.kind = 61;
+    f.subKey = 3;
+    f.geomType = 3;
+    // Two partially overlapping outers are the minimum case that requires
+    // source-level parity. Independent Features would both fill the overlap;
+    // one Feature lets modulo-two cancel it.
+    f.rings = {
+        {{0, 100}, {500, 100}, {500, 500}, {0, 500}},
+        {{300, 300}, {700, 300}, {700, 700}, {300, 700}},
+    };
+    part.features.push_back(std::move(f));
+
+    const auto features = amapDecodedPartToFeatures(part, /*toWgs84=*/false);
+    ASSERT_EQ(1u, features.size());
+    EXPECT_EQ(2u, features[0].rings.size());
+    EXPECT_EQ("12", features[0].properties.at("amap_zoom"));
+    const auto fill =
+        PolygonTessellator::tessellate(features[0], Ellipsoid::WGS84());
+    EXPECT_FALSE(fill.fillIndices.empty());
+}
+
 // 单环(无孔)区域:raw 可省略重复首点；归一化保持点列不变，闭合由
 // 裁剪/三角化的 modulo 边语义完成。
 TEST(AmapGeometryTest, EvenOddWindingSingleRingUntouched) {
@@ -537,6 +866,7 @@ TEST(AmapGeometryTest, DecodedSingleNegativeRingRemainsPolygon) {
     ASSERT_EQ(1u, features[0].rings.size());
     EXPECT_EQ(GeometryType::Polygon, features[0].type);
     EXPECT_EQ(4u, features[0].rings[0].size());
+    EXPECT_EQ("10", features[0].properties.at("amap_zoom"));
 }
 
 // 真样本端到端:AMAP_SAMPLE_TILE 指向真实瓦片时,解码→转换全部落在瓦片
@@ -644,6 +974,192 @@ TEST(AmapGeometryTest, RealSampleLinesStayInTheirLayerTileGrid) {
     EXPECT_GT(linePoints, 0u);
 }
 
+TEST(AmapGeometryTest, DiagnosesAdjacentOfficialRoadEndpointsWhenProvided) {
+    const char* root = std::getenv("AMAP_ADJACENT_TILE_DIR");
+    if (!root) GTEST_SKIP() << "AMAP_ADJACENT_TILE_DIR unset";
+    namespace fs = std::filesystem;
+    struct Endpoint {
+        int tileX = 0;
+        int tileY = 0;
+        int classCode = 0;
+        int subKey = 0;
+        double x = 0.0;
+        double y = 0.0;
+        double tangentX = 0.0;
+        double tangentY = 0.0;
+        int neighborDx = 0;
+        int neighborDy = 0;
+    };
+    std::vector<Endpoint> endpoints;
+    std::map<std::pair<int, int>, size_t> lineDistribution;
+    size_t tiles = 0;
+    for (const auto& entry : fs::directory_iterator(root)) {
+        if (!entry.is_regular_file() || entry.path().extension() != ".pbf") {
+            continue;
+        }
+        FILE* f = std::fopen(entry.path().c_str(), "rb");
+        ASSERT_NE(nullptr, f);
+        std::fseek(f, 0, SEEK_END);
+        const long len = std::ftell(f);
+        std::rewind(f);
+        ASSERT_GT(len, 0L);
+        std::vector<uint8_t> raw(static_cast<size_t>(len));
+        ASSERT_EQ(len,
+                  static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
+        std::fclose(f);
+        std::vector<AmapDecodedLayerPart> parts;
+        ASSERT_TRUE(decodeAmapTile(raw.data(), raw.size(), parts));
+        ++tiles;
+        for (const auto& part : parts) {
+            for (const auto& feature : part.features) {
+                if (feature.polygonGeometry ||
+                    (part.type != 1 && part.type != 4 &&
+                     !feature.lineGeometry)) {
+                    continue;
+                }
+                lineDistribution[{feature.classCode, feature.subKey}] +=
+                    feature.rings.size();
+                const int geometryType = feature.lineGeometry ? 1 : part.type;
+                const double scale = feature.coordScale > 0.0
+                                         ? feature.coordScale
+                                         : amapCoordScale(geometryType, part.z,
+                                                          feature.kind);
+                for (const auto& ring : feature.rings) {
+                    if (ring.size() < 2) continue;
+                    for (size_t endpointIndex : {size_t{0}, ring.size() - 1}) {
+                        const auto* point = &ring[endpointIndex];
+                        const auto* inward = endpointIndex == 0
+                                                 ? &ring[1]
+                                                 : &ring[ring.size() - 2];
+                        const double localX = point->first * scale;
+                        const double localY = 4096.0 - point->second * scale;
+                        double tangentX = (inward->first - point->first) * scale;
+                        double tangentY = -(inward->second - point->second) * scale;
+                        const double tangentLength = std::hypot(tangentX, tangentY);
+                        if (tangentLength == 0.0) continue;
+                        tangentX /= tangentLength;
+                        tangentY /= tangentLength;
+                        constexpr double kEdgeEpsilon = 1.0;
+                        int neighborDx = 0;
+                        int neighborDy = 0;
+                        if (std::abs(localX) <= kEdgeEpsilon) neighborDx = -1;
+                        else if (std::abs(localX - 8192.0) <= kEdgeEpsilon)
+                            neighborDx = 1;
+                        else if (std::abs(localY) <= kEdgeEpsilon)
+                            neighborDy = -1;
+                        else if (std::abs(localY - 4096.0) <= kEdgeEpsilon)
+                            neighborDy = 1;
+                        else
+                            continue;
+                        endpoints.push_back(
+                            {part.x, part.y, feature.classCode, feature.subKey,
+                             part.x * 8192.0 + localX,
+                             part.y * 4096.0 + localY, tangentX, tangentY,
+                             neighborDx,
+                             neighborDy});
+                    }
+                }
+            }
+        }
+    }
+    ASSERT_GT(tiles, 1u);
+    ASSERT_FALSE(endpoints.empty());
+    struct PairCandidate {
+        size_t a = 0;
+        size_t b = 0;
+        double distance = 0.0;
+        double tangentDot = 0.0;
+    };
+    std::vector<PairCandidate> candidates;
+    std::vector<uint8_t> hasOppositeIdentity(endpoints.size(), 0);
+    for (size_t ai = 0; ai < endpoints.size(); ++ai) {
+        const auto& a = endpoints[ai];
+        for (size_t bi = 0; bi < endpoints.size(); ++bi) {
+            const auto& b = endpoints[bi];
+            if (a.classCode != b.classCode || a.subKey != b.subKey ||
+                b.tileX != a.tileX + a.neighborDx ||
+                b.tileY != a.tileY + a.neighborDy ||
+                b.neighborDx != -a.neighborDx ||
+                b.neighborDy != -a.neighborDy) continue;
+            hasOppositeIdentity[ai] = 1;
+            if (a.neighborDx < 0 || a.neighborDy < 0) continue;
+            candidates.push_back({ai, bi, std::hypot(a.x - b.x, a.y - b.y),
+                                  a.tangentX * b.tangentX +
+                                      a.tangentY * b.tangentY});
+        }
+    }
+    std::sort(candidates.begin(), candidates.end(), [](const auto& a,
+                                                        const auto& b) {
+        if (a.distance != b.distance) return a.distance < b.distance;
+        return a.tangentDot < b.tangentDot;
+    });
+    std::vector<uint8_t> consumed(endpoints.size(), 0);
+    size_t matched = 0;
+    size_t directionMismatch = 0;
+    double worstMatched = 0.0;
+    for (const auto& candidate : candidates) {
+        if (candidate.distance > 1.0 || consumed[candidate.a] ||
+            consumed[candidate.b]) continue;
+        if (candidate.tangentDot > -0.25) {
+            ++directionMismatch;
+            continue;
+        }
+        consumed[candidate.a] = consumed[candidate.b] = 1;
+        ++matched;
+        worstMatched = std::max(worstMatched, candidate.distance);
+    }
+    size_t adjacentCandidates = 0;
+    size_t unmatchedWithIdentity = 0;
+    std::map<std::pair<int, int>, size_t> unmatchedByIdentity;
+    std::array<size_t, 5> unmatchedDistanceBuckets{};
+    for (size_t i = 0; i < endpoints.size(); ++i) {
+        if (!hasOppositeIdentity[i]) continue;
+        ++adjacentCandidates;
+        if (consumed[i]) continue;
+        ++unmatchedWithIdentity;
+        unmatchedByIdentity[{endpoints[i].classCode, endpoints[i].subKey}]++;
+        double nearest = std::numeric_limits<double>::infinity();
+        for (const auto& candidate : candidates) {
+            if (candidate.a == i || candidate.b == i)
+                nearest = std::min(nearest, candidate.distance);
+        }
+        const size_t bucket = nearest <= 1.0    ? 0
+                              : nearest <= 4.0  ? 1
+                              : nearest <= 16.0 ? 2
+                              : nearest <= 64.0 ? 3
+                                                : 4;
+        ++unmatchedDistanceBuckets[bucket];
+    }
+    std::printf(
+        "ROAD_SEAM_SUMMARY tiles=%zu endpoints=%zu adjacent_candidates=%zu "
+        "matched_pairs=%zu matched_endpoints=%zu ratio=%.6f "
+        "unmatched_with_identity=%zu direction_mismatch=%zu "
+        "worst_matched=%.6f\n",
+        tiles, endpoints.size(), adjacentCandidates, matched, matched * 2,
+        adjacentCandidates ? static_cast<double>(matched) /
+                                 (static_cast<double>(adjacentCandidates) / 2.0)
+                           : 0.0,
+        unmatchedWithIdentity, directionMismatch,
+        worstMatched);
+    std::printf(
+        "ROAD_SEAM_UNMATCHED_DISTANCE le1=%zu le4=%zu le16=%zu le64=%zu "
+        "gt64=%zu\n", unmatchedDistanceBuckets[0], unmatchedDistanceBuckets[1],
+        unmatchedDistanceBuckets[2], unmatchedDistanceBuckets[3],
+        unmatchedDistanceBuckets[4]);
+    for (const auto& [identity, count] : unmatchedByIdentity) {
+        std::printf("ROAD_SEAM_UNMATCHED_IDENTITY class=%d sub=%d count=%zu\n",
+                    identity.first, identity.second, count);
+    }
+    for (const auto& [identity, count] : lineDistribution) {
+        if (identity.first == 20014 || identity.first == 20019) {
+            std::printf("ROAD_REACHABILITY class=%d sub=%d paths=%zu\n",
+                        identity.first, identity.second, count);
+        }
+    }
+    EXPECT_GT(adjacentCandidates, 0u);
+    EXPECT_GT(matched * 2, adjacentCandidates * 99 / 100);
+}
+
 // 真样本:type2 区域必须产出 Polygon Feature(窗沿闭合前,跨瓦开放弧被
 // "首尾不同即丢弃"规则全部过滤 → 0 面 → 真机整屏露地球底色)。
 TEST(AmapGeometryTest, RealSampleRegionProducesPolygons) {
@@ -658,15 +1174,22 @@ TEST(AmapGeometryTest, RealSampleRegionProducesPolygons) {
     ASSERT_EQ(len, static_cast<long>(std::fread(raw.data(), 1, raw.size(), f)));
     std::fclose(f);
 
-    std::vector<Feature> feats;
     std::string err;
-    ASSERT_TRUE(amapBytesToFeatures(raw.data(), raw.size(), /*regionsOnly=*/true,
-                                    feats, &err));
+    AmapDecodedTile tile;
+    ASSERT_TRUE(AmapDecodedTileDecodeTraits::decode(
+        raw.data(), raw.size(), tile, &err));
+    std::vector<Feature> feats = AmapRegionsToFeaturesForTest{}(
+        TileKey{}, std::make_shared<const AmapDecodedTile>(std::move(tile)),
+        {}, {});
     size_t polys = 0;
     size_t validRings = 0;
     for (const auto& feat : feats) {
         if (feat.type != GeometryType::Polygon) continue;
         ++polys;
+        EXPECT_EQ(feat.properties.end() == feat.properties.find("amap_zoom"),
+                  false)
+            << "every AMap polygon path must preserve source zoom for the "
+               "official surface palette";
         for (const auto& ring : feat.rings) {
             if (ring.size() >= 3) {
                 ++validRings;
@@ -678,7 +1201,7 @@ TEST(AmapGeometryTest, RealSampleRegionProducesPolygons) {
         }
     }
     EXPECT_GT(polys, 0u) << "window-closed rings must produce polygons";
-    // PolygonTessellator/VectorTileRasterizer 通过 modulo 隐式闭合，
+    // PolygonTessellator 通过 modulo 隐式闭合，
     // 因此不要求解码输出重复首点。
     size_t totalRings = 0;
     for (const auto& feat : feats) {

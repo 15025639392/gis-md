@@ -12,12 +12,7 @@ namespace earth_engine {
 
 /// 矢量底图的绘制样式(颜色/线宽/图层过滤/超采样)。
 ///
-/// 服务两条通路:几何通路(FeatureRenderLayer + 瓦片桶,线要素)与栅格
-/// 通路(`rasterizeMvtRect` / `VectorDrapeImageryProvider`,面要素进页存储
-/// 合成)。栅格通路的 E4 原版曾于 2026-08-07 整链删除(页纹素封顶,近景
-/// **线**糊成栅格块),2026-08-13 按"面 drape/线 SDF 场"新分工复活 ——
-/// 只承载面,且任意目标矩形 overzoom 现画,分辨率不再封顶,见
-/// VectorTileRasterizer.h 头注释。
+/// 服务 generic MVT 几何通路(FeatureRenderLayer + 瓦片桶)。
 ///
 /// 纯数据结构,无状态 → worker 可并发按值读取。
 

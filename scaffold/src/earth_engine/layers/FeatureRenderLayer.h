@@ -28,10 +28,13 @@
 namespace earth_engine {
 
 class Ellipsoid;
+class AmapClassicRuntime;
 class GlyphAtlas;
 class IconAtlas;
 class RenderDevice;
 class Renderer;
+class ProjectedPathSampler;
+struct ProjectedPathSample;
 struct FrameState;
 
 /// 要素拾取结果(编辑基础接口,设计原则见 P2 分层:引擎只出查询,
@@ -74,13 +77,239 @@ enum class FeatureAltitudeMode {
 /// FeatureRenderLayer 的图层级样式(矢量 P1:字面量样式子集,
 /// data-driven 表达式属 P6)。
 struct FeatureRenderStyle {
+    enum class LineCap : uint8_t { Butt = 0, Square = 1, Round = 2 };
+    enum class LabelDirection : uint8_t { Center, Right, Left, Top, Bottom };
+    /// Selects one complete style-consumption contract for the layer.
+    /// AmapClassicOfficial is fail-closed: official paint ranges are required,
+    /// CSS pixels use AMap's binary retina backing scale, and renderer-local
+    /// dash/default paths are not consulted.
+    enum class ProviderContract : uint8_t {
+        Generic = 0,
+        AmapClassicOfficial = 1,
+    };
+
+    enum class OfficialRequirement : uint32_t {
+        DrawOrder = 1u << 0,
+        ZoomWindow = 1u << 1,
+        Rank = 1u << 2,
+        FillIdentity = 1u << 3,
+        LineIdentity = 1u << 4,
+        LabelIdentity = 1u << 5,
+        PointIdentity = 1u << 6,
+    };
+
+    /// Closed provider-owned profiles. Callers may install complete official
+    /// scopes, but cannot assemble an arbitrary half-official requirement set.
+    enum class AmapClassicScope : uint8_t {
+        Surface,
+        Transport,
+        RoadLabel,
+        Poi,
+    };
+
+    /// Capabilities installed by the official AMap style modules. Installers
+    /// only add requirements, so composing surface/transport/label contracts
+    /// cannot accidentally weaken an already-installed official scope.
+private:
+    ProviderContract providerContract_ = ProviderContract::Generic;
+    uint32_t officialRequirements_ = 0;
+    uint8_t officialGeometryMask_ = 0x07;
+    void installAmapClassicScope(AmapClassicScope scope);
+    friend class FeatureRenderLayer;
+    friend class AmapClassicStyleContract;
+
+public:
+    bool requiresOfficial(OfficialRequirement requirement) const {
+        return providerContract_ == ProviderContract::AmapClassicOfficial &&
+               (officialRequirements_ & static_cast<uint32_t>(requirement)) != 0;
+    }
+
+    bool usesOfficialProviderContract() const {
+        return providerContract_ == ProviderContract::AmapClassicOfficial;
+    }
+
+    bool admitsGeometry(GeometryType type) const {
+        if (!usesOfficialProviderContract()) return true;
+        return (officialGeometryMask_ &
+                (1u << static_cast<uint8_t>(type))) != 0;
+    }
+
+    struct ProviderLabelLayout {
+        enum class IconAnchor : uint8_t {
+            NumericTopLeft,
+            BottomCenter,
+        };
+
+        LabelDirection direction = LabelDirection::Center;
+        float offsetXPx = 0.0f;
+        float offsetYPx = 0.0f;
+        float iconWidthPx = 0.0f;
+        float iconHeightPx = 0.0f;
+        float iconAnchorXPx = 0.0f;
+        float iconAnchorYPx = 0.0f;
+        IconAnchor iconAnchor = IconAnchor::NumericTopLeft;
+        /// Official q8t background frame. Its final size is derived after
+        /// glyph measurement; an empty name means an ordinary fixed icon.
+        std::string dynamicBackgroundImage;
+    };
+
+    struct ResolvedPointStyle {
+        bool enabled = false;
+        std::optional<ProviderLabelLayout> labelLayout;
+        std::optional<double> minZoom;
+        std::optional<double> maxZoom;
+        std::string image;
+        int officialIconAtlas = 0;
+        int officialDynamicBackgroundAtlas = 0;
+        float sizePx = 0.0f;
+        std::array<float, 4> color{1, 1, 1, 1};
+        bool officialCanCovered = false;
+    };
+
+    struct LineDashPattern {
+        /// MapLibre/Amap line-dasharray values, measured in multiples of the
+        /// effective stroke width.  count must be 0, 2, or 4; 0 is solid.
+        std::array<float, 4> lengths{0.0f, 0.0f, 0.0f, 0.0f};
+        uint8_t count = 0;
+        /// Analytic cap applied at each visible dash span. Solid open-line
+        /// endpoint caps require tessellated endpoint primitives separately.
+        LineCap cap = LineCap::Butt;
+    };
     /// 固定样式绘制层级。数值越大越晚绘制；同一图层可用
     /// paintOrderExpr 按要素属性细分(例如 30001 kind61/kind63)。
     int paintOrder = kDefaultVectorPaintOrder;
     StyleExpression::Ptr paintOrderExpr;
+    /// Geometry-independent fill identity. Sorting remains paintOrder-driven;
+    /// this selects command-time polygon colors without rebuilding geometry.
+    StyleExpression::Ptr fillStyleGroupExpr;
+    /// Optional label-only ordering/style key. Point geometry keeps
+    /// paintOrderExpr batching while text may select a small semantic palette.
+    StyleExpression::Ptr labelPaintOrderExpr;
+    /// Geometry-independent label style identity. Label draw ordering remains
+    /// labelPaintOrder/paintOrder-driven; this key selects size/color/halo.
+    StyleExpression::Ptr labelStyleGroupExpr;
+    /// Optional O(1) composite-property override for label semantic groups.
+    /// The key is `valueA:valueB`; this complements the
+    /// expression fallback for large official taxonomies without building a
+    /// linear match tree or splitting point geometry.
+    std::string labelStyleGroupPropertyA;
+    std::string labelStyleGroupPropertyB;
+    std::unordered_map<std::string, int> labelStyleGroupByProperty;
+    /// Data-driven line command style group. Empty means no semantic group.
+    /// This does not affect sorting; it only selects command-time line tables.
+    StyleExpression::Ptr lineStyleGroupExpr;
     std::array<float, 4> fillColor{0.25f, 0.55f, 0.95f, 0.35f};
     std::array<float, 4> lineColor{1.00f, 0.80f, 0.10f, 0.90f};
+    /// Optional property-keyed line colors.  Values are resolved during
+    /// tessellation and baked per feature, avoiding one draw/range per
+    /// transit route while retaining an extensible data-driven table.
+    std::string lineColorProperty;
+    std::unordered_map<std::string, std::array<float, 4>>
+        lineColorByProperty;
     float lineWidthPx = 4.0f;
+    /// Screen-space round joins. Open endpoints remain butt caps, matching
+    /// Amap classic-normal solid roads. Currently used by non-clamped ribbon
+    /// geometry; terrain-clamp source keeps its two-vertices-per-point ABI.
+    bool lineRoundJoin = false;
+    /// Optional generic same-name suppression. Provider-owned road-name
+    /// records leave this disabled because the official stream already owns
+    /// candidate segmentation/admission.
+    float lineLabelRepeatDistancePx = 0.0f;
+    float lineLabelLetterSpacingEm = 0.0f;
+    float lineLabelPaddingXPx = 0.0f;
+    float lineLabelPaddingYPx = 0.0f;
+    /// 可选道路外描边：复用同一线 vertex/index buffer，先发更宽的纯色
+    /// command，再发原逐要素颜色的中心线。不增加 tessellation 或上传。
+    bool lineCasingEnabled = false;
+    float lineCasingExtraWidthPx = 3.0f;
+    /// >0 时按中心线宽度的比例计算额外总宽，并以 ExtraWidthPx 为上限。
+    /// 例如 ratio=0.5：2px 支路只加 1px，6px 主干加 3px。
+    float lineCasingWidthRatio = 0.0f;
+    std::array<float, 4> lineCasingColor{1.0f, 1.0f, 1.0f, 0.92f};
+    /// Geometry-independent stroke widths keyed by semantic styleGroup.
+    /// paintOrder remains a sorting key and is never consulted for styling.
+    std::unordered_map<int, StyleExpression::Ptr> lineWidthExprByStyleGroup;
+    /// Command-time visibility windows for fill semantic groups. Values use
+    /// display zoom (AMap style zoom minus one), so high-zoom overlays can be
+    /// enabled without rebaking source-z14 geometry or adding draw groups.
+    std::unordered_map<int, double> fillMinZoomByStyleGroup;
+    std::unordered_map<int, double> fillMaxZoomByStyleGroup;
+    /// Zoom-only polygon color keyed by fill styleGroup. Transparent results
+    /// suppress the command and therefore preserve provider visibility gaps.
+    std::unordered_map<int, StyleExpression::Ptr> fillColorExprByStyleGroup;
+    /// Official extrusion face color keyed by semantic building identity.
+    /// Missing identities cannot emit extrusion geometry.
+    std::unordered_map<int, std::array<float, 4>>
+        extrusionRoofColorByStyleGroup;
+    std::unordered_map<int, std::array<float, 4>>
+        extrusionWallColorByStyleGroup;
+    std::unordered_map<int, StyleExpression::Ptr>
+        lineCasingWidthExprByStyleGroup;
+    /// Zoom-driven command color override keyed by line style group.  Alpha
+    /// zero means no override and keeps the per-feature baked vertex color.
+    std::unordered_map<int, StyleExpression::Ptr> lineColorExprByStyleGroup;
+    /// Official provider lineType resolved at command time, then mapped to a
+    /// pixel dash/cap contract. Keeping the integer curve separate avoids
+    /// encoding dash arrays into StyleValue or rebuilding line geometry.
+    std::unordered_map<int, StyleExpression::Ptr> lineTypeExprByStyleGroup;
+    std::function<std::optional<LineDashPattern>(int)> lineTypeResolver;
+    /// Zoom-driven label size curves keyed only by semantic styleGroup. These
+    /// are evaluated only when the tile label bucket is baked, so the glyph
+    /// atlas and collision boxes stay coherent for a given view zoom.
+    std::unordered_map<int, StyleExpression::Ptr>
+        labelSizeExprByStyleGroup;
+    /// Command-time label color curves keyed by semantic styleGroup.
+    /// Existing label ranges already split on this key, so this adds neither
+    /// vertex attributes, glyph rebakes, nor draw calls.
+    std::unordered_map<int, StyleExpression::Ptr>
+        labelColorExprByStyleGroup;
+    /// Optional style-level label onset in display zoom. Effective visibility
+    /// is max(feature minZoom, this onset), matching Amap's two independent
+    /// gates without mutating source metadata.
+    std::unordered_map<int, int> labelMinZoomByStyleGroup;
+    /// Official style-level exclusive display-zoom ceiling. This is combined
+    /// with the provider feature window; it is never inferred from drawOrder.
+    std::unordered_map<int, int> labelMaxZoomByStyleGroup;
+    std::unordered_map<int, std::vector<std::pair<int, int>>>
+        labelZoomWindowsByStyleGroup;
+    /// Optional command-uniform casing color per semantic styleGroup.
+    std::unordered_map<int, std::array<float, 4>>
+        lineCasingColorByStyleGroup;
+    /// Optional label halo color keyed by semantic styleGroup. This is a uniform
+    /// override and does not split glyph geometry or batches.
+    std::unordered_map<int, std::array<float, 4>>
+        labelHaloColorByStyleGroup;
+    /// Zoom-driven label halo, evaluated per label command. This preserves
+    /// official style transitions without rebaking glyph geometry.
+    std::unordered_map<int, StyleExpression::Ptr>
+        labelHaloColorExprByStyleGroup;
+    /// Provider-owned label outline radius in CSS pixels. Official labels
+    /// require this table and never read the generic layer-wide labelHaloPx.
+    std::unordered_map<int, StyleExpression::Ptr>
+        labelHaloWidthExprByStyleGroup;
+    struct LineLabelLayout {
+        float repeatDistancePx = 0.0f;
+        float letterSpacingEm = 0.0f;
+        float paddingXPx = 0.0f;
+        float paddingYPx = 0.0f;
+    };
+    std::unordered_map<int, LineLabelLayout>
+        lineLabelLayoutByStyleGroup;
+    /// Optional zoom-only casing color, evaluated per command. This is the
+    /// casing counterpart of lineColorExprByStyleGroup.
+    std::unordered_map<int, StyleExpression::Ptr>
+        lineCasingColorExprByStyleGroup;
+    std::unordered_map<int, StyleExpression::Ptr>
+        lineCasingTypeExprByStyleGroup;
+    /// Exact semantic style-group allow-list for casing. Empty means every
+    /// line may use the layer-wide casing; AMap always installs explicit
+    /// official groups so provider drawOrder can never enable a casing.
+    std::unordered_set<int> lineCasingStyleGroups;
+    /// Casing is primarily a near-view separation cue.  Keep it independently
+    /// zoom-gated so broad map views can use thin single-stroke roads while the
+    /// center line itself remains visible.
+    double lineCasingMinZoom = 0.0;
+    double lineCasingMaxZoom = 24.0;
     /// 图层可见 zoom 窗口(web 墨卡托惯例 zoom ≈ log2(赤道周长/视高),
     /// 与 widthExpr 口径一致)。默认 [0, 24] 恒可见。粗源 LOD 用它做
     /// **近景让位**:z10 面源在 zoom > maxZoom 时整体不渲染(命令不发、
@@ -93,6 +322,23 @@ struct FeatureRenderStyle {
     /// stencil 线与方案 A ribbon 两路径同语义。
     float lineDashPeriodMeters = 0.0f;
     float lineDashOnFraction = 0.6f;
+    /// Screen-style dash arrays are deliberately separate from the world-
+    /// meter demo dash above. They are keyed only by semantic styleGroup and
+    /// by stroke phase so an Amap casing can be dashed while its center stays
+    /// solid (or vice versa) without duplicating geometry or draw calls.
+    std::unordered_map<int, LineDashPattern> lineDashByStyleGroup;
+    std::unordered_map<int, LineDashPattern> lineCasingDashByStyleGroup;
+    /// Command-time solid open-end cap keyed by resolved styleGroup. Values
+    /// are LineCap numerics and may vary with display zoom. Presence also
+    /// opts that styleGroup into endpoint-cap primitives at tessellation time.
+    std::unordered_map<int, StyleExpression::Ptr> lineSolidCapExprByStyleGroup;
+    /// Independent casing endpoint contract. Missing entries remain Butt.
+    std::unordered_map<int, StyleExpression::Ptr>
+        lineCasingSolidCapExprByStyleGroup;
+    /// Optional display-zoom visibility per line style group.  These gates
+    /// are command-time and therefore do not rebuild or duplicate geometry.
+    std::unordered_map<int, double> lineMinZoomByStyleGroup;
+    std::unordered_map<int, double> lineMaxZoomByStyleGroup;
     /// 海拔着色轨迹(demo,2026-08-23):按顶点椭球高在
     /// [lineColorGradientHeightMinMeters, lineColorGradientHeightMaxMeters]
     /// 内从 lineColorGradientLow 线性渐变到 lineColorGradientHigh,逐顶点
@@ -110,6 +356,15 @@ struct FeatureRenderStyle {
     /// 宽高比推,不拉伸)。
     std::array<float, 4> pointColor{1.00f, 1.00f, 1.00f, 0.95f};
     float pointSizePx = 14.0f;
+    /// Generic browser-provider styles may express screen values in CSS
+    /// pixels. AMap classic never reads this compatibility switch: its
+    /// ProviderContract owns the exact binary 1x/2x backing scale.
+    bool scaleStylePixelsByDevicePixelRatio = false;
+    /// Optional discrete zoom selector for provider visibility records.
+    /// 0 disables quantization. AMap classic sets 0.8: retain floor until
+    /// fraction .8, then select ceil. This affects feature/style min-max
+    /// windows only; the layer-level continuous LOD window remains unchanged.
+    double visibilityZoomCeilFraction = 0.0;
     /// 符号图形(P6c,设计 §11):内置形状名(circle/square/triangle/
     /// diamond/star/pin,见 SymbolShape.h)或经 Engine::addIconImage 注入
     /// 的位图图标名。名字两处都不命中 → 回落 circle(不断链)。
@@ -126,18 +381,6 @@ struct FeatureRenderStyle {
     float labelSizePx = 28.0f;    ///< 文字行高(px)
     float labelOffsetPx = 18.0f;  ///< 基线抬离锚点(px,屏幕向上)
     float labelHaloPx = 2.0f;     ///< halo 描边宽(px)
-    /// 符号/标注深度语义的行星尺度开关:相机大地高超过该值后,点符号与
-    /// 标注在 VS 里把深度顶到近平面(不再与地形做深度测试)。billboard
-    /// 是锚点常数深度,高空下 34px quad 覆盖数百 km 地面,地形逐像素
-    /// 深度会把符号斜切成半个/整个吞掉;而该高度下地形起伏已不足一像素,
-    /// 遮挡语义无意义。背面不误显:视野外/背面桶被层级地平线圆裁剪,
-    /// 标签另有 placement 地平线剔除。0 = 永不顶(纯深度测试语义)。
-    float symbolDepthPushCameraHeightMeters = 200000.0f;
-    /// 点符号被地形遮挡到底后的**最低可见度**(0 = 完全消失)。遮挡是连续
-    /// 量,这个值是它的下端:留一点可见度既避免临界点 popping,也保住"那边
-    /// 有个东西、在山后面"这条信息。**只作用于图标**——文字恒落到 0,
-    /// 半透明文字读不出来,只是噪声。
-    float symbolOccludedMinOpacity = 0.2f;
     // ---- 数据驱动样式表达式(P6b,设计 §12;空 = 用上面字面量) ----
     // 语义分割(setStyle 校验,越界降级字面量+警告):
     // 颜色表达式 = 数据驱动(镶嵌期逐要素求值烘进顶点色,禁 zoom——
@@ -147,12 +390,33 @@ struct FeatureRenderStyle {
     StyleExpression::Ptr fillColorExpr;
     StyleExpression::Ptr lineColorExpr;
     StyleExpression::Ptr pointColorExpr;
+    /// 逐要素文字字号，镶嵌期按 properties 求值；禁用 camera zoom。
+    StyleExpression::Ptr labelSizeExpr;
+    /// 逐要素文字基线偏移，镶嵌期按 properties 求值；允许 0，禁用 zoom。
+    StyleExpression::Ptr labelOffsetExpr;
     StyleExpression::Ptr lineWidthExpr;
     StyleExpression::Ptr pointSizeExpr;
     /// 符号图形表达式(P6c):**数据驱动**(逐要素求值定形状/图标名,禁
     /// zoom —— zoom 驱动换图需逐帧重镶,与颜色同理后置)。求值结果按
     /// 字符串取名;非字符串值/求值失败 → 回落 pointImage 字面量。
     StyleExpression::Ptr pointImageExpr;
+    /// Optional late-bound adapter for provider-owned icon taxonomies. The
+    /// worker preserves the two identity properties below; the resolver runs
+    /// only when display zoom and the current icon atlas are known. Returning
+    /// disabled keeps the feature label-only instead of fabricating a shape.
+    std::string pointStylePropertyA;
+    std::string pointStylePropertyB;
+    /// Under AmapClassicOfficial, appearance, layout, sizing, admission, and
+    /// collision come only from pointStyleResolver; generic point fields are
+    /// never consulted.
+    std::function<ResolvedPointStyle(const std::string&, const std::string&,
+                                     const std::string&, double, float)>
+        pointStyleResolver;
+    /// Worker-time closed-contract admission for provider point identities.
+    /// This runs before TileSymbolCpu allocation/budgeting; it must accept the
+    /// union of official label, fixed-icon, and dynamic-background records.
+    std::function<bool(const std::string&, const std::string&)>
+        pointIdentityValidator;
     FeatureAltitudeMode altitudeMode = FeatureAltitudeMode::Absolute;
     /// 高程偏移(m),语义见 FeatureAltitudeMode。Clamp 模式下兼作防
     /// z-fight 抬升(地形网格是 65 格下采样,面与网格间存在格内起伏差)。
@@ -190,8 +454,9 @@ struct FeatureTerrainSampling {
     std::function<
         std::function<std::optional<float>(double, double)>(const Rectangle&)>
         makeAreaSampler;
-    /// 地形数据代次签名:变化 → 已钳制几何节流重钳(方案 A 的 LOD 切换
-    /// 重钳,过渡态策略)。
+    /// 当前可见地形面签名:变化 → 已钳制几何节流重钳。官方 Scene 接线
+    /// 必须包含 TileRenderEntry 来源、网格档、morph、fade 与高度数据代次，
+    /// 不能只用 registry heightmap generation。
     std::function<uint64_t()> revision;
 };
 
@@ -212,6 +477,16 @@ struct FeatureTerrainSampling {
 /// P1 范围:Polygon fill + 外环 outline、LineString;Point 要素跳过(P5 符号)。
 class FeatureRenderLayer {
 public:
+    struct PresentationPolicy {
+        /// Provider-independent globe policy. Above this camera height,
+        /// symbols use a near-plane depth to avoid terrain-depth slicing of
+        /// screen-space billboards. Zero disables the push.
+        float symbolDepthPushCameraHeightMeters = 200000.0f;
+        /// Minimum icon opacity when the anchor is terrain-occluded. Labels
+        /// still fade to zero because translucent text is unreadable noise.
+        float symbolOccludedMinOpacity = 0.2f;
+    };
+    enum class AmapClassicProfile : uint8_t { Main, Regions, Poi };
     FeatureRenderLayer(std::string layerId,
                        RenderDevice* renderDevice,
                        const Ellipsoid& ellipsoid);
@@ -241,7 +516,26 @@ public:
 
     /// 设样式。已建桶按新样式全部重镶(渲染线程调用)。
     void setStyle(const FeatureRenderStyle& s);
+#if defined(EARTH_ENGINE_TESTING)
+    /// Test-only fixture injection for malformed/partial contract coverage.
+    /// Production builds cannot install an official style outside the sealed
+    /// profile factory.
+    void setStyleForContractTest(const FeatureRenderStyle& s);
+#endif
+#if defined(EARTH_ENGINE_TESTING)
+    void installAmapClassicProfile(AmapClassicProfile profile);
+#endif
     const FeatureRenderStyle& style() const { return style_; }
+    bool hasSealedOfficialProfile() const { return officialProfileSealed_; }
+    std::optional<AmapClassicProfile> amapClassicProfile() const {
+        return amapClassicProfile_;
+    }
+    void setPresentationPolicy(PresentationPolicy policy) {
+        presentationPolicy_ = policy;
+    }
+    const PresentationPolicy& presentationPolicy() const {
+        return presentationPolicy_;
+    }
 
     /// 注入地形采样(P3 贴地)。Scene 接线;不设 = 钳制回落椭球面。
     void setTerrainSampling(FeatureTerrainSampling sampling) {
@@ -308,6 +602,21 @@ public:
     /// "不稳定")。帧门控经 syncLabelWorkTicket 领取 Pumped 票据此续帧。
     bool hasPendingLabelWork() const;
 
+    /// Official-only migration gate: ordinary surface polygons are painted by
+    /// the terrain raster overlay once enabled. Buildings/extrusions and line
+    /// outlines remain on their existing geometry paths.
+    void setOfficialSurfaceFillBaked(bool enabled) {
+        if (officialSurfaceFillBaked_ == enabled) return;
+        officialSurfaceFillBaked_ = enabled;
+        if (officialProfileSealed_) {
+            std::vector<BucketKey> keys;
+            keys.reserve(buckets_.size());
+            for (const auto& entry : buckets_) keys.push_back(entry.first);
+            for (BucketKey key : keys) rebuildBucket(key);
+        }
+    }
+    bool officialSurfaceFillBaked() const { return officialSurfaceFillBaked_; }
+
     /// 七态只读聚合 dump(诊断基建):给定标注,一行看齐全部宿主可见状态,
     /// 把"跨会话逐层插探针"压成"dump 一眼看谁在说谎"(V27 一天五洞的
     /// 排查成本教训)。七态 = 驻留(桶)× 烘焙(settled/indexCount)×
@@ -347,6 +656,7 @@ public:
         /// renderDevice_->supportsStencilClassification(),但那是**静态能力
         /// 位**,不是真要用设备 —— 快照进来,镶嵌器就彻底不持设备指针。
         bool supportsStencilClassification = false;
+        double labelViewZoom = 0.0;
         /// 该批要素所在区域的地形高度范围(米,椭球面之上)。**有值时取代
         /// 逐点地形采样**:stencil 分类是像素级判定,挤出体只需要覆盖住地形
         /// 的高度范围,不需要贴合每个顶点的精确地面高度。
@@ -360,30 +670,77 @@ public:
         bool hasTerrainHeightRange = false;
         double terrainMinHeight = 0.0;
         double terrainMaxHeight = 0.0;
+        /// Slow-tile attribution only. Disabled by default so generic users
+        /// pay no per-feature clock cost; production AMap sinks opt in.
+        bool collectDiagnostics = false;
+        FeatureTileMesh::TessellationDiagnostics* tileMeshDiagnostics = nullptr;
+        /// Official AMap-only migration gate. When the sealed 256 surface
+        /// overlay is installed, ordinary provider surface polygons keep
+        /// their topology for the mask fetch path but do not build a second
+        /// terrain-clamped CDT fill mesh. Buildings/extrusions are unaffected.
+        bool bakeOfficialSurfaceFill = false;
     };
 
+#if defined(EARTH_ENGINE_TESTING)
+    void setOfficialIconAtlasDemandForTest(std::function<void(int)> demand) {
+        setOfficialIconAtlasDemand(std::move(demand));
+    }
+#endif
 
 private:
+    friend class AmapClassicSourceBundle;
+    friend class AmapClassicRuntime;
+    void setOfficialIconAtlasDemand(std::function<void(int)> demand) {
+        officialIconAtlasDemand_ = std::move(demand);
+    }
+#if !defined(EARTH_ENGINE_TESTING)
+    void installAmapClassicProfile(AmapClassicProfile profile);
+#endif
+    void applyStyleUnchecked(const FeatureRenderStyle& s);
+    bool officialProfileSealed_ = false;
+    bool officialSurfaceFillBaked_ = false;
+    std::function<void(int)> officialIconAtlasDemand_;
+    std::optional<AmapClassicProfile> amapClassicProfile_;
     /// 单要素标签在桶标签顶点流中的登记(P5c placement 的 collect 源 +
     /// opacity 回写区间)。碰撞盒 px 相对锚点投影位置(y 向上,含 halo)。
     struct LabelEntry {
         FeatureId featureId = kInvalidFeatureId;
         int rank = 6;
+        uint64_t officialInsertionOrder = 0;
+        uint32_t officialFragmentOrder = 0;
         int minZoom = 0;  ///< 要素显示窗口 [minZoom, maxZoom)
         int maxZoom = 30;
         Vec3 anchorEcef;               ///< 绝对 ECEF(double,不减桶原点)
+        Vec3 tangentEcef;              ///< 线标签屏幕方向参考；等于 anchor=水平
         float boxMinXPx = 0.0f;
         float boxMinYPx = 0.0f;
         float boxMaxXPx = 0.0f;
         float boxMaxYPx = 0.0f;
+        bool hasIconBox = false;
+        float iconBoxMinXPx = 0.0f;
+        float iconBoxMinYPx = 0.0f;
+        float iconBoxMaxXPx = 0.0f;
+        float iconBoxMaxYPx = 0.0f;
+        uint64_t repeatGroup = 0;
+        float repeatDistancePx = 0.0f;
+        float angleRad = 0.0f;
+        float paddingXPx = 0.0f;
+        float paddingYPx = 0.0f;
+        bool officialCanCovered = false;
+        std::vector<LabelCollisionPart> collisionParts;
         size_t vertexFloatStart = 0;   ///< labelVerts 起始 float 下标
         size_t vertexFloatCount = 0;
+        size_t labelIndexStart = 0;
+        size_t labelIndexCount = 0;
+        size_t backgroundIndexStart = 0;
+        size_t backgroundIndexCount = 0;
         float appliedOpacity = 0.0f;   ///< 已写入顶点流的值(判重传)
     };
 
     struct LabelGeometryCpu {
         std::vector<float> verts;
         std::vector<uint32_t> indices;
+        std::vector<uint32_t> backgroundIndices;
         std::vector<LabelEntry> entries;
     };
 
@@ -395,12 +752,14 @@ private:
             int indexCount = 0;
             int minZoom = 0;  ///< 要素显示窗口 [minZoom, maxZoom)
             int maxZoom = 30;
+            int styleGroup = 0;
         };
         Vec3 origin = Vec3::zero();        ///< ECEF double 原点
         std::unique_ptr<Buffer> fillVertexBuffer;
         std::unique_ptr<Buffer> fillIndexBuffer;
         int fillIndexCount = 0;
         std::vector<PaintRangeGpu> fillRanges;
+        std::vector<float> fillClampSource;
         std::unique_ptr<Buffer> lineVertexBuffer;
         std::unique_ptr<Buffer> lineIndexBuffer;
         int lineIndexCount = 0;
@@ -413,6 +772,9 @@ private:
         std::unique_ptr<Buffer> labelIndexBuffer;
         int labelIndexCount = 0;
         std::vector<PaintRangeGpu> labelRanges;
+        std::unique_ptr<Buffer> labelBackgroundIndexBuffer;
+        int labelBackgroundIndexCount = 0;
+        std::vector<PaintRangeGpu> labelBackgroundRanges;
         /// 标签 CPU 侧:顶点流副本(opacity 分量可改写重传)+ 登记表。
         std::vector<float> labelVertsCpu;
         std::vector<LabelEntry> labelEntries;
@@ -420,14 +782,37 @@ private:
         /// bakeTileBucketLabels 在字体就绪时烘 —— 字体注入晚于瓦片 commit
         /// 时,store 桶走 rebuildBucket 补标注,瓦片桶没有重镶路径,靠它。
         struct TileLabelSource {
+            struct GenericVisualPayload {
+                float labelSizePx = 28.0f;
+                float labelOffsetPx = 18.0f;
+            };
             int paintOrder = 0;
+            int styleGroup = 0;
             int rank = 6;
+            uint64_t officialInsertionOrder = 0;
             int minZoom = 0;
             int maxZoom = 30;
+            /// Official-provider labels resolve size/offset exclusively from
+            /// providerLayout + the sealed styleGroup runtime.  Only generic
+            /// labels carry caller-authored visual scalars.
+            std::optional<GenericVisualPayload> genericVisual;
+            uint64_t repeatGroup = 0;
+            float repeatDistancePx = 0.0f;
+            float angleRad = 0.0f;
+            float letterSpacingEm = 0.0f;
+            float paddingXPx = 0.0f;
+            float paddingYPx = 0.0f;
+            std::optional<FeatureRenderStyle::ProviderLabelLayout>
+                providerLayout;
             std::array<float, 3> rel{0.0f, 0.0f, 0.0f};
             Vec3 anchorEcef = Vec3::zero();
+            std::array<float, 3> tangentRel{0.0f, 0.0f, 0.0f};
+            Vec3 tangentEcef = Vec3::zero();
+            std::vector<std::array<double, 3>> pathCartographic;
             uint64_t featureId = 0;
             std::string name;
+            std::vector<uint32_t> labelSplitIndicesUtf16;
+            bool officialCanCovered = false;
         };
         std::vector<TileLabelSource> tileLabelSources;
         /// 本桶尚未完成的唯一 codepoint 集。首次 bake 构建，之后 Ready /
@@ -445,8 +830,12 @@ private:
         /// 一个烘不出字的桶让帧循环永不 idle(白烧)。atlas 翻转 / 重钳
         /// 清位重试。
         bool labelBakeSettled = false;
-        /// 瓦片桶专属:符号实例源(**rank 截断后**,故容量同上屏上限
-        /// 128/瓦)。留着是为了地形代次变化时重钳 —— 锚点高度是 commit
+        Mat4 labelBakeViewProjection;
+        double labelBakeViewportWidth = 0.0;
+        double labelBakeViewportHeight = 0.0;
+        bool hasCameraDependentLabelBake = false;
+        /// 瓦片桶专属:符号实例源。AMap provider 保留完整官方候选，
+        /// 通用图层可按引擎预算物化子集。留着是为了地形代次变化时重钳 —— 锚点高度是 commit
         /// 当刻的地形采样,冷启动时地形还粗,细化后山体升上来会把锚点埋
         /// 掉(硬件深度 + T2 判定都读它),表现为"标记点闪一下就没"。
         /// store 桶靠 rebuildBucket 重钳,瓦片桶没有重镶路径,靠它。
@@ -457,9 +846,9 @@ private:
         int sourceTileZoom = 0;
         int symbolViewZoomBucket = -1;
         uint64_t symbolSelectionSignature = 0;
-        /// E 方案 P2:瓦片线重钳源(每 ribbon 顶点 lon/lat 弧度 +
-        /// colorPacked,与 lineVertexBuffer 同序)。地形代次变化时重采样
-        /// 重传顶点缓冲(索引不变);镜像 tileSymbolSources 的重钳路径。
+        /// 瓦片线重钳源(每最终 line vertex 9f:pos/prev/next lon-lat +
+        /// side/length/colorPacked,与 lineVertexBuffer 同序)。地形代次变化
+        /// 时重采样并重传顶点缓冲(索引不变)，完整保留官方 join/cap。
         std::vector<float> lineClampSource;
         /// P6 stencil 分类贴地(方案 B):面 fill 的水密挤出体(pos-only
         /// 12B,相对桶原点)。P6b 按解析 fill 色分组——每组一对
@@ -484,6 +873,7 @@ private:
         std::unique_ptr<Buffer> extrudeIndexBuffer;
         int extrudeIndexCount = 0;
         std::vector<PaintRangeGpu> extrudeRanges;
+        std::vector<float> extrudeClampSource;
     };
 
     // VolumeCpuGroup / VolumeCpuGroups 已下沉到 data/FeatureTileMesh.h ——
@@ -506,9 +896,12 @@ private:
 
     /// 渲染线程自用的上下文(图集齐全,样式取当前成员)。
     TessellationContext tessellationContext() const {
-        return TessellationContext{style_, ellipsoid_, glyphAtlas_, iconAtlas_,
-                                   renderDevice_ &&
-                                       renderDevice_->supportsStencilClassification()};
+        TessellationContext ctx{
+            style_, ellipsoid_, glyphAtlas_, iconAtlas_,
+            renderDevice_ && renderDevice_->supportsStencilClassification(),
+            currentLabelViewZoom_};
+        ctx.bakeOfficialSurfaceFill = officialSurfaceFillBaked_;
+        return ctx;
     }
 
 public:
@@ -540,10 +933,11 @@ public:
     ///        ⚠️ **宁宽勿窄**:窄了体穿不透地形,该区域的线会整片消失。
     TessellationContext workerTessellationContext() const {
         TessellationContext ctx{style_, ellipsoid_, nullptr, nullptr,
-                                stencilClassificationSupported()};
+                                stencilClassificationSupported(), 0.0};
         ctx.hasTerrainHeightRange = hasWorkerTerrainRange_;
         ctx.terrainMinHeight = workerTerrainMinHeight_;
         ctx.terrainMaxHeight = workerTerrainMaxHeight_;
+        ctx.bakeOfficialSurfaceFill = officialSurfaceFillBaked_;
         return ctx;
     }
     /// **渲染线程**设定 worker 贴地用的区域高度范围(米)。worker 侧的
@@ -660,25 +1054,110 @@ public:
                                  int paintOrder,
                                  TileMeshCpu& mesh);
 
+    /// **worker 线程**:命名折线 → label-only TileSymbolCpu。锚点取折线
+    /// 弧长中点；不产生 point quad，也不要求 GlyphAtlas。
+    static void appendTileLineLabel(const TessellationContext& ctx,
+                                    const Feature& feature,
+                                    int paintOrder,
+                                    TileMeshCpu& mesh);
+
+    /// Amap letterSpacing is expressed in em and applies only between
+    /// drawable glyphs. Kept pure so style decoding and layout share a
+    /// deterministic, backend-independent contract.
+    static float labelLetterSpacingAdvancePx(size_t drawableGlyphCount,
+                                             float letterSpacingEm,
+                                             float labelSizePx);
+    static int effectiveLabelMinZoom(const FeatureRenderStyle& style,
+                                     int paintOrder, int featureMinZoom);
+    static int effectiveLabelMaxZoom(const FeatureRenderStyle& style,
+                                     int paintOrder, int featureMaxZoom);
+    static bool labelStyleVisibleAtZoom(const FeatureRenderStyle& style,
+                                        int styleGroup, double gateZoom);
+    static float resolvedLabelSizePx(const FeatureRenderStyle& style,
+                                     int paintOrder, double viewZoom,
+                                     float featureSizePx);
+    static std::array<float, 4> resolvedLabelColor(
+        const FeatureRenderStyle& style, int paintOrder, double viewZoom);
+    static std::array<float, 4> resolvedLabelHaloColor(
+        const FeatureRenderStyle& style, int paintOrder, double viewZoom);
+    static float resolvedLabelHaloWidthPx(const FeatureRenderStyle& style,
+                                          int styleGroup,
+                                          double viewZoom);
+
     /// **渲染线程**:单条文字 → glyph quads(32B 布局)+ LabelEntry 登记。
     /// store 镶嵌与瓦片准入定型共用 —— 标签顶点布局/碰撞盒契约只此一份。
     static void appendLabelTextQuads(GlyphAtlas& atlas,
                                      const FeatureRenderStyle& style,
                                      FeatureId featureId,
                                      const Vec3& anchorEcef,
+                                     const Vec3& tangentEcef,
                                      const std::array<float, 3>& rel,
+                                     const std::array<float, 3>& tangentRel,
                                      const std::string& text,
+                                     const std::vector<uint32_t>*
+                                         splitIndicesUtf16,
                                      std::vector<float>& labelVerts,
                                      std::vector<uint32_t>& labelIndices,
+                                     std::vector<uint32_t>* backgroundIndices,
                                      std::vector<LabelEntry>& labelEntries,
                                      int rank = 6,
                                      int minZoom = 0,
-                                     int maxZoom = 30);
+                                     int maxZoom = 30,
+                                     float labelSizePx = -1.0f,
+                                     float labelOffsetPx = -1.0f,
+                                     float labelHaloPx = -1.0f,
+                                     const FeatureRenderStyle::ProviderLabelLayout*
+                                         providerLayout = nullptr,
+                                     float providerPixelRatio = 1.0f,
+                                     uint64_t repeatGroup = 0,
+                                     float repeatDistancePx = 0.0f,
+                                     float angleRad = 0.0f,
+                                     float letterSpacingEm = 0.0f,
+                                     float paddingXPx = 0.0f,
+                                     float paddingYPx = 0.0f,
+                                     const std::vector<std::array<double, 3>>*
+                                         pathCartographic = nullptr,
+                                     const Ellipsoid* pathEllipsoid = nullptr,
+                                     const Vec3* pathOrigin = nullptr,
+                                     double pathMetersPerPixel = 0.0,
+                                     const IconAtlas* iconAtlas = nullptr,
+                                     const ProjectedPathSampler*
+                                         projectedPath = nullptr,
+                                     const std::vector<ProjectedPathSample>*
+                                         officialGlyphSamples = nullptr);
 
     /// **渲染线程**:上传并整瓦原子替换。mesh 为空 → EmptyTerminal；
     /// 上传失败 → RetryableFailure，调用方保留 CPU mesh 后续重试。
     TileMeshCommitResult commitTileMesh(const TileKey& key,
                                         TileMeshCpu& mesh);
+#if defined(EARTH_ENGINE_TESTING)
+    void clampTileMeshForTest(TileMeshCpu& mesh) {
+        clampTileFillHeights(mesh);
+        clampTileExtrusionHeights(mesh);
+        clampTileLineHeights(mesh);
+    }
+    struct LabelCollisionBoundsForTest {
+        std::array<float, 4> text{};
+        bool hasSecondary = false;
+        std::array<float, 4> secondary{};
+    };
+    std::optional<LabelCollisionBoundsForTest>
+    firstTileLabelCollisionBoundsForTest() const;
+    std::optional<uint64_t> officialTileLabelInsertionOrderForTest(
+        const TileKey& key, const std::string& name) const;
+    struct TerrainReclampSnapshotForTest {
+        uint64_t appliedRevision = 0;
+        size_t pendingBuckets = 0;
+        const Buffer* fillVertexBuffer = nullptr;
+        const Buffer* lineVertexBuffer = nullptr;
+        const Buffer* pointVertexBuffer = nullptr;
+        const Buffer* labelVertexBuffer = nullptr;
+        const Buffer* extrusionVertexBuffer = nullptr;
+        std::optional<Vec3> origin;
+        std::optional<double> firstLabelAnchorHeightMeters;
+    };
+    TerrainReclampSnapshotForTest terrainReclampSnapshotForTest() const;
+#endif
     TileMeshCommitResult commitTileMesh(const TileKey& key,
                                         TileMeshCpu&& mesh) {
         return commitTileMesh(key, mesh);
@@ -701,7 +1180,12 @@ public:
     /// AtlasSaturated 表示全局字形并发/本帧启动预算已满，调用方应立即停止
     /// 整层桶扫描；下一帧由 hasPendingLabelWork 继续供帧。
     TileLabelBakeResult bakeTileBucketLabels(BucketGpu& gpu,
-                                             double viewZoom);
+                                              double viewZoom,
+                                              float stylePixelRatio,
+                                              const Mat4& viewProjection,
+                                              double viewportWidth,
+                                              double viewportHeight,
+                                              bool forceCameraRebake = false);
 
     /// P6:Renderer 级共享的新字形栅格化预算。预算所有权在 GlyphAtlas，
     /// 因为同一 Renderer 下可能有多个 FeatureRenderLayer；若放在 layer
@@ -712,7 +1196,7 @@ public:
     static constexpr double kGlyphRasterBudgetMs = 4.0;
 
     /// P6:地形代次重钳的每帧桶预算。重钳一次要重建全部瓦片桶(~60 个)
-    /// 的点 buffer + 重烘标签,实测单帧 27ms。代次变化本就 120 帧节流,
+    /// 的点 buffer + 重烘标签,实测单帧 27ms。代次变化由 2 秒合并窗节流,
     /// 摊几帧完成完全不可见。
     static constexpr int kReclampBucketsPerFrame = 4;
     std::vector<TileKey> pendingReclamp_;
@@ -721,6 +1205,7 @@ public:
     /// 解析)。commit 与重钳共用一份 —— 两处各写一遍必然错位。
     void buildTileSymbolGpu(const std::vector<TileSymbolCpu>& symbols,
                             const Vec3& origin, int tileZ,
+                            double viewZoom, float officialScale,
                             std::vector<float>& pointVerts,
                             std::vector<uint32_t>& pointIndices,
                             std::vector<PaintRange>& pointRanges,
@@ -739,6 +1224,10 @@ public:
     /// E 方案 P2:地形代次变化重钳线桶(镜像 reclampTileBucketSymbols;
     /// 只重建顶点缓冲,索引不变)。
     void reclampTileBucketLines(BucketGpu& gpu);
+    void clampTileFillHeights(TileMeshCpu& mesh);
+    void reclampTileBucketFills(BucketGpu& gpu);
+    void clampTileExtrusionHeights(TileMeshCpu& mesh);
+    void reclampTileBucketExtrusions(BucketGpu& gpu);
     /// 共享钳高数学:由 clampSource(每顶点 lon/lat/colorPacked)重建完整
     /// ribbon 顶点流(pos/prev/next/lengthSoFar 重算,side/color 原样)。
     /// 返回 false = 源不足/退化,调用方保留旧缓冲。
@@ -787,6 +1276,9 @@ private:
     static void tessellateFeatureInto(const TessellationContext& ctx,
                                const Feature& feature,
                                int paintOrder,
+                               int fillStyleGroup,
+                               int lineStyleGroup,
+                               int labelStyleGroup,
                                const AreaSampleFn& sample,
                                Vec3& origin,
                                bool& hasOrigin,
@@ -808,23 +1300,42 @@ private:
                                    std::vector<PaintRange>* outRanges =
                                        nullptr,
                                    std::vector<float>* clampSource = nullptr);
+    static void flattenExtrusionRanges(
+        const std::map<std::tuple<int, int, int, int>, PaintGeometryCpu>& ranges,
+        std::vector<float>& verts, std::vector<uint32_t>& indices,
+        std::vector<PaintRange>* outRanges,
+        std::vector<float>* clampSource = nullptr);
+    static void flattenLinePaintRanges(
+        const std::map<std::pair<int, int>, PaintGeometryCpu>& ranges,
+        size_t floatsPerVertex, std::vector<float>& verts,
+        std::vector<uint32_t>& indices, std::vector<PaintRange>* outRanges,
+        std::vector<float>* clampSource = nullptr);
+    static void flattenStylePaintRanges(
+        const std::map<std::pair<int, int>, PaintGeometryCpu>& ranges,
+        size_t floatsPerVertex, std::vector<float>& verts,
+        std::vector<uint32_t>& indices,
+        std::vector<PaintRange>* outRanges = nullptr);
 
     static void flattenLabelRanges(
-        const std::map<int, LabelGeometryCpu>& ranges,
+        const std::map<std::pair<int, int>, LabelGeometryCpu>& ranges,
         std::vector<float>& verts,
         std::vector<uint32_t>& indices,
         std::vector<LabelEntry>& entries,
-        std::vector<PaintRange>* outRanges);
+        std::vector<PaintRange>* outRanges,
+        std::vector<uint32_t>* backgroundIndices = nullptr,
+        std::vector<PaintRange>* backgroundRanges = nullptr);
 
     /// V6 建筑挤出:footprint(贴地钳高后)+ amap_height → 墙带 + CDT 顶面。
     static void appendExtrusionVolume(
         const TessellationContext& ctx,
         const Feature& feature,
-        const std::array<float, 4>& color,
+        const std::array<float, 4>& roofColor,
+        const std::array<float, 4>& wallColor,
         Vec3& origin,
         bool& hasOrigin,
         std::vector<float>& extrudeVerts,
-        std::vector<uint32_t>& extrudeIndices);
+        std::vector<uint32_t>& extrudeIndices,
+        std::vector<float>* clampSource = nullptr);
 
     /// P6 stencil 贴地:polygon footprint 挤成水密体(底/顶两层同拓扑
     /// CDT cap + 环边墙),按解析 fill 色归组。高度范围 = 环顶点+粗内部
@@ -908,6 +1419,7 @@ private:
         double zoomLevel = 0.0;
         float lineWidthPx = 0.0f;
         float pointSizePx = 0.0f;
+        float stylePixelRatio = 1.0f;
         float symbolDepthPush = 0.0f;
         float halfWidthPerEyeZ = 0.0f;
     };
@@ -921,6 +1433,7 @@ private:
 
     std::string layerId_;
     bool visible_ = true;
+    PresentationPolicy presentationPolicy_;
     RenderDevice* renderDevice_ = nullptr;
     // worker 贴地用的区域高度范围(渲染线程写,worker 读;见
     // setWorkerTerrainHeightRange 的无锁理由)。
@@ -936,6 +1449,10 @@ private:
     std::unordered_map<BucketKey, BucketGpu> buckets_;
     /// E1:MVT 瓦片桶(瓦片即桶)。与 buckets_ 平行,同一命令层消费。
     std::unordered_map<TileKey, BucketGpu> tileBuckets_;
+    /// Render-thread equivalent of the official worker Util.stamp stream.
+    /// Assigned once when a sealed-provider tile is admitted, then carried
+    /// through terrain/zoom/glyph rebuilds. Zero remains the generic sentinel.
+    uint64_t nextOfficialInsertionOrder_ = 1;
 
     // ---- 编辑预览态 ----
     FeatureId previewFeatureId_ = kInvalidFeatureId;
@@ -963,6 +1480,7 @@ private:
     // 与字体同构:图标可在建桶之后才注入,图集代次变化 → 全桶重镶补 uv。
     IconAtlas* iconAtlas_ = nullptr;
     uint64_t lastIconRevision_ = 0;
+    float lastStylePixelRatio_ = 1.0f;
 
     // ---- 跨瓦稳定符号 ID(符号刀C) ----
     /// name 哈希 → 同名符号锚点表。语义见 crossTileIdFor。
@@ -986,6 +1504,7 @@ private:
     /// 瓦片标签派生几何只覆盖当前整数 zoom 窗口；跨档时失效并按保留的
     /// tileLabelSources 重烘，避免为当前不可见的数千 POI 预烘字形/quad。
     int lastLabelBakeZoomBucket_ = -1;
+    double currentLabelViewZoom_ = 0.0;
     bool symbolBucketsAwaitingRebuild_ = false;
     /// V27:桶换代(bake 出新标注/重镶)→ 下一帧全量 placement 绕过 300ms
     /// 节流(与 priorityChanged 即时重跑同款),runFull 后清位。不即时跑的

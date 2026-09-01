@@ -11,12 +11,15 @@
 #include "renderer/TileCompositeBakePoc.h"
 #include "renderer/VtIndirectionSamplePoc.h"
 #include "renderer/RenderDevice.h"
+#include "renderer/Renderer.h"
+#include "renderer/IconAtlas.h"
+#include "renderer/GlyphAtlas.h"
 #include "layers/FeatureRenderLayer.h"
 #include "data/MvtVectorSource.h"
 #include "layers/VectorLayer.h"
-#include "providers/RoadFieldSource.h"
-#include "providers/VectorDrapeImageryProvider.h"
 #include "layers/ActivatedRasterOverlay.h"  // B2a 门②:overlays.front()->getTileProvider()
+#include "layers/RasterOverlay.h"
+#include "providers/ImageryProvider.h"
 #include "core/cache/HttpCache.h"
 #include "core/async/WorkLedger.h"
 #include "debug/Contracts.h"
@@ -62,6 +65,23 @@ Engine::~Engine() {
     // 先摘除 WorkLedger 唤醒桥接:它捕获 this,worker/网络线程可能正要触发,
     // 必须在任何成员析构前断开(WorkLedger 是全局单例,活得比 Engine 久)。
     WorkLedger::shared().setWakeCallback(nullptr);
+    {
+        // A worker may already hold a copied WorkLedger callback. The copy
+        // captures only this shared gate; taking the same mutex waits for any
+        // invocation already inside the gate, then revokes Engine access for
+        // every late copy before object destruction continues.
+        std::lock_guard<std::mutex> lock(frameWakeGate_->mutex);
+        frameWakeGate_->engine = nullptr;
+        frameWakeGate_->hostCallback = nullptr;
+    }
+    // The official bundle removes its three Scene-owned layers through this
+    // Engine. Destroy it while scene_ is still a fully live object; waiting
+    // for Scene's member destruction would re-enter Engine through a Scene
+    // whose unique_ptr is already being deleted.
+    if (scene_) {
+        scene_->clearTilesets();
+        scene_->removeAmapClassicRuntime();
+    }
     onSurfaceDestroyed();
 }
 
@@ -126,6 +146,12 @@ bool Engine::offscreenPostProcessSupported() const {
 }
 
 bool Engine::setOffscreenPassthroughEnabled(bool enabled) {
+    if (enabled && scene_ && scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic offscreen passthrough while AMap official runtime is active");
+        offscreenPassthroughEnabled_ = false;
+        return false;
+    }
     if (enabled && !offscreenPostProcessSupported()) {
         platformLog(LogLevel::Error, "Engine",
                     "offscreen passthrough requested but backend does not "
@@ -139,6 +165,12 @@ bool Engine::setOffscreenPassthroughEnabled(bool enabled) {
 }
 
 bool Engine::setFxaaEnabled(bool enabled) {
+    if (enabled && scene_ && scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic FXAA while AMap official runtime is active");
+        fxaaEnabled_ = false;
+        return false;
+    }
     if (enabled && !offscreenPostProcessSupported()) {
         platformLog(LogLevel::Error, "Engine",
                     "FXAA requested but backend does not support offscreen "
@@ -152,6 +184,12 @@ bool Engine::setFxaaEnabled(bool enabled) {
 }
 
 bool Engine::setAerialFogEnabled(bool enabled) {
+    if (enabled && scene_ && scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic aerial fog while AMap official runtime is active");
+        aerialFogEnabled_ = false;
+        return false;
+    }
     if (enabled && !offscreenPostProcessSupported()) {
         platformLog(LogLevel::Error, "Engine",
                     "aerial fog requested but backend does not support "
@@ -165,11 +203,21 @@ bool Engine::setAerialFogEnabled(bool enabled) {
 }
 
 void Engine::setAerialFogParams(float density, float startDistance) {
+    if (scene_ && scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic aerial fog parameters while AMap official runtime is active");
+        return;
+    }
     aerialFogDensity_ = density;
     aerialFogStartDistance_ = startDistance;
 }
 
-void Engine::setVirtualTexturePocEnabled(bool enabled) {
+bool Engine::setVirtualTexturePocEnabled(bool enabled) {
+    if (enabled && scene_ && scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject virtual texture PoC while AMap official runtime is active");
+        return false;
+    }
     virtualTexturePocEnabled_ = enabled;
     virtualTexturePocInitFailed_ = false;
     // 关闭时释放资源(避免持有离屏 FBO/atlas 占显存)。
@@ -177,24 +225,37 @@ void Engine::setVirtualTexturePocEnabled(bool enabled) {
         virtualTexturePoc_->dispose();
         virtualTexturePoc_.reset();
     }
+    return true;
 }
 
-void Engine::setTileCompositeBakePocEnabled(bool enabled) {
+bool Engine::setTileCompositeBakePocEnabled(bool enabled) {
+    if (enabled && scene_ && scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject tile composite bake PoC while AMap official runtime is active");
+        return false;
+    }
     tileCompositeBakePocEnabled_ = enabled;
     tileCompositeBakePocInitFailed_ = false;
     if (!enabled && tileCompositeBakePoc_) {
         tileCompositeBakePoc_->dispose();
         tileCompositeBakePoc_.reset();
     }
+    return true;
 }
 
-void Engine::setVtIndirectionSamplePocEnabled(bool enabled) {
+bool Engine::setVtIndirectionSamplePocEnabled(bool enabled) {
+    if (enabled && scene_ && scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject VT indirection sample PoC while AMap official runtime is active");
+        return false;
+    }
     vtIndirectionSamplePocEnabled_ = enabled;
     vtIndirectionSamplePocInitFailed_ = false;
     if (!enabled && vtIndirectionSamplePoc_) {
         vtIndirectionSamplePoc_->dispose();
         vtIndirectionSamplePoc_.reset();
     }
+    return true;
 }
 
 bool Engine::setGpuPassTimingEnabled(bool enabled) {
@@ -257,12 +318,23 @@ void Engine::setFrameRequestCallback(std::function<void()> cb) {
     // WorkLedger 是全局单例,故 ~Engine 必须清除(见析构),否则 worker 线程
     // 回调进已亡 Engine。回调可能在任意 worker/网络线程触发。
     if (frameRequestCallback_) {
-        WorkLedger::shared().setWakeCallback([this] {
-            requestRender("workLanded");
-            if (frameRequestCallback_) frameRequestCallback_();
+        {
+            std::lock_guard<std::mutex> lock(frameWakeGate_->mutex);
+            frameWakeGate_->engine = this;
+            frameWakeGate_->hostCallback = frameRequestCallback_;
+        }
+        const std::shared_ptr<FrameWakeGate> gate = frameWakeGate_;
+        WorkLedger::shared().setWakeCallback([gate] {
+            std::lock_guard<std::mutex> lock(gate->mutex);
+            if (!gate->engine) return;
+            gate->engine->requestRender("workLanded");
+            if (gate->hostCallback) gate->hostCallback();
         });
     } else {
         WorkLedger::shared().setWakeCallback(nullptr);
+        std::lock_guard<std::mutex> lock(frameWakeGate_->mutex);
+        frameWakeGate_->engine = nullptr;
+        frameWakeGate_->hostCallback = nullptr;
     }
 }
 
@@ -379,6 +451,11 @@ bool Engine::needsFrame() {
 }
 
 void Engine::setTerrainPageStoreEnabled(bool enabled) {
+    if (enabled && scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject TerrainPageStore while AMap official runtime is active");
+        return;
+    }
     terrainPageStoreEnabled_ = enabled;
     terrainPageStoreInitFailed_ = false;
     if (!enabled && terrainPageStore_) {
@@ -391,16 +468,18 @@ bool Engine::ensureTerrainPageStore() {
     if (!terrainPageStoreEnabled_ || terrainPageStoreInitFailed_) {
         return false;
     }
+    if (scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject pending TerrainPageStore while AMap official runtime is active");
+        terrainPageStoreEnabled_ = false;
+        return false;
+    }
     if (terrainPageStore_) {
         return true;
     }
     auto store = std::make_unique<TerrainPageStore>();
     TerrainPageStore::Config pageStoreConfig;
     pageStoreConfig.composeWorkers = &AsyncSystem::pool();
-    pageStoreConfig.roadFieldRequest = roadFieldRequest_;
-    pageStoreConfig.roadFieldColor = roadFieldColor_;
-    pageStoreConfig.roadFieldWidthRamp = roadFieldWidthRampPx_;
-    pageStoreConfig.roadFieldMaxZoom = roadFieldMaxZoom_;
     if (!store->initialize(device_, pageStoreConfig)) {
         terrainPageStoreInitFailed_ = true;
         return false;
@@ -410,7 +489,7 @@ bool Engine::ensureTerrainPageStore() {
     return true;
 }
 
-Renderer* Engine::renderer() const {
+const Renderer* Engine::renderer() const {
     return scene_ ? scene_->renderer() : nullptr;
 }
 
@@ -421,88 +500,6 @@ void Engine::setGpuHeightBakeEnabled(bool enabled) {
     if (terrainDisplacementPool_) {
         terrainDisplacementPool_->setGpuHeightBakeEnabled(enabled);
     }
-}
-
-void Engine::setRoadFieldSource(
-    std::function<void(const TileKey&, CancellationToken,
-                       std::function<void(std::vector<uint8_t>)>)>
-        request,
-    std::array<float, 4> lineColor,
-    std::array<float, 4> widthRampPx,
-    int fieldMaxZoom) {
-    roadFieldRequest_ = std::move(request);
-    roadFieldColor_ = lineColor;
-    roadFieldWidthRampPx_ = widthRampPx;
-    roadFieldMaxZoom_ = fieldMaxZoom;
-}
-
-void Engine::setRoadFieldStyleUniforms(std::array<float, 4> lineColor,
-                                       std::array<float, 4> widthRampPx) {
-    // 成员与页存储双写:首帧前调只落成员(随 Config 快照带入);首帧后调
-    // 直写页存储,下一帧命令构建生效(V26 一期,Uniform 成本类,零重烘)。
-    roadFieldColor_ = lineColor;
-    roadFieldWidthRampPx_ = widthRampPx;
-    if (terrainPageStore_) {
-        terrainPageStore_->setRoadFieldStyleUniforms(lineColor, widthRampPx);
-    }
-}
-
-void Engine::invalidateRoadFieldPages(int fieldMaxZoom) {
-    if (fieldMaxZoom >= 0) {
-        roadFieldMaxZoom_ = fieldMaxZoom;
-    }
-    if (terrainPageStore_) {
-        terrainPageStore_->invalidateFieldPages(fieldMaxZoom);
-    }
-}
-
-void Engine::invalidateComposedTerrainPages() {
-    if (terrainPageStore_) {
-        terrainPageStore_->invalidateComposedPages();
-    }
-}
-
-void Engine::setStyleTargets(VectorDrapeImageryProvider* drapeProvider,
-                             std::shared_ptr<RoadFieldSource> fieldSource,
-                             FeatureRenderLayer* symbolLayer) {
-    styleDrapeTarget_ = drapeProvider;
-    styleFieldTarget_ = std::move(fieldSource);
-    styleSymbolTarget_ = symbolLayer;
-    // 目标集变了,旧编译产物的指纹不再对应可达目标,清掉让下一份全量应用。
-    lastCompiledStyle_.reset();
-}
-
-std::vector<StyleError> Engine::applyStyleDocument(const std::string& jsonText) {
-    std::vector<StyleError> errors;
-    StyleDocument doc = parseStyleDocument(jsonText, errors);
-    CompiledStyle compiled;
-    if (errors.empty()) compiled = compileStyleDocument(doc, errors);
-    if (!errors.empty()) return errors;  // 整份拒收,现行样式不动
-
-    const StyleApplyPlan plan = planStyleApply(
-        lastCompiledStyle_ ? &*lastCompiledStyle_ : nullptr, compiled);
-    if (styleDrapeTarget_ && plan.rebakeDrape) {
-        styleDrapeTarget_->setStyle(compiled.drapeStyle);
-        invalidateComposedTerrainPages();
-    }
-    if (styleFieldTarget_) {
-        setRoadFieldStyleUniforms(compiled.fieldLineColor,
-                                  compiled.fieldWidthRamp);
-        if (plan.rebakeField) {
-            styleFieldTarget_->setStyle(compiled.fieldStyle);
-            invalidateRoadFieldPages(compiled.fieldMaxZoom);
-        }
-    }
-    if (styleSymbolTarget_ && plan.retessSymbols) {
-        // FeatureRenderLayer::setStyle 内部已全桶重镶(Re-tess 通路现成)。
-        // 按掩码合成:文档没写的字段保持现行 —— 尤其 altitudeMode 这类
-        // 几何语义(真机踩过:洗成 Absolute 后符号整批埋进地形)。
-        styleSymbolTarget_->setStyle(mergeSymbolStyle(
-            styleSymbolTarget_->style(), compiled.symbolStyle,
-            compiled.symbolMask));
-    }
-    lastCompiledStyle_ = std::move(compiled);
-    return {};
 }
 
 void Engine::setTerrainGpuDisplacementEnabled(bool enabled) {
@@ -1193,6 +1190,11 @@ CameraSystem& Engine::cameraSystem() {
 // ---- 矢量图层 ----
 
 void Engine::addVectorLayer(std::unique_ptr<VectorLayer> layer) {
+    if (scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic VectorLayer while AMap official runtime is active");
+        return;
+    }
     scene_->addVectorLayer(std::move(layer));
 }
 
@@ -1201,32 +1203,58 @@ std::unique_ptr<VectorLayer> Engine::removeVectorLayer(const std::string& layerI
 }
 
 void Engine::addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer) {
+    if (scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic FeatureRenderLayer while AMap official runtime is active");
+        return;
+    }
+    if (layer && layer->style().usesOfficialProviderContract()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject standalone official FeatureRenderLayer '%s'",
+                    layer->id().c_str());
+        return;
+    }
     scene_->addFeatureRenderLayer(std::move(layer));
+}
+
+bool Engine::addOfficialFeatureRenderLayer(
+    std::unique_ptr<FeatureRenderLayer> layer) {
+    if (!layer || !layer->hasSealedOfficialProfile() ||
+        !layer->style().usesOfficialProviderContract()) return false;
+    return scene_->addOfficialFeatureRenderLayer(std::move(layer));
 }
 
 std::unique_ptr<FeatureRenderLayer> Engine::removeFeatureRenderLayer(
     const std::string& layerId) {
-    // Keep the borrowed style target valid when callers use the legacy
-    // generic removal API for a Scene-owned MVT bundle.  MVT layers cannot be
-    // detached independently; Scene performs suspend/wait/drop/removal.
-    FeatureRenderLayer* mvtLayer = scene_->mvtVectorLayer(layerId);
     if (scene_->removeMvtVectorSource(layerId)) {
-        if (styleSymbolTarget_ == mvtLayer) styleSymbolTarget_ = nullptr;
         return nullptr;
     }
     return scene_->removeFeatureRenderLayer(layerId);
 }
 
+std::unique_ptr<FeatureRenderLayer> Engine::removeOfficialFeatureRenderLayer(
+    const std::string& layerId) {
+    return scene_->removeOfficialFeatureRenderLayer(layerId);
+}
+
 bool Engine::addMvtVectorSource(
     std::unique_ptr<MvtVectorSource> source,
     std::unique_ptr<FeatureRenderLayer> layer) {
+    if (scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic MVT source while AMap official runtime is active");
+        return false;
+    }
+    if (layer && layer->style().usesOfficialProviderContract()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic MVT source for official layer '%s'",
+                    layer->id().c_str());
+        return false;
+    }
     return scene_->addMvtVectorSource(std::move(source), std::move(layer));
 }
 
 bool Engine::removeMvtVectorSource(const std::string& layerId) {
-    if (styleSymbolTarget_ == scene_->mvtVectorLayer(layerId)) {
-        styleSymbolTarget_ = nullptr;
-    }
     return scene_->removeMvtVectorSource(layerId);
 }
 
@@ -1234,34 +1262,183 @@ size_t Engine::mvtVectorSourceCount() const {
     return scene_->mvtVectorSourceCount();
 }
 
-FeatureRenderLayer* Engine::mvtVectorLayer(const std::string& layerId) const {
-    return scene_->mvtVectorLayer(layerId);
+const AmapClassicRuntime* Engine::installAmapClassicRuntime(
+    PlatformBridge& platformBridge,
+    std::shared_ptr<ThreadPool> type1DecodePool,
+    std::shared_ptr<ThreadPool> poiDecodePool,
+    std::shared_ptr<ThreadPool> tessellationPool,
+    AmapClassicRuntime::Options options) {
+    if (!device_ || scene_->hasAmapClassicRuntime()) return nullptr;
+    if (terrainPageStoreEnabled_ || virtualTexturePocEnabled_ ||
+        tileCompositeBakePocEnabled_ || vtIndirectionSamplePocEnabled_) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject AMap official runtime while generic terrain/VT PoC is enabled");
+        return nullptr;
+    }
+    if (genericLabelFontInstalled_) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject official AMap runtime after generic font installation");
+        return nullptr;
+    }
+    if (genericIconInstalled_) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject official AMap runtime after generic icon installation");
+        return nullptr;
+    }
+    if (offscreenPassthroughEnabled_ || fxaaEnabled_ || aerialFogEnabled_) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject AMap official runtime after generic post-process activation");
+        return nullptr;
+    }
+    if (scene_->hasAnyTileset()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject AMap official runtime beside generic terrain/glTF/content Tileset");
+        return nullptr;
+    }
+    auto runtime = std::unique_ptr<AmapClassicRuntime>(
+        new AmapClassicRuntime(
+            *this, *device_, platformBridge, std::move(type1DecodePool),
+            std::move(poiDecodePool), std::move(tessellationPool),
+            std::move(options)));
+    const AmapClassicRuntime* installed =
+        scene_->installAmapClassicRuntime(std::move(runtime));
+    if (installed) {
+        // Commit first so failed construction/installation cannot mutate the
+        // preceding generic scene. The official canvas becomes neutral before
+        // control returns to the host, hence before its first render frame.
+        scene_->setSunsetTerrainTint(0.0f, 0.0f);
+    }
+    return installed;
+}
+
+bool Engine::hasAmapClassicRuntime() const {
+    return scene_->hasAmapClassicRuntime();
+}
+
+AmapClassicRuntime* Engine::amapClassicRuntimeForSdk() {
+    return scene_ ? scene_->amapClassicRuntimeForEngine() : nullptr;
 }
 
 bool Engine::setLabelFontData(std::vector<uint8_t> fontData) {
-    return scene_->setLabelFontData(std::move(fontData));
+    if (scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic font installation while official AMap runtime exists");
+        return false;
+    }
+    const bool installed = scene_->setLabelFontData(std::move(fontData));
+    if (installed) genericLabelFontInstalled_ = true;
+    return installed;
+}
+
+void Engine::activateAmapClassicOfficialGlyphProvider(
+    std::function<void(uint32_t)> demand) {
+    if (auto* glyphs = scene_->renderer()->glyphAtlas()) {
+        glyphs->activateAmapOfficialProvider(std::move(demand));
+    }
+}
+
+bool Engine::installAmapClassicOfficialGlyphBatch(
+    int imageWidth, int imageHeight,
+    const std::vector<uint8_t>& grayscale,
+    const std::vector<GlyphAtlas::ProviderGlyph>& glyphs) {
+    auto* atlas = scene_->renderer()->glyphAtlas();
+    return atlas && atlas->installAmapOfficialGlyphBatch(
+        imageWidth, imageHeight, grayscale, glyphs);
 }
 
 bool Engine::addIconImage(const std::string& name,
                           int width,
                           int height,
                           const std::vector<uint8_t>& rgba) {
+    if (scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic icon installation while official AMap runtime exists");
+        return false;
+    }
+    if (name.rfind("amap-icons-", 0) == 0) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic icon write to reserved AMap namespace '%s'",
+                    name.c_str());
+        return false;
+    }
+    const bool installed = scene_->addIconImage(name, width, height, rgba);
+    if (installed) genericIconInstalled_ = true;
+    return installed;
+}
+
+bool Engine::addOfficialIconImage(const std::string& name,
+                                  int width,
+                                  int height,
+                                  const std::vector<uint8_t>& rgba) {
+    if (name.rfind("amap-icons-", 0) != 0) return false;
     return scene_->addIconImage(name, width, height, rgba);
+}
+
+void Engine::clearAmapClassicOfficialAssets() {
+    if (scene_ && scene_->renderer()) {
+        if (auto* icons = scene_->renderer()->iconAtlas()) {
+            icons->removeNamePrefix("amap-icons-");
+        }
+        if (auto* glyphs = scene_->renderer()->glyphAtlas()) {
+            glyphs->clearAmapOfficialProvider();
+        }
+    }
+}
+
+bool Engine::hasIconImage(const std::string& name) const {
+    return scene_->hasIconImage(name);
 }
 
 size_t Engine::vectorLayerCount() const {
     return scene_->vectorLayerCount();
 }
 
+bool Engine::installAmapClassicTerrainTileset(std::unique_ptr<Tileset> tileset) {
+    if (!scene_->hasAmapClassicRuntime() || !tileset ||
+        !tileset->rasterOverlays().empty()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject invalid AMap official terrain Tileset: official "
+                    "surface fill is terrain-local and permits no raster "
+                    "overlay");
+        return false;
+    }
+    // The official runtime owns exactly one primary terrain Tileset, but the
+    // terrain source itself is scene configuration and may be replaced.  Use
+    // Scene's primary replacement operation so a second installScene cannot
+    // leave the facade reporting a new provider while rendering the old one.
+    scene_->setTileset(std::move(tileset));
+    return true;
+}
+
+void Engine::clearAmapClassicTerrainTileset() {
+    if (!scene_) return;
+    scene_->clearTilesets();
+}
+
 void Engine::setTileset(std::unique_ptr<Tileset> tileset) {
+    if (scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject public Tileset mutation while AMap official runtime is active");
+        return;
+    }
     scene_->setTileset(std::move(tileset));
 }
 
 void Engine::stageTilesetReplacement(std::unique_ptr<Tileset> tileset) {
+    if (scene_->hasAmapClassicRuntime() && tileset) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic staged Tileset while AMap official runtime is active");
+        return;
+    }
     scene_->stageTilesetReplacement(std::move(tileset));
 }
 
 void Engine::addTileset(std::unique_ptr<Tileset> tileset) {
+    if (scene_->hasAmapClassicRuntime() && tileset) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic content Tileset while AMap official runtime is active");
+        return;
+    }
     scene_->addTileset(std::move(tileset));
 }
 
@@ -1336,6 +1513,11 @@ void Engine::setTime(double julianDate) {
 }
 
 void Engine::setSunsetTerrainTint(float warmth, float shadowScale) {
+    if (scene_->hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "Engine",
+                    "reject generic sunset terrain tint while AMap official runtime is active");
+        return;
+    }
     scene_->setSunsetTerrainTint(warmth, shadowScale);
 }
 

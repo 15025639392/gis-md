@@ -2,6 +2,7 @@
 
 #include "earth_engine/content/EllipsoidTerrainMeshBuilder.h"
 #include "earth_engine/content/EllipsoidTerrainContentProvider.h"
+#include "earth_engine/content/AmapClassicTerrainInternal.h"
 #include "earth_engine/content/GltfModel.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
@@ -18,6 +19,41 @@
 using namespace earth_engine;
 
 namespace {
+
+class RaisedTerrainProvider final : public TilesetContentProvider {
+public:
+    std::string id() const override { return "raised-terrain"; }
+    bool supportsTile(const TileKey&) const override { return true; }
+    std::vector<TileKey> rootTiles() const override {
+        return {TileKey{"XYZ-WebMercator", 0, 0, 0}};
+    }
+    uint64_t tileMetadataRevision() const override { return 17; }
+    uint64_t childTopologyRevision() const override { return 23; }
+    bool providesTerrainQuadtree() const override { return true; }
+    TileAvailabilityState availabilityState(const TileKey&) const override {
+        return TileAvailabilityState::Available;
+    }
+    int estimatedRequestFanout(const TileKey&) const override { return 3; }
+    void requestTileContent(const TileKey& key, CancellationToken,
+                            ContentCallback callback,
+                            HttpRequestPriority) override {
+        callback(key, raised());
+    }
+    TileContentLoadResult decodeContent(const uint8_t*, size_t) override {
+        return raised();
+    }
+private:
+    static TileContentLoadResult raised() {
+        auto model = std::make_unique<GltfModel>();
+        model->primitives.emplace_back();
+        SurfaceVertex vertex;
+        vertex.positionEcef = Vec3(1.0, 2.0, 725.0);
+        model->primitives.front().vertices = {vertex};
+        return TileContentLoadResult::renderTerrain(
+            std::move(model), {}, Mat4::identity(),
+            TileTerrainRenderSource::Generic);
+    }
+};
 
 // A tile rectangle well away from poles/antimeridian so projection is smooth.
 Rectangle testRectangle() {
@@ -36,6 +72,10 @@ TEST(EllipsoidTerrainMeshBuilderTest, ProducesDrapeReadyGridModel) {
     ASSERT_NE(nullptr, model);
     ASSERT_EQ(1u, model->primitives.size());
     const GltfPrimitive& prim = model->primitives.front();
+
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
+              prim.baseColorFactor);
+    EXPECT_FALSE(prim.unlit);
 
     const int n = gridSize + 1;
     EXPECT_EQ(static_cast<size_t>(n * n), prim.vertices.size());
@@ -58,21 +98,55 @@ TEST(EllipsoidTerrainMeshBuilderTest, ProducesDrapeReadyGridModel) {
 }
 
 TEST(EllipsoidTerrainMeshBuilderTest,
-     ProviderMarksTerrainContentAsEllipsoidFallback) {
-    EllipsoidTerrainContentProvider provider("Geographic-TMS", 1, 4);
+     InternalAmapTerrainDecoratorKeepsOfficialUnlitLandContract) {
+    auto provider = decorateAmapClassicTerrainContentProvider(
+        std::make_unique<EllipsoidTerrainContentProvider>(
+            "XYZ-WebMercator", 13, 16));
+    ASSERT_NE(nullptr, provider);
     TileContentLoadResult result;
-    provider.requestTileContent(
-        TileKey{"Geographic-TMS", 0, 0, 0},
-        CancellationToken{},
+    provider->requestTileContent(
+        TileKey{"XYZ-WebMercator", 0, 0, 0}, CancellationToken{},
         [&](const TileKey&, TileContentLoadResult loaded) {
             result = std::move(loaded);
         },
         HttpRequestPriority::Normal);
 
-    EXPECT_EQ(TileLoadStatus::Renderable, result.status);
-    EXPECT_TRUE(result.terrainRenderContent);
-    EXPECT_EQ(TileTerrainRenderSource::EllipsoidFallback,
-              result.terrainRenderSource);
+    ASSERT_EQ(TileLoadStatus::Renderable, result.status);
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    EXPECT_EQ((std::array<float, 4>{0xf7 / 255.0f, 0xf7 / 255.0f,
+                                    0xf7 / 255.0f, 1.0f}),
+              primitive.baseColorFactor);
+    EXPECT_TRUE(primitive.unlit);
+}
+
+TEST(EllipsoidTerrainMeshBuilderTest,
+     InternalAmapTerrainDecoratorPreservesHeightAndProviderLifecycle) {
+    auto provider = decorateAmapClassicTerrainContentProvider(
+        std::make_unique<RaisedTerrainProvider>());
+    ASSERT_NE(nullptr, provider);
+    EXPECT_EQ("amap-classic-terrain:raised-terrain", provider->id());
+    EXPECT_EQ(17u, provider->tileMetadataRevision());
+    EXPECT_EQ(23u, provider->childTopologyRevision());
+    EXPECT_EQ(3, provider->estimatedRequestFanout(
+                     TileKey{"XYZ-WebMercator", 0, 0, 0}));
+
+    TileContentLoadResult result;
+    provider->requestTileContent(
+        TileKey{"XYZ-WebMercator", 0, 0, 0}, CancellationToken{},
+        [&](const TileKey&, TileContentLoadResult loaded) {
+            result = std::move(loaded);
+        });
+    ASSERT_NE(nullptr, result.gltfModel);
+    ASSERT_EQ(1u, result.gltfModel->primitives.size());
+    const GltfPrimitive& primitive = result.gltfModel->primitives.front();
+    ASSERT_EQ(1u, primitive.vertices.size());
+    EXPECT_DOUBLE_EQ(725.0, primitive.vertices.front().positionEcef.z());
+    EXPECT_EQ((std::array<float, 4>{0xf7 / 255.0f, 0xf7 / 255.0f,
+                                    0xf7 / 255.0f, 1.0f}),
+              primitive.baseColorFactor);
+    EXPECT_TRUE(primitive.unlit);
 }
 
 TEST(EllipsoidTerrainMeshBuilderTest,

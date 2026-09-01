@@ -14,6 +14,15 @@
 #include <vector>
 
 namespace earth_engine {
+std::unique_ptr<GltfModel> makeEllipsoidModel(
+    const Rectangle& geographicRectangle,
+    const std::vector<RasterOverlayProjection>& projections,
+    int gridSize,
+    const EllipsoidProxyHeightSampler& heightSampler,
+    bool computeGridNormals,
+    bool computeGeomorphDelta,
+    bool buildSkirt);
+
 namespace {
 
 constexpr double kEllipsoidTerrainMinimumHeight = 0.0;
@@ -369,7 +378,7 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     bool computeGridNormals,
     bool computeGeomorphDelta,
     bool buildSkirt) {
-    return makeModel(
+    return makeEllipsoidModel(
         geographicRectangle,
         std::vector<RasterOverlayProjection>{projection},
         gridSize,
@@ -380,6 +389,19 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
 }
 
 std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
+    const Rectangle& geographicRectangle,
+    const std::vector<RasterOverlayProjection>& projections,
+    int gridSize,
+    const EllipsoidProxyHeightSampler& heightSampler,
+    bool computeGridNormals,
+    bool computeGeomorphDelta,
+    bool buildSkirt) {
+    return makeEllipsoidModel(
+        geographicRectangle, projections, gridSize, heightSampler,
+        computeGridNormals, computeGeomorphDelta, buildSkirt);
+}
+
+std::unique_ptr<GltfModel> makeEllipsoidModel(
     const Rectangle& geographicRectangle,
     const std::vector<RasterOverlayProjection>& projections,
     int gridSize,
@@ -405,7 +427,8 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     const Vec3 localOrigin = Ellipsoid::WGS84().cartographicToCartesian(center);
     model->preferredLocalOriginEcef = localOrigin;
     model->rasterOverlayDetails =
-        makeRasterOverlayDetails(geographicRectangle, projections);
+        EllipsoidTerrainMeshBuilder::makeRasterOverlayDetails(
+            geographicRectangle, projections);
 
     GltfNodeRuntime rootNode;
     rootNode.baseLocalTransform = Mat4::translation(localOrigin);
@@ -428,7 +451,6 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeModel(
     primitive.doubleSided = false;
     primitive.metallicFactor = 0.0f;
     primitive.roughnessFactor = 1.0f;
-    primitive.unlit = false;
     primitive.runtime.nodeIndex = 0;
     const size_t projectionCount =
         std::min(projections.size(), kGltfMaxTexCoordSets);
@@ -504,7 +526,6 @@ std::unique_ptr<GltfModel> EllipsoidTerrainMeshBuilder::makeTemplateOnlyModel(
     primitive.doubleSided = false;
     primitive.metallicFactor = 0.0f;
     primitive.roughnessFactor = 1.0f;
-    primitive.unlit = false;
     primitive.runtime.nodeIndex = 0;
     primitive.runtime.hasNormals = true;
     model->primitives.push_back(std::move(primitive));

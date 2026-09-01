@@ -61,7 +61,7 @@ PageStore 同时具备两层生命周期保护：`SubmissionLease` 在 CPU 命�
 - 普通 raster overlay、WMS/WMTS/TMS/XYZ、GCJ adapter 和“矢量先栅格化”的 MVT 面 drape 都可以复用 Runtime + Depot；关键条件是 provider 最终产出带明确 scheme/projection 的 `DecodedImage`。
 - MVT 面接入点是 `VectorDrapeImageryProvider` 一类 adapter：MVT 获取/解码仍属于矢量 source，adapter 把指定面层栅格化成 canonical page image，再参与 PageStore 或 Direct composite。PageStore 不直接理解 MVT extent、source-layer 或原生瓦片坐标。
 - MVT 点/标注/几何线继续走 Scene 托管的 `MvtVectorSource → FeatureRenderLayer`，不应塞入 raster overlay runtime；两条系统只在 Scene 帧级资源仲裁和最终地形/深度语义上协作。
-- ⚠️ **MVT 道路线场即将废弃。** `RoadFieldSource → LineFieldRasterizer → TerrainPageStore road-field plane` 仅保留兼容与回归，不得作为 Overlay Runtime、Asset Depot 或 PageStore backend 的新扩展入口。此标记不影响 MVT 面 drape、MVT 点/标注和 `FeatureRenderLayer` 几何线。
+- 历史 `RoadFieldSource → LineFieldRasterizer → TerrainPageStore road-field plane` 已完整物理删除，不再是 Overlay Runtime、Asset Depot 或 PageStore backend。MVT 点/标注和 `FeatureRenderLayer` 几何线不受影响。
 
 “最多 4 overlay”只限制 Direct/glTF draw command 的**同时采样槽位**：`RenderCommand` 固定有 `kMaxGltfRasterOverlays == 4` 组纹理、UV scale-bias、texcoord 与 opacity。Runtime/SDK 可以配置更多层，但当前 PageStore 必须保持与 miss 时 Direct fallback 完全同源；因此 active source 超过 4 个时，PageStore 对该有序栈整组 fail-closed，不能先合成 5+ 层再让 Direct miss 只画前 4 层。它不是 Runtime 最多管理 4 层，也不是 PageStore 技术上只能合成 4 层，而是现阶段的跨 backend parity 闸。
 
@@ -116,7 +116,7 @@ PageStoreCompatibilityKey = {
 1. `providers[0]` 是 canonical page domain；当前真实地形 scheme 必须与它相同。
 2. 后续 provider 可有不同内容、最大 zoom 和源图尺寸，但必须能消费 canonical `PageKey` 并输出 canonical 页空间图像。
 3. XYZ/TMS、Mercator/Geographic、Standard/GCJ 等不兼容组合整组退出 PageStore，继续走 Direct fallback；不得只丢弃冲突 source。
-4. 原生 mixed-scheme 数据若要参与页合成，转换职责放在 adapter 内：adapter 自行枚举原生源瓦、重投影/重采样，再把结果伪装成 canonical imagery。`VectorDrapeImageryProvider` / `AmapDrapeImageryProvider` 是现有先例。
+4. 原生 mixed-scheme 数据若要参与页合成，转换职责放在 adapter 内：adapter 自行枚举原生源瓦、重投影/重采样，再把结果伪装成 canonical imagery。`VectorDrapeImageryProvider` 是现有先例。AMap classic-normal 生产路径是纯矢量，不保留 AMap raster adapter。
 5. domain 或 provider set 变化会推进 generation；所有晚到的 imagery/compose/field/upload item 必须同时匹配 generation、页 key 与 layer，不能仅凭相同 `z/x/y` 复用。
 
 因此，“Cesium 支持 geometry/overlay scheme 不同”不能推导出“PageStore 支持多个异构 overlay 共页”。前者是 provider 独立映射，后者需要 per-source placement 与 page namespace，当前没有实现。

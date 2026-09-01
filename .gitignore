@@ -23,6 +23,9 @@ cmake-build-*/
 .codex/task-state/*
 !.codex/task-state/.gitkeep
 
+# Codex orchestrator 调试/取证产物(日志/截图/JS 提取,单次实验一次性,不入库)
+.codex/artifacts/
+
 # 参考项目源码本地克隆(CLAUDE.md .ref/ 约定),不入库
 .ref/
 scaffold/.ref/

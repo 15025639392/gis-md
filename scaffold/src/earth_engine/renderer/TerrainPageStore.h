@@ -294,32 +294,6 @@ public:
         /// 下放前逐字节一致,只是同帧完成)。
         ThreadPool* composeWorkers = nullptr;
 
-        /// ==== 刀2 路网 SDF 场"第二平面"(可选)====
-        /// 非空时页存储维护场"第二平面"(D2 线段纹素,RGBA8,编码见
-        /// LineFieldRasterizer.h)。回调契约:缓冲尺寸恒为 pageSizeTexels²×4;
-        /// **回调必到**(取消/失败给全 0=空哨兵,失败安全);可在任意线程
-        /// 回调。页存储对生产者(RoadFieldSource)零依赖,host 测试注入 fake。
-        using RoadFieldRequestFn = std::function<void(
-            const TileKey& pageTileKey, CancellationToken,
-            std::function<void(std::vector<uint8_t>)>)>;
-        RoadFieldRequestFn roadFieldRequest;
-        /// 场解算的线色(RGBA,非预乘)——经 applyToTerrainCommand 进
-        /// gltfUniforms,FS smoothstep 后 mix。样式快照,换样式换 Config。
-        std::array<float, 4> roadFieldColor{0.96f, 0.96f, 0.94f, 0.86f};
-        /// 分级宽度 ramp (z0, halfPx0, z1, halfPx1):FS 在局部 zoom 上线性
-        /// 插值出线半宽(设备px),两端 clamp。zoom 基准=影像页 zoom(见
-        /// PageStoreSamplingGLSL.h 的标定注释)。默认≈0.6→1.8 CSS px@dpr3.5。
-        std::array<float, 4> roadFieldWidthRamp{12.0f, 1.05f, 16.0f, 3.15f};
-        /// 步3 场平面 overzoom 解耦:场页 zoom 封顶。语义 = **烘焙输出不再
-        /// 随 zoom 变化的档位** = max(场数据 maxZoom, 样式最后一个 zoom 分级
-        /// 档)——取小了会把更深档才放开的要素(如 z≥15 catch-all 的末梢路)
-        /// 整体滤掉(真机踩过:封 14 远山小径全灭),取大了徒增重烘。场页
-        /// key = 影像页 key 的 z-封顶祖先,SDF 像素解算放大优雅(纹素下限
-        /// 兜底)。拉近超封顶后场零重烘零上传、换代瞬态消失。
-        int roadFieldMaxZoom = 15;
-        /// 场页独立 LRU 容量。实测默认视角稳态驻留 ~25 页,64 层留 2.5×
-        /// 余量;64×256²×4B(D2 RGBA8)= 16MB 封顶。
-        int maxFieldPages = 64;
     };
 
     TerrainPageStore() = default;
@@ -452,8 +426,6 @@ public:
     struct RasterStackSampleDescriptor {
         Texture* imageArray = nullptr;
         Texture* imageIndirectionArray = nullptr;
-        Texture* fieldArray = nullptr;
-        Texture* fieldIndirectionArray = nullptr;
         int indirectionLayer = -1;
         int texCoordSet = 0;
         int cellZoom = 0;
@@ -496,41 +468,20 @@ public:
     // 诊断:上一次 determination 的唯一可见页数(单测/日志)。
     int lastVisiblePageCount() const { return lastVisiblePageCount_; }
 
-    // [pageStore churn 归因] 上一次 updateVisiblePages 内两个间接纹理
-    // updateTextureRegion(影像 indir + 场 indir)累计耗时。用于把
+    // [pageStore churn 归因] 上一次 updateVisiblePages 内影像间接纹理
+    // updateTextureRegion 累计耗时。用于把
     // "determination CPU" 与 "间接纹理上传阻塞" 分开(临时插桩)。
     double lastIndirUploadMs() const { return lastIndirUploadMs_; }
 
     /// ==== V26 一期:运行期换样式的失效通路(渲染线程,与 tick 同线程)====
-    /// Uniform 类:线色/宽度 ramp 直写 config_ 快照(applyToTerrainCommand
-    /// 每帧从 config_ 读),下一帧命令构建即生效,零重建。
-    void setRoadFieldStyleUniforms(const std::array<float, 4>& color,
-                                   const std::array<float, 4>& widthRamp);
     /// Re-bake 类(面):面 drape 生产者换样式后调。清空全部合成页(cancel
     /// 在途;pool 槽位不清,同 key 重 acquire 同 layer 直接重 kick)——与
     /// updateVisiblePages 里"源列表变了全作废"共用 clearAllComposedPages,
     /// 同构保证。下一次 determination 自然重建重烘。
     void invalidateComposedPages();
-    /// Re-bake 类(线):场生产者(RoadFieldSource::setStyle)换样式后调。
-    /// 清空全部场页 + **清跳烘门 fieldLayerKey_** —— 不清则同 key 重建走
-    /// determination 的"层内真场直接复用"分支,旧样式内容原地复活(静默
-    /// 失效);跳烘门是 churn 无闪复用的机关,换样式时它恰好变成敌人。
-    /// newFieldMaxZoom >= 0 时同步改场页 zoom 封顶(新样式分级档变了封顶
-    /// 要跟着变,语义见 Config::roadFieldMaxZoom)。
-    void invalidateFieldPages(int newFieldMaxZoom = -1);
-    // 诊断(单测/日志):账本计数与场样式快照。注意与 residentPageCount()
+    // 诊断(单测/日志):账本计数。注意与 residentPageCount()
     // (pool 槽位驻留数)语义不同:invalidate 后账本清零而槽位保留,二者分叉。
     int ledgerPageCount() const { return static_cast<int>(pages_.size()); }
-    int ledgerFieldPageCount() const {
-        return static_cast<int>(fieldPages_.size());
-    }
-    const std::array<float, 4>& roadFieldStyleColor() const {
-        return config_.roadFieldColor;
-    }
-    const std::array<float, 4>& roadFieldStyleWidthRamp() const {
-        return config_.roadFieldWidthRamp;
-    }
-    int roadFieldZoomCap() const { return config_.roadFieldMaxZoom; }
 
     /// 停滞多少帧之后,一个未完成的页不再算"在途"。
     ///
@@ -568,16 +519,6 @@ public:
             }
             if (pageCountsAsInFlight(pe.uploadComplete(), frameId_,
                                      pe.lastProgressFrame)) {
-                return true;
-            }
-        }
-        for (const auto& entry : fieldPages_) {
-            // V28:原地重烘在途(旧场仍 uploaded)——同影像 needsRebake,防停帧饿死换手。
-            if (entry.second.pendingRebake) {
-                return true;
-            }
-            if (pageCountsAsInFlight(entry.second.uploaded, frameId_,
-                                     entry.second.lastProgressFrame)) {
                 return true;
             }
         }
@@ -643,13 +584,10 @@ public:
     /// 故用 RGBA8 承载 16 位 layer 索引(容 ≤ 65535 页)+ 深度 d(≤ kMaxDetDepthLevels,
     /// 单 fetch 无需第二张 RG16 纹理)。**depth = Z-Za**:该 cell 采样的粗祖先页相对本瓦片
     /// 屏幕界定 max zoom Z 下降的级数(0=精页/现状,>0=粗页,片元用 span=2^d 定位子区)。
-    /// **A 通道**:0=miss(保留 directComposite)、255=影像 ready。历史三态的
-    /// 128(影像在/场 pending)自步3 场解耦后不再产出——场 ready 归独立的
-    /// 场间接纹理(fieldIndirArrayTexture_),两平面门控互不牵连;fieldReady
-    /// 形参保留兼容编码函数签名(调用点恒 true)。
+    /// **A 通道**:0=miss(保留 directComposite)、255=影像 ready。
     /// out 需 ≥4 字节;depth clamp 到 [0, kMaxDetDepthLevels]。
-    static void encodeLayerRGBA8(int layer, bool resident, bool fieldReady,
-                                 int depth, uint8_t out[4]);
+    static void encodeLayerRGBA8(int layer, bool resident, int depth,
+                                 uint8_t out[4]);
     /// 与片元 shader 解码逐位一致:floor(r*255+0.5)+floor(g*255+0.5)*256 = R+G*256。
     /// 供 host round-trip 单测证明「编 layer → RGBA8 → 解码回 layer」链路正确。
     static int decodeLayerRGBA8(const uint8_t in[4]);
@@ -723,7 +661,6 @@ public:
     bool debugPageDisplayReadyForTest(uint64_t pageKey) const;
     int debugPageLayerForTest(uint64_t pageKey) const;
     int debugIndirectionLayerForTest(uint64_t tileKey) const;
-    int debugFieldLayerForTest(uint64_t fieldKey) const;
 
 private:
     bool rejectMutationDuringSubmission(const char* operation);
@@ -814,27 +751,6 @@ private:
         }
     };
 
-    /// 步3 场页账本(独立于影像 PageEntry;key = z-封顶场页 key)。
-    /// 在途判定纳入 hasWorkInFlight(场没到不停帧,停滞兜底同影像页)。
-    struct FieldPageEntry {
-        int layer = -1;
-        CancellationToken token;
-        // Network admission is page-level. A denied field request remains
-        // unissued and is retried by the next determination/tick.
-        bool fetchIssued = false;
-        bool uploaded = false;
-        uint64_t lastProgressFrame = 0;
-        /// V28 场路原子换手样式代。换肤时 `invalidateFieldPages` ++ 并**原地**重
-        /// kick(不清 uploaded、不清 fieldLayerKey_→旧线顶住),新场 R8 到达覆写
-        /// 同层完成换手。场是单源(无影像那种多源 alphaOver),故不需按源单调闸;
-        /// epoch 仅用于挡下换肤前那代的 straggler(`item.epoch < targetEpoch` 丢弃),
-        /// 否则旧样式 R8 迟到会覆盖已换的新线且无后续再纠正。恒 0 时逐字节等价改造前。
-        uint64_t targetEpoch = 0;
-        /// V28:原地重烘在途(旧线仍 uploaded 上屏)。hasWorkInFlight 据此不停帧
-        /// ——否则"uploaded=true 判不在途→停帧→新场 R8 永远排不到上传"。
-        bool pendingRebake = false;
-    };
-
     /// 每个屏幕可见 capped 瓦片的稀疏间接纹理(gridN×gridN RGBA8)。
     /// **每帧在 determination 里按当前 resident 页重建**:cell 命中 resident+uploaded
     /// 页 → 编 RG=layer、A=255;否则(视锥外/未 fetch/未到)→ A=0(miss)。
@@ -853,18 +769,15 @@ private:
         // 否则就又出现两个「几何格 == 源格」的独立假设。
         SourceTilePlacement placement;
         int texCoordSet = 0;
-        // cell 网格 zoom(determination 的 p.zoom 快照)——FS 分级宽度的局部
-        // zoom 基准,经 roadFieldParams.y / 合批 pageCellDesc 下发。
+        // cell 网格 zoom(determination 的 p.zoom 快照)。
         int cellZoom = 0;
         bool fullyResident = false;  // 全 cell 高清页驻留 = 合批资格(丢 directComposite)
-        // This indirection snapshot embeds physical image/field layer ids.
+        // This indirection snapshot embeds physical image layer ids.
         // Retain the exact referenced slices until the GPU serial sampling
         // this snapshot completes; array texture ownership alone is not a
         // per-layer lifetime proof.
         std::vector<int> imageLayers;
-        std::vector<int> fieldLayers;
         std::vector<uint8_t> imageTexels;
-        std::vector<uint8_t> fieldTexels;
         uint64_t lastFrame = 0;  // determination 里 touch;sweep 清非本帧可见瓦片
         // [瓦界对齐] 几何 UV → 源格的逐瓦仿射 {c0.x,c0.y,dU.x,dU.y,dV.x,dV.y}
         // (单位=源瓦片,相对 placement.x0/y0;c0=NW 角)。instanced 管线的 psUv
@@ -886,16 +799,6 @@ private:
 
     /// kick 单页的**全部源** fetch(worker 回调把解码影像投进 inbox,带
     /// pageKey+layer+源号)。每源一个 token,存进 entry.fetchTokens 供淘汰时 cancel。
-    /// 步3:kick 单个场页的生产(roadFieldRequest → fieldInbox_)。
-    /// resetDisplay=true(新建/churn 建页):置 uploaded=false(在此之前无内容可显)。
-    /// resetDisplay=false(V28 换肤原地重烘):**不动 uploaded**——旧场 R8 仍上屏顶住,
-    /// 新场到达覆写同层完成原子换手。回调携 entry.targetEpoch,drain 的 epoch 闸用。
-    void kickFieldFetch(const TileKey& fieldKey, uint64_t fieldPacked,
-                        int layer, FieldPageEntry& entry,
-                        bool resetDisplay = true);
-    /// 步3:淘汰场页(cancel 在途生产 + 移除账本;fieldLayerKey_ 不清,
-    /// 同 key 重建凭它跳烘)。
-    void eraseFieldEntry(uint64_t fieldPacked);
     void kickPageFetches(const TileKey& pageTileKey, uint64_t pageKey, int layer,
                          PageEntry& entry);
     /// V26/V28:为页建 compose、配 assembler、打 epoch(=pe.targetEpoch)/hold 标、
@@ -921,24 +824,6 @@ private:
     RenderDevice* device_ = nullptr;
     Config config_{};
     std::unique_ptr<Texture> arrayTexture_;
-    /// 刀2/步3 场"第二平面":R8 独立 array(maxFieldPages 层,**不再**与影像
-    /// 层号对应)。场页 key = 影像页 key 的 z-封顶祖先(roadFieldMaxZoom),
-    /// 独立 LRU(fieldPool_)+ 独立场间接纹理定位。仅 roadFieldRequest 非空
-    /// 时创建;创建失败只禁用场平面,不拖垮影像页。
-    std::unique_ptr<Texture> fieldArrayTexture_;
-    /// 场间接纹理共享 array:与 indirArrayTexture_ 同尺寸同层数,**复用同一
-    /// tile 的 ind.layer 层号**(每瓦一层,RG=场层 B=场页深度 A=ready)。
-    std::unique_ptr<Texture> fieldIndirArrayTexture_;
-    struct RoadFieldInbox;  // 定义在 .cpp:场 R8 快照投递箱(存活于回调)
-    std::shared_ptr<RoadFieldInbox> fieldInbox_;
-    /// 每**场层**当前已上传真场的场页 key(size=maxFieldPages)。同 key 场页
-    /// 淘汰后重建:层仍装本页真场 → 复用不重烘不闪(churn 门控,同刀2 法)。
-    std::vector<uint64_t> fieldLayerKey_;
-    static constexpr uint64_t kInvalidFieldKey = ~0ull;  // z0/0/0 是合法 key,故用 MAX
-    TerrainPageLayerPool fieldPool_;  // 场页独立 LRU(blockLayers=1)
-    std::unordered_map<uint64_t, FieldPageEntry> fieldPages_;  // 场页账本
-    std::vector<uint8_t> fieldIndirTexelsScratch_;  // 场间接纹理上传复用缓冲
-
     TerrainPageLayerPool pool_;
     std::unordered_map<uint64_t, PageEntry> pages_;      // pageKey → 页账本
     std::unordered_map<uint64_t, TileIndir> tileIndirs_;  // tileKey → 稀疏间接纹理
@@ -961,13 +846,9 @@ private:
     double winUploadMs_ = 0.0;
     double winMaxTickMs_ = 0.0;
     // [pageStore churn 归因] 临时插桩:每帧 determination 开头清零,累计两个
-    // 间接纹理 updateTextureRegion 的耗时(影像 indir + 场 indir)。
+    // 间接纹理 updateTextureRegion 的耗时。
     double lastIndirUploadMs_ = 0.0;
     int winInboxItems_ = 0;
-    int winFieldUploads_ = 0;  // 刀2 诊断:真场层上传数(证明第二平面在工作)
-    // [V24] 场洞诊断:kept cell 中"精确档 pending 且祖先回退也无存货"的数
-    // (= 该 cell 本帧线不画)。缩放期持续 >0 = 线闪的机制信号;
-    // 回退命中数单列,两数并读可判"回退在扛"还是"池被踢穿"。
     // [P1] 无谓重合成的直接判据:**同一页 key 被建过一次以上**
     // (= churn 中被淘汰又要回来 → 重拉 + 重解码 + 重合成全套重来)。
     // tick60 的 items 只数"合成了几次",分不出首次与重来 —— 那正是
@@ -975,8 +856,6 @@ private:
     std::unordered_set<uint64_t> everCreatedPages_;
     int winPagesCreated_ = 0;
     int winPagesRecreated_ = 0;
-    int winFieldHoleCells_ = 0;
-    int winFieldFallbackCells_ = 0;
 
     // 有序帧快照源(sources_[0] = canonical 页网格)。同一 vector 内只允许
     // page-facing scheme/projection 相同；变化时推进 pageDomainGeneration_ 并

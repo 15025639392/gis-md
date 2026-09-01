@@ -1,7 +1,9 @@
 #include "EllipsoidTerrainContentProvider.h"
 
 #include "EllipsoidTerrainMeshBuilder.h"
+#include "AmapClassicTerrainInternal.h"
 #include "GltfModel.h"
+#include "../style/AmapClassicStyleInternal.h"
 #include "../core/geodesy/QuadtreeGeometricError.h"
 #include "../core/geodesy/WebMercatorProjection.h"
 #include "../tiling/TileBoundingVolume.h"
@@ -186,7 +188,11 @@ void EllipsoidTerrainContentProvider::requestTileContent(
             EllipsoidTerrainMeshBuilder::makeModel(
                 bounds,
                 projections,
-                gridSize_),
+                gridSize_,
+                {},
+                false,
+                false,
+                false),
             std::move(metadata),
             Mat4::identity(),
             TileTerrainRenderSource::EllipsoidFallback));
@@ -196,6 +202,100 @@ TileContentLoadResult EllipsoidTerrainContentProvider::decodeContent(
     const uint8_t*,
     size_t) {
     return TileContentLoadResult::failed();
+}
+
+namespace {
+
+class AmapClassicTerrainContentProvider final : public TilesetContentProvider {
+public:
+    explicit AmapClassicTerrainContentProvider(
+        std::unique_ptr<TilesetContentProvider> provider)
+        : provider_(std::move(provider)) {}
+
+    std::string id() const override {
+        return "amap-classic-terrain:" + provider_->id();
+    }
+    bool supportsTile(const TileKey& key) const override {
+        return provider_->supportsTile(key);
+    }
+    std::vector<TileKey> rootTiles() const override {
+        return provider_->rootTiles();
+    }
+    std::optional<TilesetContentTileMetadata> tileMetadata(
+        const TileKey& key) const override {
+        return provider_->tileMetadata(key);
+    }
+    uint64_t tileMetadataRevision() const override {
+        return provider_->tileMetadataRevision();
+    }
+    std::vector<TileKey> childTiles(const TileKey& key) const override {
+        return provider_->childTiles(key);
+    }
+    bool providesTerrainQuadtree() const override {
+        return provider_->providesTerrainQuadtree();
+    }
+    uint64_t childTopologyRevision() const override {
+        return provider_->childTopologyRevision();
+    }
+    bool isTerrainAvailabilityBoundaryLevel(int level) const override {
+        return provider_->isTerrainAvailabilityBoundaryLevel(level);
+    }
+    int estimatedRequestFanout(const TileKey& key) const override {
+        return provider_->estimatedRequestFanout(key);
+    }
+    TileAvailabilityState availabilityState(
+        const TileKey& key) const override {
+        return provider_->availabilityState(key);
+    }
+    void requestTileContent(
+        const TileKey& key, CancellationToken token, ContentCallback callback,
+        HttpRequestPriority priority = HttpRequestPriority::Normal) override {
+        requestTileContent(
+            key, std::move(token), std::move(callback), priority,
+            TileContentRequestOptions{});
+    }
+    void requestTileContent(
+        const TileKey& key, CancellationToken token, ContentCallback callback,
+        HttpRequestPriority priority,
+        TileContentRequestOptions options) override {
+        provider_->requestTileContent(
+            key, std::move(token),
+            [callback = std::move(callback)](
+                const TileKey& loadedKey, TileContentLoadResult result) mutable {
+                AmapClassicTerrainContentProvider::applyOfficialLand(result);
+                callback(loadedKey, std::move(result));
+            },
+            priority, std::move(options));
+    }
+    TileContentLoadResult decodeContent(
+        const uint8_t* data, size_t size) override {
+        TileContentLoadResult result = provider_->decodeContent(data, size);
+        applyOfficialLand(result);
+        return result;
+    }
+    ProviderRequestDiagnostics requestDiagnostics() const override {
+        return provider_->requestDiagnostics();
+    }
+
+private:
+    static void applyOfficialLand(TileContentLoadResult& result) {
+        if (!result.gltfModel) return;
+        for (GltfPrimitive& primitive : result.gltfModel->primitives) {
+            primitive.baseColorFactor = amapClassicLandBaseColor();
+            primitive.unlit = true;
+        }
+    }
+    std::unique_ptr<TilesetContentProvider> provider_;
+};
+
+} // namespace
+
+std::unique_ptr<TilesetContentProvider>
+decorateAmapClassicTerrainContentProvider(
+    std::unique_ptr<TilesetContentProvider> provider) {
+    if (!provider) return nullptr;
+    return std::make_unique<AmapClassicTerrainContentProvider>(
+        std::move(provider));
 }
 
 } // namespace earth_engine

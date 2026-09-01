@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
+#include "../../helpers/AmapOfficialStyleTestAdapter.h"
 
 #include "earth_engine/layers/FeatureRenderLayer.h"
+#include "earth_engine/style/AmapClassicRoadStyle.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 
 #include <algorithm>
@@ -39,7 +41,7 @@ std::vector<Feature> sampleFeatures() {
 FeatureRenderLayer::TessellationContext makeContext(
     const FeatureRenderStyle& style, GlyphAtlas* glyph, IconAtlas* icon) {
     return FeatureRenderLayer::TessellationContext{
-        style, Ellipsoid::WGS84(), glyph, icon, /*stencil=*/false};
+        style, Ellipsoid::WGS84(), glyph, icon, /*stencil=*/false, 0.0};
 }
 
 } // namespace
@@ -89,6 +91,124 @@ TEST(FeatureTileMeshTest, TessellationIsDeterministic) {
     EXPECT_EQ(a.fillIndices, b.fillIndices);
     EXPECT_EQ(a.lineVerts, b.lineVerts);
     EXPECT_EQ(a.lineIndices, b.lineIndices);
+}
+
+TEST(FeatureTileMeshTest, OptionalDiagnosticsAttributeWorkWithoutChangingMesh) {
+    FeatureRenderStyle style;
+    auto ctx = makeContext(style, nullptr, nullptr);
+    ctx.collectDiagnostics = true;
+    const auto features = sampleFeatures();
+    const auto measured = FeatureRenderLayer::tessellateTileMesh(ctx, features);
+    ctx.collectDiagnostics = false;
+    const auto plain = FeatureRenderLayer::tessellateTileMesh(ctx, features);
+
+    EXPECT_EQ(3u, measured.diagnostics.admittedFeatures);
+    EXPECT_EQ(0u, measured.diagnostics.rejectedFeatures);
+    EXPECT_EQ(2u, measured.diagnostics.polygonFeatures);
+    EXPECT_EQ(1u, measured.diagnostics.lineFeatures);
+    EXPECT_EQ(3u, measured.diagnostics.rings);
+    EXPECT_EQ(11u, measured.diagnostics.points);
+    EXPECT_GE(measured.diagnostics.polygonMs, 0.0);
+    EXPECT_GE(measured.diagnostics.lineMs, 0.0);
+    EXPECT_EQ(plain.fillVerts, measured.fillVerts);
+    EXPECT_EQ(plain.fillIndices, measured.fillIndices);
+    EXPECT_EQ(plain.lineVerts, measured.lineVerts);
+    EXPECT_EQ(plain.lineIndices, measured.lineIndices);
+    EXPECT_EQ(plain.fillRanges.size(), measured.fillRanges.size());
+    EXPECT_EQ(plain.lineRanges.size(), measured.lineRanges.size());
+    EXPECT_EQ(plain.lineClampSource, measured.lineClampSource);
+    EXPECT_EQ(plain.fillVolumeGroups.size(), measured.fillVolumeGroups.size());
+    EXPECT_EQ(plain.lineVolumeGroups.size(), measured.lineVolumeGroups.size());
+    EXPECT_EQ(plain.extrudeVerts, measured.extrudeVerts);
+    EXPECT_EQ(plain.extrudeIndices, measured.extrudeIndices);
+    EXPECT_EQ(plain.extrudeRanges.size(), measured.extrudeRanges.size());
+    EXPECT_EQ(plain.symbols.size(), measured.symbols.size());
+    EXPECT_EQ(plain.hasOrigin, measured.hasOrigin);
+    EXPECT_DOUBLE_EQ(plain.origin.x(), measured.origin.x());
+    EXPECT_DOUBLE_EQ(plain.origin.y(), measured.origin.y());
+    EXPECT_DOUBLE_EQ(plain.origin.z(), measured.origin.z());
+}
+
+TEST(FeatureTileMeshTest, DiagnosticsRejectInvalidPointInsteadOfAdmittingIt) {
+    FeatureRenderStyle style;
+    auto ctx = makeContext(style, nullptr, nullptr);
+    ctx.collectDiagnostics = true;
+    Feature invalidPoint;
+    invalidPoint.type = GeometryType::Point;
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        ctx, {invalidPoint});
+    EXPECT_TRUE(mesh.symbols.empty());
+    EXPECT_EQ(0u, mesh.diagnostics.admittedFeatures);
+    EXPECT_EQ(1u, mesh.diagnostics.rejectedFeatures);
+    EXPECT_EQ(1u, mesh.diagnostics.rejectionCounts[static_cast<size_t>(
+        FeatureTileMesh::TessellationDiagnostics::RejectionReason::
+            DegenerateGeometry)]);
+    EXPECT_EQ(0u, mesh.diagnostics.symbolFeatures);
+}
+
+TEST(FeatureTileMeshTest, DiagnosticsAcceptLabelOnlyLineAndRejectUnknownRoadName) {
+    FeatureRenderStyle style;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.labelStyleGroupExpr = StyleExpression::match(
+        "amap_subkey", {{"2", StyleExpression::literal(20014002.0)}},
+        StyleExpression::literal(0.0));
+    style.lineStyleGroupExpr = StyleExpression::literal(0.0);
+    auto ctx = makeContext(style, nullptr, nullptr);
+    ctx.collectDiagnostics = true;
+
+    Feature labelOnly = makeLine(106.5, 29.6);
+    labelOnly.properties["name"] = "引导线";
+    labelOnly.properties["amap_subkey"] = "2";
+    labelOnly.properties["amap_draworder"] = "65";
+    labelOnly.properties["amap_minzoom"] = "3";
+    labelOnly.properties["amap_maxzoom"] = "20";
+    labelOnly.properties["amap_rank"] = "1";
+    Feature unknownRoadName = makeLine(106.6, 29.6);
+    unknownRoadName.properties["name"] = "未知路名";
+    unknownRoadName.properties["amap_subkey"] = "999";
+    unknownRoadName.properties["amap_draworder"] = "65";
+    unknownRoadName.properties["amap_minzoom"] = "3";
+    unknownRoadName.properties["amap_maxzoom"] = "20";
+    unknownRoadName.properties["amap_rank"] = "1";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        ctx, {labelOnly, unknownRoadName});
+    EXPECT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(1u, mesh.diagnostics.symbolFeatures);
+    EXPECT_EQ(1u, mesh.diagnostics.admittedFeatures);
+    EXPECT_EQ(1u, mesh.diagnostics.rejectedFeatures);
+    EXPECT_EQ(1u, mesh.diagnostics.rejectionCounts[static_cast<size_t>(
+        FeatureTileMesh::TessellationDiagnostics::RejectionReason::
+            LineIdentity)]);
+}
+
+TEST(FeatureTileMeshTest, DiagnosticsRejectDegenerateKnownRoadNameOnce) {
+    FeatureRenderStyle style;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.labelStyleGroupExpr = StyleExpression::literal(20014002.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(0.0);
+    auto ctx = makeContext(style, nullptr, nullptr);
+    ctx.collectDiagnostics = true;
+    Feature roadName;
+    roadName.type = GeometryType::LineString;
+    roadName.rings = {{Cartographic(106.5 * kDeg, 29.6 * kDeg)}};
+    roadName.properties["name"] = "退化路名";
+    roadName.properties["amap_class"] = "20014";
+    roadName.properties["amap_subkey"] = "2";
+    roadName.properties["amap_draworder"] = "65";
+    roadName.properties["amap_minzoom"] = "3";
+    roadName.properties["amap_maxzoom"] = "20";
+    roadName.properties["amap_rank"] = "1";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(ctx, {roadName});
+    EXPECT_TRUE(mesh.symbols.empty());
+    EXPECT_EQ(0u, mesh.diagnostics.admittedFeatures);
+    EXPECT_EQ(1u, mesh.diagnostics.rejectedFeatures);
+    EXPECT_EQ(1u, mesh.diagnostics.rejectionCounts[static_cast<size_t>(
+        FeatureTileMesh::TessellationDiagnostics::RejectionReason::
+            DegenerateGeometry)]);
+    EXPECT_EQ(0u, mesh.diagnostics.symbolFeatures);
 }
 
 TEST(FeatureTileMeshTest, PaintRangesIgnoreFeatureInputOrderAndKeepWaterLast) {
@@ -185,7 +305,9 @@ TEST(FeatureTileMeshTest, PointFeaturesEmitSymbolInstancesNotGeometry) {
     EXPECT_DOUBLE_EQ(29.6 * kDeg, s.latRad);
     EXPECT_EQ("解放碑", s.name);
     EXPECT_EQ(3, s.rank);
-    EXPECT_NE(0.0f, s.colorPacked) << "worker 应已求值样式色并打包";
+    ASSERT_TRUE(s.genericVisual);
+    EXPECT_NE(0.0f, s.genericVisual->colorPacked)
+        << "worker 应已求值样式色并打包";
     EXPECT_TRUE(mesh.hasOrigin) << "纯符号瓦片也要有 RTE 原点";
     EXPECT_FALSE(mesh.empty()) << "实例表非空的瓦片不得被 drop";
     EXPECT_TRUE(mesh.fillIndices.empty() && mesh.lineIndices.empty())
@@ -226,8 +348,6 @@ TEST(FeatureTileMeshTest, SymbolInstancesCarryResolvedPaintOrder) {
     const auto mesh = FeatureRenderLayer::tessellateTileMesh(
         makeContext(style, nullptr, nullptr), {high, low});
     ASSERT_EQ(2u, mesh.symbols.size());
-    EXPECT_TRUE(mesh.symbols[0].hasPaintOrder);
-    EXPECT_TRUE(mesh.symbols[1].hasPaintOrder);
     EXPECT_EQ(100, mesh.symbols[0].paintOrder);
     EXPECT_EQ(20, mesh.symbols[1].paintOrder);
 }

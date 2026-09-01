@@ -34,6 +34,9 @@ struct GlyphAtlas::Impl {
     RenderDevice* device = nullptr;
     std::shared_ptr<std::vector<uint8_t>> fontData;
     bool fontReady = false;
+    bool amapProvider = false;
+    std::function<void(uint32_t)> providerDemand;
+    std::unordered_set<uint32_t> providerDemanded;
 #if EARTH_ENGINE_HAS_STB_TRUETYPE
     stbtt_fontinfo font{};
 #endif
@@ -279,7 +282,7 @@ GlyphAtlas::~GlyphAtlas() = default;
 
 bool GlyphAtlas::setFontData(std::vector<uint8_t> fontData) {
 #if EARTH_ENGINE_HAS_STB_TRUETYPE
-    if (!impl_->device || fontData.empty()) return false;
+    if (!impl_->device || fontData.empty() || impl_->amapProvider) return false;
 #if defined(__ANDROID__)
     if (!impl_->glyphWorkers) {
         impl_->glyphWorkers = std::make_unique<Impl::GlyphRasterWorkers>();
@@ -340,11 +343,36 @@ bool GlyphAtlas::setFontData(std::vector<uint8_t> fontData) {
 #endif
 }
 
+void GlyphAtlas::clearFontData() {
+    impl_->fontReady = false;
+    impl_->fontData.reset();
+    impl_->glyphs.clear();
+    impl_->cursorX = 0;
+    impl_->cursorY = 0;
+    impl_->rowHeight = 0;
+    impl_->glyphBudgetFrameId = std::numeric_limits<uint64_t>::max();
+    impl_->glyphBudgetRemainingMs = 0.0;
+    impl_->glyphRasterMs = 0.0;
+    impl_->glyphRasterAttempts = 0;
+#if defined(__ANDROID__) && EARTH_ENGINE_HAS_STB_TRUETYPE
+    ++impl_->fontGeneration;
+    impl_->pendingGlyphs.clear();
+    impl_->missingGlyphs.clear();
+#endif
+    ++impl_->revision;
+}
+
 bool GlyphAtlas::ready() const { return impl_->fontReady; }
+float GlyphAtlas::metricPixelHeight() const {
+    return impl_->amapProvider ? static_cast<float>(kAmapProviderPixelHeight)
+                               : static_cast<float>(kGlyphPixelHeight);
+}
 int GlyphAtlas::atlasFullDropCount() const { return impl_->atlasFullDrops; }
 float GlyphAtlas::ascent() const { return impl_->ascentPx; }
 float GlyphAtlas::descent() const { return impl_->descentPx; }
-Texture* GlyphAtlas::texture() const { return impl_->texture.get(); }
+Texture* GlyphAtlas::texture() { return impl_->texture.get(); }
+
+const Texture* GlyphAtlas::texture() const { return impl_->texture.get(); }
 
 uint64_t GlyphAtlas::revision() const { return impl_->revision; }
 
@@ -439,7 +467,8 @@ void GlyphAtlas::beginFrameGlyphBudget(uint64_t frameId, double budgetMs) {
     // 真机用 drain/build/帧时间验证尖峰，不能靠降低标签数量规避。
     size_t committed = 0;
     Impl::GlyphRasterResult result;
-    while (committed < Impl::GlyphRasterWorkers::kBatchSize &&
+    while (impl_->glyphWorkers &&
+           committed < Impl::GlyphRasterWorkers::kBatchSize &&
            impl_->glyphWorkers->tryTake(result)) {
         if (result.generation == impl_->fontGeneration) {
             impl_->pendingGlyphs.erase(result.codepoint);
@@ -464,6 +493,17 @@ void GlyphAtlas::beginFrameGlyphBudget(uint64_t frameId, double budgetMs) {
 
 GlyphAtlas::BudgetedGlyphResult GlyphAtlas::ensureGlyphBudgeted(
     uint32_t codepoint) {
+    if (impl_->amapProvider) {
+        if (hasGlyph(codepoint)) return BudgetedGlyphResult::Ready;
+        if (codepoint == 0 || codepoint > 0x10ffff) {
+            return BudgetedGlyphResult::MissingTerminal;
+        }
+        if (impl_->providerDemanded.insert(codepoint).second &&
+            impl_->providerDemand) {
+            impl_->providerDemand(codepoint);
+        }
+        return BudgetedGlyphResult::Deferred;
+    }
 #if defined(__ANDROID__) && EARTH_ENGINE_HAS_STB_TRUETYPE
     if (hasGlyph(codepoint)) return BudgetedGlyphResult::Ready;
     if (impl_->missingGlyphs.count(codepoint) != 0) {
@@ -531,6 +571,7 @@ double GlyphAtlas::frameGlyphRasterMs() const {
 }
 
 bool GlyphAtlas::needsFrameForGlyphRasterDispatch() const {
+    if (impl_->amapProvider) return false;
 #if defined(__ANDROID__) && EARTH_ENGINE_HAS_STB_TRUETYPE
     // Landing 只负责把 worker 从睡眠中唤醒一次；若同一唤醒前积累了
     // 多张 batch，beginFrameGlyphBudget 可能只消费其中一张。结果箱仍有
@@ -557,6 +598,15 @@ size_t GlyphAtlas::pendingGlyphRasterCount() const {
 }
 
 const GlyphAtlas::Glyph* GlyphAtlas::ensureGlyph(uint32_t codepoint) {
+    if (impl_->amapProvider) {
+        auto it = impl_->glyphs.find(codepoint);
+        if (it != impl_->glyphs.end()) return &it->second;
+        if (impl_->providerDemanded.insert(codepoint).second &&
+            impl_->providerDemand) {
+            impl_->providerDemand(codepoint);
+        }
+        return nullptr;
+    }
 #if EARTH_ENGINE_HAS_STB_TRUETYPE
     if (!impl_->fontReady) return nullptr;
 #if defined(__ANDROID__)
@@ -652,6 +702,105 @@ const GlyphAtlas::Glyph* GlyphAtlas::ensureGlyph(uint32_t codepoint) {
     (void)codepoint;
     return nullptr;
 #endif
+}
+
+void GlyphAtlas::activateAmapOfficialProvider(
+    std::function<void(uint32_t)> demand) {
+    clearFontData();
+    impl_->amapProvider = true;
+    impl_->providerDemand = std::move(demand);
+    impl_->fontReady = impl_->device != nullptr;
+    impl_->ascentPx = static_cast<float>(kAmapProviderPixelHeight);
+    impl_->descentPx = 0.0f;
+    if (!impl_->texture && impl_->device) {
+        TextureDesc desc;
+        desc.width = kAtlasSize;
+        desc.height = kAtlasSize;
+        desc.arrayLayers = 2;
+        desc.format = TextureDesc::Format::R8;
+        desc.mipmap = false;
+        desc.minFilter = TextureDesc::Filter::Linear;
+        desc.magFilter = TextureDesc::Filter::Linear;
+        impl_->texture = impl_->device->createTexture(desc);
+        impl_->fontReady = impl_->texture != nullptr;
+    }
+    ++impl_->revision;
+}
+
+bool GlyphAtlas::installAmapOfficialGlyphBatch(
+    int imageWidth, int imageHeight,
+    const std::vector<uint8_t>& grayscale,
+    const std::vector<ProviderGlyph>& glyphs) {
+    if (!impl_->amapProvider || !impl_->fontReady || !impl_->texture ||
+        imageWidth <= 0 || imageHeight <= 0 ||
+        grayscale.size() != static_cast<size_t>(imageWidth) * imageHeight ||
+        glyphs.empty()) return false;
+    for (const ProviderGlyph& source : glyphs) {
+        if (source.codepoint == 0 || source.fontWidth <= 0 ||
+            source.fontHeight <= 0 || source.horiAdvance < 0 ||
+            source.posX < 0 || source.posY < 0 ||
+            source.posX + source.fontWidth > imageWidth ||
+            source.posY + source.fontHeight > imageHeight ||
+            impl_->glyphs.count(source.codepoint) != 0) return false;
+    }
+    struct Pending { ProviderGlyph source; Glyph glyph; int x; int y; };
+    std::vector<Pending> pending;
+    int cursorX = impl_->cursorX, cursorY = impl_->cursorY;
+    int rowHeight = impl_->rowHeight;
+    for (const ProviderGlyph& source : glyphs) {
+        if (cursorX + source.fontWidth > kAtlasSize) {
+            cursorX = 0;
+            cursorY += rowHeight;
+            rowHeight = 0;
+        }
+        if (cursorY + source.fontHeight > kAtlasSize) return false;
+        Glyph glyph;
+        glyph.offsetX = static_cast<float>(source.horiBearingX);
+        glyph.offsetY = static_cast<float>(-source.horiBearingY);
+        glyph.width = static_cast<float>(source.fontWidth);
+        glyph.height = static_cast<float>(source.fontHeight);
+        glyph.advance = static_cast<float>(source.horiAdvance + 1);
+        glyph.hasBitmap = true;
+        pending.push_back({source, glyph, cursorX, cursorY});
+        cursorX += source.fontWidth;
+        rowHeight = std::max(rowHeight, source.fontHeight);
+    }
+    for (Pending& item : pending) {
+        std::vector<uint8_t> pixels(
+            static_cast<size_t>(item.source.fontWidth) *
+            item.source.fontHeight);
+        for (int y = 0; y < item.source.fontHeight; ++y) {
+            const size_t src = static_cast<size_t>(item.source.posY + y) *
+                imageWidth + item.source.posX;
+            const size_t dst = static_cast<size_t>(y) * item.source.fontWidth;
+            std::copy_n(grayscale.data() + src, item.source.fontWidth,
+                        pixels.data() + dst);
+        }
+        if (!impl_->device->updateTextureRegion(
+                impl_->texture.get(), item.x, item.y,
+                item.source.fontWidth, item.source.fontHeight, pixels.data(),
+                static_cast<size_t>(item.source.fontWidth), 0)) return false;
+        const float inv = 1.0f / static_cast<float>(kAtlasSize);
+        item.glyph.u0 = item.x * inv;
+        item.glyph.v0 = item.y * inv;
+        item.glyph.u1 = (item.x + item.source.fontWidth) * inv;
+        item.glyph.v1 = (item.y + item.source.fontHeight) * inv;
+    }
+    impl_->cursorX = cursorX;
+    impl_->cursorY = cursorY;
+    impl_->rowHeight = rowHeight;
+    for (Pending& item : pending) {
+        impl_->glyphs.emplace(item.source.codepoint, item.glyph);
+    }
+    ++impl_->revision;
+    return true;
+}
+
+void GlyphAtlas::clearAmapOfficialProvider() {
+    impl_->amapProvider = false;
+    impl_->providerDemand = {};
+    impl_->providerDemanded.clear();
+    clearFontData();
 }
 
 std::vector<uint32_t> GlyphAtlas::decodeUtf8(const std::string& text) {

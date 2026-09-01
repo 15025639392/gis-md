@@ -6,6 +6,7 @@
 #include "../data/MvtVectorSource.h"
 #include "../tiling/TileOcclusionCallback.h"
 #include <memory>
+#include <limits>
 #include <vector>
 #include <string>
 
@@ -13,6 +14,7 @@ namespace earth_engine {
 
 class Camera;
 class CameraSystem;
+class AmapClassicRuntime;
 struct Diagnostics;
 struct InputEvent;
 struct PickResult;
@@ -30,6 +32,7 @@ class SceneTilesetCoordinator;
 class SkyGradient;
 class TerrainPageStore;
 class TerrainDisplacementTemplatePool;
+class AmapTerrainFillMaskStore;
 class Tileset;
 class FeatureRenderLayer;
 class VectorLayer;
@@ -139,7 +142,12 @@ public:
                             std::unique_ptr<FeatureRenderLayer> layer);
     bool removeMvtVectorSource(const std::string& layerId);
     size_t mvtVectorSourceCount() const;
-    FeatureRenderLayer* mvtVectorLayer(const std::string& layerId) const;
+    const AmapClassicRuntime* installAmapClassicRuntime(
+        std::unique_ptr<AmapClassicRuntime> runtime);
+    void removeAmapClassicRuntime();
+    bool hasAmapClassicRuntime() const {
+        return amapClassicRuntime_ != nullptr;
+    }
 
     /// 矢量标注字体注入(P5b;TrueType 字节,渲染线程调用)。
     bool setLabelFontData(std::vector<uint8_t> fontData);
@@ -149,13 +157,16 @@ public:
                       int width,
                       int height,
                       const std::vector<uint8_t>& rgba);
+    bool hasIconImage(const std::string& name) const;
 
     // ---- 统一 Tileset（cesium-native 对齐） ----
     void setTileset(std::unique_ptr<Tileset> tileset);
     void stageTilesetReplacement(std::unique_ptr<Tileset> tileset);
     void addTileset(std::unique_ptr<Tileset> tileset);
+    void clearTilesets();
     Tileset* tileset() const;
     size_t additionalTilesetCount() const;
+    bool hasAnyTileset() const;
     bool hasTerrain() const;
 
     // ---- 输入事件（归一化） ----
@@ -177,6 +188,22 @@ public:
     const SkyGradient& skyGradient() const;
 
 private:
+    friend class Engine;
+    AmapClassicRuntime* amapClassicRuntimeForEngine() {
+        return amapClassicRuntime_.get();
+    }
+    bool addOfficialFeatureRenderLayer(
+        std::unique_ptr<FeatureRenderLayer> layer);
+    std::unique_ptr<FeatureRenderLayer> removeOfficialFeatureRenderLayer(
+        const std::string& layerId);
+    std::unique_ptr<FeatureRenderLayer> removeFeatureRenderLayerInternal(
+        const std::string& layerId, bool allowOfficial);
+    // needsFrame() may be queried repeatedly between two rendered frames.
+    // The audit compares frame-produced layer state with ledger state, so a
+    // second query after the first query consumed a Landing pulse would be a
+    // false mismatch. Keep the documented "per-frame" contract literal.
+    mutable uint64_t lastWorkLedgerAuditFrameId_ =
+        std::numeric_limits<uint64_t>::max();
     struct MvtRuntime {
         std::unique_ptr<MvtVectorSource> source;
         std::string layerId;
@@ -206,8 +233,10 @@ private:
     // 矢量图层
     std::unique_ptr<SceneLayerCoordinator> layers_;
     std::vector<MvtRuntime> mvtSources_;
+    std::unique_ptr<AmapClassicRuntime> amapClassicRuntime_;
     size_t mvtUpdateCursor_ = 0;
     TerrainPageStore* terrainPageStore_ = nullptr;
+    AmapTerrainFillMaskStore* terrainFillMaskStore_ = nullptr;
 
     // 统一 Tileset（cesium-native 对齐）
     std::unique_ptr<SceneTilesetCoordinator> tilesets_;

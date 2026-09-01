@@ -35,6 +35,9 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/core/math/BoundingCylinderRegion.h
     earth_engine/core/math/BoundingCylinderRegion.cpp
 )
+if(BUILD_TESTING)
+    target_compile_definitions(earth_engine_core PRIVATE EARTH_ENGINE_TESTING=1)
+endif()
 
 # ============================================================
 # core/async
@@ -153,6 +156,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderDevice.h
     earth_engine/renderer/RenderCommand.h
     earth_engine/renderer/RenderCommand.cpp
+    earth_engine/renderer/AmapTerrainFillMaskStore.h
+    earth_engine/renderer/AmapTerrainFillMaskStore.cpp
     earth_engine/renderer/Renderer.h
     earth_engine/renderer/Renderer.cpp
     earth_engine/renderer/GlyphAtlas.h
@@ -280,6 +285,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/tiling/LoadedTerrainHeightSampler.cpp
     earth_engine/tiling/TerrainHeightService.h
     earth_engine/tiling/TerrainHeightService.cpp
+    earth_engine/tiling/RenderedTerrainSurfaceSampler.h
+    earth_engine/tiling/RenderedTerrainSurfaceSampler.cpp
     earth_engine/tiling/RasterOverlayScreenSpaceMetrics.h
     earth_engine/tiling/RasterOverlayScreenSpaceMetrics.cpp
     earth_engine/tiling/TileRasterOverlayDetailsGenerator.h
@@ -544,19 +551,14 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/RasterAssetDepot.cpp
     earth_engine/providers/DebugImageryProvider.h
     earth_engine/providers/DebugImageryProvider.cpp
+    earth_engine/providers/AmapSurfaceMaskImageryProvider.h
+    earth_engine/providers/AmapSurfaceMaskImageryProvider.cpp
     earth_engine/providers/BingMapsImageryProvider.h
     earth_engine/providers/BingMapsImageryProvider.cpp
     earth_engine/providers/GoogleMapTilesImageryProvider.h
     earth_engine/providers/GoogleMapTilesImageryProvider.cpp
     earth_engine/providers/XYZImageryProvider.h
     earth_engine/providers/XYZImageryProvider.cpp
-    earth_engine/providers/VectorDrapeImageryProvider.h
-    earth_engine/providers/VectorDrapeImageryProvider.cpp
-    earth_engine/providers/AmapDrapeImageryProvider.h
-    earth_engine/providers/AmapDrapeImageryProvider.cpp
-    earth_engine/providers/MvtRectCoverage.h
-    earth_engine/providers/RoadFieldSource.h
-    earth_engine/providers/RoadFieldSource.cpp
     earth_engine/providers/WebMapServiceImageryProvider.h
     earth_engine/providers/WebMapServiceImageryProvider.cpp
     earth_engine/providers/WebMapTileServiceImageryProvider.h
@@ -594,6 +596,7 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/layers/VectorLayer.cpp
     earth_engine/layers/FeatureRenderLayer.h
     earth_engine/layers/FeatureRenderLayer.cpp
+    earth_engine/layers/ProjectedPathSampler.cpp
     earth_engine/layers/LabelPlacement.h
     earth_engine/layers/LabelPlacement.cpp
     earth_engine/layers/RasterOverlay.h
@@ -731,9 +734,20 @@ endif()
 # style
 # ============================================================
 target_sources(earth_engine_core PRIVATE
+    earth_engine/style/AmapClassicAssets.h
+    earth_engine/style/AmapClassicAssets.cpp
+    earth_engine/style/AmapClassicRuntime.h
+    earth_engine/style/AmapClassicRuntime.cpp
+    earth_engine/style/AmapClassicTransport.cpp
+    earth_engine/style/AmapClassicStyleInternal.h
+    earth_engine/style/AmapClassicRoadStyle.h
+    earth_engine/style/AmapClassicRoadStyle.cpp
+    earth_engine/style/AmapClassicLabelStyleInternal.h
+    earth_engine/style/AmapClassicLabelStyle.cpp
+    earth_engine/content/AmapClassicTerrainInternal.h
+    earth_engine/style/AmapClassicSurfaceStyle.cpp
     earth_engine/style/OverlayStyle.h
     earth_engine/style/OverlayStyle.cpp
-    earth_engine/style/StyleDocument.cpp
 )
 
 # ============================================================
@@ -763,6 +777,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/StyleExpression.cpp
     earth_engine/data/StyleFilter.cpp
     earth_engine/data/VectorTileMeshBuilder.cpp
+    earth_engine/data/AmapSurfaceMaskRasterizer.h
+    earth_engine/data/AmapSurfaceMaskRasterizer.cpp
     earth_engine/data/GeoJsonImporter.h
     earth_engine/data/GeoJsonImporter.cpp
     earth_engine/data/MvtDecoder.h
@@ -778,10 +794,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/data/MvtVectorSource.h
     earth_engine/data/MvtVectorSource.cpp
     earth_engine/data/VectorRasterStyle.h
-    earth_engine/data/VectorTileRasterizer.h
-    earth_engine/data/VectorTileRasterizer.cpp
-    earth_engine/data/LineFieldRasterizer.h
-    earth_engine/data/LineFieldRasterizer.cpp
     earth_engine/data/MvtTileFetchCache.h
     earth_engine/data/MvtTileFetchCache.cpp
 )

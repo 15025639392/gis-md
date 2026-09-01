@@ -454,6 +454,8 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         Tile,
         Gltf,
         GltfInstanced,
+        VectorLabel,
+        VectorLabelBackground,
         Color,
         DebugLine
     };
@@ -487,6 +489,19 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vertexFunc = [library newFunctionWithName:@"gltfVertex"];
         fragmentFunc = [library newFunctionWithName:@"gltfFragment"];
         if (vertexFunc && fragmentFunc) layout = PipelineLayout::Gltf;
+    }
+    if (!vertexFunc || !fragmentFunc) {
+        vertexFunc = [library newFunctionWithName:@"vectorLabelVertex"];
+        fragmentFunc = [library newFunctionWithName:@"vectorLabelFragment"];
+        if (vertexFunc && fragmentFunc) layout = PipelineLayout::VectorLabel;
+    }
+    if (!vertexFunc || !fragmentFunc) {
+        vertexFunc = [library newFunctionWithName:@"vectorLabelVertex"];
+        fragmentFunc =
+            [library newFunctionWithName:@"vectorLabelBackgroundFragment"];
+        if (vertexFunc && fragmentFunc) {
+            layout = PipelineLayout::VectorLabelBackground;
+        }
     }
     if (!vertexFunc || !fragmentFunc) {
         vertexFunc = [library newFunctionWithName:@"colorVertex"];
@@ -524,6 +539,21 @@ std::unique_ptr<ShaderProgram> RenderDeviceMetal::createShader(const ShaderDesc&
         vd.attributes[0].offset = 0;
         vd.attributes[0].bufferIndex = 0;
         vd.layouts[0].stride = 12;
+    } else if (layout == PipelineLayout::VectorLabel ||
+               layout == PipelineLayout::VectorLabelBackground) {
+        vd.attributes[0].format = MTLVertexFormatFloat3;  // anchor
+        vd.attributes[0].offset = 0;
+        vd.attributes[0].bufferIndex = 0;
+        vd.attributes[1].format = MTLVertexFormatFloat3;  // tangent
+        vd.attributes[1].offset = 12;
+        vd.attributes[1].bufferIndex = 0;
+        vd.attributes[2].format = MTLVertexFormatFloat3;  // offset + opacity
+        vd.attributes[2].offset = 24;
+        vd.attributes[2].bufferIndex = 0;
+        vd.attributes[3].format = MTLVertexFormatFloat2;  // glyph UV
+        vd.attributes[3].offset = 36;
+        vd.attributes[3].bufferIndex = 0;
+        vd.layouts[0].stride = 44;
     } else if (layout == PipelineLayout::Surface) {
         // Surface layout: POSITION(12) + NORMAL(12) + TEXCOORD_0(8).
         vd.attributes[0].format = MTLVertexFormatFloat3;   // position
@@ -1013,10 +1043,21 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                 case RenderCommandKind::VectorLine:
                     setVertex(u.viewport.data(), u.viewport.size() * sizeof(float), 2);
                     setVertex(&u.lineWidthPx, sizeof(u.lineWidthPx), 3);
+                    setVertex(&u.dashPixelsPerMeter,
+                              sizeof(u.dashPixelsPerMeter), 4);
                     setFragment(&u.dashPeriodMeters,
                                  sizeof(u.dashPeriodMeters), 0);
                     setFragment(&u.dashOnFraction,
                                  sizeof(u.dashOnFraction), 1);
+                    setFragment(u.color.data(), u.color.size() * sizeof(float), 2);
+                    setFragment(u.dashPattern.data(),
+                                u.dashPattern.size() * sizeof(float), 3);
+                    setFragment(&u.dashPatternCount,
+                                sizeof(u.dashPatternCount), 4);
+                    setFragment(&u.dashCapStyle,
+                                sizeof(u.dashCapStyle), 5);
+                    setFragment(&u.solidCapStyle,
+                                sizeof(u.solidCapStyle), 6);
                     break;
                 case RenderCommandKind::VectorPoint:
                     setVertex(u.viewport.data(), u.viewport.size() * sizeof(float), 2);
@@ -1030,6 +1071,7 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
                     setFragment(u.haloColor.data(), u.haloColor.size() * sizeof(float), 1);
                     setFragment(&u.sdfEdge, sizeof(u.sdfEdge), 2);
                     setFragment(&u.sdfHaloDelta, sizeof(u.sdfHaloDelta), 3);
+                    setFragment(&u.sdfGamma, sizeof(u.sdfGamma), 4);
                     break;
                 default:
                     break;
@@ -1214,10 +1256,11 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         // sampler2DArray at slot 20, SVT 间接纹理 at slot 21)。纹理槽上限远高于
         // sampler 上限(16);页存储复用共享 terrain sampler(0)、间接纹理用着色器
         // 内 constexpr NEAREST sampler,均不占新 sampler 槽。
-        // 刀2:覆盖到路网场槽(23)。slot22(height)是顶点纹理,fragment 侧
-        // 无对应参数声明,循环多绑到该 index 合法且无副作用。
+        // Fill mask occupies logical/Metal texture slot 23. slot22(height) is
+        // a vertex texture; binding it to fragment as well is harmless, while
+        // extending through slot23 is required for selected-tile fill pages.
         const NSUInteger maxMaterialTextures =
-            kGltfRoadFieldIndirTextureSlot + 1;
+            kGltfTerrainFillMaskTextureSlot + 1;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
         id<MTLSamplerState> sharedTileSampler = nil;

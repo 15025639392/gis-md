@@ -37,6 +37,7 @@ void TileRenderCommandManager::buildTileDrawCommand(
     float transitionOpacity,
     bool allowSynchronousMeshPrep,
     const std::optional<std::array<float, 4>>& surfaceClipUv,
+    const TilesetTile* terrainFillMaskOwner,
     const TilesetTile* surfaceClipDescendant) {
     const bool resourcesChanged = TileRenderCommandPreparer::build(
         renderer,
@@ -51,6 +52,7 @@ void TileRenderCommandManager::buildTileDrawCommand(
             transitionOpacity,
             allowSynchronousMeshPrep,
             surfaceClipUv,
+            terrainFillMaskOwner,
             surfaceClipDescendant,
             edgeLutTables_},
         [this, &renderer](TilesetTile& meshTile) {

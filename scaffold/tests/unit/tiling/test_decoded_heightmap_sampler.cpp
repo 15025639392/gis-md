@@ -184,11 +184,17 @@ TEST(DecodedHeightmapSamplerTest, RenderGridMatchesFullResAtGridNodes) {
 }
 
 TEST(DecodedHeightmapSamplerTest, RenderGridSmallSourceEqualsFullRes) {
-    // 源 ≤ 65:渲染格 = 源格,两种采样恒等。
+    // 源 ≤ 65 时节点集合相同；对平面高度场，双线性源采样与 GPU 两三角形
+    // 插值恒等。非平面 cell 由下一条测试锁定为 GPU 拓扑，而非双线性 patch。
     DecodedHeightmap heightmap;
     heightmap.tileSize = 5;
-    heightmap.stagedHeights.assign(25, 0.0f);
-    heightmap.stagedHeights[12] = 100.0f;  // 中心
+    heightmap.stagedHeights.resize(25);
+    for (int y = 0; y < 5; ++y) {
+        for (int x = 0; x < 5; ++x) {
+            heightmap.stagedHeights[static_cast<size_t>(y) * 5 + x] =
+                static_cast<float>(x * 10 + y * 20);
+        }
+    }
     heightmap.assignHeights();
     const Rectangle bounds = rootBounds();
 
@@ -201,6 +207,30 @@ TEST(DecodedHeightmapSamplerTest, RenderGridSmallSourceEqualsFullRes) {
                 heightmap, bounds, lon, lat, kTerrainDisplacementGridSize),
             1e-3f) << "f=" << f;
     }
+}
+
+TEST(DecodedHeightmapSamplerTest,
+     RenderGridInterpolatesGpuTrianglesInsteadOfBilinearPatch) {
+    DecodedHeightmap heightmap;
+    heightmap.tileSize = 2;
+    heightmap.stagedHeights = {0.0f, 0.0f, 0.0f, 100.0f};
+    heightmap.assignHeights();
+    heightmap.minHeight = 0.0f;
+    heightmap.maxHeight = 100.0f;
+    const Rectangle bounds = rootBounds();
+    const double lon = bounds.west() + bounds.width() * 0.5;
+    const double lat = bounds.north() - bounds.height() * 0.5;
+
+    EXPECT_FLOAT_EQ(
+        0.0f,
+        DecodedHeightmapSampler::sampleHeightRenderGrid(
+            heightmap, bounds, lon, lat, 1))
+        << "the fixed a-c-b / b-c-d diagonal crosses zero-height nodes; "
+           "a bilinear patch would incorrectly return 25";
+    EXPECT_FLOAT_EQ(
+        0.0f,
+        DecodedHeightmapSampler::sampleHeightRenderGridQuantized(
+            heightmap, bounds, lon, lat, 1, 0.0f, 100.0f));
 }
 
 // ============================================================

@@ -199,6 +199,7 @@ public:
     void setLayerRules(std::vector<SourceLayerRule> rules);
 
     VectorTileTreeT<Payload>& tree() { return tree_; }
+    const VectorTileTreeT<Payload>& tree() const { return tree_; }
     /// 已 commit 的瓦片数(诊断)。
     size_t activeTileCount() const { return activeTiles_.size(); }
 
@@ -576,13 +577,89 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
                 const double tessMs =
                     std::chrono::duration<double, std::milli>(
                         taskEnd - tessStart).count();
-                if (!debugName.empty() && convertMs + tessMs >= 100.0) {
+                if (!debugName.empty() &&
+                    (convertMs + tessMs >= 100.0 ||
+                     mesh.diagnostics.rejectedFeatures != 0)) {
+                    const auto& rejectionCounts =
+                        mesh.diagnostics.rejectionCounts;
+                    uint8_t rejectTopGeometry = 0;
+                    int rejectTopClass = 0;
+                    int rejectTopSubKey = 0;
+                    size_t rejectTopCount = 0;
+                    for (const auto& [identity, count] :
+                         mesh.diagnostics.rejectedIdentities) {
+                        if (count <= rejectTopCount) continue;
+                        rejectTopGeometry = std::get<0>(identity);
+                        rejectTopClass = std::get<1>(identity);
+                        rejectTopSubKey = std::get<2>(identity);
+                        rejectTopCount = count;
+                    }
                     platformLog(
                         LogLevel::Info, "VectorTessSlow",
                         "%s z=%d x=%d y=%d features=%zu convert=%.2fms "
-                        "tess=%.2fms",
+                        "tess=%.2fms admit=%.2fms polygon=%.2fms line=%.2fms "
+                        "polySetup=%.2fms polyDensify=%.2fms "
+                        "polyIntersect=%.2fms polyCdt=%.2fms polyEcef=%.2fms "
+                        "cdtSuper=%.2fms cdtPoint=%.2fms "
+                        "cdtConstraint=%.2fms cdtExtract=%.2fms "
+                        "extrude=%.2fms symbol=%.2fms accepted=%zu rejected=%zu "
+                        "polyN=%zu lineN=%zu extrudeN=%zu symbolN=%zu "
+                        "rings=%zu points=%zu slowest=%.2fms class=%d sub=%d "
+                        "slowRings=%zu slowPoints=%zu polyInput=%zu "
+                        "polyDense=%zu polyConstraints=%zu/%zu "
+                        "polyPairs=%zu/%zu polyTris=%zu "
+                        "cdtPointTests=%zu cdtBad=%zu cdtEdgeLookups=%zu "
+                        "cdtCrossTests=%zu cdtConstraints=%zu/%zu "
+                        "cdtPeakTris=%zu cdtCapacityGrowths=%zu/%zu "
+                        "rejectReasons=%zu/%zu/%zu/%zu/%zu/%zu/%zu/%zu/%zu "
+                        "rejectTop=%u:%d:%d/%zu",
                         debugName.c_str(), key.z, key.x, key.y, featureCount,
-                        convertMs, tessMs);
+                        convertMs, tessMs, mesh.diagnostics.admissionMs,
+                        mesh.diagnostics.polygonMs, mesh.diagnostics.lineMs,
+                        mesh.diagnostics.polygonSetupMs,
+                        mesh.diagnostics.polygonDensifyMs,
+                        mesh.diagnostics.polygonIntersectionMs,
+                        mesh.diagnostics.polygonCdtMs,
+                        mesh.diagnostics.polygonEcefMs,
+                        mesh.diagnostics.polygonCdtSuperMs,
+                        mesh.diagnostics.polygonCdtPointMs,
+                        mesh.diagnostics.polygonCdtConstraintMs,
+                        mesh.diagnostics.polygonCdtExtractMs,
+                        mesh.diagnostics.extrusionMs, mesh.diagnostics.symbolMs,
+                        mesh.diagnostics.admittedFeatures,
+                        mesh.diagnostics.rejectedFeatures,
+                        mesh.diagnostics.polygonFeatures,
+                        mesh.diagnostics.lineFeatures,
+                        mesh.diagnostics.extrusionFeatures,
+                        mesh.diagnostics.symbolFeatures,
+                        mesh.diagnostics.rings, mesh.diagnostics.points,
+                        mesh.diagnostics.slowestFeatureMs,
+                        mesh.diagnostics.slowestClassCode,
+                        mesh.diagnostics.slowestSubKey,
+                        mesh.diagnostics.slowestRings,
+                        mesh.diagnostics.slowestPoints,
+                        mesh.diagnostics.polygonInputPoints,
+                        mesh.diagnostics.polygonDensifiedPoints,
+                        mesh.diagnostics.polygonInitialConstraints,
+                        mesh.diagnostics.polygonFinalConstraints,
+                        mesh.diagnostics.polygonIntersectionCandidatePairs,
+                        mesh.diagnostics.polygonIntersectionPairs,
+                        mesh.diagnostics.polygonTriangles,
+                        mesh.diagnostics.polygonCdtPointTriangleTests,
+                        mesh.diagnostics.polygonCdtPointBadTriangles,
+                        mesh.diagnostics.polygonCdtConstraintEdgeTests,
+                        mesh.diagnostics.polygonCdtConstraintCrossTests,
+                        mesh.diagnostics.polygonCdtConstraintsAlreadyPresent,
+                        mesh.diagnostics.polygonCdtConstraintsInserted,
+                        mesh.diagnostics.polygonCdtPeakTriangles,
+                        mesh.diagnostics.polygonCdtPointCapacityGrowths,
+                        mesh.diagnostics.polygonCdtTriangleCapacityGrowths,
+                        rejectionCounts[0], rejectionCounts[1],
+                        rejectionCounts[2], rejectionCounts[3],
+                        rejectionCounts[4], rejectionCounts[5],
+                        rejectionCounts[6], rejectionCounts[7],
+                        rejectionCounts[8], rejectTopGeometry,
+                        rejectTopClass, rejectTopSubKey, rejectTopCount);
                 }
                 {
                     std::lock_guard<std::mutex> lock(inbox->mutex);

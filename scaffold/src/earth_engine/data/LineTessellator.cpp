@@ -18,7 +18,9 @@ double dist3(const Vec3& a, const Vec3& b) {
 
 TessellatedLine LineTessellator::tessellate(const Feature& feature,
                                             const Ellipsoid& ellipsoid,
-                                            double heightOffset, bool closed) {
+                                            double heightOffset, bool closed,
+                                            bool roundJoin,
+                                            bool endpointCapPrimitives) {
     TessellatedLine out;
     if (feature.type != GeometryType::LineString || feature.rings.empty()) {
         return out;
@@ -56,6 +58,68 @@ TessellatedLine LineTessellator::tessellate(const Feature& feature,
         if (i + 1 < n) return pos[i + 1];
         return closed ? pos[0] : pos[n - 1];
     };
+    auto appendEndpointCap = [&](size_t i) {
+        const uint32_t base = static_cast<uint32_t>(out.vertices.size());
+        const Vec3& previous = i == 0 ? pos[0] : pos[i - 1];
+        const Vec3& next = i + 1 < n ? pos[i + 1] : pos[i];
+        for (int corner = 0; corner < 4; ++corner) {
+            out.vertices.push_back(
+                {pos[i], previous, next, 6.0f + corner,
+                 static_cast<float>(lengthSoFar[i])});
+        }
+        out.indices.insert(out.indices.end(),
+                           {base, base + 1, base + 2,
+                            base + 2, base + 1, base + 3});
+    };
+
+    if (roundJoin) {
+        // A round stroke is the union of independent butt-capped segment
+        // rectangles and a radius-halfWidth disk at every interior join.
+        // The disk is generated analytically in screen space from a four
+        // vertex bounding quad. The fragment shader clips that quad to a
+        // circle, so quality is independent of line width while keeping the
+        // existing 48-byte vertex ABI. side=2..5 encodes the four corners.
+        const size_t segCount = closed ? n : n - 1;
+        out.vertices.reserve(segCount * 4 +
+                             (closed ? n : n - 2) * 4);
+        out.indices.reserve(segCount * 6 +
+                            (closed ? n : n - 2) * 6);
+        for (size_t s = 0; s < segCount; ++s) {
+            const size_t j = (s + 1) % n;
+            const uint32_t base = static_cast<uint32_t>(out.vertices.size());
+            for (float side : {1.0f, -1.0f}) {
+                out.vertices.push_back(
+                    {pos[s], pos[s], pos[j], side,
+                     static_cast<float>(lengthSoFar[s])});
+            }
+            for (float side : {1.0f, -1.0f}) {
+                out.vertices.push_back(
+                    {pos[j], pos[s], pos[j], side,
+                     static_cast<float>(lengthSoFar[j])});
+            }
+            out.indices.insert(out.indices.end(),
+                               {base, base + 1, base + 2,
+                                base + 2, base + 1, base + 3});
+        }
+        const size_t joinBegin = closed ? 0 : 1;
+        const size_t joinEnd = closed ? n : n - 1;
+        for (size_t i = joinBegin; i < joinEnd; ++i) {
+            const uint32_t base = static_cast<uint32_t>(out.vertices.size());
+            for (int corner = 0; corner < 4; ++corner) {
+                out.vertices.push_back(
+                    {pos[i], pos[i], pos[i], 2.0f + corner,
+                     static_cast<float>(lengthSoFar[i])});
+            }
+            out.indices.insert(out.indices.end(),
+                               {base, base + 1, base + 2,
+                                base + 2, base + 1, base + 3});
+        }
+        if (!closed && endpointCapPrimitives) {
+            appendEndpointCap(0);
+            appendEndpointCap(n - 1);
+        }
+        return out;
+    }
 
     // 每折线顶点 2 个 ribbon 顶点(side +1 / -1)。
     out.vertices.reserve(2 * n);
@@ -87,6 +151,10 @@ TessellatedLine LineTessellator::tessellate(const Feature& feature,
         out.indices.push_back(b);
         out.indices.push_back(aN);
         out.indices.push_back(bN);
+    }
+    if (!closed && endpointCapPrimitives) {
+        appendEndpointCap(0);
+        appendEndpointCap(n - 1);
     }
     return out;
 }

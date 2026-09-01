@@ -49,6 +49,8 @@ private:
 /// - match(prop, cases, fallback)   属性字符串等值分支(原文比较)
 /// - interpolateLinear(input, stops) 分段线性插值(数值/颜色 stop 皆可,
 ///                                  stop 输出类型须一致;input 须为数值)
+/// - step(input, stops)              硬切色阶/数值阶梯,取不大于 input 的
+///                                  最后一个 stop;两端钳制
 ///
 /// 求值失败(缺属性/类型不符/上下文缺 zoom)返回 nullopt,调用方回落
 /// 字面量样式 —— 表达式永不让渲染断链。
@@ -68,11 +70,15 @@ public:
     static Ptr literalString(std::string s);
     static Ptr get(std::string property);
     static Ptr zoom();
+    /// Quantized camera zoom: keep floor(x) until the fractional part reaches
+    /// ceilFraction, then select ceil(x).
+    static Ptr discreteZoom(double ceilFraction);
     static Ptr match(std::string property,
                      std::vector<std::pair<std::string, Ptr>> cases,
                      Ptr fallback);
     static Ptr interpolateLinear(Ptr input,
                                  std::vector<std::pair<double, Ptr>> stops);
+    static Ptr step(Ptr input, std::vector<std::pair<double, Ptr>> stops);
 
     /// @param properties 要素属性(nullptr = 无属性上下文)
     /// @param zoomLevel  相机 zoom(NaN = 无 zoom 上下文)
@@ -83,12 +89,15 @@ public:
     bool referencesZoom() const;
 
 private:
-    enum class Op { Literal, Get, Zoom, Match, InterpolateLinear };
+    enum class Op {
+        Literal, Get, Zoom, DiscreteZoom, Match, InterpolateLinear, Step
+    };
 
     StyleExpression() = default;
 
     Op op_ = Op::Literal;
     StyleValue literal_;
+    double parameter_ = 0.0;                              // DiscreteZoom
     std::string property_;                                // Get / Match
     std::vector<std::pair<std::string, Ptr>> cases_;      // Match
     Ptr fallback_;                                        // Match

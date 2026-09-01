@@ -13,7 +13,6 @@ class PlatformBridge;
 /// 使用 HTTP GET 获取 PNG 瓦片，stb_image 解码为 RGBA。
 /// URL 模板示例：
 ///   OSM:     https://tile.openstreetmap.org/{z}/{x}/{y}.png
-///   高德卫星: https://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}
 ///
 /// 支持占位符：{z} {x} {y} {s}（子域名 0-3）
 class XYZImageryProvider : public ImageryProvider {

@@ -389,6 +389,7 @@ TEST(
     EXPECT_EQ(entry.reason, TileRenderEntryReason::AncestorFallback);
     EXPECT_TRUE(entry.usesAncestorFallback);
     EXPECT_TRUE(entry.surfaceClipEnabled);
+    EXPECT_TRUE(TileSurfaceClip::supportsTerrainHeightRemap(parent));
     EXPECT_EQ(plan.renderEntryAncestorFallbackCount, 1);
     EXPECT_EQ(plan.renderEntrySynchronousPrepCount, 0);
     EXPECT_EQ(plan.renderEntryDeferredPrepCount, 0);
@@ -815,6 +816,7 @@ TEST(
     EXPECT_EQ(&parent, entry.renderTile);
     EXPECT_TRUE(entry.usesAncestorFallback);
     EXPECT_TRUE(entry.surfaceClipEnabled);
+    EXPECT_FALSE(TileSurfaceClip::supportsTerrainHeightRemap(parent));
     // 子象限外扩封缝带:v 起点 0 处 clamp,高度 = 1.03×投影跨度(见
     // TileSurfaceClip::kClipSeamSealMarginFraction)。
     EXPECT_NEAR(0.485f, entry.surfaceClipUv[0], 1e-6f);

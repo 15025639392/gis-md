@@ -1,169 +1,162 @@
 #pragma once
 
-#include "AmapGeometry.h"
+#include "AmapVectorTile.h"
 #include "Feature.h"
-#include "MvtVectorSource.h"
+#include "../core/math/Rectangle.h"
 #include "../tiling/TileKey.h"
+#include "../threading/CancellationToken.h"
 
+#include <functional>
 #include <memory>
-#include <iterator>
+#include <cstdint>
 #include <string>
 #include <vector>
 
 namespace earth_engine {
 
-inline void appendAmapPartFeatures(const AmapDecodedLayerPart& part,
-                                   std::vector<Feature>& out) {
-    auto features = amapDecodedPartToFeatures(part, false);
-    out.insert(out.end(), std::make_move_iterator(features.begin()),
-               std::make_move_iterator(features.end()));
-}
-
-/// type1 完整解码载荷 → 粗区域 source。筛选放到消费阶段，让 regions/main/
-/// water12 共享同一个 gzip/protobuf 解码结果。
-struct AmapRegionsToFeatures {
-    std::vector<Feature> operator()(
-        const TileKey&, std::shared_ptr<const AmapDecodedTile> tile,
-        const std::vector<std::string>&,
-        const std::vector<SourceLayerRule>&) const {
-        std::vector<Feature> out;
-        for (const AmapDecodedLayerPart& part : tile->parts) {
-            if (part.type == 2) appendAmapPartFeatures(part, out);
-        }
-        return out;
-    }
-};
-
-/// type1 完整解码载荷 → main source。低档 type2 由 regions 唯一提供；
-/// z12+ 只接非 30001 地块，水/绿仍由 water12 提供。
-struct AmapMainToFeatures {
-    std::vector<Feature> operator()(
-        const TileKey&, std::shared_ptr<const AmapDecodedTile> tile,
-        const std::vector<std::string>&,
-        const std::vector<SourceLayerRule>&) const {
-        std::vector<Feature> out;
-        for (const AmapDecodedLayerPart& part : tile->parts) {
-            if (part.type == 2) {
-                if (part.z < 12) continue;
-                AmapDecodedLayerPart kept = part;
-                kept.features.clear();
-                for (const AmapDecodedFeature& feature : part.features) {
-                    if (feature.classCode != 30001) {
-                        kept.features.push_back(feature);
-                    }
-                }
-                appendAmapPartFeatures(kept, out);
-                continue;
-            }
-            appendAmapPartFeatures(part, out);
-        }
-        return out;
-    }
-};
-
-struct AmapWaterToFeatures {
-    std::vector<Feature> operator()(
-        const TileKey&, std::shared_ptr<const AmapDecodedTile> tile,
-        const std::vector<std::string>&,
-        const std::vector<SourceLayerRule>&) const {
-        std::vector<Feature> out;
-        for (const AmapDecodedLayerPart& part : tile->parts) {
-            if (part.type != 2) continue;
-            AmapDecodedLayerPart kept = part;
-            kept.features.clear();
-            for (const AmapDecodedFeature& feature : part.features) {
-                if (feature.classCode == 30001) {
-                    kept.features.push_back(feature);
-                }
-            }
-            appendAmapPartFeatures(kept, out);
-        }
-        return out;
-    }
-};
-
-/// POI 保留为轻量解码结构，进入 tessellation worker 后才转换 Feature。
-/// 旧通路在 decode 阶段先构造 Feature，派单时 `return *tile` 又深复制整份
-/// rings/properties；全球 64 瓦会产生一轮纯内存复制和分配抖动。
-struct AmapPoiDecodedTileDecodeTraits {
-    static bool decode(const uint8_t* data, size_t size,
-                       AmapDecodedTile& out, std::string* error) {
-        return decodeAmapPoiTile(data, size, out.parts, error);
-    }
-
-    static size_t approxBytes(const AmapDecodedTile& tile) {
-        return AmapDecodedTileDecodeTraits::approxBytes(tile);
-    }
-};
-
-struct AmapPoiToFeatures {
-    std::vector<Feature> operator()(
-        const TileKey&, std::shared_ptr<const AmapDecodedTile> tile,
-        const std::vector<std::string>&,
-        const std::vector<SourceLayerRule>&) const {
-        std::vector<Feature> out;
-        for (const AmapDecodedLayerPart& part : tile->parts) {
-            if (part.type == 0) appendAmapPartFeatures(part, out);
-        }
-        return out;
-    }
-};
-
-/// amap 解码特质:字节流 → Feature 列表。
-/// RegionsOnly 编译期开关:粗源(z10/z12 区域)保留 type2 面,主源(z12-14)
-/// 保留 type1/3/4 与 30002 地块面，过滤 30001 水/绿地——过滤在 worker
-/// 解码期做,不进缓存。
-template <bool RegionsOnly>
-struct AmapDecodeTraits {
-    static bool decode(const uint8_t* data, size_t size,
-                       std::vector<Feature>& out, std::string* error) {
-        return amapBytesToFeatures(data, size, RegionsOnly, out, error);
-    }
-
-    /// 解码瓦的近似常驻字节(几何点 + 属性字符串 + 容器头)。
-    static size_t approxBytes(const std::vector<Feature>& feats) {
-        constexpr size_t kMapNodeBytes = 56;
-        constexpr size_t kVecHeaderBytes = 24;
-        size_t bytes = sizeof(std::vector<Feature>) +
-                       feats.capacity() * sizeof(Feature);
-        for (const Feature& f : feats) {
-            bytes += f.rings.capacity() * kVecHeaderBytes;
-            for (const auto& ring : f.rings) {
-                bytes += ring.capacity() * sizeof(Cartographic);
-            }
-            bytes += f.properties.size() * kMapNodeBytes;
-            for (const auto& kv : f.properties) {
-                if (kv.first.size() > 15) bytes += kv.first.size();
-                if (kv.second.size() > 15) bytes += kv.second.size();
-            }
-        }
-        return bytes;
-    }
-};
-
-/// amap 区域粗源(z3/6/8/10:水/绿地与地块,type2)。
-using AmapType1TileCache =
-    MvtTileFetchCacheT<AmapDecodedTile, AmapDecodedTileDecodeTraits>;
-
-using AmapRegionsVectorSource = VectorTileSourceT<
-    AmapDecodedTile, AmapDecodedTileDecodeTraits, AmapRegionsToFeatures>;
-
-using AmapWaterVectorSource = VectorTileSourceT<
-    AmapDecodedTile, AmapDecodedTileDecodeTraits, AmapWaterToFeatures>;
-
-/// amap 主源(z3/6/8/10/12/14:路网/建筑/轨道；z12+ 另含地块
-/// type2。低档地块由 regions source 唯一提供，30001 水/绿地由粗区域/
-/// z12 water source 提供)。
-using AmapMainVectorSource = VectorTileSourceT<
-    AmapDecodedTile, AmapDecodedTileDecodeTraits, AmapMainToFeatures>;
-
-/// amap POI 源(z3/6/8/10/12/14:type 0 通用 POI 点标签)。
-using AmapPoiVectorSource = VectorTileSourceT<
-    AmapDecodedTile, AmapPoiDecodedTileDecodeTraits, AmapPoiToFeatures>;
+class Engine;
+class FeatureRenderLayer;
+class RenderDevice;
+class ThreadPool;
+class AmapClassicRuntime;
+class SceneFrameResourceArbiter;
+struct Feature;
+#if defined(EARTH_ENGINE_TESTING)
+struct AmapDecodedTileDecodeTraits;
+struct AmapDecodedTile;
+#endif
 
 /// 高德瓦片地理矩形(弧度,4326 等距圆柱 2:1)。
 /// 与 AmapGeographicScheme::tileToRectangle 同数学;GLESView 的
 /// workerTessellationContextForArea 需要按瓦片矩形取高度范围。
 Rectangle amapTileRectangle(const TileKey& key);
+
+#if defined(EARTH_ENGINE_TESTING)
+std::vector<Feature> amapRegionsToFeaturesForContractTest(
+    std::shared_ptr<const AmapDecodedTile> tile);
+std::vector<Feature> amapMainToFeaturesForContractTest(
+    std::shared_ptr<const AmapDecodedTile> tile);
+std::vector<Feature> amapPoiToFeaturesForContractTest(
+    std::shared_ptr<const AmapDecodedTile> tile);
+#endif
+
+/// Atomic owner of the official AMap decoded-data path. It is the only
+/// production constructor that pairs the sealed profiles with the AMap typed
+/// decoders, geographic scheme, discrete data zooms and shared type-1 cache.
+/// Layers remain Scene-owned through Engine, while this bundle owns their
+/// sources and removes the layers during teardown.
+class AmapClassicSourceBundle {
+private:
+    friend class AmapClassicRuntime;
+    using FetchCallback = std::function<void(int, std::vector<uint8_t>)>;
+    using Type1Fetch = std::function<void(const TileKey&, FetchCallback)>;
+    using PoiFetch = std::function<void(const TileKey&, FetchCallback)>;
+    using SurfaceFeatures = std::vector<Feature>;
+    using SurfaceFeaturesCallback =
+        std::function<void(std::shared_ptr<const SurfaceFeatures>)>;
+
+public:
+
+    struct CacheStats {
+        uint64_t hits = 0;
+        uint64_t fetches = 0;
+        uint64_t refetches = 0;
+        uint64_t rawHits = 0;
+        size_t residentTiles = 0;
+        size_t rawTiles = 0;
+        size_t rawBytes = 0;
+        size_t residentBytes = 0;
+        uint64_t failureSkips = 0;
+    };
+
+    struct SourceStats {
+        double ingestMs = 0.0;
+        double treeMs = 0.0;
+        double dispatchMs = 0.0;
+        double commitMs = 0.0;
+        int commits = 0;
+        int drops = 0;
+        int tessellateDispatched = 0;
+        int selectedZoom = 0;
+        int64_t desiredTileCount = 0;
+        size_t scannedTileCount = 0;
+        size_t renderTileCount = 0;
+        size_t requestTileCount = 0;
+        size_t pendingTileCount = 0;
+        size_t tessellatingTileCount = 0;
+        size_t readyTileCount = 0;
+        size_t activeTileCount = 0;
+        size_t activeAncestorPairs = 0;
+    };
+
+    struct Options {
+        size_t decodedCacheTiles = 48;
+        size_t rawCacheTiles = 256;
+        size_t maximumTilesPerView = 256;
+        size_t maximumTessellationsInFlight = 8;
+        bool collectDiagnostics = true;
+#if defined(EARTH_ENGINE_TESTING)
+        size_t failAfterSourceConstruction = 0;
+#endif
+    };
+
+    ~AmapClassicSourceBundle();
+
+    AmapClassicSourceBundle(const AmapClassicSourceBundle&) = delete;
+    AmapClassicSourceBundle& operator=(const AmapClassicSourceBundle&) = delete;
+
+    const FeatureRenderLayer* regionsLayer() const { return regionsLayer_; }
+    const FeatureRenderLayer* mainLayer() const { return mainLayer_; }
+    const FeatureRenderLayer* poiLayer() const { return poiLayer_; }
+    CacheStats type1CacheStats() const;
+    SourceStats regionsSourceStats() const;
+    SourceStats mainSourceStats() const;
+    SourceStats poiSourceStats() const;
+    bool hasPendingWork() const;
+    void setOfficialSurfaceFillBaked(bool enabled);
+
+private:
+#if defined(EARTH_ENGINE_TESTING)
+    friend struct AmapDecodedTileDecodeTraits;
+    friend bool decodeAmapTile(
+        const uint8_t*, size_t, std::vector<AmapDecodedLayerPart>&,
+        std::string*);
+    friend bool decodeAmapPoiTile(
+        const uint8_t*, size_t, std::vector<AmapDecodedLayerPart>&,
+        std::string*);
+    friend std::vector<Feature> amapDecodedPartToFeatures(
+        const AmapDecodedLayerPart&, bool);
+    friend std::vector<Feature> amapRegionsToFeaturesForContractTest(
+        std::shared_ptr<const AmapDecodedTile>);
+    friend std::vector<Feature> amapMainToFeaturesForContractTest(
+        std::shared_ptr<const AmapDecodedTile>);
+    friend std::vector<Feature> amapPoiToFeaturesForContractTest(
+        std::shared_ptr<const AmapDecodedTile>);
+#endif
+    AmapClassicSourceBundle(
+        Engine& engine, RenderDevice& renderDevice, Type1Fetch type1Fetch,
+        PoiFetch poiFetch,
+        std::shared_ptr<ThreadPool> type1DecodePool,
+        std::shared_ptr<ThreadPool> poiDecodePool,
+        std::shared_ptr<ThreadPool> tessellationPool,
+        Options options);
+    void update(const Rectangle& viewRectangle, double cameraHeightMeters,
+                SceneFrameResourceArbiter& resourceArbiter);
+    /// Resolve all ordinary surface polygons needed to paint one geographic
+    /// or WebMercator 256 page. The request shares the official type-1 cache with
+    /// regions/main, converts geometry to WGS84, and reports nullptr on any
+    /// incomplete/failed source tile so the raster overlay keeps its loading
+    /// or ancestor fallback state instead of caching a transparent success.
+    void requestSurfaceFeatures(const TileKey& webMercatorKey,
+                                CancellationToken token,
+                                SurfaceFeaturesCallback callback) const;
+    struct Impl;
+    Engine& engine_;
+    std::unique_ptr<Impl> impl_;
+    FeatureRenderLayer* regionsLayer_ = nullptr;
+    FeatureRenderLayer* mainLayer_ = nullptr;
+    FeatureRenderLayer* poiLayer_ = nullptr;
+    size_t updateCursor_ = 0;
+};
 
 } // namespace earth_engine

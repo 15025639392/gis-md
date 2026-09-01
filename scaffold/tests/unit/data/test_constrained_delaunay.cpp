@@ -195,3 +195,22 @@ TEST(ConstrainedDelaunayTest, RandomConvexPolygons) {
             EXPECT_TRUE(hasEdge(tris, e.first, e.second)) << "iter " << iter;
     }
 }
+
+TEST(ConstrainedDelaunayTest, ReservedStorageAvoidsGrowthOnLargeInput) {
+    // Large enough to cross several default-vector growth thresholds while
+    // remaining suitable for the intentionally O(n²) reference algorithm.
+    constexpr uint32_t n = 512;
+    std::vector<Vec2> pts{{0, 0}, {1, 0}, {1, 1}, {0, 1}};
+    pts.reserve(n);
+    std::mt19937 rng(20260830);
+    std::uniform_real_distribution<double> unit(0.001, 0.999);
+    while (pts.size() < n) pts.emplace_back(unit(rng), unit(rng));
+    ConstrainedDelaunayDiagnostics diagnostics;
+    const auto tris = ConstrainedDelaunay::triangulate(
+        pts, ringEdges(0, 4), &diagnostics);
+    ASSERT_FALSE(tris.empty());
+    EXPECT_GE(diagnostics.initialPointCapacity, n + 3u);
+    EXPECT_GE(diagnostics.initialTriangleCapacity, 2u * (n + 3u));
+    EXPECT_EQ(0u, diagnostics.pointCapacityGrowths);
+    EXPECT_EQ(0u, diagnostics.triangleCapacityGrowths);
+}

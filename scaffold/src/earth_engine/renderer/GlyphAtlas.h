@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -31,6 +32,8 @@ public:
     static constexpr int kSdfPadding = 6;         ///< SDF 外扩(px)
     static constexpr unsigned char kSdfOnEdge = 180;  ///< 轮廓处 SDF 值
     static constexpr float kSdfDistScale = 24.0f;     ///< SDF 值/px
+    static constexpr int kAmapProviderPixelHeight = 24;
+    static constexpr unsigned char kAmapSdfOnEdge = 205;
 
     explicit GlyphAtlas(RenderDevice* device);
     ~GlyphAtlas();
@@ -40,7 +43,10 @@ public:
 
     /// 注入字体字节(TrueType/ttc 首字体)。失败(解析不了/CFF)返回 false。
     bool setFontData(std::vector<uint8_t> fontData);
+    /// Invalidates the current font and every derived glyph registration.
+    void clearFontData();
     bool ready() const;
+    float metricPixelHeight() const;
 
     /// 单字形:uv + 布局盒(px,基线原点,y 向上为正)。
     struct Glyph {
@@ -51,6 +57,16 @@ public:
         float height = 0;    ///< 位图高 px
         float advance = 0;   ///< pen 前进 px
         bool hasBitmap = false;  ///< 空白字符 false(只前进不出图)
+    };
+    struct ProviderGlyph {
+        uint32_t codepoint = 0;
+        int fontWidth = 0;
+        int fontHeight = 0;
+        int horiBearingX = 0;
+        int horiBearingY = 0;
+        int horiAdvance = 0;
+        int posX = 0;
+        int posY = 0;
     };
 
     /// 取字形(缺则栅格化+上传)。失败(无字体/无字形/图集满)返回 nullptr。
@@ -88,6 +104,19 @@ public:
     size_t residentGlyphCount() const;
     /// 字形是否已在图集内(不触发栅格化)。预算调度用。
     bool hasGlyph(uint32_t codepoint) const;
+#if defined(EARTH_ENGINE_TESTING)
+    void activateAmapOfficialProviderForTest(
+        std::function<void(uint32_t)> demand) {
+        activateAmapOfficialProvider(std::move(demand));
+    }
+    bool installAmapOfficialGlyphBatchForTest(
+        int imageWidth, int imageHeight,
+        const std::vector<uint8_t>& grayscale,
+        const std::vector<ProviderGlyph>& glyphs) {
+        return installAmapOfficialGlyphBatch(imageWidth, imageHeight,
+                                             grayscale, glyphs);
+    }
+#endif
 
     /// 图集页满导致的字形丢弃计数(ensureGlyph 因页满返回 nullptr 的次数)。
     /// >0 = 屏幕上有字渲染不出来。静默丢字不可接受:首次溢出打 Warning
@@ -103,7 +132,8 @@ public:
     float descent() const;
 
     /// 图集纹理(未初始化返回 nullptr)。
-    Texture* texture() const;
+    Texture* texture();
+    const Texture* texture() const;
 
     /// 成功注入字体的代次。字体 ready→ready 替换会清空并重排图集，
     /// 消费方据此失效已经烘焙的 UV/标签派生数据；失败注入不递增。
@@ -113,6 +143,15 @@ public:
     static std::vector<uint32_t> decodeUtf8(const std::string& text);
 
 private:
+    friend class Engine;
+    friend class AmapClassicAssets;
+    void activateAmapOfficialProvider(
+        std::function<void(uint32_t)> demand);
+    bool installAmapOfficialGlyphBatch(
+        int imageWidth, int imageHeight,
+        const std::vector<uint8_t>& grayscale,
+        const std::vector<ProviderGlyph>& glyphs);
+    void clearAmapOfficialProvider();
     struct Impl;
     std::unique_ptr<Impl> impl_;
 };

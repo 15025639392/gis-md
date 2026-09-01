@@ -31,10 +31,9 @@ public:
     // ---- FeatureStore 渲染桥接层(矢量数据系统 P1) ----
     // 与旧 VectorLayer 平行的新路径;层自持 RenderDevice(构造时注入),
     // 无 initialize 二段式。
-    void addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer);
+    bool addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer);
     std::unique_ptr<FeatureRenderLayer> removeFeatureRenderLayer(
         const std::string& layerId);
-    FeatureLayerList& featureRenderLayers() { return featureRenderLayers_; }
     const FeatureLayerList& featureRenderLayers() const {
         return featureRenderLayers_;
     }
@@ -44,6 +43,10 @@ public:
                            FeatureState state);
 
 private:
+    friend class Scene;
+    FeatureLayerList& mutableFeatureRenderLayers() {
+        return featureRenderLayers_;
+    }
     RenderDevice* renderDevice_ = nullptr;
     LayerList vectorLayers_;
     FeatureLayerList featureRenderLayers_;

@@ -7,24 +7,20 @@
 > 判据与债不在本文重复,只引编号(如 V3 / P3)。本文写完即随架构变更更新,
 > 不是冻结档案(那是 `docs/issues/*`)。
 
-> **高德专属北极星**：供应商协议、Amap 4326/离散 zoom、regions/main/water12/POI 分工、真实链路验收和高德未闭环债务见 [`docs/northstar/amap-vector.md`](northstar/amap-vector.md)。本文只保留 MVT 通用机制，不把高德细节复制成第二份真源。
+> **高德专属北极星**：供应商协议、Amap 4326/离散 zoom、regions/main/POI 分工、真实链路验收和高德未闭环债务见 [`docs/northstar/amap-vector.md`](northstar/amap-vector.md)。本文只保留 MVT 通用机制，不把高德细节复制成第二份真源。
 
 状态时点:2026-08-27(MVT source 纳入 Scene/SDK 托管；V26 样式系统三期收官 + §1b 驱动切面/七态 dump 后订正;
 上一时点 2026-08-18)。
 
-> ⚠️ **生命周期状态：MVT 道路线场即将废弃。** 范围仅限
-> `RoadFieldSource` → `LineFieldRasterizer`/D2 → `TerrainPageStore` 场平面。
-> 该链路暂时保留用于兼容、回归和历史数据对照；新功能、新图层不得继续依赖或扩展它。
-> MVT 面 drape、MVT 点/标注以及 `FeatureRenderLayer` 几何线不在本次标记范围内；替代实现和删除时间尚未确定。
+> **生命周期状态：MVT 道路线场已完整物理删除。** `RoadFieldSource`、
+> `LineFieldRasterizer`、TerrainPageStore 第二平面及 shader/platform ABI 均不存在。
+> 后文命中的旧名称和性能数字仅是历史决策记录，不是现行源码、兼容入口、回归路径或扩展合同。现行瓦片矢量只走 `MvtVectorSource`/`AmapVectorSource` → `FeatureRenderLayer` 几何与符号命令。
 
 ---
 
 ## 0. 一句话
 
-一条 MVT 数据源,**一个获取层**扇出到**三条表示各异的渲染路**:
-面走栅格化进影像页合成、线走 **（⚠️即将废弃的）SDF/D2 场路径**寄生地形 FS、点走 billboard 几何链。
-分工的判据不是"数据类型",是**这类要素的视觉本质对应哪个物理量**,
-以及该表示在 TBDR 上最便宜。
+一条现行瓦片矢量数据源经单一获取/解码层进入 `FeatureRenderLayer`：面和线生成几何命令，点与文字生成 billboard/SDF 符号命令。官方 AMap profile 的 identity、paint/layout、排序与缩放窗口由官方 runtime/PBF 合同封闭提供；generic MVT 不得成为官方 fallback。
 
 ---
 
@@ -42,7 +38,7 @@
                                       │ shared_ptr<const MvtTile>
               ┌───────────────────────┼───────────────────────┐
               │                       │                       │
-        【面】drape          【线，⚠️即将废弃】SDF/D2 场    【点】符号几何
+        【面】drape          【线，历史已删除】SDF/D2 场    【点】符号几何
               │                       │                       │
    VectorDrapeImageryProvider   RoadFieldSource      MvtVectorSource
    ├ 冒充 ImageryProvider       ├ 经 PageStore        ├ VectorTileTree(选择/LRU)
@@ -67,7 +63,7 @@
 **关键结构事实**:
 - 面与线**不产生独立 draw call**——都寄生在地形 pass 的片元着色器里合成(GPU ~0,见 V1/V2)。
 - 点是唯一有独立 draw 的矢量内容(每桶 1 point + 1 label draw)。
-- 场平面与影像平面**同页存储但不同生命周期**:场页有独立 zoom 封顶、独立 LRU、独立间接纹理(场专项步3)；该场平面属于**即将废弃的兼容路径**。
+- 历史场平面曾与影像平面同页存储但使用独立生命周期；该实现及其 ABI 已删除，本条只解释旧性能数据。
 
 ---
 
@@ -176,7 +172,7 @@ P1 几何上屏 → P3 贴地(方案A 高程采样) → P6a/d stencil 贴地(像
     → P4 MVT 底图接入 → E1 瓦片即桶 + worker 全链(16107→216ms)
     → E2 分级过滤从数据侧搬回样式侧 → E4 drape 探索
     → 刀1 面→drape(75ms→0) → 刀2 线→SDF 场(stencil 链退役)
-    → 场专项步1-3 + D2 线段纹素换代(线宽真像素恒定；现为⚠️即将废弃的兼容路径)
+    → 场专项步1-3 + D2 线段纹素换代（历史已删除，仅保留决策记录）
     → 符号五刀(刀0/A/B/C/D/E)+ A.5 获取层单一化
     → R*/V24 换代闪根修 → 符号遮挡按视觉语义重做
 ```
@@ -193,8 +189,8 @@ P1 几何上屏 → P3 贴地(方案A 高程采样) → P6a/d stencil 贴地(像
 
 | 内容类 | 视觉本质(物理量) | 选定表示 | 上屏机制 | 实测成本 | 能力边界(能/不能) | 扩展点 | 失效成本类 |
 |---|---|---|---|---|---|---|---|
-| 面(水/建筑/landuse) | 归属+颜色 | drape 栅格化冒充影像 | 影像页合成 | GPU ~0(刀1 75ms→0) | 能:多色/分级/overzoom 现画;不能:逐要素交互高亮(像素级) | `VectorRasterStyle`+StyleDocument fill | Re-bake |
-| 线(路网，⚠️即将废弃) | 到中心线距离 | D2 线段纹素 SDF 场（兼容） | 地形 FS 寄生 | GPU ~0(overlay 25-30ms→0) | 能:线宽像素恒定/多色(分类平面)/段内相位 dash;不能:沿折线弧长 dash(同语义=E 案)、逐要素渐变 | 分类平面/相位遮罩/通道 | Uniform/Re-bake |
+| 面(水/建筑/landuse) | 归属+颜色 | 历史 drape 路径已删除 | N/A | N/A | official AMap 由几何面 profile 承载 | sealed official surface profile | profile 重建 |
+| 线（历史已删除） | 到中心线距离 | D2 线段纹素 SDF 场 | 地形 FS 寄生 | GPU ~0(overlay 25-30ms→0) | 历史能力边界，不是现行扩展合同 | — | — |
 | 点(POI) | 屏幕注记(恒定像素) | billboard 符号 | 独立 draw(order 30/31,深度关) | 每桶 1-2 draw | 能:分类图形/颜色/交互态高亮/锚点遮挡;不能:逐像素深度语义 | `TileSymbolCpu`/interaction | Re-tess/Uniform |
 | 文本(标注) | 可读注记 | glyph quad+placement | 同 billboard | build p50 2.63→1.51ms | 能:CJK/避让/跨瓦 fade;不能:复杂 shaping/沿线文字 | GlyphAtlas/LabelPlacement | Re-tess |
 | 轨迹(海拔着色/逐要素渐变) | 沿线连续物理量(海拔/里程/速度) | E 案几何线条带(方案 A ribbon,**非** SDF 场) | 独立 line draw | CPU 每顶点打包色 O(n)(镶嵌期);GPU 同 ribbon | 能:逐顶点渐变(海拔/里程/速度)、弧长 dash(同语义);不能:贴地像素级贴合(stencil 体积 mesh 无顶点色,需后置) | `a_color` 逐顶点 + `lengthSoFar` + `lineColorGradientByHeight` | Re-tess |
@@ -311,7 +307,7 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 
 ### MVT **线**图层（如 railway）：仅兼容维护，不再新增依赖
 
-> ⚠️ 道路线场链路即将废弃。不要再把新图层加入 `makeMvtRoadFieldStyle()`，也不要为此路径扩展场编码、分色通道或 `kMvtRoadFieldMaxZoom`。
+> 历史道路线场链路及 `makeMvtRoadFieldStyle()`、`kMvtRoadFieldMaxZoom` 已删除；这些名称不得恢复为兼容入口。
 > 现有配置只允许为兼容和回归而维护；替代表示需另立设计并通过独立评审。
 
 ### 加一个新 MVT **点**图层
@@ -366,19 +362,11 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 1. **三条消费路没有共同抽象层**。加一个新数据类型要从头决定走哪条路、
    从头接线;三条路的产物类型、生命周期管理、失效机制各写一套。
    现状能工作是因为只有三条且都稳定了,**再加第四条(如 3D 建筑)会暴露**。
-2. **样式系统割裂 —— V26 三期收官后大部分已还(2026-08-18 订正)**。
-   原文断言的两层后果均已失效:面 drape 补了
-   `VectorDrapeImageryProvider::setStyle`(加锁快照,可与 requestTile 并发),
-   场路补了 `RoadFieldSource::setStyle` + TerrainPageStore 失效原子换手
-   (V28),统一入口 `Engine::setStyleTargets` + `applyStyleDocument`
-   (StyleDocument A 案对象 JSON,fail-loud 契约 + Uniform/Re-bake/Re-tess
-   三档成本类失效路由,掩码合成防"文档没写的字段被洗")。真机热改闭环:
-   改设备 JSON→Skin→变色零重装;symbol 换肤 placement/fade 不重启
-   (dump 自证)。设计:`docs/issues/vector-style-architecture-2026-08-18.md`。
-   **残余**:`style/OverlayStyle.h` 平行类型系(旧 `VectorLayer` GeoJSON
-   编辑演示路)仍在 demo 上线且未并入 StyleDocument —— 判缓,唯一消费者
-   是编辑演示层,正路是日后退役合并进 FeatureRenderLayer(归用户拍板)。
-3. **线的样式表达力被编码格式卡死（⚠️即将废弃路径）**:D2 场编码只有"距离 + 方向 + 端点余量",
+2. **通用矢量样式与官方 AMap 合同彼此隔离**。旧 JSON 样式编译器、
+   VectorDrape 与 RoadField 样式拼装路径已删除；AMap classic-normal 只由
+   sealed official profile 消费固定 PBF/runtime 生成表。通用
+   `OverlayStyle` 仅服务非 AMap 的 VectorLayer，不得进入 official runtime。
+3. **历史线场的样式表达力曾被编码格式卡死（实现已删除）**:D2 场编码只有"距离 + 方向 + 端点余量",
    **没有图层/分类通道**,而且即便有位、颜色也在 uniform 侧(全局一个
    `u_roadFieldColor`,FS 里 `mix(base.rgb, roadFieldColor.rgb, roadCov)`),
    所以**全图线只能一个颜色**。多色路网必须扩通道或加平面 —— 这是
@@ -394,7 +382,7 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
    与 northstar 把 E 立为战略备选一致。
 4. **zoom 三义无类型区分**(§4.2),已踩两次。裸 `int` 传递,靠注释约束。
 5. ~~**样式硬编码**~~ **已收官(2026-08-18)**:
-   面/线/符号样式走 StyleDocument 设备侧 JSON(见 #2),分级规则在
+   面/线/符号样式不得通过设备侧 JSON 覆盖 official AMap 合同，分级规则在
    `MinimalGlobeDemoConfig.cpp` 工厂 + `test_mvt_basemap_grading` 守卫;
    数据源 URL 走设备侧 `sources.json`(与 style-*.json 同目录约定,
    `parseDemoSourceOverrides` fail-loud:未知键/非字符串整份拒收回落内置)
@@ -418,7 +406,7 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 
 | 优先级 | 债 | 理由 |
 |---|---|---|
-| ~~高~~ ✅ | #2 样式统一 + #5 样式外置(**判据 = northstar `V26`**) | **2026-08-18 三期收官**(StyleDocument + 双路 setStyle + 失效路由,真机热改闭环);同日收尾:symbol 换肤像素补验(placement 跨换肤存活)+ 数据源 URL 启动期外置(见 #5)。唯一残余:OverlayStyle 交互路退役合并(判缓,归用户拍板) |
+| 高 | #2 official AMap 合同封闭 | sealed `Main/Regions/Poi` profile 为唯一入口；旧 JSON 样式编译器和双路 setStyle 已删除 |
 | 中 | #3 线分类通道 | 直接卡住**多色路网**;dash(V9)只被卡住"同语义"那一半(见 #3)。~~需与 P7 容量债一起算~~ —— P7 已于 2026-08-15 量化后**结清判定不修**,不再是前置 |
 | 中 | #6 命名/开关正名 | 纯清理,便宜,防止新人踩坑 |
 | 低 | #1 统一抽象 | 现在抽象是过早;等第四条路真出现时再抽 |
@@ -433,7 +421,7 @@ Cesium 默认 `depthTestAgainstTerrain=false`。
 | 获取层 | `data/MvtTileFetchCache.h/.cpp` |
 | 解码/转换 | `data/MvtDecoder.*`、`data/MvtFeatureConverter.*` |
 | 面 | `providers/VectorDrapeImageryProvider.*`、`data/VectorTileRasterizer.*` |
-| 线（⚠️即将废弃的道路线场） | `providers/RoadFieldSource.*`、`data/LineFieldRasterizer.*` |
+| 线（历史已删除的道路线场） | 源文件已删除；仅可从版本历史研究，不是当前入口 |
 | 点/符号 | `data/MvtVectorSource.*`、`data/VectorTileTree.*`、`layers/FeatureRenderLayer.*` |
 | 标注避让 | `layers/LabelPlacement.*`、`renderer/GlyphAtlas.*`、`renderer/IconAtlas.*` |
 | 样式/过滤 | `data/VectorRasterStyle.h`、`data/StyleFilter.h`、`data/StyleExpression.h` |

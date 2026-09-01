@@ -3,7 +3,11 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <chrono>
+#include <cassert>
+#include <cmath>
 #include <deque>
+#include <limits>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -60,16 +64,58 @@ uint64_t edgeKey(uint32_t a, uint32_t b) {
 class Cdt {
 public:
     Cdt(const std::vector<Vec2>& points,
-        const std::vector<ConstrainedDelaunay::Edge>& constraints)
-        : pts_(points), constraints_(constraints) {}
+        const std::vector<ConstrainedDelaunay::Edge>& constraints,
+        ConstrainedDelaunayDiagnostics* diagnostics)
+        : pts_(points), constraints_(constraints), diagnostics_(diagnostics) {
+        // The super triangle adds exactly three points. A planar triangulation
+        // of V vertices has fewer than 2V triangles; reserving that bound
+        // removes deterministic whole-table reallocations without changing
+        // insertion order, predicates, traversal, or emitted indices.
+        pts_.reserve(points.size() + 3);
+        const size_t verticesWithSuper = points.size() + 3;
+        if (verticesWithSuper <=
+            (std::numeric_limits<size_t>::max() - 8) / 2) {
+            tris_.reserve(verticesWithSuper * 2 + 8);
+        }
+        if (diagnostics_) {
+            diagnostics_->initialPointCapacity = pts_.capacity();
+            diagnostics_->initialTriangleCapacity = tris_.capacity();
+        }
+    }
 
     std::vector<uint32_t> run() {
         const uint32_t n = static_cast<uint32_t>(pts_.size());
         if (n < 3) return {};
 
-        buildSuperTriangle(n);
-        for (uint32_t i = 0; i < n; ++i) insertPoint(i);
-        for (const auto& e : constraints_) insertConstraint(e.first, e.second);
+        using Clock = std::chrono::steady_clock;
+        const auto elapsedMs = [](const Clock::time_point& start) {
+            return std::chrono::duration<double, std::milli>(Clock::now() - start)
+                .count();
+        };
+        if (diagnostics_) {
+            auto start = Clock::now();
+            buildSuperTriangle(n);
+            diagnostics_->superTriangleMs += elapsedMs(start);
+            start = Clock::now();
+            for (uint32_t i = 0; i < n; ++i) insertPoint(i);
+            diagnostics_->pointInsertMs += elapsedMs(start);
+        } else {
+            buildSuperTriangle(n);
+            for (uint32_t i = 0; i < n; ++i) insertPoint(i);
+        }
+        buildEdgeCounts();
+        if (diagnostics_) {
+            auto start = Clock::now();
+            for (const auto& e : constraints_)
+                insertConstraint(e.first, e.second);
+            diagnostics_->constraintInsertMs += elapsedMs(start);
+            start = Clock::now();
+            auto result = extractInside(n);
+            diagnostics_->extractInsideMs += elapsedMs(start);
+            return result;
+        }
+        for (const auto& e : constraints_)
+            insertConstraint(e.first, e.second);
         return extractInside(n);
     }
 
@@ -77,11 +123,57 @@ private:
     std::vector<Vec2> pts_;
     const std::vector<ConstrainedDelaunay::Edge>& constraints_;
     std::vector<Tri> tris_;
+    ConstrainedDelaunayDiagnostics* diagnostics_ = nullptr;
+    std::unordered_map<uint64_t, uint32_t> edgeCounts_;
+    bool trackEdges_ = false;
+    std::vector<Tri> pointBadTrianglesScratch_;
+    std::vector<uint64_t> pointDirectedEdgesScratch_;
+    std::vector<uint32_t> constraintCrossedIndicesScratch_;
+    std::vector<std::array<uint32_t, 2>> constraintCrossedEdgesScratch_;
+    std::unordered_set<uint64_t> constraintDirectedEdgesScratch_;
+    std::unordered_map<uint32_t, uint32_t> constraintNextScratch_;
+    std::unordered_set<uint32_t> constraintCrossedSetScratch_;
+    std::vector<uint32_t> constraintCycleScratch_;
+
+    void addTriEdges(const Tri& t) {
+        ++edgeCounts_[edgeKey(t.v[0], t.v[1])];
+        ++edgeCounts_[edgeKey(t.v[1], t.v[2])];
+        ++edgeCounts_[edgeKey(t.v[2], t.v[0])];
+    }
+
+    void removeTriEdges(const Tri& t) {
+        for (int k = 0; k < 3; ++k) {
+            const uint64_t key = edgeKey(t.v[k], t.v[(k + 1) % 3]);
+            const auto it = edgeCounts_.find(key);
+            assert(it != edgeCounts_.end() && it->second > 0);
+            if (it == edgeCounts_.end()) continue;
+            if (it->second <= 1) edgeCounts_.erase(it);
+            else --it->second;
+        }
+    }
+
+    void buildEdgeCounts() {
+        edgeCounts_.clear();
+        edgeCounts_.reserve(tris_.size() * 2);
+        for (const Tri& t : tris_) addTriEdges(t);
+        trackEdges_ = true;
+    }
+
+    void recordPeakTriangles() {
+        if (diagnostics_) {
+            diagnostics_->peakTriangles =
+                std::max(diagnostics_->peakTriangles, tris_.size());
+        }
+    }
 
     // 追加 CCW 三角形。
     void addTriCcw(uint32_t a, uint32_t b, uint32_t c) {
         if (orient2d(pts_[a], pts_[b], pts_[c]) < 0.0) std::swap(b, c);
+        if (diagnostics_ && tris_.size() == tris_.capacity()) {
+            ++diagnostics_->triangleCapacityGrowths;
+        }
         tris_.push_back(Tri{{a, b, c}});
+        if (trackEdges_) addTriEdges(tris_.back());
     }
 
     void buildSuperTriangle(uint32_t n) {
@@ -97,46 +189,88 @@ private:
         const double dmax = std::max(dx, dy) > 0 ? std::max(dx, dy) : 1.0;
         const double midx = 0.5 * (minx + maxx), midy = 0.5 * (miny + maxy);
         // 足够大的包围三角形(CCW)。
-        pts_.push_back(Vec2(midx - 20.0 * dmax, midy - dmax));       // n
-        pts_.push_back(Vec2(midx + 20.0 * dmax, midy - dmax));       // n+1
-        pts_.push_back(Vec2(midx, midy + 20.0 * dmax));              // n+2
+        const auto appendPoint = [&](const Vec2& point) {
+            if (diagnostics_ && pts_.size() == pts_.capacity()) {
+                ++diagnostics_->pointCapacityGrowths;
+            }
+            pts_.push_back(point);
+        };
+        appendPoint(Vec2(midx - 20.0 * dmax, midy - dmax));       // n
+        appendPoint(Vec2(midx + 20.0 * dmax, midy - dmax));       // n+1
+        appendPoint(Vec2(midx, midy + 20.0 * dmax));              // n+2
         addTriCcw(n, n + 1, n + 2);
+        recordPeakTriangles();
     }
 
     // Bowyer-Watson:插入点 i,重构受影响 cavity。
     void insertPoint(uint32_t i) {
         const Vec2& p = pts_[i];
-        // 有向边计数,提取 cavity 边界(reverse 不在集合中的有向边)。
-        std::unordered_map<uint64_t, std::pair<uint32_t, uint32_t>> boundary;
-        std::vector<Tri> kept;
-        kept.reserve(tris_.size());
-        std::vector<std::array<uint32_t, 2>> badEdges;
+        auto& badTriangles = pointBadTrianglesScratch_;
+        auto& directed = pointDirectedEdgesScratch_;
+        badTriangles.clear();
+        directed.clear();
+        // 稳定原地压缩 survivor：保持旧 kept vector 的遍历/输出顺序，但避免
+        // 每个输入点都分配并复制一整份当前三角形表。
+        size_t keptCount = 0;
 
-        for (const Tri& t : tris_) {
-            if (inCircleUnsigned(pts_[t.v[0]], pts_[t.v[1]], pts_[t.v[2]], p)) {
-                badEdges.push_back({t.v[0], t.v[1]});
-                badEdges.push_back({t.v[1], t.v[2]});
-                badEdges.push_back({t.v[2], t.v[0]});
+        for (size_t read = 0; read < tris_.size(); ++read) {
+            // No push_back occurs during this scan, so the reference remains
+            // valid. Most triangles survive in place; avoid copying every
+            // tested Tri and copy only when stable compaction has an actual
+            // gap. Because keptCount <= read, writing an earlier slot cannot
+            // modify the referenced read slot or change predicate order.
+            const Tri& t = tris_[read];
+            if (diagnostics_) ++diagnostics_->pointTriangleTests;
+            const bool inside = inCircleUnsigned(
+                pts_[t.v[0]], pts_[t.v[1]], pts_[t.v[2]], p);
+            if (inside) {
+                if (diagnostics_) ++diagnostics_->pointBadTriangles;
+                // Retain the triangle once. The two following passes expand
+                // its edges in the same 0->1, 1->2, 2->0 order as the former
+                // three edge pushes, halving scratch writes without changing
+                // hash insertion/look-up order or emitted triangles.
+                badTriangles.push_back(t);
             } else {
-                kept.push_back(t);
+                if (keptCount != read) {
+                    tris_[keptCount] = t;
+                }
+                ++keptCount;
             }
         }
-        if (badEdges.empty()) return;  // p 不在任何外接圆内(理论上不该发生)
+        if (badTriangles.empty()) return;  // p 不在任何外接圆内(理论上不该发生)
 
-        // 有向边集合;边界 = reverse 不存在的有向边。
-        std::unordered_set<uint64_t> directed;
-        directed.reserve(badEdges.size() * 2);
-        for (const auto& e : badEdges)
-            directed.insert((static_cast<uint64_t>(e[0]) << 32) | e[1]);
-
-        tris_ = std::move(kept);
-        for (const auto& e : badEdges) {
-            const uint64_t rev = (static_cast<uint64_t>(e[1]) << 32) | e[0];
-            if (directed.find(rev) == directed.end()) {
-                // 边界有向边 (e0->e1);新三角形 (e0,e1,p) 保持 CCW。
-                tris_.push_back(Tri{{e[0], e[1], i}});
+        // 有向边集合;边界 = reverse 不存在的有向边。Membership 不消费
+        // hash iteration order，且最终发射仍由 badTriangles 的稳定顺序驱动；
+        // 因此复用连续 scratch 并排序查询副本，避免每个输入点为 cavity
+        // 的 3*bad 边构造/销毁独立 unordered_set 节点。
+        directed.reserve(badTriangles.size() * 3);
+        for (const Tri& t : badTriangles) {
+            for (int k = 0; k < 3; ++k) {
+                directed.push_back(
+                    (static_cast<uint64_t>(t.v[k]) << 32) |
+                    t.v[(k + 1) % 3]);
             }
         }
+        std::sort(directed.begin(), directed.end());
+
+        tris_.resize(keptCount);
+        for (const Tri& t : badTriangles) {
+            for (int k = 0; k < 3; ++k) {
+                const uint32_t a = t.v[k];
+                const uint32_t b = t.v[(k + 1) % 3];
+                const uint64_t rev =
+                    (static_cast<uint64_t>(b) << 32) | a;
+                if (!std::binary_search(directed.begin(), directed.end(), rev)) {
+                    // Boundary directed edge a->b; preserve the old edge
+                    // expansion order and append (a,b,p) unchanged.
+                    if (diagnostics_ && tris_.size() == tris_.capacity()) {
+                        ++diagnostics_->triangleCapacityGrowths;
+                    }
+                    tris_.push_back(Tri{{a, b, i}});
+                }
+            }
+        }
+        recordPeakTriangles();
     }
 
     bool triangleHasEdge(const Tri& t, uint32_t a, uint32_t b) const {
@@ -147,22 +281,27 @@ private:
     }
 
     bool edgeExists(uint32_t a, uint32_t b) const {
-        for (const Tri& t : tris_)
-            if (triangleHasEdge(t, a, b)) return true;
-        return false;
+        if (diagnostics_) ++diagnostics_->constraintEdgeLookups;
+        return edgeCounts_.find(edgeKey(a, b)) != edgeCounts_.end();
     }
 
     // Anglada:插入约束边 (a,b)。
     void insertConstraint(uint32_t a, uint32_t b) {
         if (a == b) return;
-        if (edgeExists(a, b)) return;
+        if (edgeExists(a, b)) {
+            if (diagnostics_) ++diagnostics_->constraintsAlreadyPresent;
+            return;
+        }
         const Vec2& pa = pts_[a];
         const Vec2& pb = pts_[b];
 
         // 找被 ab 真穿越的三角形(任一边与 ab 真相交)。
-        std::vector<uint32_t> crossedIdx;
-        std::vector<std::array<uint32_t, 2>> crossedEdges;
+        auto& crossedIdx = constraintCrossedIndicesScratch_;
+        auto& crossedEdges = constraintCrossedEdgesScratch_;
+        crossedIdx.clear();
+        crossedEdges.clear();
         for (uint32_t ti = 0; ti < tris_.size(); ++ti) {
+            if (diagnostics_) ++diagnostics_->constraintCrossTriangleTests;
             const Tri& t = tris_[ti];
             bool crossed = false;
             for (int k = 0; k < 3; ++k) {
@@ -183,26 +322,40 @@ private:
         if (crossedIdx.empty()) return;  // 防御:无穿越却不存在边
 
         // cavity 有向边界。
-        std::unordered_set<uint64_t> directed;
+        auto& directed = constraintDirectedEdgesScratch_;
+        directed.clear();
+        directed.reserve(crossedEdges.size() * 2);
         for (const auto& e : crossedEdges)
             directed.insert((static_cast<uint64_t>(e[0]) << 32) | e[1]);
-        std::unordered_map<uint32_t, uint32_t> nextMap;
+        auto& nextMap = constraintNextScratch_;
+        nextMap.clear();
+        nextMap.reserve(crossedEdges.size());
         for (const auto& e : crossedEdges) {
             const uint64_t rev = (static_cast<uint64_t>(e[1]) << 32) | e[0];
             if (directed.find(rev) == directed.end()) nextMap[e[0]] = e[1];
         }
 
         // 移除被穿越三角形。
-        std::unordered_set<uint32_t> crossedSet(crossedIdx.begin(),
-                                                crossedIdx.end());
-        std::vector<Tri> kept;
-        kept.reserve(tris_.size());
-        for (uint32_t ti = 0; ti < tris_.size(); ++ti)
-            if (crossedSet.find(ti) == crossedSet.end()) kept.push_back(tris_[ti]);
-        tris_ = std::move(kept);
+        auto& crossedSet = constraintCrossedSetScratch_;
+        crossedSet.clear();
+        crossedSet.reserve(crossedIdx.size() * 2);
+        crossedSet.insert(crossedIdx.begin(), crossedIdx.end());
+        size_t keptCount = 0;
+        for (uint32_t ti = 0; ti < tris_.size(); ++ti) {
+            const Tri t = tris_[ti];
+            if (crossedSet.find(ti) == crossedSet.end()) {
+                if (keptCount != ti) tris_[keptCount] = t;
+                ++keptCount;
+            } else {
+                removeTriEdges(t);
+            }
+        }
+        tris_.resize(keptCount);
 
         // 沿边界 CCW 走一圈(a→…→b→…→a),按 b 拆成两条 a→b 链。
-        std::vector<uint32_t> cycle;
+        auto& cycle = constraintCycleScratch_;
+        cycle.clear();
+        cycle.reserve(nextMap.size() + 1);
         cycle.push_back(a);
         uint32_t cur = a;
         bool ok = true;
@@ -228,6 +381,8 @@ private:
 
         triangulatePseudo(sideA);
         triangulatePseudo(sideB);
+        if (diagnostics_) ++diagnostics_->constraintsInserted;
+        recordPeakTriangles();
     }
 
     // 递归三角化伪多边形:poly[0]=a … poly.back()=b,base 边 (a,b)。
@@ -322,8 +477,9 @@ private:
 
 std::vector<uint32_t> ConstrainedDelaunay::triangulate(
     const std::vector<glm::dvec2>& points,
-    const std::vector<Edge>& constraintEdges) {
-    Cdt cdt(points, constraintEdges);
+    const std::vector<Edge>& constraintEdges,
+    ConstrainedDelaunayDiagnostics* diagnostics) {
+    Cdt cdt(points, constraintEdges, diagnostics);
     return cdt.run();
 }
 

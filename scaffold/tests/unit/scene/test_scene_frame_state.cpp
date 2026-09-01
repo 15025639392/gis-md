@@ -4,8 +4,11 @@
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Transforms.h"
+#include "earth_engine/environment/SkyGradient.h"
+#include "earth_engine/environment/TimeController.h"
 #include "earth_engine/layers/ActivatedRasterOverlay.h"
 #include "earth_engine/layers/RasterOverlay.h"
+#include "earth_engine/layers/VectorLayer.h"
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
@@ -1080,6 +1083,31 @@ TEST(SceneFrameStateTest, FrameStateBuilderPopulatesPerFrameState) {
     EXPECT_TRUE(frameState.selectorViews.empty());
 }
 
+TEST(SceneFrameStateTest, ZeroSunsetTerrainTintIsNeutral) {
+    Camera camera;
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    camera.lookAt(target + Vec3(1000000.0, 0.0, 0.0), target,
+                  Vec3::unitZ());
+    TimeController time;
+    SkyGradient sky;
+    sky.setSunsetTerrainTint(0.0f, 0.0f);
+    FrameState frameState;
+    frameState.viewportWidthPixels = 800;
+    frameState.viewportHeightPixels = 600;
+
+    SceneFrameStateBuilder::build(SceneFrameStateBuildInput{
+        frameState, &camera, 1, 0.0, 0.0, false, nullptr, false,
+        Vec3::zero(), -1.0, &time, &sky});
+
+    EXPECT_FLOAT_EQ(1.0f, frameState.sunTint.r);
+    EXPECT_FLOAT_EQ(1.0f, frameState.sunTint.g);
+    EXPECT_FLOAT_EQ(1.0f, frameState.sunTint.b);
+    EXPECT_FLOAT_EQ(0.0f, frameState.terrainSunAmbient.r);
+    EXPECT_FLOAT_EQ(0.0f, frameState.terrainSunAmbient.g);
+    EXPECT_FLOAT_EQ(0.0f, frameState.terrainSunAmbient.b);
+}
+
 TEST(SceneFrameStateTest, PresentationTraceRecordsDeterministicCameraState) {
     DummyRenderDevice device;
     Scene scene;
@@ -1552,6 +1580,130 @@ TEST(SceneFrameStateTest, GltfTerrainDiagnosticsDoNotUseLegacySurfacePrep) {
         scene.diagnostics().renderGltfPrimitives,
         1 + countPolarCapCommands(device));
     EXPECT_EQ(scene.diagnostics().terrainRenderContentCommands, 1);
+}
+
+TEST(SceneFrameStateTest,
+     PostBuildHoldKeepsTerrainAndVectorPresentationAtomic) {
+    DummyRenderDevice device;
+    Scene scene;
+    ASSERT_TRUE(scene.setRenderDevice(&device));
+    scene.setViewport(800, 600, 1.0f);
+
+    const auto& ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target(ellipsoid.semiMajorAxis(), 0.0, 0.0);
+    scene.camera().lookAt(
+        target + Vec3(1000000.0, 0.0, 0.0),
+        target,
+        Vec3::unitZ());
+
+    auto baseOverlay = std::make_unique<RasterOverlay>(
+        std::make_unique<DebugImageryProvider>(),
+        TileScheme::createGeographicTMS(),
+        makeRasterOverlayOptions());
+    ActivatedRasterOverlay baseActivated(*baseOverlay);
+    auto terrainTileset = std::make_unique<Tileset>(
+        TileScheme::createGeographicTMS(),
+        std::vector<ActivatedRasterOverlay*>{&baseActivated},
+        &device,
+        TilesetOptions{});
+    Tileset* terrainRaw = terrainTileset.get();
+
+    const TileKey rootKey{"Geographic-TMS", 0, 0, 0};
+    TilesetTile* root = TilesetTestAccess::ensureTile(*terrainRaw, rootKey);
+    ASSERT_NE(root, nullptr);
+    TilesetTestAccess::setLoadedGltfTerrainContent(
+        *root,
+        makeFlatGeographicTerrainGltfModel(root->bounds, 0.0),
+        0.0,
+        &device);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    DirectRasterMapping* rootMapped =
+        root->rasterOverlayState.mappings().empty()
+            ? nullptr
+            : root->rasterOverlayState.mappings()[0].get();
+    RasterOverlayTile* rootRaster =
+        rootMapped ? rootMapped->getLoadingTile() : nullptr;
+    ASSERT_NE(rootRaster, nullptr);
+    rootRaster->setTexture(std::make_unique<DummyTexture>(4, 4));
+    rootRaster->setMoreDetailAvailable(
+        RasterOverlayTile::MoreDetailAvailable::No);
+    TilesetTestAccess::prefetchRasterOverlays(*terrainRaw, *root);
+    ASSERT_TRUE(root->hasSurfaceDrawable());
+
+    GeoFeature point;
+    point.id = "atomic-vector";
+    point.type = GeoFeature::Type::Point;
+    point.rings = {{Cartographic::fromRadians(0.0, 0.0, 0.0)}};
+    point.bounds = Rectangle(0.0, 0.0, 0.0, 0.0);
+    OverlayStyle vectorStyle = makeDefaultPointStyle();
+    std::get<PointStyle>(vectorStyle.layer.geometry).color = Color::red();
+    auto vectorLayer = std::make_unique<VectorLayer>(
+        "atomic-vector-layer",
+        std::vector<GeoFeature>{point},
+        vectorStyle,
+        &device);
+    VectorLayer* vectorRaw = vectorLayer.get();
+
+    scene.setTileset(std::move(terrainTileset));
+    scene.addVectorLayer(std::move(vectorLayer));
+
+    const auto submittedVectorColor = [&]() -> std::vector<float> {
+        const auto it = std::find_if(
+            device.submittedCommands.begin(),
+            device.submittedCommands.end(),
+            [](const RenderCommand& command) {
+                return command.kind == RenderCommandKind::VectorOverlay &&
+                       command.owner ==
+                           "atomic-vector-layer:atomic-vector";
+            });
+        if (it == device.submittedCommands.end()) return {};
+        const auto color = it->uniforms.find("u_color");
+        return color == it->uniforms.end() ? std::vector<float>{}
+                                           : color->second;
+    };
+
+    // A: submit a complete terrain + red vector frame.
+    scene.update(1.0 / 60.0);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
+    ASSERT_TRUE(scene.render());
+    ASSERT_EQ(submittedVectorColor(),
+              (std::vector<float>{1.0f, 0.0f, 0.0f, 1.0f}));
+    const uint64_t presentedA = scene.presentationTrace().camera.frameId;
+    const RenderCommandList submittedA = device.submittedCommands;
+
+    // B: build a green candidate vector while the selected terrain has no
+    // emitted surface command. The post-build hold must commit neither half.
+    OverlayStyle greenStyle = vectorStyle;
+    std::get<PointStyle>(greenStyle.layer.geometry).color = Color::green();
+    vectorRaw->setStyle(greenStyle);
+    scene.update(1.0 / 60.0);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilePlan& heldPlan = TilesetTestAccess::mutableTilePlan(*terrainRaw);
+    heldPlan.visibleTiles.push_back(rootKey);
+    heldPlan.tilesToRenderThisFrame.push_back(root);
+    EXPECT_FALSE(scene.render());
+    EXPECT_EQ(device.submittedCommands.size(), submittedA.size());
+    ASSERT_EQ(submittedVectorColor(),
+              (std::vector<float>{1.0f, 0.0f, 0.0f, 1.0f}));
+    EXPECT_EQ(scene.presentationTrace().camera.frameId, presentedA)
+        << "beforeSubmit must not publish a candidate vector/terrain state";
+
+    // C: once the terrain command exists again, terrain and the green vector
+    // become visible in one submit and the presentation trace advances.
+    scene.update(1.0 / 60.0);
+    TilesetTestAccess::beginTilePlan(*terrainRaw);
+    TilesetTestAccess::addTileToCurrentPlan(*terrainRaw, *root);
+    ASSERT_TRUE(scene.render());
+    ASSERT_EQ(submittedVectorColor(),
+              (std::vector<float>{0.0f, 1.0f, 0.0f, 1.0f}));
+    EXPECT_GT(scene.presentationTrace().camera.frameId, presentedA);
+    EXPECT_TRUE(std::any_of(
+        device.submittedCommands.begin(),
+        device.submittedCommands.end(),
+        [](const RenderCommand& command) {
+            return command.terrainRenderContent;
+        }));
 }
 
 TEST(SceneFrameStateTest, DiagnosticsRejectImageryOnlyAncestorFallback) {

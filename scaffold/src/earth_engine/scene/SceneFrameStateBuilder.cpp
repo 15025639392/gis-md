@@ -85,6 +85,11 @@ double updateEnvironment(const SceneFrameStateBuildInput& input) {
     const TerrainSunsetTint& st = kSunsetTintNatural;
     float warmth = input.skyGradient->sunsetWarmth();
     float shadowScale = input.skyGradient->sunsetShadowScale();
+    if (!(warmth > 0.0f)) {
+        frameState.sunTint = {1.0f, 1.0f, 1.0f};
+        frameState.terrainSunAmbient = {0.0f, 0.0f, 0.0f};
+        return perf::nowMs() - startMs;
+    }
     float f = static_cast<float>(sunLow) * warmth;
     frameState.sunTint = {
         st.noonTint[0] + (st.sunsetTint[0] - st.noonTint[0]) * f,

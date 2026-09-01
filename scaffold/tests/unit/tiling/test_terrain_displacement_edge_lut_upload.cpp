@@ -72,7 +72,7 @@ TEST(TerrainDisplacementEdgeLutUpload, IdenticalBytesSkipUpload) {
 
     // 真实差值替换 init,帧末一次批量上传(单层)。
     EXPECT_TRUE(pool.updateEdgeLutRows(key, kGridSize, lut.data()));
-    pool.flushEdgeLutUploads();
+    EXPECT_TRUE(pool.flushEdgeLutUploads());
     EXPECT_EQ(device.textureArrayRegionUpdateCount, 1)
         << "H-S4:同帧同 array 的多层变更应合并成一次批量调用";
     EXPECT_EQ(device.lastBatchFirstLayer, 0);
@@ -80,14 +80,14 @@ TEST(TerrainDisplacementEdgeLutUpload, IdenticalBytesSkipUpload) {
 
     // 相同字节 → 跳过(字节 diff 在入池前,缓存已随上次 flush 推进)。
     EXPECT_TRUE(pool.updateEdgeLutRows(key, kGridSize, lut.data()));
-    pool.flushEdgeLutUploads();
+    EXPECT_TRUE(pool.flushEdgeLutUploads());
     EXPECT_EQ(device.textureArrayRegionUpdateCount, 1)
         << "相同 LUT 字节不应再次上传";
 
     // 内容变化 → 上传并更新缓存。
     lut[0] ^= 0xFF;
     EXPECT_TRUE(pool.updateEdgeLutRows(key, kGridSize, lut.data()));
-    pool.flushEdgeLutUploads();
+    EXPECT_TRUE(pool.flushEdgeLutUploads());
     EXPECT_EQ(device.textureArrayRegionUpdateCount, 2);
 }
 
@@ -115,11 +115,31 @@ TEST(TerrainDisplacementEdgeLutUpload, ChangedLayersBatchIntoSingleCall) {
     EXPECT_TRUE(pool.updateEdgeLutRows(keyA, kGridSize, lutA.data()));
     EXPECT_TRUE(pool.updateEdgeLutRows(keyB, kGridSize, lutB.data()));
 
-    pool.flushEdgeLutUploads();
+    EXPECT_TRUE(pool.flushEdgeLutUploads());
     EXPECT_EQ(device.textureArrayRegionUpdateCount, 1)
         << "H-S4:两层变更应合并成一次批量上传";
     EXPECT_EQ(device.lastBatchFirstLayer, 0);
     EXPECT_EQ(device.lastBatchLayerCount, 2);
+}
+
+TEST(TerrainDisplacementEdgeLutUpload, FlushFailureIsReported) {
+    MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    TerrainDisplacementTemplatePool pool;
+    pool.initialize(&device);
+    pool.setGpuHeightBakeEnabled(false);
+
+    constexpr int kGridSize = 64;
+    const TileKey key{SchemeId{}, 8, 130, 90};
+    const Rectangle bounds(0.0, 0.0, 0.1, 0.1);
+    const DecodedHeightmap hm = makeHeightmap(65);
+    ASSERT_NE(pool.acquireHeightTexture(key, hm, bounds, kGridSize, 1),
+              nullptr);
+    std::vector<uint8_t> lut = makeZeroDeltaLut(kGridSize);
+    lut[0] ^= 0x7f;
+    ASSERT_TRUE(pool.updateEdgeLutRows(key, kGridSize, lut.data()));
+    device.textureRegionUploadSucceeds = false;
+    EXPECT_FALSE(pool.flushEdgeLutUploads());
 }
 
 }  // namespace

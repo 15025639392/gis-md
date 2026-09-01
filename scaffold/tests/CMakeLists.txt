@@ -139,8 +139,15 @@ add_test(NAME test_feature_tile_mesh COMMAND test_feature_tile_mesh)
 add_executable(test_feature_render_layer
     unit/layers/test_feature_render_layer.cpp
 )
+target_compile_definitions(test_feature_render_layer PRIVATE EARTH_ENGINE_TESTING=1)
 target_link_libraries(test_feature_render_layer PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_feature_render_layer COMMAND test_feature_render_layer)
+
+add_executable(test_projected_path_sampler
+    unit/layers/test_projected_path_sampler.cpp
+)
+target_link_libraries(test_projected_path_sampler PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_projected_path_sampler COMMAND test_projected_path_sampler)
 
 add_executable(test_label_placement
     unit/layers/test_label_placement.cpp
@@ -160,6 +167,7 @@ add_test(NAME test_feature_edit_queries COMMAND test_feature_edit_queries)
 add_executable(test_platform_integration
     unit/platform/test_platform_integration.cpp
 )
+target_compile_definitions(test_platform_integration PRIVATE EARTH_ENGINE_TESTING=1)
 target_include_directories(test_platform_integration PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/helpers
 )
@@ -400,6 +408,12 @@ add_executable(test_terrain_height_service
 )
 target_link_libraries(test_terrain_height_service PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_terrain_height_service COMMAND test_terrain_height_service)
+
+add_executable(test_rendered_terrain_surface_sampler
+    unit/tiling/test_rendered_terrain_surface_sampler.cpp
+)
+target_link_libraries(test_rendered_terrain_surface_sampler PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_rendered_terrain_surface_sampler COMMAND test_rendered_terrain_surface_sampler)
 
 add_executable(test_terrain_edge_height_lut
     unit/tiling/test_terrain_edge_height_lut.cpp
@@ -1042,11 +1056,26 @@ add_test(NAME test_style_expression COMMAND test_style_expression)
 
 # V26 二期:样式文档(A 案精简子集)——parser fail-loud / filter 对拍 /
 # 编译契约(场单色/封顶推导)/ 成本类路由(Uniform 不触发 Re-bake)。
-add_executable(test_style_document
-    unit/style/test_style_document.cpp
+add_executable(test_amap_classic_road_style
+    unit/style/test_amap_classic_road_style.cpp
 )
-target_link_libraries(test_style_document PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_style_document COMMAND test_style_document)
+target_link_libraries(test_amap_classic_road_style PRIVATE earth_engine_core GTest::gtest_main)
+target_compile_definitions(test_amap_classic_road_style PRIVATE EARTH_ENGINE_TESTING=1)
+add_test(NAME test_amap_classic_road_style COMMAND test_amap_classic_road_style)
+
+add_executable(test_amap_classic_label_style
+    unit/style/test_amap_classic_label_style.cpp
+)
+target_link_libraries(test_amap_classic_label_style PRIVATE earth_engine_core GTest::gtest_main)
+target_compile_definitions(test_amap_classic_label_style PRIVATE EARTH_ENGINE_TESTING=1)
+add_test(NAME test_amap_classic_label_style COMMAND test_amap_classic_label_style)
+
+add_executable(test_amap_classic_surface_style
+    unit/style/test_amap_classic_surface_style.cpp
+)
+target_link_libraries(test_amap_classic_surface_style PRIVATE earth_engine_core GTest::gtest_main)
+target_compile_definitions(test_amap_classic_surface_style PRIVATE EARTH_ENGINE_TESTING=1)
+add_test(NAME test_amap_classic_surface_style COMMAND test_amap_classic_surface_style)
 
 add_executable(test_feature_bucket_grid
     unit/data/test_feature_bucket_grid.cpp
@@ -1063,6 +1092,9 @@ add_test(NAME test_mvt_decoder COMMAND test_mvt_decoder)
 add_executable(test_amap_vector_tile
     unit/data/test_amap_vector_tile.cpp
 )
+target_compile_definitions(test_amap_vector_tile PRIVATE
+    EARTH_ENGINE_TESTING=1
+    AMAP_TEST_FIXTURE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/amap")
 target_link_libraries(test_amap_vector_tile PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_amap_vector_tile COMMAND test_amap_vector_tile)
 
@@ -1075,20 +1107,11 @@ add_test(NAME test_amap_tile_manifest COMMAND test_amap_tile_manifest)
 add_executable(test_amap_geometry
     unit/data/test_amap_geometry.cpp
 )
+target_compile_definitions(test_amap_geometry PRIVATE
+    EARTH_ENGINE_TESTING=1
+    AMAP_TEST_FIXTURE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/amap")
 target_link_libraries(test_amap_geometry PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_amap_geometry COMMAND test_amap_geometry)
-
-add_executable(test_line_field_rasterizer
-    unit/data/test_line_field_rasterizer.cpp
-)
-target_link_libraries(test_line_field_rasterizer PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_line_field_rasterizer COMMAND test_line_field_rasterizer)
-
-add_executable(test_vector_tile_rasterizer
-    unit/data/test_vector_tile_rasterizer.cpp
-)
-target_link_libraries(test_vector_tile_rasterizer PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_vector_tile_rasterizer COMMAND test_vector_tile_rasterizer)
 
 add_executable(test_vector_tile_tree
     unit/data/test_vector_tile_tree.cpp
@@ -1108,6 +1131,24 @@ add_executable(test_vector_tile_mesh_builder
 target_link_libraries(test_vector_tile_mesh_builder PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_vector_tile_mesh_builder COMMAND test_vector_tile_mesh_builder)
 
+add_executable(test_amap_surface_mask_rasterizer
+    unit/data/test_amap_surface_mask_rasterizer.cpp
+)
+target_link_libraries(test_amap_surface_mask_rasterizer PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_amap_surface_mask_rasterizer COMMAND test_amap_surface_mask_rasterizer)
+
+add_executable(test_amap_surface_mask_imagery_provider
+    unit/providers/test_amap_surface_mask_imagery_provider.cpp
+)
+target_link_libraries(test_amap_surface_mask_imagery_provider PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_amap_surface_mask_imagery_provider COMMAND test_amap_surface_mask_imagery_provider)
+
+add_executable(test_amap_terrain_fill_mask_store
+    unit/renderer/test_amap_terrain_fill_mask_store.cpp
+)
+target_link_libraries(test_amap_terrain_fill_mask_store PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_amap_terrain_fill_mask_store COMMAND test_amap_terrain_fill_mask_store)
+
 add_executable(test_style_filter
     unit/data/test_style_filter.cpp
 )
@@ -1123,6 +1164,9 @@ add_test(NAME test_mvt_vector_source COMMAND test_mvt_vector_source)
 add_executable(test_amap_vector_source
     unit/data/test_amap_vector_source.cpp
 )
+target_compile_definitions(test_amap_vector_source PRIVATE
+    EARTH_ENGINE_TESTING=1
+    AMAP_TEST_FIXTURE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/amap")
 target_link_libraries(test_amap_vector_source PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_amap_vector_source COMMAND test_amap_vector_source)
 
@@ -1172,8 +1216,7 @@ target_include_directories(test_minimal_globe_diagnostics PRIVATE
 )
 add_test(NAME test_minimal_globe_diagnostics COMMAND test_minimal_globe_diagnostics)
 
-# 建筑/次级路 zoom+距离分级:测真配置函数(makeMvtDrapeStyle/
-# makeMvtRoadFieldStyle),锁定分级门槛不被改坏。
+# Android demo 官方 AMap 源交接、worker 预算与纯矢量配置契约。
 add_executable(test_mvt_basemap_grading
     unit/data/test_mvt_basemap_grading.cpp
     ../examples/android/MinimalGlobe/MinimalGlobeDemoConfig.cpp
@@ -1205,24 +1248,6 @@ add_executable(test_heightmap_terrain
 )
 target_link_libraries(test_heightmap_terrain PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_heightmap_terrain COMMAND test_heightmap_terrain)
-
-add_executable(test_road_field_source
-    unit/providers/test_road_field_source.cpp
-)
-target_link_libraries(test_road_field_source PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_road_field_source COMMAND test_road_field_source)
-
-add_executable(test_vector_drape_provider
-    unit/providers/test_vector_drape_provider.cpp
-)
-target_link_libraries(test_vector_drape_provider PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_vector_drape_provider COMMAND test_vector_drape_provider)
-
-add_executable(test_amap_drape_provider
-    unit/providers/test_amap_drape_provider.cpp
-)
-target_link_libraries(test_amap_drape_provider PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_amap_drape_provider COMMAND test_amap_drape_provider)
 
 add_executable(test_raster_overlay_lifecycle
     unit/providers/test_raster_overlay_lifecycle.cpp
@@ -1307,6 +1332,15 @@ add_test(NAME test_post_process_model COMMAND test_post_process_model)
 #   只能靠人读源码。测试通过 ≠ AI_INDEX 是对的。
 find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
+    add_test(
+        NAME test_amap_official_api_surface
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../tools/test_amap_official_api_surface.py)
+    add_test(
+        NAME test_amap_official_symbol_surface
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/../tools/test_amap_official_symbol_surface.py
+                $<TARGET_FILE:earth_engine_core>)
     # 管线特性契约守卫:同一特性在逐瓦/合批/instanced × GLES/Metal 的搬运语句
     # 是否全数落位(单一治理点 / uniform 表 / apply 写入 / 实例流拷贝 / MSL 镜像
     # 同序)。历史上两次单管线静默漏配(9043e20fe / 80892aca1)的回归锁。

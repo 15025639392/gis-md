@@ -53,6 +53,16 @@ void SceneTilesetCoordinator::addContent(std::unique_ptr<Tileset> tileset) {
     contentTilesets_.push_back(std::move(tileset));
 }
 
+void SceneTilesetCoordinator::clearAll() {
+    // Destruction order is deliberate: pending and primary may both borrow
+    // the same ActivatedRasterOverlay, and content trees can do so as well.
+    // Release all Tileset objects while their overlay owners are still live.
+    pendingPrimary_.reset();
+    pendingTakeoverState_ = {};
+    primary_.reset();
+    contentTilesets_.clear();
+}
+
 void SceneTilesetCoordinator::setOcclusionCallback(
     TileOcclusionCallback callback) {
     occlusionCallback_ = std::move(callback);

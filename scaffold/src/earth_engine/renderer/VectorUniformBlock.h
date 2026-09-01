@@ -36,10 +36,23 @@ struct alignas(16) VectorUniformBlock {
     float halfWidthPerEyeZ = 0.0f;
     float dashPeriodMeters = 0.0f;
     float dashOnFraction = 1.0f;
+    std::array<float, 4> dashPattern{0.0f, 0.0f, 0.0f, 0.0f};
+    float dashPatternCount = 0.0f;
+    /// 0=butt, 1=square, 2=round; matches FeatureRenderStyle::LineCap.
+    float dashCapStyle = 0.0f;
+    /// Solid open endpoint primitive visibility/cap style. Currently only
+    /// round (2) is emitted; 0 keeps candidate endpoint quads discarded.
+    float solidCapStyle = 0.0f;
+    float dashPixelsPerMeter = 0.0f;
+    /// Generic symbols: artwork size in physical pixels. Official AMap
+    /// symbols: binary Support.scale (1x/2x); artwork CSS bounds live in VBO.
     float pointSizePx = 1.0f;
     float depthPushNdc = 0.0f;
     float sdfEdge = 0.5f;
     float sdfHaloDelta = 0.0f;
+    /// >0 selects the official AMap explicit SDF transition width;
+    /// 0 keeps generic labels on derivative-based fwidth antialiasing.
+    float sdfGamma = 0.0f;
 };
 
 static_assert(alignof(VectorUniformBlock) == 16);
@@ -65,7 +78,7 @@ inline const auto& vectorUniformTable() {
         detail::vectorFloatOffset(offsetof(VectorUniformBlock, field)),    \
         componentCount                                                     \
     }
-    static const std::array<VectorUniformTableEntry, 17> table = {{
+    static const std::array<VectorUniformTableEntry, 23> table = {{
         EE_VECTOR_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_VECTOR_ENTRY("u_modelView", modelView, 16),
         EE_VECTOR_ENTRY("u_color", color, 4),
@@ -79,10 +92,16 @@ inline const auto& vectorUniformTable() {
         EE_VECTOR_ENTRY("u_halfWidthPerEyeZ", halfWidthPerEyeZ, 1),
         EE_VECTOR_ENTRY("u_dashPeriodMeters", dashPeriodMeters, 1),
         EE_VECTOR_ENTRY("u_dashOnFraction", dashOnFraction, 1),
+        EE_VECTOR_ENTRY("u_dashPattern", dashPattern, 4),
+        EE_VECTOR_ENTRY("u_dashPatternCount", dashPatternCount, 1),
+        EE_VECTOR_ENTRY("u_dashCapStyle", dashCapStyle, 1),
+        EE_VECTOR_ENTRY("u_solidCapStyle", solidCapStyle, 1),
+        EE_VECTOR_ENTRY("u_dashPixelsPerMeter", dashPixelsPerMeter, 1),
         EE_VECTOR_ENTRY("u_pointSizePx", pointSizePx, 1),
         EE_VECTOR_ENTRY("u_depthPushNdc", depthPushNdc, 1),
         EE_VECTOR_ENTRY("u_sdfEdge", sdfEdge, 1),
         EE_VECTOR_ENTRY("u_sdfHaloDelta", sdfHaloDelta, 1),
+        EE_VECTOR_ENTRY("u_sdfGamma", sdfGamma, 1),
     }};
 #undef EE_VECTOR_ENTRY
     return table;

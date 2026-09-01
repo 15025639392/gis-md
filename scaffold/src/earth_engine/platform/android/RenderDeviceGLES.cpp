@@ -62,23 +62,6 @@ GLfloat deviceMaxTextureAnisotropy() {
 // aliases the extension samplers to the base-color sampler, so those 10 slots
 // carry no live sampler and the raster/water textures can be compacted into the
 // freed 5-9 range to stay within 16 units. Metal keeps the full 0-19 layout.
-constexpr int kGltfExtensionSamplerSlots = kGltfRasterOverlayTextureBase - 5;  // 10
-constexpr int kGlesGltfRasterUnitBase =
-    kGltfRasterOverlayTextureBase - kGltfExtensionSamplerSlots;  // 5
-constexpr int kGlesGltfWaterUnit =
-    kGltfWaterMaskTextureSlot - kGltfExtensionSamplerSlots;      // 9
-
-// Maps a shared textures-vector index to the compacted GLES fragment texture
-// unit for glTF / terrain commands. Returns -1 for the aliased extension slots
-// (5-14), which carry no live sampler on GLES and must not be bound.
-int glesGltfTextureUnit(size_t vecIndex) {
-    if (vecIndex <= 4) return static_cast<int>(vecIndex);
-    if (vecIndex >= static_cast<size_t>(kGltfRasterOverlayTextureBase)) {
-        return static_cast<int>(vecIndex) - kGltfExtensionSamplerSlots;
-    }
-    return -1;
-}
-
 // VAO 缓存上限：working set 约为可见瓦片数（几十~一两百条），512 足够
 // 宽裕；触顶时逐出最久未用的一条，防止长时间运行 VAO 无限增长。
 constexpr size_t kMaxVaoCacheEntries = 512;
@@ -1334,13 +1317,13 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
 
     GLuint currentProgram = 0;
     GLuint currentVao = 0;
-    // +1 覆盖最高纹理槽(kGltfRoadFieldTextureSlot=23,刀2 路网场):此
+    // +1 覆盖最高纹理槽(kGltfTerrainFillMaskTextureSlot=23):此
     // 数组既是逐 unit 绑定缓存,也隐式界定纹理绑定循环的最大 vec 索引
     // (min(cmd.textures.size(), 本数组 size))。定容小于最高槽会把该槽排除出循环
     // → 新纹理永不绑定(真机踩过的孪生 bug:高度纹理槽 22 加入时此处未同步扩容,
     // 导致 GPU 位移瓦片高度纹理永不绑定 → texelFetch 恒 0 → 地形平抬无起伏),故
     // **每新增最高纹理槽都必须同步扩容此数组**。
-    std::array<GLuint, kGltfRoadFieldIndirTextureSlot + 1> currentTextures{};
+    std::array<GLuint, kGltfTerrainFillMaskTextureSlot + 1> currentTextures{};
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool alphaToCoverageEnabled = false;
@@ -1488,11 +1471,11 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             vaoKey.layout = VertexLayoutKind::TerrainCompact32Instanced;
             vaoKey.vertexStride = 32;
         } else if (cmd.kind == RenderCommandKind::VectorLabel &&
-                   cmd.vertexStride == 32) {
+                   cmd.vertexStride == 44) {
             // 矢量标注(P5b/P5c):按 kind 分派。必须先于下方 stride-32 通用
             // 分支(Surface32/TerrainCompact32 同 stride,靠 kind 区分)。
-            vaoKey.layout = VertexLayoutKind::VectorLabel32;
-            vaoKey.vertexStride = 32;
+            vaoKey.layout = VertexLayoutKind::VectorLabel44;
+            vaoKey.vertexStride = 44;
         } else if (cmd.vertexStride == 32 &&
             cmd.kind == RenderCommandKind::GltfPrimitive) {
             // Terrain compact 布局(geomorph 后 32B)。地形恒 GltfPrimitive kind,
@@ -1602,6 +1585,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // 矢量 P5b 文字标注:SDF 字形图集恒绑 unit 0(标注命令
             // textures[0];其它 program 未声明此名 → loc=-1 无副作用)。
             setSampler("u_glyphAtlas", 0);
+            setSampler("u_iconAtlas", 0);
             // 离屏后处理 aerial fog:depth 采样器绑 unit 1(其它 program
             // 未声明此名 → loc=-1 无副作用)。
             setSampler("u_depthTexture", 1);
@@ -1640,12 +1624,12 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // 成 unit 12,仍 ≤16 底线)。非地形 program 未声明此名 → loc=-1 无副作用。
             setSampler("u_heightTexture",
                        glesGltfTextureUnit(kGltfHeightTextureSlot));
-            // 刀2 路网 SDF 场"第二平面"(slot23 经压缩成 unit 13,≤16 底线)。
-            setSampler("u_roadField",
-                       glesGltfTextureUnit(kGltfRoadFieldTextureSlot));
-            // 步3 场间接纹理(slot24 经压缩成 unit 14,≤16 底线)。
-            setSampler("u_roadFieldIndir",
-                       glesGltfTextureUnit(kGltfRoadFieldIndirTextureSlot));
+            // Selected-tile terrain fill mask: logical slot 23 compresses to
+            // GLES unit 13 (the extension slots 5-14 are aliased away).
+            // Non-terrain programs do not declare this sampler, so location -1
+            // is harmless; the uniform gate keeps stale bindings inert.
+            setSampler("u_terrainFillMask",
+                       glesGltfTextureUnit(kGltfTerrainFillMaskTextureSlot));
             setSampler("u_waterMask", 5);
             for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
                 std::string name = "u_overlayTexture" + std::to_string(i);
@@ -1972,11 +1956,17 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     // 此时作用于默认 VAO(0) 的 element 绑定，与旧行为一致。
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    // Unbind every unit the frame may have touched — terrain uses 0-4/5,
-    // compacted glTF/terrain uses 0-9 (kGlesGltfWaterUnit).
-    for (int textureUnit = kGlesGltfWaterUnit; textureUnit >= 0; --textureUnit) {
+    // Unbind every unit the frame may have touched.  The compacted glTF
+    // mapping now places the terrain page/height/fill-mask samplers at units
+    // 10-13, above the legacy water unit 9.  Page-store uses a 2D-array target
+    // while the other live samplers use 2D, so clear both target bindings;
+    // otherwise unit 10 retains the tile-owned page array across submits.
+    for (int textureUnit = glesGltfTextureUnit(kGltfTerrainFillMaskTextureSlot);
+         textureUnit >= 0;
+         --textureUnit) {
         glActiveTexture(GL_TEXTURE0 + textureUnit);
         glBindTexture(GL_TEXTURE_2D, 0);
+        glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
     }
 
     const double submitMs = perf::nowMs() - submitStartMs;
@@ -2270,8 +2260,8 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glVertexAttribPointer(4, 1, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(32));
             break;
-        case VertexLayoutKind::VectorLabel32:
-            // 矢量标注:anchor(12)+offsetPx+opacity(12,vec3 的 z)+uv(8)
+        case VertexLayoutKind::VectorLabel44:
+            // anchor(12)+tangent(12)+offset/opacity(12)+uv(8)
             glEnableVertexAttribArray(0);
             glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(0));
@@ -2279,8 +2269,11 @@ void RenderDeviceGLES::recordVaoLayout(const VaoKey& key) {
             glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(12));
             glEnableVertexAttribArray(2);
-            glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, stride,
+            glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, stride,
                                   reinterpret_cast<void*>(24));
+            glEnableVertexAttribArray(3);
+            glVertexAttribPointer(3, 2, GL_FLOAT, GL_FALSE, stride,
+                                  reinterpret_cast<void*>(36));
             break;
         case VertexLayoutKind::SimpleStride: {
             // 显式 vertex stride（VectorLayer、SkyBox、Atmosphere 等使用）

@@ -295,20 +295,23 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     // 指北针：相机方位角(弧度,0=正北,顺时针+) / 复位正北朝上。
     public static native float nativeGetHeadingRadians();
     public static native void nativeResetNorthUp();
+    /** Functional map zoom controls for the Android shell. */
+    public static void requestZoom(float scale, int width, int height) {
+        nativeDebugZoom(scale, width, height);
+    }
+    /** 屏幕中心附近的椭球地表米/物理像素；当前视线不落地时返回 0。 */
+    public static native double nativeGetMetersPerPixel();
 
     // --- Debug panel native methods ---
     // 逐帧诊断串:面板已不再显示它(30 行文本在手机上读不完,数字走 logcat),
     // 保留接口供宿主按需取用。
     public native String nativeGetDiagnosticsString();
-    public native void nativeAddDemoVectorLayer();
     public native void nativeResetCamera();
     public native void nativeGrazingView();
     public native void nativeDebugNadirView();
     public native void nativeDebugFlyTo();
     public native void nativeDebugTether();
     public native void nativeDebugToggleOrtho(int width, int height);
-    /** V26 一期:日/夜换肤往返(面 drape 重栅格化 + 场线色 uniform + 场页重烘)。 */
-    public native void nativeDebugRestyle();
     // 阶段 4/5 的状态回读(同样"真值在引擎,UI 不存镜像"):
     // nativeGetTetherState 返回 0=Free / 1=跟车 / 2=座舱。
     public native boolean nativeGetOrtho();
@@ -319,10 +322,7 @@ public class GLESView extends SurfaceView implements SurfaceHolder.Callback {
     // ⚠️ 两个开关的真值都在 native(引擎标志 / atomic),UI 不许自己存一份镜像:
     // surface 重建会把引擎档位重置,Activity 重建会把 Java 字段重置,存两份必分叉。
     public native boolean nativeGetGpuTerrain();
-    public native boolean nativeGetEditMode();
 
     // 矢量 P2 demo 编辑流(应用层最小实现:引擎只出 pick/snap/预览接口)。
     // EDIT 开启期间触摸走顶点拖拽编辑,相机手势被抑制。
-    public native void nativeSetEditMode(boolean enabled);
-    public native void nativeUndoEdit();
 }

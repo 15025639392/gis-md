@@ -22,6 +22,13 @@ struct Diagnostics {
     double mvtVectorUpdateMs = 0.0;
     double renderCommandBuildMs = 0.0;
     double renderSubmitMs = 0.0;
+    double terrainSurfaceSamplerBuildMs = 0.0;
+    int terrainSurfaceSamplerCandidates = 0;
+    int terrainSurfaceSamplerCommandIndexEntries = 0;
+    int terrainSurfaceSamplerCommandLookups = 0;
+    int terrainSurfaceSamplerLutCopyBytes = 0;
+    int terrainSurfaceSamplerAreaBuilds = 0;
+    int terrainSurfaceSamplerAreaCandidateCopies = 0;
     int drawCalls = 0;
     // 地形实例化合批(Step3):本帧被合并进 instanced 命令的逐瓦片数 / 生成的
     // 批数。batchedTerrainCommands 大 = draw 省得多;batches 小 = 分组紧凑。

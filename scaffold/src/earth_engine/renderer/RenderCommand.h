@@ -15,6 +15,8 @@
 
 namespace earth_engine {
 
+struct TerrainEdgeLutTable;
+
 static constexpr int kDefaultVectorPaintOrder = 1000;
 
 static constexpr int kMaxSurfaceImageryOverlays = 4;
@@ -34,16 +36,29 @@ static constexpr int kGltfPageStoreIndirTextureSlot =
 // 顶点 shader texelFetch 取回归一化高度反量化位移)。紧接页存储 indir 槽(21→22)。
 static constexpr int kGltfHeightTextureSlot =
     kGltfPageStoreIndirTextureSlot + 1;
-// 刀2 路网 SDF 场"第二平面":R8 sampler2DArray,与页存储影像 array 同层号
-// 驻留,FS 在同一次间接查找下再采一次做贴地线解算。紧接高度纹理槽(22→23)。
-// ⚠️ 新增最高槽的孪生同步点:RenderCommandTextureList::kCapacity(本文件,
-// 随本常量自动)、RenderDeviceGLES 的 currentTextures 容量与 setSampler 登记、
-// Metal 绑定循环上限 —— 漏任何一处该纹理永不绑定,texelFetch 恒 0。
-static constexpr int kGltfRoadFieldTextureSlot = kGltfHeightTextureSlot + 1;
-// 步3 场平面 overzoom 解耦:场间接纹理(RGBA8,RG=场层号 B=场页深度 A=ready)。
-// 场页 z 封顶后与影像页 key 脱钩,片元经它独立定位场层/深度(23→24)。
-static constexpr int kGltfRoadFieldIndirTextureSlot =
-    kGltfRoadFieldTextureSlot + 1;
+static constexpr int kGltfTerrainFillMaskTextureSlot =
+    kGltfHeightTextureSlot + 1;
+
+// GLES only guarantees 16 fragment texture units. The shared command layout
+// keeps Metal's full glTF slots, while GLES aliases extension slots 5-14 and
+// compacts raster/water/page/height/fill resources into units 5-13. Keep this
+// mapping next to the logical slot contract so backend code and host tests use
+// one source of truth.
+static constexpr int kGlesGltfAliasedExtensionSlotCount =
+    kGltfRasterOverlayTextureBase - 5;
+static constexpr int kGlesGltfRasterUnitBase =
+    kGltfRasterOverlayTextureBase - kGlesGltfAliasedExtensionSlotCount;
+static constexpr int kGlesGltfWaterUnit =
+    kGltfWaterMaskTextureSlot - kGlesGltfAliasedExtensionSlotCount;
+constexpr int glesGltfTextureUnit(size_t logicalSlot) {
+    if (logicalSlot <= 4u) return static_cast<int>(logicalSlot);
+    if (logicalSlot >=
+        static_cast<size_t>(kGltfRasterOverlayTextureBase)) {
+        return static_cast<int>(logicalSlot) -
+               kGlesGltfAliasedExtensionSlotCount;
+    }
+    return -1;
+}
 static constexpr int kGltfInstanceMatrixStride = 100;
 // 地形合批(Step 3)实例流步长:6× vec4 = 96B。rel 帧 3 行(相对批参考帧
 // frame0)+ dispMorph(minH·fade,range·fade,morphFactor,gridN)+ clipUv +
@@ -59,7 +74,7 @@ static constexpr int kTerrainInstanceStride = 128;
 class RenderCommandTextureList {
 public:
     static constexpr size_t kCapacity =
-        static_cast<size_t>(kGltfRoadFieldIndirTextureSlot) + 1u;
+        static_cast<size_t>(kGltfTerrainFillMaskTextureSlot) + 1u;
 
     RenderCommandTextureList() = default;
     RenderCommandTextureList(std::initializer_list<Texture*> init) {
@@ -145,6 +160,9 @@ struct RenderCommand {
     /// 矢量样式内的固定绘制层级；同 MVP pass 内数值越大越晚绘制。
     /// 未显式分层的旧命令共享默认值，稳定排序保持既有插入顺序。
     int vectorPaintOrder = kDefaultVectorPaintOrder;
+    // 同一官方 paintOrder 内的稳定子层级。道路 casing/center 共享
+    // drawOrder，只在该 drawOrder 内保证 casing 先于 center。
+    int vectorPaintSubOrder = 0;
     std::string owner;     // layer id（调试用）
     std::string pass;      // "depth" | "color" | "picking" | "shadow" | "postprocess"
     // Stable identity for long-lived renderables. Transient commands leave this
@@ -158,6 +176,7 @@ struct RenderCommand {
     uint64_t frameId = 0;
     uint64_t generation = 0;
     bool terrainRenderContent = false;
+    bool terrainFillMaskActive = false;
     TerrainSurfaceCommandSource terrainSurfaceSource =
         TerrainSurfaceCommandSource::Unknown;
 
@@ -251,6 +270,32 @@ struct RenderCommand {
     // 该命令高度纹理所在的密度档(层边长-1)。自适应密度下 coarse/dense 各有独立
     // array + LRU + epoch,故校验/保活都必须带上档位。
     int terrainHeightGridSize = 0;
+    // CPU-visible description of the height surface this command actually
+    // submits. TileRenderEntryCommandBuilder stamps the selected footprint;
+    // GltfDrawCommandBuilder stamps fade when it binds displacement. These
+    // fields are diagnostics/query metadata and are not uploaded to the GPU.
+    bool terrainVisibleSurfaceValid = false;
+    int terrainVisibleSelectedZ = -1;
+    int terrainVisibleSelectedX = 0;
+    int terrainVisibleSelectedY = 0;
+    int terrainVisibleRenderZ = -1;
+    int terrainVisibleRenderX = 0;
+    int terrainVisibleRenderY = 0;
+    bool terrainVisibleSelectedPass = false;
+    const void* terrainVisibleSelectedTileIdentity = nullptr;
+    const void* terrainVisibleRenderTileIdentity = nullptr;
+    int terrainVisibleGridSize = 0;
+    float terrainVisibleMorph = 1.0f;
+    float terrainVisibleFade = 1.0f;
+    float terrainVisibleClipMode = 0.0f;
+    std::array<float, 4> terrainVisibleClipUv{
+        0.0f, 0.0f, 1.0f, 1.0f};
+    // Final edge-snap state consumed by the terrain vertex shader. The LUT
+    // pointer is non-owning and only valid while the originating TilePlan is
+    // alive; RenderedTerrainSurfaceSampler copies the table into its owned
+    // frame snapshot before render references are released.
+    float terrainVisibleEdgeSnapPacked = 0.0f;
+    const TerrainEdgeLutTable* terrainVisibleEdgeLutTable = nullptr;
     // 共享位移模板的槽位号 + 分配代(模板 VBO 有界淘汰的引用安全锚点)。
     // 槽位被 LRU 重分配后 generation 失配 → build 侧 invalidate 命令缓存自愈重建
     // (与高度层 epoch 同构)。档位复用 terrainHeightGridSize(模板与高度纹理同档)。

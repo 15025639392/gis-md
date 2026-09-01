@@ -1,15 +1,26 @@
 #include <gtest/gtest.h>
+#include "../../helpers/AmapOfficialStyleTestAdapter.h"
 
 #include "earth_engine/layers/FeatureRenderLayer.h"
+#include "earth_engine/Engine.h"
+#include "earth_engine/core/async/AsyncSystem.h"
 #include "earth_engine/renderer/IconAtlas.h"
 #include "earth_engine/renderer/GlyphAtlas.h"
 #include "earth_engine/renderer/Renderer.h"
 #include "earth_engine/renderer/SymbolShape.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/FrameState.h"
+#include "earth_engine/style/AmapClassicStyleInternal.h"
+#include "earth_engine/style/AmapClassicRoadStyle.h"
+#include "earth_engine/style/AmapClassicLabelStyleInternal.h"
+#include "earth_engine/style/AmapClassicRuntime.h"
+#include "earth_engine/providers/TerrainProvider.h"
+#include "earth_engine/tiling/TerrainHeightService.h"
+#include "earth_engine/tiling/TileRenderContentState.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "../../helpers/MockRenderDevice.h"
+#include "../../helpers/MockPlatformBridge.h"
 
 #include <algorithm>
 #include <array>
@@ -17,15 +28,18 @@
 #include <cstring>
 #include <map>
 #include <memory>
+#include <set>
 #include <utility>
 
 using namespace earth_engine;
 using earth_engine::testing::DummyBuffer;
 using earth_engine::testing::MockRenderDevice;
+using earth_engine::testing::MockPlatformBridge;
 
 namespace {
 
 constexpr double kDeg = M_PI / 180.0;
+std::vector<uint8_t> loadHostFont();
 
 Feature makePolygon(double lonDeg, double latDeg, double sizeDeg) {
     const double w = lonDeg * kDeg;
@@ -49,6 +63,41 @@ Feature makeLine(double lonDeg, double latDeg, double spanDeg) {
     return f;
 }
 
+void addOfficialMetadata(Feature& feature, const char* classCode,
+                         const char* subKey, const char* drawOrder = "1",
+                         const char* rank = "1") {
+    feature.properties["amap_class"] = classCode;
+    feature.properties["amap_subkey"] = subKey;
+    feature.properties["amap_draworder"] = drawOrder;
+    feature.properties["amap_minzoom"] = "3";
+    feature.properties["amap_maxzoom"] = "20";
+    feature.properties["amap_rank"] = rank;
+}
+
+void installTestOfficialLabelStyle(FeatureRenderStyle& style,
+                                   int styleGroup = 1) {
+    style.labelStyleGroupPropertyA.clear();
+    style.labelStyleGroupPropertyB.clear();
+    style.labelStyleGroupByProperty.clear();
+    style.labelStyleGroupExpr =
+        StyleExpression::literal(static_cast<double>(styleGroup));
+    style.labelSizeExprByStyleGroup[styleGroup] =
+        StyleExpression::literal(20.0);
+    style.labelColorExprByStyleGroup[styleGroup] = StyleExpression::literal(
+        std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f});
+    style.labelHaloColorExprByStyleGroup[styleGroup] =
+        StyleExpression::literal(
+            std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f});
+    style.labelHaloWidthExprByStyleGroup[styleGroup] =
+        StyleExpression::literal(1.0);
+}
+
+TileSymbolCpu::GenericVisualPayload& genericVisual(TileSymbolCpu& symbol) {
+    if (!symbol.genericVisual) symbol.genericVisual.emplace();
+    return *symbol.genericVisual;
+}
+
+
 /// 测试夹具:MockRenderDevice + Renderer(initialize 建 shader)+ 相机帧。
 class FeatureRenderLayerTest : public ::testing::Test {
 protected:
@@ -63,7 +112,7 @@ protected:
         // densify 由 GlobeFillDensifySplitsLargePolygon 单独打开。
         FeatureRenderStyle style = layer_->style();
         style.globeFillMaxEdgeMeters = 0.0;
-        layer_->setStyle(style);
+        layer_->setStyleForContractTest(style);
 
         camera_.lookAt(Vec3(1.5e7, 0.0, 0.0), Vec3(0.0, 0.0, 0.0),
                        Vec3(0.0, 0.0, 1.0));
@@ -96,7 +145,7 @@ TEST_F(FeatureRenderLayerTest, PolygonEmitsFillAndOutlineCommands) {
     // 本测例验证「fill + outline」双命令拓扑:显式打开描边(生产默认关)。
     FeatureRenderStyle style = layer_->style();
     style.fillOutlineEnabled = true;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
 
     RenderCommandList commands = build();
@@ -174,7 +223,7 @@ TEST_F(FeatureRenderLayerTest, TilePaintRangesShareOneBufferPair) {
          {"land", StyleExpression::literal(30.0)},
          {"water", StyleExpression::literal(50.0)}},
         StyleExpression::literal(0.0));
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
 
     std::vector<Feature> features;
     for (const char* surface : {"water", "green", "land"}) {
@@ -204,6 +253,209 @@ TEST_F(FeatureRenderLayerTest, TilePaintRangesShareOneBufferPair) {
     EXPECT_LT(commands[1].indexOffset, commands[2].indexOffset);
 }
 
+TEST_F(FeatureRenderLayerTest,
+       AmapSurfaceColorLateBindingReusesGpuGeometryAcrossDisplayZoom) {
+    FeatureRenderStyle style = layer_->style();
+    style.fillColor = {0.0f, 0.0f, 0.0f, 0.0f};
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Main);
+    layer_->setStyleForContractTest(style);
+
+    Feature sportsGround = makePolygon(0.0, 0.0, 0.01);
+    sportsGround.properties = {{"amap_class", "30002"},
+                               {"amap_subkey", "19"},
+                               {"amap_draworder", "73"},
+                               {"amap_minzoom", "14"},
+                               {"amap_maxzoom", "16"}};
+    const int buffersBefore = device_.createdBufferCount;
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {sportsGround});
+    ASSERT_EQ(1u, mesh.fillRanges.size());
+    EXPECT_EQ(73, mesh.fillRanges[0].paintOrder);
+    EXPECT_EQ(30002019, mesh.fillRanges[0].styleGroup);
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
+                  std::move(mesh)));
+    EXPECT_EQ(buffersBefore + 2, device_.createdBufferCount);
+    const int buffersAfterCommit = device_.createdBufferCount;
+    const int updatesAfterCommit = device_.updatedBufferCount;
+
+    const double radius = Ellipsoid::WGS84().radii().x();
+    auto setZoom = [&](double zoom) {
+        const double height = 4.0e7 / std::pow(2.0, zoom);
+        camera_.lookAt(Vec3(radius + height, 0.0, 0.0),
+                       Vec3(radius, 0.0, 0.0), Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+    };
+    auto onlyFill = [&]() -> RenderCommand {
+        auto commands = build();
+        auto it = std::find_if(commands.begin(), commands.end(), [](const auto& cmd) {
+            return cmd.kind == RenderCommandKind::VectorFill;
+        });
+        EXPECT_NE(commands.end(), it);
+        return it == commands.end() ? RenderCommand{} : *it;
+    };
+
+    setZoom(14.79);
+    const RenderCommand green = onlyFill();
+    EXPECT_EQ(73, green.vectorPaintOrder);
+    EXPECT_EQ((std::array<float, 4>{0xb4 / 255.0f, 0xeb / 255.0f,
+                                    0xaf / 255.0f, 1.0f}),
+              green.vectorUniforms.color);
+
+    // ECEF -> cartographic height round-trip may land a few ulps below the
+    // requested camera zoom; step safely across the exact .8 boundary whose
+    // expression-level contract is covered by AmapClassicSurfaceStyleTest.
+    setZoom(14.801);
+    const RenderCommand turquoise = onlyFill();
+    EXPECT_EQ(73, turquoise.vectorPaintOrder);
+    EXPECT_EQ((std::array<float, 4>{0x79 / 255.0f, 0xd5 / 255.0f,
+                                    0xc0 / 255.0f, 1.0f}),
+              turquoise.vectorUniforms.color);
+    EXPECT_EQ(green.vertexBuffer, turquoise.vertexBuffer);
+    EXPECT_EQ(green.indexBuffer, turquoise.indexBuffer);
+    EXPECT_EQ(buffersAfterCommit, device_.createdBufferCount);
+    EXPECT_EQ(updatesAfterCommit, device_.updatedBufferCount);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       AmapSurfaceUnknownIdentityAndOverlayZoomGapEmitNoFillCommand) {
+    FeatureRenderStyle style = layer_->style();
+    style.fillColor = {1.0f, 0.0f, 1.0f, 1.0f};
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Main);
+    layer_->setStyleForContractTest(style);
+
+    Feature unknown = makePolygon(0.0, 0.0, 0.01);
+    unknown.properties = {{"amap_class", "30002"},
+                          {"amap_subkey", "999"},
+                          {"amap_draworder", "73"},
+                          {"amap_minzoom", "14"},
+                          {"amap_maxzoom", "16"}};
+    Feature overlay = makePolygon(0.02, 0.0, 0.01);
+    overlay.properties = {{"amap_class", "30003"},
+                          {"amap_subkey", "3"},
+                          {"amap_draworder", "74"},
+                          {"amap_minzoom", "14"},
+                          {"amap_maxzoom", "16"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {unknown, overlay});
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
+                  std::move(mesh)));
+
+    const double radius = Ellipsoid::WGS84().radii().x();
+    auto setZoom = [&](double zoom) {
+        const double height = 4.0e7 / std::pow(2.0, zoom);
+        camera_.lookAt(Vec3(radius + height, 0.0, 0.0),
+                       Vec3(radius, 0.0, 0.0), Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+    };
+    auto fillOrders = [&]() {
+        std::vector<int> out;
+        for (const auto& cmd : build()) {
+            if (cmd.kind == RenderCommandKind::VectorFill)
+                out.push_back(cmd.vectorPaintOrder);
+        }
+        return out;
+    };
+
+    setZoom(15.79);
+    EXPECT_TRUE(fillOrders().empty());
+    setZoom(15.801);
+    EXPECT_EQ((std::vector<int>{74}), fillOrders());
+}
+
+TEST_F(FeatureRenderLayerTest,
+       EveryOfficialSurfaceIdentityReachesMatchingFinalFillCommand) {
+    const auto records = amapClassicSurfaceRecordsForTest();
+    ASSERT_EQ(351u, records.size());
+
+    struct Identity {
+        int classCode = 0;
+        int subKey = 0;
+        int paintOrder = 0;
+    };
+    std::vector<Identity> identities;
+    std::map<std::pair<int, int>, int> paintOrderByIdentity;
+    std::vector<Feature> features;
+    for (const auto& record : records) {
+        const std::pair<int, int> key{record.classCode, record.subKey};
+        if (paintOrderByIdentity.count(key)) continue;
+        const int paintOrder = 1000 + static_cast<int>(identities.size());
+        paintOrderByIdentity.emplace(key, paintOrder);
+        identities.push_back({record.classCode, record.subKey, paintOrder});
+        const int index = static_cast<int>(identities.size()) - 1;
+        const double x = (index % 16) * 0.0002;
+        const double y = (index / 16) * 0.0002;
+        Feature feature = makePolygon(x, y, 0.0001);
+        feature.properties = {
+            {"amap_class", std::to_string(record.classCode)},
+            {"amap_subkey", std::to_string(record.subKey)},
+            {"amap_draworder", std::to_string(paintOrder)},
+            {"amap_minzoom", "1"}, {"amap_maxzoom", "30"}};
+        features.push_back(std::move(feature));
+    }
+    ASSERT_EQ(256u, identities.size());
+
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main);
+    style.globeFillMaxEdgeMeters = 0.0;
+    layer_->setStyleForContractTest(style);
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), features);
+    ASSERT_EQ(identities.size(), mesh.fillRanges.size());
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                  std::move(mesh)));
+
+    const double radius = Ellipsoid::WGS84().radii().x();
+    for (int displayZoom = 1; displayZoom <= 24; ++displayZoom) {
+        const double height = 4.0e7 / std::pow(2.0, displayZoom);
+        camera_.lookAt(Vec3(radius + height, 0.0, 0.0),
+                       Vec3(radius, 0.0, 0.0), Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+        const auto commands = build();
+        std::map<int, std::array<float, 4>> actual;
+        for (const auto& command : commands) {
+            if (command.kind == RenderCommandKind::VectorFill) {
+                actual.emplace(command.vectorPaintOrder,
+                               command.vectorUniforms.color);
+            }
+        }
+        for (const auto& identity : identities) {
+            std::array<float, 4> expected{};
+            const int providerZoom = displayZoom + 1;
+            for (const auto& record : records) {
+                if (record.classCode == identity.classCode &&
+                    record.subKey == identity.subKey &&
+                    record.minZoom <= providerZoom &&
+                    providerZoom <= record.maxZoom) {
+                    expected = record.color;
+                }
+            }
+            const auto found = actual.find(identity.paintOrder);
+            if (expected[3] <= 0.0f) {
+                EXPECT_EQ(actual.end(), found)
+                    << identity.classCode << ':' << identity.subKey
+                    << " must be absent at display zoom " << displayZoom;
+            } else {
+                ASSERT_NE(actual.end(), found)
+                    << identity.classCode << ':' << identity.subKey
+                    << " missing final fill at display zoom " << displayZoom;
+                EXPECT_EQ(expected, found->second)
+                    << identity.classCode << ':' << identity.subKey
+                    << " final command color mismatch at display zoom "
+                    << displayZoom;
+            }
+        }
+    }
+}
+
 TEST_F(FeatureRenderLayerTest, TileCommitReportsRetryableGpuFailure) {
     Feature polygon = makePolygon(6.0, 29.0, 0.01);
     FeatureTileMesh mesh = FeatureRenderLayer::tessellateTileMesh(
@@ -229,13 +481,31 @@ TEST_F(FeatureRenderLayerTest, EmptyTileCommitIsTerminalSuccess) {
               layer_->commitTileMesh(key, mesh));
 }
 
+TEST_F(FeatureRenderLayerTest, RangeLessTileAbiIsRejectedInsteadOfStyleGroupZero) {
+    Feature polygon = makePolygon(6.0, 29.0, 0.01);
+    Feature line = makeLine(6.0, 29.0, 0.01);
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {polygon, line});
+    ASSERT_FALSE(mesh.fillIndices.empty());
+    ASSERT_FALSE(mesh.lineIndices.empty());
+    ASSERT_FALSE(mesh.fillRanges.empty());
+    ASSERT_FALSE(mesh.lineRanges.empty());
+    mesh.fillRanges.clear();
+    mesh.lineRanges.clear();
+
+    EXPECT_EQ(TileMeshCommitResult::EmptyTerminal,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200}, mesh));
+    EXPECT_TRUE(build().empty());
+}
+
 TEST_F(FeatureRenderLayerTest, GlobalPaintOrderSeparatesFillAndLineAcrossTiles) {
     FeatureRenderStyle style = layer_->style();
     style.paintOrderExpr = StyleExpression::match(
         "family", {{"surface", StyleExpression::literal(30.0)},
                     {"road", StyleExpression::literal(80.0)}},
         StyleExpression::literal(0.0));
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
 
     for (int x : {101, 100}) {
         Feature polygon = makePolygon(6.0 + x * 0.001, 29.0, 0.01);
@@ -265,7 +535,7 @@ TEST_F(FeatureRenderLayerTest, MaxZoomGatesCoarseLodLayer) {
     // LOD 粗源近景让位:zoom > maxZoom 时整层不发命令(主源细面承接)。
     FeatureRenderStyle style = layer_->style();
     style.maxZoom = 11.5;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
 
     // 相机 ~3.2km 高(zoom≈13.6 > 11.5):粗源被门控,无命令。
@@ -289,7 +559,7 @@ TEST_F(FeatureRenderLayerTest, GlobeFillDensifySplitsLargePolygon) {
     // 会把 ECEF 大三角裁成射线(VectorFill 水系/绿地的根因)。
     FeatureRenderStyle style = layer_->style();
     style.globeFillMaxEdgeMeters = 400.0;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
     RenderCommandList commands = build();
     const RenderCommand* fill = nullptr;
@@ -311,6 +581,1107 @@ TEST_F(FeatureRenderLayerTest, LineStringEmitsOnlyLineCommand) {
     EXPECT_EQ(12, commands[0].indexCount);
 }
 
+TEST_F(FeatureRenderLayerTest,
+       AmapRoadNameLineProducesLabelOnlyCandidateWithoutLineGeometry) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style.labelSizePx = 21.0f;
+    style.labelSizeExpr = StyleExpression::match(
+        "amap_class", {{"20001", StyleExpression::literal(25.0)}},
+        StyleExpression::literal(18.0));
+    style.labelOffsetPx = 0.0f;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    constexpr int kRoadLabel = amapClassicStyleIdentity(20001, 1);
+    style.labelStyleGroupExpr = StyleExpression::literal(kRoadLabel);
+    style.labelSizeExprByStyleGroup[kRoadLabel] =
+        StyleExpression::literal(18.0);
+    style.labelColorExprByStyleGroup[kRoadLabel] =
+        StyleExpression::literal(std::array<float, 4>{0, 0, 0, 1});
+    style.labelHaloColorExprByStyleGroup[kRoadLabel] =
+        StyleExpression::literal(std::array<float, 4>{1, 1, 1, 1});
+    style.labelHaloWidthExprByStyleGroup[kRoadLabel] =
+        StyleExpression::literal(1.0);
+    layer_->setStyleForContractTest(style);
+
+    Feature roadName = makeLine(106.4, 29.5, 0.02);
+    roadName.properties["amap_class"] = "20001";
+    roadName.properties["amap_draworder"] = "82";
+    roadName.properties["name"] = "成渝环线高速";
+    roadName.properties["amap_rank"] = "-7";
+    roadName.properties["amap_minzoom"] = "10";
+    roadName.properties["amap_maxzoom"] = "16";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {roadName});
+    EXPECT_TRUE(mesh.lineIndices.empty());
+    EXPECT_TRUE(mesh.lineRanges.empty());
+    ASSERT_EQ(1u, mesh.symbols.size());
+    const TileSymbolCpu& label = mesh.symbols.front();
+    EXPECT_FALSE(label.genericVisual.has_value());
+    EXPECT_EQ("成渝环线高速", label.name);
+    EXPECT_EQ(7, label.rank);
+    EXPECT_EQ(9, label.minZoom);
+    EXPECT_EQ(16, label.maxZoom);
+    EXPECT_EQ(82, label.paintOrder);
+    EXPECT_FLOAT_EQ(18.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                               style, label.labelStyleGroup, 12.0,
+                               0.0f));
+    EXPECT_EQ(0u, label.labelRepeatGroup);
+    EXPECT_FLOAT_EQ(0.0f, label.labelRepeatDistancePx);
+    const float expectedAngle = static_cast<float>(
+        std::atan2(0.01, 0.01 * std::cos(29.01 * kDeg)));
+    EXPECT_NEAR(expectedAngle, label.labelAngleRad, 0.01f);
+    ASSERT_EQ(3u, label.labelPathCartographic.size());
+    EXPECT_LT(label.labelPathCartographic.front()[0],
+              label.labelPathCartographic.back()[0]);
+}
+
+TEST_F(FeatureRenderLayerTest, RoadLabelPathNormalizesReverseGeometryReadable) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.labelStyleGroupExpr = StyleExpression::literal(
+        amapClassicStyleIdentity(20001, 1));
+    layer_->setStyleForContractTest(style);
+    Feature road;
+    road.type = GeometryType::LineString;
+    road.rings = {{Cartographic(106.44 * kDeg, 29.52 * kDeg),
+                   Cartographic(106.42 * kDeg, 29.51 * kDeg),
+                   Cartographic(106.40 * kDeg, 29.50 * kDeg)}};
+    road.properties["amap_class"] = "20001";
+    road.properties["name"] = "反向道路";
+    addOfficialMetadata(road, "20001", "1");
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {road});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    const auto& path = mesh.symbols.front().labelPathCartographic;
+    ASSERT_EQ(3u, path.size());
+    EXPECT_LT(path.front()[0], path.back()[0]);
+    EXPECT_GT(std::cos(mesh.symbols.front().labelAngleRad), 0.0f);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       RoadLabelPathPreservesEveryOfficialProviderPoint) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.labelStyleGroupExpr = StyleExpression::literal(
+        amapClassicStyleIdentity(20001, 1));
+    layer_->setStyleForContractTest(style);
+    Feature road;
+    road.type = GeometryType::LineString;
+    constexpr size_t kPointCount = 130;
+    road.rings.emplace_back();
+    road.rings.front().reserve(kPointCount);
+    for (size_t i = 0; i < kPointCount; ++i) {
+        const double lat = i == 65 ? 29.51 : 29.50;
+        road.rings.front().emplace_back((106.40 + i * 0.0001) * kDeg,
+                                        lat * kDeg);
+    }
+    road.properties["amap_class"] = "20001";
+    road.properties["name"] = "密集弯点道路";
+    addOfficialMetadata(road, "20001", "1");
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {road});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    const auto& path = mesh.symbols.front().labelPathCartographic;
+    ASSERT_EQ(kPointCount, path.size());
+    const double apexLat = 29.51 * kDeg;
+    EXPECT_NE(path.end(),
+              std::find_if(path.begin(), path.end(), [&](const auto& p) {
+                  return std::abs(p[1] - apexLat) < 1e-12;
+              }))
+        << "bounded simplification must not cut across a locally dense bend";
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialRoadLabelSamplesTerrainAtEveryProviderPathPoint) {
+    FeatureRenderLayer layer("official-road-label-terrain", &device_,
+                             Ellipsoid::WGS84());
+    layer.installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    auto sampled = std::make_shared<std::vector<std::array<double, 2>>>();
+    FeatureTerrainSampling sampling;
+    sampling.makeAreaSampler = [sampled](const Rectangle&) {
+        return [sampled](double lon, double lat) -> std::optional<float> {
+            sampled->push_back({lon, lat});
+            return static_cast<float>(100.0 + lon * 10.0 + lat * 20.0);
+        };
+    };
+    sampling.revision = []() -> uint64_t { return 1; };
+    layer.setTerrainSampling(std::move(sampling));
+
+    Feature road;
+    road.type = GeometryType::LineString;
+    road.rings = {{Cartographic(106.52 * kDeg, 29.54 * kDeg),
+                   Cartographic(106.55 * kDeg, 29.56 * kDeg),
+                   Cartographic(106.59 * kDeg, 29.59 * kDeg)}};
+    road.properties["amap_class"] = "20001";
+    road.properties["name"] = "逐点贴地路名";
+    addOfficialMetadata(road, "20001", "1");
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer.workerTessellationContext(), {road});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    ASSERT_EQ(3u, mesh.symbols.front().labelPathCartographic.size());
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer.commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 14, 13038, 5501},
+                  std::move(mesh)));
+
+    for (const Cartographic& expected : road.rings.front()) {
+        EXPECT_NE(sampled->end(),
+                  std::find_if(sampled->begin(), sampled->end(),
+                               [&](const auto& point) {
+                                   return std::abs(point[0] -
+                                                   expected.longitude()) <
+                                              1e-7 &&
+                                          std::abs(point[1] -
+                                                   expected.latitude()) <
+                                              1e-7;
+                               }))
+            << "each official path point must own its terrain height; the "
+               "anchor height cannot be copied over the whole road";
+    }
+}
+
+TEST_F(FeatureRenderLayerTest,
+       AlongRoadLabelRebakesAfterProjectedPathMovesBeyondThreshold) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    FeatureRenderStyle style = layer_->style();
+    style.labelSizePx = 18.0f;
+    style.labelOffsetPx = 0.0f;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    constexpr int kRoadLabel = amapClassicStyleIdentity(20001, 1);
+    style.labelStyleGroupExpr = StyleExpression::literal(kRoadLabel);
+    style.labelSizeExprByStyleGroup[kRoadLabel] =
+        StyleExpression::literal(18.0);
+    style.labelColorExprByStyleGroup[kRoadLabel] =
+        StyleExpression::literal(std::array<float, 4>{0, 0, 0, 1});
+    style.labelHaloColorExprByStyleGroup[kRoadLabel] =
+        StyleExpression::literal(std::array<float, 4>{1, 1, 1, 1});
+    style.labelHaloWidthExprByStyleGroup[kRoadLabel] =
+        StyleExpression::literal(1.0);
+    layer_->setStyleForContractTest(style);
+
+    Feature road;
+    road.type = GeometryType::LineString;
+    road.rings = {{Cartographic(106.52 * kDeg, 29.54 * kDeg),
+                   Cartographic(106.55 * kDeg, 29.56 * kDeg),
+                   Cartographic(106.59 * kDeg, 29.59 * kDeg)}};
+    road.properties["amap_class"] = "20001";
+    road.properties["name"] = "AB";
+    addOfficialMetadata(road, "20001", "1");
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {road});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 14, 13038, 5501},
+        std::move(mesh));
+
+    const Ellipsoid ellipsoid = Ellipsoid::WGS84();
+    const Vec3 target = ellipsoid.cartographicToCartesian(
+        Cartographic(106.55 * kDeg, 29.56 * kDeg));
+    const Vec3 up = target.normalized();
+    camera_.lookAt(target + up * 8000.0, target, Vec3(0, 0, 1));
+    RenderCommandList first = build();
+    ASSERT_TRUE(std::any_of(first.begin(), first.end(), [](const auto& cmd) {
+        return cmd.kind == RenderCommandKind::VectorLabel;
+    }));
+    const int buffersAfterFirstBake = device_.createdBufferCount;
+
+    camera_.lookAt(target + up * 8000.0 + Vec3(0, 3000, 0), target,
+                   Vec3(0, 0, 1));
+    ++frame_.frameId;
+    RenderCommandList moved = build();
+    EXPECT_GT(device_.createdBufferCount, buffersAfterFirstBake)
+        << "camera-dependent screen-arc geometry must refresh after >2px drift";
+    EXPECT_TRUE(std::any_of(moved.begin(), moved.end(), [](const auto& cmd) {
+        return cmd.kind == RenderCommandKind::VectorLabel;
+    }));
+}
+
+TEST_F(FeatureRenderLayerTest,
+       LabelPaintOrderCanDifferWithoutSplittingPointGeometry) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(100.0);
+    style.labelPaintOrderExpr = StyleExpression::match(
+        "amap_class", {{"10002", StyleExpression::literal(101.0)}},
+        StyleExpression::literal(100.0));
+    layer_->setStyleForContractTest(style);
+
+    Feature admin;
+    admin.type = GeometryType::Point;
+    admin.rings = {{Cartographic(106.5 * kDeg, 29.6 * kDeg)}};
+    admin.properties["amap_class"] = "10002";
+    admin.properties["name"] = "沙坪坝区";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {admin});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(100, mesh.symbols.front().paintOrder);
+    EXPECT_EQ(101, mesh.symbols.front().labelPaintOrder);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       LabelStyleGroupIsIndependentFromProviderDrawOrder) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style.labelPaintOrderExpr = StyleExpression::get("amap_draworder");
+    style.labelStyleGroupExpr = StyleExpression::match(
+        "amap_class",
+        {{"20001", StyleExpression::literal(
+                       static_cast<double>(amapClassicStyleIdentity(20001, 1)))}},
+        StyleExpression::literal(0.0));
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+
+    Feature roadName = makeLine(106.4, 29.5, 0.02);
+    roadName.properties = {{"amap_class", "20001"},
+                           {"amap_subkey", "1"},
+                           {"amap_draworder", "37"},
+                           {"amap_minzoom", "3"},
+                           {"amap_maxzoom", "20"},
+                           {"amap_rank", "1"},
+                           {"name", "成渝高速"}};
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {roadName});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(37, mesh.symbols.front().labelPaintOrder);
+    EXPECT_EQ(amapClassicStyleIdentity(20001, 1),
+              mesh.symbols.front().labelStyleGroup);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialPoiIdentityRejectsUnknownWithoutUsingProviderOrder) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style.labelPaintOrderExpr = style.paintOrderExpr;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+
+    Feature matched;
+    matched.type = GeometryType::Point;
+    matched.rings = {{Cartographic(106.5 * kDeg, 29.6 * kDeg)}};
+    matched.properties["amap_class"] = "12024";
+    matched.properties["amap_subkey"] = "1178";
+    matched.properties["amap_draworder"] = "9137";
+    matched.properties["amap_rank"] = "1";
+    matched.properties["amap_minzoom"] = "3";
+    matched.properties["amap_maxzoom"] = "20";
+    matched.properties["name"] = "matched";
+
+    Feature fallback = matched;
+    fallback.rings = {{Cartographic(106.6 * kDeg, 29.6 * kDeg)}};
+    fallback.properties["amap_subkey"] = "193";
+    fallback.properties["name"] = "fallback";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {matched, fallback});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(9137, mesh.symbols[0].paintOrder);
+    EXPECT_EQ(9137, mesh.symbols[0].labelPaintOrder);
+    EXPECT_EQ(amapClassicLabelIdentity(12024, 1178),
+              mesh.symbols[0].labelStyleGroup);
+    EXPECT_EQ("matched", mesh.symbols[0].name);
+    EXPECT_EQ(-1, mesh.symbols[0].rank);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialPoiRejectsGenericRankAliasWithoutOfficialRank) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+
+    Feature point;
+    point.type = GeometryType::Point;
+    point.rings = {{Cartographic(106.5 * kDeg, 29.6 * kDeg)}};
+    point.properties = {{"amap_class", "12024"},
+                        {"amap_subkey", "1178"},
+                        {"amap_draworder", "9137"},
+                        {"rank", "-1"},
+                        {"name", "legacy-alias"}};
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {point});
+    EXPECT_TRUE(mesh.symbols.empty());
+}
+
+TEST_F(FeatureRenderLayerTest,
+       StrictOfficialDrawOrderRejectsMissingAndMalformedButAcceptsZero) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style = earth_engine::testing::amapOfficialStyleForTest(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+
+    Feature missing;
+    missing.type = GeometryType::Point;
+    missing.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    addOfficialMetadata(missing, "12024", "1");
+    missing.properties.erase("amap_draworder");
+    Feature malformed = missing;
+    malformed.rings = {{Cartographic(6.1 * kDeg, 29.0 * kDeg)}};
+    malformed.properties["amap_draworder"] = "not-a-number";
+    Feature legalZero = missing;
+    legalZero.rings = {{Cartographic(6.2 * kDeg, 29.0 * kDeg)}};
+    legalZero.properties["amap_draworder"] = "0";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(),
+        {missing, malformed, legalZero});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(0, mesh.symbols.front().paintOrder);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialStoreRejectsMissingAndMalformedDrawOrderBeforeGeometryUpload) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Regions);
+    layer_->setStyleForContractTest(style);
+
+    auto surface = [](double longitude, const char* drawOrder) {
+        Feature feature = makePolygon(longitude, 29.0, 0.01);
+        feature.properties = {{"amap_class", "30001"},
+                              {"amap_subkey", "1"},
+                              {"amap_minzoom", "2"},
+                              {"amap_maxzoom", "20"}};
+        if (drawOrder) feature.properties["amap_draworder"] = drawOrder;
+        return feature;
+    };
+    layer_->store().addFeature(surface(6.0, nullptr));
+    layer_->store().addFeature(surface(6.02, "not-an-integer"));
+    layer_->store().addFeature(surface(6.04, "73"));
+
+    const RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(RenderCommandKind::VectorFill, commands.front().kind);
+    EXPECT_EQ(73, commands.front().vectorPaintOrder);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialLabelOrderIgnoresCallerExpressionAfterInstaller) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.labelPaintOrderExpr = StyleExpression::literal(-999.0);
+    layer_->setStyleForContractTest(style);
+
+    Feature roadName = makeLine(106.4, 29.5, 0.02);
+    roadName.properties = {{"amap_class", "20001"},
+                           {"amap_subkey", "1"},
+                           {"amap_draworder", "37"},
+                           {"amap_minzoom", "3"},
+                           {"amap_maxzoom", "20"},
+                           {"amap_rank", "1"},
+                           {"name", "official-order"}};
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {roadName});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(37, mesh.symbols.front().paintOrder);
+    EXPECT_EQ(37, mesh.symbols.front().labelPaintOrder);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialPointStoreFailsClosedInsteadOfUsingGenericCircleContract) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(106.5 * kDeg, 29.6 * kDeg)}};
+    poi.properties = {{"amap_class", "12024"},
+                      {"amap_subkey", "1178"},
+                      {"amap_draworder", "9137"},
+                      {"amap_rank", "1"},
+                      {"amap_minzoom", "3"},
+                      {"amap_maxzoom", "20"},
+                      {"name", "official-poi"}};
+    layer_->store().addFeature(std::move(poi));
+    EXPECT_TRUE(build().empty());
+}
+
+TEST_F(FeatureRenderLayerTest,
+       GenericSetterRejectsIncomingAndReplacementOfficialContracts) {
+    FeatureRenderStyle incomingOfficial = layer_->style();
+    incomingOfficial = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Regions);
+    layer_->setStyle(incomingOfficial);
+    EXPECT_FALSE(layer_->style().usesOfficialProviderContract());
+
+    layer_->installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Main);
+    ASSERT_TRUE(layer_->style().usesOfficialProviderContract());
+    ASSERT_TRUE(layer_->hasSealedOfficialProfile());
+
+    FeatureRenderStyle mutated = layer_->style();
+    mutated.fillColor = {1, 0, 0, 1};
+    mutated.fillColorExprByStyleGroup.clear();
+    layer_->setStyle(mutated);
+    EXPECT_TRUE(layer_->style().usesOfficialProviderContract());
+    EXPECT_FALSE(layer_->style().fillColorExprByStyleGroup.empty());
+    EXPECT_NE((std::array<float, 4>{1, 0, 0, 1}),
+              layer_->style().fillColor);
+
+    FeatureRenderStyle generic;
+    layer_->setStyle(generic);
+    EXPECT_TRUE(layer_->style().usesOfficialProviderContract());
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialCasingDoesNotFallBackToGenericLayerWidth) {
+    FeatureRenderStyle style;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Main);
+    const int identity = amapClassicStyleIdentity(20001, 1);
+    ASSERT_TRUE(style.lineCasingStyleGroups.count(identity));
+    style.lineCasingWidthExprByStyleGroup.erase(identity);
+    style.lineCasingExtraWidthPx = 99.0f;
+    style.lineCasingWidthRatio = 8.0f;
+    layer_->setStyleForContractTest(style);
+
+    Feature road = makeLine(6.0, 29.0, 0.02);
+    addOfficialMetadata(road, "20001", "1", "90");
+    layer_->store().addFeature(std::move(road));
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    camera_.lookAt(surface + surface.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.0)),
+                   surface, Vec3(0.0, 0.0, 1.0));
+
+    const RenderCommandList commands = build();
+    for (const auto& command : commands) {
+        EXPECT_NE(0, command.vectorPaintSubOrder);
+    }
+}
+
+TEST_F(FeatureRenderLayerTest,
+       MalformedOfficialCasingDoesNotConsumeGenericFallbackScalars) {
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main);
+    const int identity = amapClassicStyleIdentity(20001, 1);
+    ASSERT_TRUE(style.lineCasingStyleGroups.count(identity));
+    style.lineCasingWidthExprByStyleGroup[identity] =
+        StyleExpression::literal(
+            std::numeric_limits<double>::quiet_NaN());
+    style.lineCasingExtraWidthPx = 999.0f;
+    style.lineCasingWidthRatio = 999.0f;
+    layer_->setStyleForContractTest(style);
+
+    Feature road = makeLine(6.0, 29.0, 0.02);
+    addOfficialMetadata(road, "20001", "1", "90");
+    layer_->store().addFeature(std::move(road));
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    camera_.lookAt(surface + surface.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.0)),
+                   surface, Vec3(0.0, 0.0, 1.0));
+
+    const RenderCommandList commands = build();
+    ASSERT_FALSE(commands.empty());
+    for (const auto& command : commands) {
+        EXPECT_NE(0, command.vectorPaintSubOrder)
+            << "malformed official casing must fail closed";
+        EXPECT_LT(command.vectorUniforms.lineWidthPx, 100.0f)
+            << "generic fallback scalars must not contaminate official width";
+    }
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialFreshResetAndContinuationReachFinalRoadCommands) {
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main);
+    layer_->setStyleForContractTest(style);
+    frame_.devicePixelRatio = 1.0f;
+
+    Feature road = makeLine(6.0, 29.0, 0.02);
+    addOfficialMetadata(road, "20023", "6", "90");
+    layer_->store().addFeature(std::move(road));
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    const Vec3 radial = surface.normalized();
+    const auto atDisplayZoom = [&](double zoom) {
+        camera_.lookAt(surface + radial * (4.0e7 / std::pow(2.0, zoom)),
+                       surface, Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+        RenderCommandList commands = build();
+        commands.erase(std::remove_if(
+            commands.begin(), commands.end(), [](const RenderCommand& cmd) {
+                return cmd.kind != RenderCommandKind::VectorLine;
+            }), commands.end());
+        return commands;
+    };
+
+    // Provider zoom 8 continues the original casing-only field set from the
+    // fresh zoom-6 record. It must reach one red, 1 CSS-pixel casing command.
+    const RenderCommandList inherited = atDisplayZoom(7.0);
+    ASSERT_EQ(1u, inherited.size());
+    EXPECT_EQ(0, inherited[0].vectorPaintSubOrder);
+    EXPECT_FLOAT_EQ(1.0f, inherited[0].vectorUniforms.lineWidthPx);
+    EXPECT_EQ((std::array<float, 4>{0xe6 / 255.0f, 0x37 / 255.0f,
+                                    0x19 / 255.0f, 1.0f}),
+              inherited[0].vectorUniforms.color);
+
+    // Provider zoom 9 is both continuation and fresh. Its omitted casing
+    // width/color reset the inherited pass; only the new 1px gray center may
+    // survive. Keeping the old red casing here would violate field 10.
+    const RenderCommandList reset = atDisplayZoom(8.0);
+    ASSERT_EQ(1u, reset.size());
+    EXPECT_EQ(1, reset[0].vectorPaintSubOrder);
+    EXPECT_FLOAT_EQ(1.0f, reset[0].vectorUniforms.lineWidthPx);
+    EXPECT_EQ((std::array<float, 4>{0xda / 255.0f, 0xda / 255.0f,
+                                    0xda / 255.0f, 1.0f}),
+              reset[0].vectorUniforms.color);
+
+    // Provider zoom 10 is a continuation record that explicitly restores
+    // casing width/color. Both independent final commands must return.
+    const RenderCommandList restored = atDisplayZoom(9.0);
+    ASSERT_EQ(2u, restored.size());
+    EXPECT_EQ(0, restored[0].vectorPaintSubOrder);
+    EXPECT_EQ(1, restored[1].vectorPaintSubOrder);
+    EXPECT_FLOAT_EQ(3.0f, restored[0].vectorUniforms.lineWidthPx);
+    EXPECT_FLOAT_EQ(2.0f, restored[1].vectorUniforms.lineWidthPx);
+    EXPECT_EQ((std::array<float, 4>{0xe6 / 255.0f, 0x37 / 255.0f,
+                                    0x19 / 255.0f, 1.0f}),
+              restored[0].vectorUniforms.color);
+}
+
+TEST_F(FeatureRenderLayerTest, ClosedOfficialProfileIsSealed) {
+    auto sealed = std::make_unique<FeatureRenderLayer>(
+        "sealed-official", &device_, Ellipsoid::WGS84());
+    sealed->installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Main);
+    EXPECT_TRUE(sealed->hasSealedOfficialProfile());
+    EXPECT_TRUE(sealed->style().usesOfficialProviderContract());
+    EXPECT_EQ(FeatureAltitudeMode::ClampToGround,
+              sealed->style().altitudeMode)
+        << "official visual identity stays sealed while scene terrain owns "
+           "spatial placement";
+    EXPECT_DOUBLE_EQ(0.0, sealed->style().heightOffset)
+        << "official geometry must not inherit a local z-fighting offset";
+
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialProfilesUseOneTerrainAdaptivePlacementContract) {
+    for (const auto profile : {
+             FeatureRenderLayer::AmapClassicProfile::Main,
+             FeatureRenderLayer::AmapClassicProfile::Regions,
+             FeatureRenderLayer::AmapClassicProfile::Poi}) {
+        const FeatureRenderStyle style =
+            earth_engine::testing::amapOfficialStyleForTest(profile);
+        EXPECT_TRUE(style.usesOfficialProviderContract());
+        EXPECT_EQ(FeatureAltitudeMode::ClampToGround, style.altitudeMode);
+        EXPECT_DOUBLE_EQ(0.0, style.heightOffset);
+        EXPECT_TRUE(style.terrainClampRibbon)
+            << "official roads must preserve a reclamp source instead of "
+               "falling into the generic stencil-volume path";
+    }
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialRoadTilePreservesTerrainReclampSource) {
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main);
+    FeatureRenderLayer::TessellationContext ctx{
+        style, Ellipsoid::WGS84(), nullptr, nullptr,
+        /*supportsStencilClassification=*/true};
+    ctx.hasTerrainHeightRange = true;
+    ctx.terrainMinHeight = 500.0;
+    ctx.terrainMaxHeight = 2000.0;
+
+    Feature road = makeLine(6.0, 29.0, 0.02);
+    road.properties = {{"amap_class", "20001"},
+                       {"amap_subkey", "1"},
+                       {"amap_draworder", "90"},
+                       {"amap_minzoom", "3"},
+                       {"amap_maxzoom", "20"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(ctx, {road});
+
+    EXPECT_TRUE(mesh.lineVolumeGroups.empty());
+    ASSERT_FALSE(mesh.lineVerts.empty());
+    ASSERT_FALSE(mesh.lineIndices.empty());
+    ASSERT_FALSE(mesh.lineClampSource.empty());
+    EXPECT_EQ(mesh.lineClampSource.size(), mesh.lineVerts.size() / 12 * 9);
+
+    const float* vertex = mesh.lineVerts.data();
+    const Vec3 relative(vertex[0], vertex[1], vertex[2]);
+    const Cartographic position = Ellipsoid::WGS84().cartesianToCartographic(
+        mesh.origin + relative);
+    EXPECT_NEAR(position.height(), 0.0, 0.05)
+        << "worker output is an ellipsoid placeholder; commit/reclamp owns "
+           "the authoritative render-grid terrain height";
+}
+
+TEST_F(FeatureRenderLayerTest,
+       ClosedOfficialProfilesRejectOutOfContractGeometryBeforeStyling) {
+    auto makeOfficialPoint = [] {
+        Feature point;
+        point.type = GeometryType::Point;
+        point.rings = {{Cartographic(106.5 * kDeg, 29.6 * kDeg)}};
+        addOfficialMetadata(point, "12024", "1178", "90");
+        point.properties["name"] = "must-not-use-generic-point";
+        return point;
+    };
+
+    for (const auto profile : {
+             FeatureRenderLayer::AmapClassicProfile::Main,
+             FeatureRenderLayer::AmapClassicProfile::Regions}) {
+        auto sealed = std::make_unique<FeatureRenderLayer>(
+            "geometry-gate", &device_, Ellipsoid::WGS84());
+        sealed->installAmapClassicProfile(profile);
+        const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+            sealed->workerTessellationContext(), {makeOfficialPoint()});
+        EXPECT_TRUE(mesh.symbols.empty());
+        EXPECT_TRUE(mesh.fillIndices.empty());
+        EXPECT_TRUE(mesh.lineIndices.empty());
+
+        sealed->store().addFeature(makeOfficialPoint());
+        RenderCommandList commands;
+        sealed->buildRenderCommands(frame_, *renderer_, commands);
+        EXPECT_TRUE(commands.empty());
+    }
+
+    auto poi = std::make_unique<FeatureRenderLayer>(
+        "poi-geometry-gate", &device_, Ellipsoid::WGS84());
+    poi->installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    Feature polygon = makePolygon(106.4, 29.5, 0.01);
+    addOfficialMetadata(polygon, "30001", "2", "10");
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        poi->workerTessellationContext(), {polygon});
+    EXPECT_TRUE(mesh.fillIndices.empty());
+    EXPECT_TRUE(mesh.lineIndices.empty());
+    EXPECT_TRUE(mesh.symbols.empty());
+
+    poi->store().addFeature(std::move(polygon));
+    RenderCommandList commands;
+    poi->buildRenderCommands(frame_, *renderer_, commands);
+    EXPECT_TRUE(commands.empty());
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialGeometryDoesNotBakeGenericFillOrLineColors) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Regions);
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Main);
+    // Deliberately poison every generic color entry. Official tessellation
+    // must retain only styleGroup identity; these values cannot become a
+    // hidden fallback in the CPU/GPU payload.
+    style.fillColor = {1, 0, 1, 1};
+    style.fillColorExpr = StyleExpression::literal(style.fillColor);
+    style.lineColor = {0, 1, 0, 1};
+    style.lineColorExpr = StyleExpression::literal(style.lineColor);
+    style.lineColorProperty = "generic_color";
+    style.lineColorByProperty["poison"] = {1, 1, 0, 1};
+    layer_->setStyleForContractTest(style);
+
+    Feature surface = makePolygon(106.4, 29.5, 0.01);
+    addOfficialMetadata(surface, "30001", "2", "10");
+    Feature road = makeLine(106.4, 29.5, 0.01);
+    addOfficialMetadata(road, "20001", "1", "20");
+    road.properties["generic_color"] = "poison";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {surface, road});
+    ASSERT_FALSE(mesh.fillVerts.empty());
+    ASSERT_FALSE(mesh.lineVerts.empty());
+
+    uint32_t fillPacked = 1;
+    uint32_t linePacked = 1;
+    std::memcpy(&fillPacked, &mesh.fillVerts[3], sizeof(fillPacked));
+    std::memcpy(&linePacked, &mesh.lineVerts[11], sizeof(linePacked));
+    EXPECT_EQ(0u, fillPacked);
+    EXPECT_EQ(0u, linePacked);
+    ASSERT_EQ(1u, mesh.fillRanges.size());
+    ASSERT_EQ(1u, mesh.lineRanges.size());
+    EXPECT_NE(0, mesh.fillRanges.front().styleGroup);
+    EXPECT_NE(0, mesh.lineRanges.front().styleGroup);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       SealedOfficialCommitRejectsGenericCrossProfilePayloads) {
+    FeatureRenderStyle generic;
+    FeatureRenderLayer::TessellationContext genericCtx{
+        generic, Ellipsoid::WGS84()};
+
+    Feature point;
+    point.type = GeometryType::Point;
+    point.rings = {{Cartographic(106.4 * kDeg, 29.5 * kDeg)}};
+    auto pointMesh = FeatureRenderLayer::tessellateTileMesh(
+        genericCtx, {point});
+    ASSERT_FALSE(pointMesh.symbols.empty());
+    layer_->installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Main);
+    EXPECT_EQ(TileMeshCommitResult::EmptyTerminal,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                  std::move(pointMesh)));
+    EXPECT_TRUE(build().empty());
+
+    auto poiLayer = std::make_unique<FeatureRenderLayer>(
+        "sealed-poi-commit", &device_, Ellipsoid::WGS84());
+    Feature polygon = makePolygon(106.4, 29.5, 0.01);
+    auto fillMesh = FeatureRenderLayer::tessellateTileMesh(
+        genericCtx, {polygon});
+    ASSERT_FALSE(fillMesh.fillIndices.empty());
+    poiLayer->installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    EXPECT_EQ(TileMeshCommitResult::EmptyTerminal,
+              poiLayer->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 10, 101, 200},
+                  std::move(fillMesh)));
+    RenderCommandList poiCommands;
+    poiLayer->buildRenderCommands(frame_, *renderer_, poiCommands);
+    EXPECT_TRUE(poiCommands.empty());
+
+    Feature officialPoint;
+    officialPoint.type = GeometryType::Point;
+    officialPoint.rings = {{Cartographic(106.4 * kDeg, 29.5 * kDeg)}};
+    addOfficialMetadata(officialPoint, "12024", "1", "10");
+    auto officialMesh = FeatureRenderLayer::tessellateTileMesh(
+        poiLayer->workerTessellationContext(), {officialPoint});
+    ASSERT_EQ(1u, officialMesh.symbols.size());
+    genericVisual(officialMesh.symbols.front()).colorPacked = 1.0f;
+    EXPECT_EQ(TileMeshCommitResult::EmptyTerminal,
+              poiLayer->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 10, 102, 200},
+                  std::move(officialMesh)));
+}
+
+TEST_F(FeatureRenderLayerTest,
+       SealedSurfaceStoreNeverProducesGenericNameLabels) {
+    layer_->installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Main);
+    Feature road = makeLine(106.4, 29.5, 0.01);
+    addOfficialMetadata(road, "20001", "1", "90");
+    road.properties["name"] = "must-not-be-generic-label";
+    road.properties["rank"] = "1";
+    layer_->store().addFeature(std::move(road));
+
+    const auto commands = build();
+    EXPECT_TRUE(std::none_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorLabel;
+    }));
+}
+
+TEST_F(FeatureRenderLayerTest,
+       SealedOfficialProfilesRejectEditableStoreProvenance) {
+    layer_->installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Main);
+    Feature polygon = makePolygon(106.4, 29.5, 0.01);
+    addOfficialMetadata(polygon, "30001", "1", "10");
+    layer_->store().addFeature(std::move(polygon));
+
+    Feature road = makeLine(106.4, 29.5, 0.01);
+    addOfficialMetadata(road, "20001", "1", "20");
+    layer_->store().addFeature(std::move(road));
+
+    EXPECT_TRUE(build().empty());
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialRailwayLabelPayloadDoesNotDuplicateMainLineGeometry) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style.labelPaintOrderExpr = style.paintOrderExpr;
+    style.lineStyleGroupExpr = amapClassicLineStyleGroupExpression();
+    style.labelStyleGroupExpr = amapClassicLineLabelStyleGroupExpression();
+    style = earth_engine::testing::amapOfficialStyleForTest(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.labelSizePx = 99.0f;
+    style.labelSizeExpr = StyleExpression::literal(88.0);
+    style.labelOffsetPx = 77.0f;
+    style.labelOffsetExpr = StyleExpression::literal(66.0);
+    layer_->setStyleForContractTest(style);
+
+    Feature railway = makeLine(106.4, 29.5, 0.02);
+    railway.properties["amap_class"] = "20010";
+    railway.properties["amap_subkey"] = "2";
+    railway.properties["amap_draworder"] = "62";
+    railway.properties["amap_minzoom"] = "3";
+    railway.properties["amap_maxzoom"] = "20";
+    railway.properties["name"] = "成渝铁路";
+    railway.properties["amap_rank"] = "1";
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {railway});
+    EXPECT_TRUE(mesh.lineIndices.empty());
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(62, mesh.symbols.front().labelPaintOrder);
+    EXPECT_EQ(amapClassicStyleIdentity(20010, 2),
+              mesh.symbols.front().labelStyleGroup);
+    EXPECT_FALSE(mesh.symbols.front().genericVisual.has_value());
+    EXPECT_GT(FeatureRenderLayer::resolvedLabelSizePx(
+                  style, mesh.symbols.front().labelStyleGroup,
+                  8.0, 0.0f),
+              0.0f);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialGuideSubKey2EmitsLabelWithoutLineGeometryOrUpload) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style.labelPaintOrderExpr = style.paintOrderExpr;
+    style.lineStyleGroupExpr = amapClassicLineStyleGroupExpression();
+    style.labelStyleGroupExpr = amapClassicLineLabelStyleGroupExpression();
+    style = earth_engine::testing::amapOfficialStyleForTest(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+
+    Feature guide = makeLine(106.4, 29.5, 0.02);
+    guide.properties = {{"amap_class", "20014"},
+                        {"amap_subkey", "2"},
+                        {"amap_draworder", "65"},
+                        {"amap_minzoom", "3"},
+                        {"amap_maxzoom", "20"},
+                        {"amap_rank", "1"},
+                        {"name", "官方引导线"}};
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {guide});
+    EXPECT_TRUE(mesh.lineVerts.empty());
+    EXPECT_TRUE(mesh.lineIndices.empty());
+    EXPECT_TRUE(mesh.lineRanges.empty());
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(amapClassicStyleIdentity(20014, 2),
+              mesh.symbols.front().labelStyleGroup);
+    EXPECT_FLOAT_EQ(11.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                               style, mesh.symbols.front().labelStyleGroup,
+                               8.0, 0.0f));
+    EXPECT_EQ(8, FeatureRenderLayer::effectiveLabelMinZoom(
+                     style, mesh.symbols.front().labelStyleGroup, 0));
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialConstructionLabelPayloadDoesNotDuplicateMainStroke) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style.labelPaintOrderExpr = style.paintOrderExpr;
+    style.lineStyleGroupExpr = amapClassicLineStyleGroupExpression();
+    style.labelStyleGroupExpr = amapClassicLineLabelStyleGroupExpression();
+    style = earth_engine::testing::amapOfficialStyleForTest(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+
+    Feature construction = makeLine(106.4, 29.5, 0.02);
+    construction.properties = {{"amap_class", "20019"},
+                               {"amap_subkey", "1"},
+                               {"amap_draworder", "90"},
+                               {"amap_minzoom", "3"},
+                               {"amap_maxzoom", "20"},
+                               {"amap_rank", "1"},
+                               {"name", "在建道路"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {construction});
+    EXPECT_TRUE(mesh.lineIndices.empty());
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(amapClassicStyleIdentity(20019, 1),
+              mesh.symbols.front().labelStyleGroup);
+    EXPECT_FLOAT_EQ(10.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                               style, mesh.symbols.front().labelStyleGroup,
+                               14.0, 0.0f));
+
+}
+
+TEST(FeatureRenderStyleContractTest, RoadNameZoomCurveUsesDisplayZoom) {
+    FeatureRenderStyle style;
+    style.labelMinZoomByStyleGroup[82] = 9;
+    style.labelSizeExprByStyleGroup[82] = StyleExpression::interpolateLinear(
+        StyleExpression::zoom(),
+        {{9.0, StyleExpression::literal(11.0)},
+         {10.0, StyleExpression::literal(12.0)}});
+    EXPECT_EQ(9, FeatureRenderLayer::effectiveLabelMinZoom(style, 82, 0));
+    EXPECT_EQ(11, FeatureRenderLayer::effectiveLabelMinZoom(style, 82, 11));
+    EXPECT_FLOAT_EQ(11.0f,
+                    FeatureRenderLayer::resolvedLabelSizePx(style, 82, 9.0,
+                                                            28.0f));
+    EXPECT_FLOAT_EQ(11.5f,
+                    FeatureRenderLayer::resolvedLabelSizePx(style, 82, 9.5,
+                                                            28.0f));
+}
+
+TEST(FeatureRenderStyleContractTest, LabelHaloCurveUsesDisplayZoom) {
+    FeatureRenderStyle style;
+    style.labelHaloColor = {0, 0, 0, 0};
+    style.labelHaloColorExprByStyleGroup[50005] = StyleExpression::step(
+        StyleExpression::zoom(),
+        {{4.0, StyleExpression::literal(
+                   std::array<float, 4>{1, 1, 1, 0.8f})},
+         {5.0, StyleExpression::literal(
+                   std::array<float, 4>{1, 1, 1, 1})}});
+    EXPECT_FLOAT_EQ(0.8f, FeatureRenderLayer::resolvedLabelHaloColor(
+                              style, 50005, 4.0)[3]);
+    EXPECT_FLOAT_EQ(1.0f, FeatureRenderLayer::resolvedLabelHaloColor(
+                              style, 50005, 5.0)[3]);
+}
+
+TEST(FeatureRenderStyleContractTest,
+     OfficialHaloNeverFallsBackToGenericOrFixedColor) {
+    FeatureRenderStyle style;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    ASSERT_FALSE(style.labelHaloWidthExprByStyleGroup.empty());
+    const int kDistrict = style.labelHaloWidthExprByStyleGroup.begin()->first;
+    style.labelHaloColor = {1, 0, 0, 1};
+    style.labelHaloColorByStyleGroup[kDistrict] = {0, 1, 0, 1};
+    style.labelHaloColorExprByStyleGroup[kDistrict] =
+        StyleExpression::literal(42.0);
+    EXPECT_EQ((std::array<float, 4>{0, 0, 0, 0}),
+              FeatureRenderLayer::resolvedLabelHaloColor(
+                  style, kDistrict, 12.0));
+    style.labelHaloColorExprByStyleGroup.erase(kDistrict);
+    EXPECT_EQ((std::array<float, 4>{0, 0, 0, 0}),
+              FeatureRenderLayer::resolvedLabelHaloColor(
+                  style, kDistrict, 12.0));
+}
+
+TEST(FeatureRenderStyleContractTest,
+     OfficialHaloWidthNeverFallsBackToGenericScalar) {
+    FeatureRenderStyle style;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    ASSERT_FALSE(style.labelHaloWidthExprByStyleGroup.empty());
+    const int kDistrict = style.labelHaloWidthExprByStyleGroup.begin()->first;
+    style.labelHaloPx = 99.0f;
+    EXPECT_FLOAT_EQ(1.0f, FeatureRenderLayer::resolvedLabelHaloWidthPx(
+                              style, kDistrict, 12.0));
+    style.labelHaloWidthExprByStyleGroup[kDistrict] =
+        StyleExpression::literal(2.5);
+    EXPECT_FLOAT_EQ(2.5f, FeatureRenderLayer::resolvedLabelHaloWidthPx(
+                              style, kDistrict, 12.0));
+    style.labelHaloWidthExprByStyleGroup[kDistrict] =
+        StyleExpression::literal(-1.0);
+    EXPECT_LT(FeatureRenderLayer::resolvedLabelHaloWidthPx(
+                  style, kDistrict, 12.0),
+              0.0f);
+    style.labelHaloWidthExprByStyleGroup.erase(kDistrict);
+    EXPECT_LT(FeatureRenderLayer::resolvedLabelHaloWidthPx(
+                  style, kDistrict, 12.0),
+              0.0f);
+}
+
+TEST(FeatureRenderStyleContractTest,
+     RoadNameColorCurveUsesStyleGroupAndDisplayZoom) {
+    FeatureRenderStyle style;
+    style.labelColor = {1.0f, 0.0f, 0.0f, 1.0f};
+    style.labelColorExprByStyleGroup[82] =
+        StyleExpression::interpolateLinear(
+            StyleExpression::zoom(),
+            {{9.0, StyleExpression::literal(
+                       std::array<float, 4>{0.0f, 0.0f, 0.0f, 1.0f})},
+             {17.0, StyleExpression::literal(
+                        std::array<float, 4>{0.8f, 0.4f, 0.2f, 1.0f})}});
+
+    const auto mid = FeatureRenderLayer::resolvedLabelColor(style, 82, 13.0);
+    EXPECT_NEAR(0.4f, mid[0], 1e-6f);
+    EXPECT_NEAR(0.2f, mid[1], 1e-6f);
+    EXPECT_NEAR(0.1f, mid[2], 1e-6f);
+    EXPECT_FLOAT_EQ(1.0f, mid[3]);
+    EXPECT_EQ(style.labelColor,
+              FeatureRenderLayer::resolvedLabelColor(style, 79, 13.0));
+}
+
+TEST_F(FeatureRenderLayerTest, NormalNamedRoadKeepsLineGeometry) {
+    Feature road = makeLine(106.4, 29.5, 0.2);
+    road.properties["amap_class"] = "20001";
+    road.properties["name"] = "真实道路名";
+
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {road});
+    EXPECT_FALSE(mesh.lineIndices.empty());
+    EXPECT_TRUE(mesh.symbols.empty());
+}
+
+TEST_F(FeatureRenderLayerTest,
+       RequiredOfficialLabelIdentityRejectsUnknownRoadBeforeSymbolWork) {
+    FeatureRenderStyle style = layer_->style();
+    style.labelProperty = "name";
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.lineStyleGroupExpr = StyleExpression::match(
+        "amap_class",
+        {{"20010", StyleExpression::match(
+                       "amap_subkey",
+                       {{"1", StyleExpression::literal(20010001.0)}},
+                       StyleExpression::literal(0.0))}},
+        StyleExpression::literal(0.0));
+    style.labelStyleGroupExpr = StyleExpression::match(
+        "amap_class",
+        {{"20010", StyleExpression::match(
+                       "amap_subkey",
+                       {{"1", StyleExpression::literal(20010001.0)}},
+                       StyleExpression::literal(0.0))}},
+        StyleExpression::literal(0.0));
+
+    Feature unknown;
+    unknown.type = GeometryType::LineString;
+    unknown.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg),
+                      Cartographic(6.1 * kDeg, 29.0 * kDeg)}};
+    unknown.properties = {{"name", "unknown railway"},
+                          {"amap_class", "20010"},
+                          {"amap_subkey", "999"},
+                          {"amap_draworder", "9137"}};
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        FeatureRenderLayer::TessellationContext{
+            style, Ellipsoid::WGS84(), nullptr, nullptr, false, 10.0},
+        {unknown});
+    EXPECT_TRUE(mesh.symbols.empty());
+    EXPECT_TRUE(mesh.lineIndices.empty())
+        << "unknown official tuple must fail before line tessellation/upload";
+}
+
+TEST_F(FeatureRenderLayerTest,
+       ProviderPointWorkerDoesNotCarryGenericVisualFallbackState) {
+    FeatureRenderStyle style = layer_->style();
+    style.pointImage = "circle";
+    style.pointColor = {1.0f, 0.0f, 0.0f, 1.0f};
+    style.labelOffsetPx = 27.0f;
+    style.pointStylePropertyA = "amap_class";
+    style.pointStylePropertyB = "amap_subkey";
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    installTestOfficialLabelStyle(style);
+    style.pointStyleResolver = [](const std::string&, const std::string&,
+                                  const std::string&, double, float) {
+        return FeatureRenderStyle::ResolvedPointStyle{};
+    };
+    layer_->setStyleForContractTest(style);
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties["amap_draworder"] = "1";
+    poi.properties["amap_rank"] = "1";
+    poi.properties = {{"name", "official"},
+                      {"amap_class", "12024"},
+                      {"amap_subkey", "1"}};
+    addOfficialMetadata(poi, "12024", "1");
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_FALSE(mesh.symbols[0].genericVisual.has_value());
+}
+
+TEST_F(FeatureRenderLayerTest, ProviderRoadNameKeepsProviderSelectedBentPath) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.labelStyleGroupExpr = StyleExpression::literal(
+        amapClassicStyleIdentity(20001, 1));
+    layer_->setStyleForContractTest(style);
+    Feature road;
+    road.type = GeometryType::LineString;
+    road.rings = {{Cartographic(106.4 * kDeg, 29.5 * kDeg),
+                   Cartographic(106.41 * kDeg, 29.5 * kDeg),
+                   Cartographic(106.41 * kDeg, 29.51 * kDeg)}};
+    road.properties["amap_class"] = "20001";
+    road.properties["name"] = "急弯道路";
+    addOfficialMetadata(road, "20001", "1");
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {road});
+    EXPECT_EQ(1u, mesh.symbols.size());
+    EXPECT_TRUE(mesh.lineIndices.empty());
+}
+
 // 海拔着色轨迹(2026-08-23):逐顶点椭球高 → a_color 线性渐变,复用既有
 // VectorLine48 布局(shader 无改动);lengthSoFar 原样携带(dash 语义不变)。
 TEST_F(FeatureRenderLayerTest, LineHeightGradientBakesPerVertexColors) {
@@ -326,7 +1697,7 @@ TEST_F(FeatureRenderLayerTest, LineHeightGradientBakesPerVertexColors) {
     style.lineColorGradientHeightMaxMeters = 3000.0f;
     style.lineColorGradientLow = {0.10f, 0.55f, 0.25f, 0.95f};
     style.lineColorGradientHigh = {0.90f, 0.15f, 0.15f, 0.95f};
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(std::move(line));
 
     RenderCommandList commands = build();
@@ -375,10 +1746,14 @@ TEST_F(FeatureRenderLayerTest, LineHeightGradientBakesPerVertexColors) {
 
 // 渐变开关关闭 → 整线统一字面量色(默认行为不回退)。
 TEST_F(FeatureRenderLayerTest, LineHeightGradientOffUsesUniformColor) {
-    layer_->store().addFeature(makeLine(6.0, 29.0, 0.01));
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    road.properties = {{"amap_draworder", "1"},
+                       {"amap_minzoom", "3"},
+                       {"amap_maxzoom", "20"}};
+    layer_->store().addFeature(std::move(road));
     FeatureRenderStyle style;
     style.lineColor = {1.0f, 0.5f, 0.25f, 0.9f};
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
 
     RenderCommandList commands = build();
     ASSERT_EQ(1u, commands.size());
@@ -417,7 +1792,7 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     EXPECT_TRUE(cmd.blend);
     ASSERT_TRUE(cmd.hasVectorUniforms);
     EXPECT_TRUE(cmd.uniforms.empty());
-    EXPECT_FLOAT_EQ(layer_->style().symbolOccludedMinOpacity,
+    EXPECT_FLOAT_EQ(layer_->presentationPolicy().symbolOccludedMinOpacity,
                     cmd.vectorUniforms.symbolOcclusion[1]);
     EXPECT_FLOAT_EQ(layer_->style().pointSizePx,
                     cmd.vectorUniforms.pointSizePx);
@@ -448,6 +1823,59 @@ TEST_F(FeatureRenderLayerTest, PointFeatureRendersBillboard) {
     EXPECT_FLOAT_EQ(-1.0f, floats[5]);
     EXPECT_FLOAT_EQ(-1.0f, floats[6]);
     EXPECT_FLOAT_EQ(0.0f, floats[8]);  // shape = circle
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialSymbolsIgnoreGenericPresentationPolicy) {
+    build();
+    std::vector<uint8_t> frame(4u * 4u * 4u, 255);
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage(
+        "official-presentation-policy", 4, 4, frame));
+    auto style = earth_engine::testing::amapOfficialStyleForTest(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.pointStyleResolver = [](const std::string&, const std::string&,
+                                  const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle out;
+        out.enabled = true;
+        out.image = "official-presentation-policy";
+        out.sizePx = 16.0f;
+        out.labelLayout.emplace();
+        out.labelLayout->iconWidthPx = 16.0f;
+        out.labelLayout->iconHeightPx = 16.0f;
+        return out;
+    };
+    layer_->setStyleForContractTest(style);
+    layer_->setPresentationPolicy({1.0f, 0.75f});
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties = {{"amap_class", "12024"},
+                      {"amap_subkey", "1178"},
+                      {"amap_draworder", "9137"},
+                      {"amap_rank", "1"},
+                      {"amap_minzoom", "3"},
+                      {"amap_maxzoom", "20"},
+                      {"name", "official"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 14, 13038, 5501},
+                  std::move(mesh)));
+
+    const RenderCommandList commands = build();
+    ASSERT_FALSE(commands.empty());
+    for (const RenderCommand& command : commands) {
+        if (command.kind != RenderCommandKind::VectorPoint &&
+            command.kind != RenderCommandKind::VectorLabel) {
+            continue;
+        }
+        ASSERT_TRUE(command.hasVectorUniforms);
+        EXPECT_FLOAT_EQ(0.0f, command.vectorUniforms.depthPushNdc);
+        EXPECT_FLOAT_EQ(0.0f, command.vectorUniforms.symbolOcclusion[1]);
+    }
 }
 
 TEST_F(FeatureRenderLayerTest, MultiplePointsShareOneCommand) {
@@ -493,7 +1921,7 @@ TEST_F(FeatureRenderLayerTest, PointPaintOrderExprSplitsCommands) {
         {{"low", StyleExpression::literal(20.0)},
          {"high", StyleExpression::literal(100.0)}},
         StyleExpression::literal(0.0));
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
 
     Feature low;
     low.type = GeometryType::Point;
@@ -537,7 +1965,7 @@ TEST_F(FeatureRenderLayerTest, LabelPaintOrderExprSplitsCommands) {
         {{"low", StyleExpression::literal(20.0)},
          {"high", StyleExpression::literal(100.0)}},
         StyleExpression::literal(0.0));
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
 
     Feature low;
     low.type = GeometryType::Point;
@@ -587,7 +2015,7 @@ TEST_F(FeatureRenderLayerTest, TileSymbolsRenderAfterCommit) {
     TileSymbolCpu s;
     s.lonRad = 6.0 * kDeg;
     s.latRad = 29.0 * kDeg;
-    s.colorPacked = 1.0f;
+    genericVisual(s).colorPacked = 1.0f;
     mesh.symbols.push_back(s);
 
     layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
@@ -607,6 +2035,1014 @@ TEST_F(FeatureRenderLayerTest, TileSymbolsRenderAfterCommit) {
     EXPECT_FLOAT_EQ(0.0f, floats[2]);
 }
 
+TEST_F(FeatureRenderLayerTest,
+       LateBoundProviderSymbolStaysAtomicUntilExactFrameArrives) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();  // Cache glyph/icon atlas pointers before tile commit.
+
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    // Inject generic presentation scalars only after the official profile is
+    // installed. They must not influence provider-owned CSS geometry or the
+    // binary Support.scale uniform.
+    style.pointSizePx = 999.0f;
+    style.pointSizeExpr = StyleExpression::literal(777.0);
+    style.scaleStylePixelsByDevicePixelRatio = false;
+    style.pointStylePropertyA = "provider_class";
+    style.pointStylePropertyB = "provider_subkey";
+    style.pointIdentityValidator = [](const std::string& cls,
+                                      const std::string& sub) {
+        return cls == "10002" && sub == "5";
+    };
+    installTestOfficialLabelStyle(style);
+    style.pointStyleResolver = [](const std::string& classValue,
+                                  const std::string& subKeyValue,
+                                  const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle resolved;
+        if (classValue == "10002" && subKeyValue == "5") {
+            resolved.enabled = true;
+            resolved.image = "provider-icons-1-107";
+            resolved.sizePx = 21.0f;
+            resolved.color = {1, 1, 1, 1};
+            resolved.labelLayout.emplace();
+            resolved.labelLayout->iconWidthPx = 21.0f;
+            resolved.labelLayout->iconHeightPx = 21.0f;
+            resolved.labelLayout->iconAnchorXPx = 10.0f;
+            resolved.labelLayout->iconAnchorYPx = 10.0f;
+        }
+        return resolved;
+    };
+    layer_->setStyleForContractTest(style);
+    frame_.devicePixelRatio = 2.0f;
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    camera_.lookAt(surface + surface.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.0)),
+                   surface, Vec3(0.0, 0.0, 1.0));
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties["name"] = "AB";
+    poi.properties["provider_class"] = "10002";
+    poi.properties["provider_subkey"] = "5";
+    addOfficialMetadata(poi, "10002", "5");
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ("10002", mesh.symbols[0].pointStyleKeyA);
+    EXPECT_EQ("5", mesh.symbols[0].pointStyleKeyB);
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    RenderCommandList commands = build();
+    EXPECT_FALSE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorPoint;
+    })) << "provider-owned missing frame must not fabricate a circle";
+    EXPECT_FALSE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorLabel;
+    })) << "provider icon and label must remain atomic while artwork loads";
+
+    std::vector<uint8_t> officialFrame(64u * 64u * 4u, 255);
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage(
+        "provider-icons-1-107", 64, 64, officialFrame));
+    commands = build();
+    const auto point = std::find_if(commands.begin(), commands.end(),
+                                    [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorPoint;
+    });
+    ASSERT_NE(commands.end(), point);
+    EXPECT_TRUE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorLabel;
+    }));
+    EXPECT_FLOAT_EQ(2.0f, point->vectorUniforms.pointSizePx);
+    const auto* vb = dynamic_cast<const DummyBuffer*>(point->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* f = reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_LT(f[8], 0.0f);
+    EXPECT_FLOAT_EQ(-10.0f, f[3]);
+    EXPECT_FLOAT_EQ(-11.0f, f[4])
+        << "provider quad consumes the official 10/10 CSS-px anchor";
+    EXPECT_FLOAT_EQ(11.0f, f[2 * 9 + 3]);
+    EXPECT_FLOAT_EQ(10.0f, f[2 * 9 + 4]);
+    EXPECT_FLOAT_EQ(42.0f,
+                    (f[2 * 9 + 3] - f[3]) *
+                        point->vectorUniforms.pointSizePx)
+        << "21 CSS px artwork scales once to 42 physical px at DPR2";
+    EXPECT_FLOAT_EQ(42.0f,
+                    (f[2 * 9 + 4] - f[4]) *
+                        point->vectorUniforms.pointSizePx);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialBottomCenterAnchorDrivesQuadAtDevicePixelRatioOnce) {
+    build();
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage(
+        "official-bottom-center", 128, 128,
+        std::vector<uint8_t>(128u * 128u * 4u, 255)));
+    FeatureRenderStyle style = earth_engine::testing::amapOfficialStyleForTest(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.pointIdentityValidator = [](const std::string& cls,
+                                      const std::string& sub) {
+        return cls == "10007" && sub == "190";
+    };
+    style.pointStyleResolver = [](const std::string&, const std::string&,
+                                  const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle out;
+        out.enabled = true;
+        out.image = "official-bottom-center";
+        out.sizePx = 51.0f;
+        out.labelLayout.emplace();
+        out.labelLayout->iconWidthPx = 51.0f;
+        out.labelLayout->iconHeightPx = 51.0f;
+        out.labelLayout->iconAnchor =
+            FeatureRenderStyle::ProviderLabelLayout::IconAnchor::BottomCenter;
+        return out;
+    };
+    layer_->setStyleForContractTest(style);
+    frame_.devicePixelRatio = 2.0f;
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    addOfficialMetadata(poi, "10007", "190");
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+        std::move(mesh));
+
+    const RenderCommandList commands = build();
+    const auto point = std::find_if(commands.begin(), commands.end(),
+                                    [](const auto& command) {
+        return command.kind == RenderCommandKind::VectorPoint;
+    });
+    ASSERT_NE(commands.end(), point);
+    const auto* vb = dynamic_cast<const DummyBuffer*>(point->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* vertices =
+        reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_FLOAT_EQ(-25.5f, vertices[3]);
+    EXPECT_FLOAT_EQ(0.0f, vertices[4]);
+    EXPECT_FLOAT_EQ(25.5f, vertices[2 * 9 + 3]);
+    EXPECT_FLOAT_EQ(51.0f, vertices[2 * 9 + 4]);
+    EXPECT_FLOAT_EQ(2.0f, point->vectorUniforms.pointSizePx);
+    EXPECT_FLOAT_EQ(-51.0f,
+                    vertices[3] * point->vectorUniforms.pointSizePx);
+    EXPECT_FLOAT_EQ(102.0f,
+                    vertices[2 * 9 + 4] *
+                        point->vectorUniforms.pointSizePx);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       LateBoundUnknownIdentityNeverFallsBackToSyntheticShape) {
+    FeatureRenderStyle style = layer_->style();
+    style.pointStylePropertyA = "provider_class";
+    style.pointStylePropertyB = "provider_subkey";
+    style.pointIdentityValidator = [](const std::string& cls,
+                                      const std::string& sub) {
+        return cls == "12024" && sub == "1230";
+    };
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    installTestOfficialLabelStyle(style);
+    style.pointStyleResolver = [](const std::string&, const std::string&,
+                                  const std::string&, double, float) {
+        return FeatureRenderStyle::ResolvedPointStyle{};
+    };
+    layer_->setStyleForContractTest(style);
+
+    Feature unknown;
+    unknown.type = GeometryType::Point;
+    unknown.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    unknown.properties["provider_class"] = "unknown";
+    unknown.properties["provider_subkey"] = "unknown";
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {unknown});
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    const RenderCommandList commands = build();
+    EXPECT_TRUE(commands.empty());
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialIconOnlyIdentitySkipsGlyphAndLabelContracts) {
+    build();
+    std::vector<uint8_t> frame(64u * 64u * 4u, 255);
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage(
+        "official-icon-only", 64, 64, frame));
+
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.pointStylePropertyA = "amap_class";
+    style.pointStylePropertyB = "amap_subkey";
+    style.pointStyleResolver = [](const std::string& classValue,
+                                  const std::string& subKeyValue,
+                                  const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle out;
+        if (classValue == "12024" && subKeyValue == "854") {
+            out.enabled = true;
+            out.image = "official-icon-only";
+            out.sizePx = 21.0f;
+            out.labelLayout.emplace();
+            out.labelLayout->iconWidthPx = 21.0f;
+            out.labelLayout->iconHeightPx = 21.0f;
+            out.labelLayout->iconAnchorXPx = 10.0f;
+            out.labelLayout->iconAnchorYPx = 10.0f;
+        }
+        return out;
+    };
+    layer_->setStyleForContractTest(style);
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties = {{"name", "icon-only"},
+                      {"amap_class", "12024"},
+                      {"amap_subkey", "854"}};
+    addOfficialMetadata(poi, "12024", "854");
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(0, mesh.symbols.front().labelStyleGroup);
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    const auto commands = build();
+    EXPECT_TRUE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorPoint;
+    }));
+    EXPECT_FALSE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.kind == RenderCommandKind::VectorLabel;
+    }));
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialMultilineLayoutUsesPerLineWidthAndBoSpacing) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();
+
+    FeatureRenderStyle style = layer_->style();
+    style.labelSizePx = 20.0f;
+    style.pointStylePropertyA = "provider_class";
+    style.pointStylePropertyB = "provider_subkey";
+    style.pointIdentityValidator = [](const std::string& cls,
+                                      const std::string& sub) {
+        return cls == "x" && sub == "y";
+    };
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.labelSizePx = 20.0f;
+    style.pointStylePropertyA = "provider_class";
+    style.pointStylePropertyB = "provider_subkey";
+    style.pointIdentityValidator = [](const std::string& cls,
+                                      const std::string& sub) {
+        return cls == "x" && sub == "y";
+    };
+    installTestOfficialLabelStyle(style);
+    style.pointStyleResolver = [](const std::string&, const std::string&,
+                                  const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle out;
+        out.labelLayout.emplace();
+        out.labelLayout->direction =
+            FeatureRenderStyle::LabelDirection::Center;
+        return out;
+    };
+    layer_->setStyleForContractTest(style);
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties = {{"name", "A\nBB"},
+                      {"provider_class", "x"},
+                      {"provider_subkey", "y"}};
+    addOfficialMetadata(poi, "12024", "1");
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+    frame_.devicePixelRatio = 2.0f;
+    const auto commands = build();
+    const auto label = std::find_if(commands.begin(), commands.end(),
+                                    [](const auto& command) {
+        return command.kind == RenderCommandKind::VectorLabel;
+    });
+    ASSERT_NE(commands.end(), label);
+    EXPECT_EQ(18, label->indexCount) << "newline is layout, not a glyph";
+    const auto* vb = dynamic_cast<const DummyBuffer*>(label->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    const auto* v = reinterpret_cast<const float*>(vb->bytes().data());
+    constexpr size_t stride = 11;
+    const float firstLineLeft = v[6];
+    const float firstLineRight = v[1 * stride + 6];
+    const float secondLineLeft = v[4 * stride + 6];
+    const float secondGlyphRight = v[9 * stride + 6];
+    EXPECT_NEAR((firstLineLeft + firstLineRight) * 0.5f,
+                (secondLineLeft + secondGlyphRight) * 0.5f, 1.0f)
+        << "XV centers each line using its measured width";
+    EXPECT_NEAR(46.0f, v[7] - v[4 * stride + 7], 1.0f)
+        << "BO advances each line by (fontSize + 3 CSS px) * DPR";
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialLabelCommandConsumesRuntimeSdfFragmentContract) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    build();
+
+    FeatureRenderStyle style = earth_engine::testing::amapOfficialStyleForTest(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    installTestOfficialLabelStyle(style);
+    style.labelSizeExprByStyleGroup[1] = StyleExpression::literal(24.0);
+    style.pointStyleResolver = [](const std::string&, const std::string&,
+                                  const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle out;
+        out.labelLayout.emplace();
+        return out;
+    };
+    layer_->setStyleForContractTest(style);
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties = {{"name", "AB"}};
+    addOfficialMetadata(poi, "12024", "1");
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    frame_.devicePixelRatio = 1.0f;
+    const auto commandsDpr1 = build();
+    const auto dpr1 = std::find_if(commandsDpr1.begin(), commandsDpr1.end(),
+                                   [](const auto& command) {
+        return command.kind == RenderCommandKind::VectorLabel;
+    });
+    ASSERT_NE(commandsDpr1.end(), dpr1);
+    constexpr float edge = 205.0f / 256.0f;
+    constexpr float strokeWidth = 1.0f;
+    EXPECT_NEAR(edge, dpr1->vectorUniforms.sdfEdge, 1e-6f);
+    EXPECT_NEAR(edge - edge * (1.0f - strokeWidth / 10.1f),
+                dpr1->vectorUniforms.sdfHaloDelta, 1e-6f);
+    EXPECT_NEAR(1.4142f * 1.5f / 24.0f,
+                dpr1->vectorUniforms.sdfGamma, 1e-6f);
+
+    frame_.devicePixelRatio = 2.0f;
+    const auto commandsDpr2 = build();
+    const auto dpr2 = std::find_if(commandsDpr2.begin(), commandsDpr2.end(),
+                                   [](const auto& command) {
+        return command.kind == RenderCommandKind::VectorLabel;
+    });
+    ASSERT_NE(commandsDpr2.end(), dpr2);
+    const float buffer = edge + 1.5f / 256.0f;
+    const float borderBuffer = edge * (1.0f - 2.0f / 10.1f);
+    EXPECT_NEAR(buffer, dpr2->vectorUniforms.sdfEdge, 1e-6f);
+    EXPECT_NEAR(buffer - borderBuffer,
+                dpr2->vectorUniforms.sdfHaloDelta, 1e-6f);
+    EXPECT_NEAR(1.4142f * 1.7f / 24.0f,
+                dpr2->vectorUniforms.sdfGamma, 1e-6f);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialRoadLabelIdentityReachesFinalSdfColorsAndHalo) {
+    GlyphAtlas* glyphAtlas = renderer_->glyphAtlas();
+    ASSERT_NE(nullptr, glyphAtlas);
+    glyphAtlas->activateAmapOfficialProviderForTest([](uint32_t) {});
+    std::vector<uint8_t> glyphPixels(64u * 32u, 127);
+    const std::vector<GlyphAtlas::ProviderGlyph> glyphs = {
+        {'A', 22, 22, 1, -2, 24, 0, 0},
+        {'B', 22, 22, 1, -2, 24, 32, 0},
+    };
+    ASSERT_TRUE(glyphAtlas->installAmapOfficialGlyphBatchForTest(
+        64, 32, glyphPixels, glyphs));
+    build();
+    FeatureRenderStyle style = earth_engine::testing::amapOfficialStyleForTest(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+
+    Feature road;
+    road.type = GeometryType::LineString;
+    road.rings = {{Cartographic(106.52 * kDeg, 29.54 * kDeg),
+                   Cartographic(106.55 * kDeg, 29.56 * kDeg),
+                   Cartographic(106.59 * kDeg, 29.59 * kDeg)}};
+    road.properties["amap_class"] = "20001";
+    road.properties["amap_subkey"] = "1";
+    road.properties["amap_draworder"] = "82";
+    road.properties["amap_minzoom"] = "10";
+    road.properties["amap_maxzoom"] = "30";
+    road.properties["amap_rank"] = "1";
+    road.properties["name"] = "AB";
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {road});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(amapClassicStyleIdentity(20001, 1),
+              mesh.symbols.front().labelStyleGroup);
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 14, 13038, 5501},
+                  std::move(mesh)));
+
+    const Vec3 target = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(106.55 * kDeg, 29.56 * kDeg));
+    const Vec3 radial = target.normalized();
+    constexpr double displayZoom = 10.0;
+    const double cameraHeight = 4.0e7 / std::pow(2.0, displayZoom);
+    camera_.lookAt(target + radial * cameraHeight, target,
+                   Vec3(0.0, 0.0, 1.0));
+    ++frame_.frameId;
+    frame_.devicePixelRatio = 1.0f;
+    RenderCommandList commands;
+    for (int i = 0; i < 12; ++i) {
+        commands = build();
+        if (std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+                return c.kind == RenderCommandKind::VectorLabel;
+            })) break;
+        ++frame_.frameId;
+    }
+    const auto label = std::find_if(
+        commands.begin(), commands.end(), [](const auto& command) {
+            return command.kind == RenderCommandKind::VectorLabel;
+        });
+    ASSERT_NE(commands.end(), label);
+    // Official road-label style group 20001:1 at display zoom 10 consumes
+    // provider zoom 11 records: #606066 text and opaque white casing.
+    EXPECT_NEAR(0x60 / 255.0f, label->vectorUniforms.color[0], 1e-6f);
+    EXPECT_NEAR(0x60 / 255.0f, label->vectorUniforms.color[1], 1e-6f);
+    EXPECT_NEAR(0x66 / 255.0f, label->vectorUniforms.color[2], 1e-6f);
+    EXPECT_FLOAT_EQ(1.0f, label->vectorUniforms.color[3]);
+    EXPECT_FLOAT_EQ(1.0f, label->vectorUniforms.haloColor[0]);
+    EXPECT_FLOAT_EQ(1.0f, label->vectorUniforms.haloColor[1]);
+    EXPECT_FLOAT_EQ(1.0f, label->vectorUniforms.haloColor[2]);
+    EXPECT_FLOAT_EQ(1.0f, label->vectorUniforms.haloColor[3]);
+    constexpr float labelSizeCssPx = 11.0f;
+    constexpr float haloWidthCssPx = 1.0f;
+    constexpr float baseEdge = 205.0f / 256.0f;
+    EXPECT_FLOAT_EQ(labelSizeCssPx, FeatureRenderLayer::resolvedLabelSizePx(
+                                          style,
+                                          amapClassicStyleIdentity(20001, 1),
+                                          displayZoom, 0.0f));
+    EXPECT_FLOAT_EQ(haloWidthCssPx,
+                    FeatureRenderLayer::resolvedLabelHaloWidthPx(
+                        style, amapClassicStyleIdentity(20001, 1),
+                        displayZoom));
+    EXPECT_NEAR(baseEdge, label->vectorUniforms.sdfEdge, 1e-6f);
+    EXPECT_NEAR(baseEdge -
+                    baseEdge * (1.0f - haloWidthCssPx / 10.1f),
+                label->vectorUniforms.sdfHaloDelta, 1e-6f);
+    EXPECT_NEAR(1.4142f * 1.5f / labelSizeCssPx,
+                label->vectorUniforms.sdfGamma, 1e-6f);
+
+    frame_.devicePixelRatio = 2.0f;
+    ++frame_.frameId;
+    RenderCommandList commandsDpr2;
+    for (int i = 0; i < 12; ++i) {
+        commandsDpr2 = build();
+        if (std::any_of(commandsDpr2.begin(), commandsDpr2.end(),
+                        [](const auto& c) {
+                            return c.kind == RenderCommandKind::VectorLabel;
+                        })) {
+            break;
+        }
+        ++frame_.frameId;
+    }
+    const auto labelDpr2 = std::find_if(
+        commandsDpr2.begin(), commandsDpr2.end(), [](const auto& command) {
+            return command.kind == RenderCommandKind::VectorLabel;
+        });
+    ASSERT_NE(commandsDpr2.end(), labelDpr2);
+    const float dpr2Edge = baseEdge + 1.5f / 256.0f;
+    const float dpr2Border =
+        baseEdge * (1.0f - 2.0f * haloWidthCssPx / 10.1f);
+    EXPECT_NEAR(dpr2Edge, labelDpr2->vectorUniforms.sdfEdge, 1e-6f);
+    EXPECT_NEAR(dpr2Edge - dpr2Border,
+                labelDpr2->vectorUniforms.sdfHaloDelta, 1e-6f);
+    EXPECT_NEAR(1.4142f * 1.7f / labelSizeCssPx,
+                labelDpr2->vectorUniforms.sdfGamma, 1e-6f);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialPoiLabelSizeTextAndHaloTransitionsReachFinalSdfCommand) {
+    GlyphAtlas* glyphAtlas = renderer_->glyphAtlas();
+    ASSERT_NE(nullptr, glyphAtlas);
+    glyphAtlas->activateAmapOfficialProviderForTest([](uint32_t) {});
+    std::vector<uint8_t> glyphPixels(64u * 32u, 127);
+    const std::vector<GlyphAtlas::ProviderGlyph> glyphs = {
+        {'A', 22, 22, 1, -2, 24, 0, 0},
+        {'B', 22, 22, 1, -2, 24, 32, 0},
+    };
+    ASSERT_TRUE(glyphAtlas->installAmapOfficialGlyphBatchForTest(
+        64, 32, glyphPixels, glyphs));
+    build();
+
+    const FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties = {{"name", "AB"},
+                      {"amap_class", "10002"},
+                      {"amap_subkey", "36"}};
+    addOfficialMetadata(poi, "10002", "36", "90");
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    ASSERT_EQ(amapClassicLabelIdentity(10002, 36),
+              mesh.symbols.front().labelStyleGroup);
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 6, 100, 200},
+                  std::move(mesh)));
+
+    const Vec3 target = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    const Vec3 radial = target.normalized();
+    frame_.devicePixelRatio = 1.0f;
+    const auto atDisplayZoom = [&](double displayZoom) {
+        camera_.lookAt(target + radial *
+                           (4.0e7 / std::pow(2.0, displayZoom)),
+                       target, Vec3(0.0, 0.0, 1.0));
+        RenderCommandList commands;
+        for (int i = 0; i < 8; ++i) {
+            ++frame_.frameId;
+            commands = build();
+            if (std::any_of(commands.begin(), commands.end(),
+                            [](const auto& command) {
+                                return command.kind ==
+                                       RenderCommandKind::VectorLabel;
+                            })) break;
+        }
+        const auto label = std::find_if(
+            commands.begin(), commands.end(), [](const auto& command) {
+                return command.kind == RenderCommandKind::VectorLabel;
+            });
+        EXPECT_NE(commands.end(), label);
+        return label == commands.end() ? RenderCommand{} : *label;
+    };
+
+    const int identity = amapClassicLabelIdentity(10002, 36);
+    const RenderCommand providerZoom4 = atDisplayZoom(3.0);
+    EXPECT_FLOAT_EQ(10.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                               style, identity, 3.0, 0.0f));
+    EXPECT_EQ((std::array<float, 4>{0x82 / 255.0f, 0x8e / 255.0f,
+                                    0x97 / 255.0f, 1.0f}),
+              providerZoom4.vectorUniforms.color);
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 0xcc / 255.0f}),
+              providerZoom4.vectorUniforms.haloColor);
+    EXPECT_NEAR(1.4142f * 1.5f / 10.0f,
+                providerZoom4.vectorUniforms.sdfGamma, 1e-6f);
+
+    // Provider zoom 5 changes only field 1, proving the final SDF size/gamma
+    // transition without conflating it with a color transition.
+    const RenderCommand providerZoom5 = atDisplayZoom(4.0);
+    EXPECT_FLOAT_EQ(11.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                               style, identity, 4.0, 0.0f));
+    EXPECT_EQ(providerZoom4.vectorUniforms.color,
+              providerZoom5.vectorUniforms.color);
+    EXPECT_EQ(providerZoom4.vectorUniforms.haloColor,
+              providerZoom5.vectorUniforms.haloColor);
+    EXPECT_NEAR(1.4142f * 1.5f / 11.0f,
+                providerZoom5.vectorUniforms.sdfGamma, 1e-6f);
+
+    // Provider zoom 6 keeps 11px but changes fields 2/3. Both colors must
+    // reach the same final command without a host-font or generic fallback.
+    const RenderCommand providerZoom6 = atDisplayZoom(5.0);
+    EXPECT_FLOAT_EQ(11.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                               style, identity, 5.0, 0.0f));
+    EXPECT_EQ((std::array<float, 4>{0x55 / 255.0f, 0x55 / 255.0f,
+                                    0x55 / 255.0f, 1.0f}),
+              providerZoom6.vectorUniforms.color);
+    // Official label field 2 final text-color consumer.
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
+              providerZoom6.vectorUniforms.haloColor);
+    // Official label field 3 final halo-color consumer.
+    EXPECT_NEAR(providerZoom5.vectorUniforms.sdfGamma,
+                providerZoom6.vectorUniforms.sdfGamma, 1e-6f);
+}
+
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialRoadLabelSizeTextAndHaloTransitionsUseProviderGlyphs) {
+    GlyphAtlas* glyphAtlas = renderer_->glyphAtlas();
+    ASSERT_NE(nullptr, glyphAtlas);
+    glyphAtlas->activateAmapOfficialProviderForTest([](uint32_t) {});
+    std::vector<uint8_t> glyphPixels(64u * 32u, 127);
+    const std::vector<GlyphAtlas::ProviderGlyph> glyphs = {
+        {'A', 22, 22, 1, -2, 24, 0, 0},
+        {'B', 22, 22, 1, -2, 24, 32, 0},
+    };
+    ASSERT_TRUE(glyphAtlas->installAmapOfficialGlyphBatchForTest(
+        64, 32, glyphPixels, glyphs));
+    build();
+
+    const FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+    Feature road;
+    road.type = GeometryType::LineString;
+    road.rings = {{Cartographic(106.52 * kDeg, 29.54 * kDeg),
+                   Cartographic(106.55 * kDeg, 29.56 * kDeg),
+                   Cartographic(106.59 * kDeg, 29.59 * kDeg)}};
+    road.properties = {{"amap_class", "20026"},
+                       {"amap_subkey", "1"},
+                       {"amap_draworder", "82"},
+                       {"amap_minzoom", "10"},
+                       {"amap_maxzoom", "30"},
+                       {"amap_rank", "1"},
+                       {"name", "AB"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {road});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    const int identity = amapClassicStyleIdentity(20026, 1);
+    ASSERT_EQ(identity, mesh.symbols.front().labelStyleGroup);
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 18, 13038, 5501},
+                  std::move(mesh)));
+
+    const Vec3 target = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(106.55 * kDeg, 29.56 * kDeg));
+    const Vec3 radial = target.normalized();
+    frame_.devicePixelRatio = 1.0f;
+    const auto atDisplayZoom = [&](double displayZoom) {
+        camera_.lookAt(target + radial *
+                           (4.0e7 / std::pow(2.0, displayZoom)),
+                       target, Vec3(0.0, 0.0, 1.0));
+        RenderCommandList commands;
+        for (int i = 0; i < 12; ++i) {
+            ++frame_.frameId;
+            commands = build();
+            if (std::any_of(commands.begin(), commands.end(),
+                            [](const auto& command) {
+                                return command.kind ==
+                                       RenderCommandKind::VectorLabel;
+                            })) break;
+        }
+        const auto label = std::find_if(
+            commands.begin(), commands.end(), [](const auto& command) {
+                return command.kind == RenderCommandKind::VectorLabel;
+            });
+        EXPECT_NE(commands.end(), label);
+        return label == commands.end() ? RenderCommand{} : *label;
+    };
+
+    const RenderCommand providerZoom17 = atDisplayZoom(16.0);
+    EXPECT_FLOAT_EQ(12.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                               style, identity, 16.0, 0.0f));
+    EXPECT_EQ((std::array<float, 4>{0x83 / 255.0f, 0x8a / 255.0f,
+                                    0x9c / 255.0f, 1.0f}),
+              providerZoom17.vectorUniforms.color);
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 0xd8 / 255.0f}),
+              providerZoom17.vectorUniforms.haloColor);
+
+    // Official road label fields 8/9 change together at provider zoom 18
+    // while field 7 remains 12px, so the final uniform transition is isolated.
+    const RenderCommand providerZoom18 = atDisplayZoom(17.0);
+    EXPECT_FLOAT_EQ(12.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                               style, identity, 17.0, 0.0f));
+    // Official road label field 8 final text-color consumer.
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
+              providerZoom18.vectorUniforms.color);
+    // Official road label field 9 final halo-color consumer.
+    EXPECT_EQ((std::array<float, 4>{0x5d / 255.0f, 0x60 / 255.0f,
+                                    0x65 / 255.0f, 1.0f}),
+              providerZoom18.vectorUniforms.haloColor);
+
+    // Official road label field 7 final size consumer: provider zoom 19
+    // changes only the size to 13px and therefore changes final SDF gamma.
+    const RenderCommand providerZoom19 = atDisplayZoom(18.0);
+    EXPECT_FLOAT_EQ(13.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                               style, identity, 18.0, 0.0f));
+    EXPECT_EQ(providerZoom18.vectorUniforms.color,
+              providerZoom19.vectorUniforms.color);
+    EXPECT_EQ(providerZoom18.vectorUniforms.haloColor,
+              providerZoom19.vectorUniforms.haloColor);
+    EXPECT_NEAR(1.4142f * 1.5f / 13.0f,
+                providerZoom19.vectorUniforms.sdfGamma, 1e-6f);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialDynamicTextBackgroundUsesMeasuredSharedPlacementGeometry) {
+    const AmapClassicPoiIconStyle dynamic =
+        resolveAmapClassicPoiDynamicBackgroundStyle(12024, 1230, 20.0);
+    ASSERT_TRUE(dynamic.enabled);
+    EXPECT_EQ(4, dynamic.atlas);          // Official label field 11.
+    EXPECT_EQ(73, dynamic.iconIndex);     // Official label field 12.
+    EXPECT_EQ(64, dynamic.cellWidth);     // Official label field 13.
+    EXPECT_EQ(64, dynamic.cellHeight);    // Official label field 14.
+    EXPECT_EQ(512, dynamic.atlasWidth);   // Official label field 15.
+
+    MockPlatformBridge bridge;
+    DecodedImage atlasImage;
+    atlasImage.width = 512;
+    atlasImage.height = 1024;
+    atlasImage.channels = 4;
+    atlasImage.pixels.resize(512u * 1024u * 4u);
+    for (int y = 0; y < atlasImage.height; ++y) {
+        for (int x = 0; x < atlasImage.width; ++x) {
+            const size_t offset =
+                (static_cast<size_t>(y) * atlasImage.width + x) * 4u;
+            atlasImage.pixels[offset] = static_cast<uint8_t>(x & 0xff);
+            atlasImage.pixels[offset + 1] = static_cast<uint8_t>(y & 0xff);
+            atlasImage.pixels[offset + 2] =
+                static_cast<uint8_t>((x / 64) | ((y / 64) << 4));
+            atlasImage.pixels[offset + 3] = 255;
+        }
+    }
+    bridge.setDecodedImage(std::move(atlasImage));
+    Engine engine(&device_);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+    auto pool = std::make_shared<ThreadPool>(1);
+    const AmapClassicRuntime* runtime = engine.installAmapClassicRuntime(
+        bridge, pool, pool, pool, {});
+    ASSERT_NE(nullptr, runtime);
+    Renderer* officialRenderer = const_cast<Renderer*>(engine.renderer());
+    ASSERT_NE(nullptr, officialRenderer);
+
+    FeatureRenderLayer officialLayer(
+        "dynamic-background-official", &device_, Ellipsoid::WGS84());
+    FrameState officialFrame = frame_;
+    Camera officialCamera;
+    officialFrame.camera = &officialCamera;
+    auto buildOfficial = [&]() {
+        RenderCommandList commands;
+        officialLayer.buildRenderCommands(
+            officialFrame, *officialRenderer, commands);
+        return commands;
+    };
+
+    GlyphAtlas* glyphAtlas = officialRenderer->glyphAtlas();
+    ASSERT_NE(nullptr, glyphAtlas);
+    glyphAtlas->activateAmapOfficialProviderForTest([](uint32_t) {});
+    std::vector<uint8_t> glyphPixels(64u * 32u, 127);
+    const std::vector<GlyphAtlas::ProviderGlyph> glyphs = {
+        {'A', 22, 22, 1, -2, 24, 0, 0},
+        {'B', 22, 22, 1, -2, 24, 32, 0},
+    };
+    ASSERT_TRUE(glyphAtlas->installAmapOfficialGlyphBatchForTest(
+        64, 32, glyphPixels, glyphs));
+    buildOfficial();
+
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Poi);
+    officialLayer.setStyleForContractTest(style);
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties = {{"name", "AB"},
+                      {"amap_class", "12024"},
+                      {"amap_subkey", "1230"}};
+    // Official Language.Mii=[1,2] makes u6t=[0,1,2]: two measured lines
+    // without changing the visible provider name or cross-tile identity.
+    poi.labelSplitIndicesUtf16 = {1, 2};
+    addOfficialMetadata(poi, "12024", "1230");
+    poi.properties["amap_maxzoom"] = "30";
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        officialLayer.workerTessellationContext(), {poi});
+    officialLayer.commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+        std::move(mesh));
+    const Vec3 target = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    officialCamera.lookAt(target + target.normalized() *
+                             (4.0e7 / std::pow(2.0, 20.0)),
+                          target, Vec3(0.0, 0.0, 1.0));
+    ++officialFrame.frameId;
+    ASSERT_EQ(nullptr,
+              officialRenderer->iconAtlas()->frame("amap-icons-4-73"));
+    const auto missingFrameCommands = buildOfficial();
+    EXPECT_FALSE(std::any_of(
+        missingFrameCommands.begin(), missingFrameCommands.end(),
+        [&](const auto& command) {
+            return command.kind == RenderCommandKind::VectorLabel &&
+                   command.shader == officialRenderer->vectorLabelShader();
+        })) << "dynamic text must remain atomic while its exact official "
+               "background frame is absent";
+    EXPECT_FALSE(std::any_of(
+        missingFrameCommands.begin(), missingFrameCommands.end(),
+        [&](const auto& command) {
+            return command.kind == RenderCommandKind::VectorLabel &&
+                   command.shader ==
+                       officialRenderer->vectorLabelBackgroundShader();
+        })) << "missing official frame must not emit a background command";
+    ASSERT_TRUE(const_cast<AmapClassicRuntime*>(runtime)
+                    ->installAtlasForContractTest(
+                        4, {0x89, 0x50, 0x4e, 0x47}));
+    const IconAtlas::Frame* officialIconFrame =
+        officialRenderer->iconAtlas()->frame("amap-icons-4-73");
+    ASSERT_NE(nullptr, officialIconFrame);
+    EXPECT_FLOAT_EQ(64.0f, officialIconFrame->widthPx);
+    EXPECT_FLOAT_EQ(64.0f, officialIconFrame->heightPx);
+    const auto exactIndex73Payload = std::find_if(
+        device_.textureRegionPayloads.begin(),
+        device_.textureRegionPayloads.end(), [](const auto& pixels) {
+            constexpr size_t kCellBytes = 64u * 64u * 4u;
+            if (pixels.size() != kCellBytes) return false;
+            // atlas4 has eight 64px columns. Official one-based index 73 is
+            // zero-based cell 72: x=0, y=9*64=576. Check both corners so a
+            // neighbouring cell or an off-by-one source rectangle fails.
+            return pixels[0] == 0 && pixels[1] == 64 && pixels[2] == 0x90 &&
+                   pixels[3] == 255 &&
+                   pixels[kCellBytes - 4] == 63 &&
+                   pixels[kCellBytes - 3] == 127 &&
+                   pixels[kCellBytes - 2] == 0x90 &&
+                   pixels[kCellBytes - 1] == 255;
+        });
+    ASSERT_NE(device_.textureRegionPayloads.end(), exactIndex73Payload)
+        << "alternate index/cell/atlas dimensions must crop source cell "
+           "(0,576)-(63,639), not merely register the expected frame name";
+    struct Snapshot {
+        std::array<float, 4> visible{};
+        FeatureRenderLayer::LabelCollisionBoundsForTest collision;
+    };
+    auto snapshot = [&]() -> Snapshot {
+        const auto commands = buildOfficial();
+        const auto background = std::find_if(
+            commands.begin(), commands.end(), [&](const auto& command) {
+                return command.kind == RenderCommandKind::VectorLabel &&
+                       command.shader ==
+                           officialRenderer->vectorLabelBackgroundShader();
+            });
+        const auto text = std::find_if(
+            commands.begin(), commands.end(), [&](const auto& command) {
+                return command.kind == RenderCommandKind::VectorLabel &&
+                       command.shader == officialRenderer->vectorLabelShader();
+            });
+        EXPECT_NE(commands.end(), background);
+        EXPECT_NE(commands.end(), text);
+        if (background == commands.end() || text == commands.end()) return {};
+        EXPECT_EQ(6, background->indexCount);
+        EXPECT_EQ(2, background->vectorPaintSubOrder);
+        EXPECT_EQ(3, text->vectorPaintSubOrder);
+        EXPECT_EQ(background->vertexBuffer, text->vertexBuffer)
+            << "background and glyphs must share placement opacity vertices";
+        EXPECT_GE(background->textures.size(), 1u);
+        if (!background->textures.empty()) {
+            EXPECT_EQ(officialRenderer->iconAtlas()->texture(),
+                      background->textures[0]);
+        }
+        const auto* vb =
+            dynamic_cast<const DummyBuffer*>(background->vertexBuffer);
+        EXPECT_NE(nullptr, vb);
+        if (!vb) return {};
+        const auto* values =
+            reinterpret_cast<const float*>(vb->bytes().data());
+        constexpr size_t stride = 11;
+        EXPECT_FLOAT_EQ(officialIconFrame->u0, values[9]);
+        EXPECT_FLOAT_EQ(officialIconFrame->v1, values[10]);
+        EXPECT_FLOAT_EQ(officialIconFrame->u1, values[2 * stride + 9]);
+        EXPECT_FLOAT_EQ(officialIconFrame->v0, values[2 * stride + 10]);
+        EXPECT_FLOAT_EQ(values[6], values[3 * stride + 6]);
+        EXPECT_FLOAT_EQ(values[stride + 6], values[2 * stride + 6]);
+        EXPECT_FLOAT_EQ(values[7], values[stride + 7]);
+        EXPECT_FLOAT_EQ(values[2 * stride + 7], values[3 * stride + 7]);
+        const auto collision =
+            officialLayer.firstTileLabelCollisionBoundsForTest();
+        EXPECT_TRUE(collision.has_value());
+        Snapshot out;
+        out.visible = {values[6], values[7], values[stride + 6],
+                       values[2 * stride + 7]};
+        if (collision) out.collision = *collision;
+        return out;
+    };
+
+    officialFrame.devicePixelRatio = 1.0f;
+    const Snapshot dpr1 = snapshot();
+    constexpr float officialLabelSize = 9.0f;
+    constexpr float officialGlyphAdvance = 25.0f;
+    constexpr float metricHeight = 24.0f;
+    const float expectedWidth =
+        officialGlyphAdvance * officialLabelSize / metricHeight + 4.0f;
+    const float expectedHeight = 2.0f * (officialLabelSize + 4.0f) + 4.0f;
+    EXPECT_FLOAT_EQ(-10.0f, dpr1.visible[0]);
+    EXPECT_FLOAT_EQ(-20.0f, dpr1.visible[1]);
+    EXPECT_FLOAT_EQ(-10.0f + expectedWidth, dpr1.visible[2]);
+    EXPECT_FLOAT_EQ(-20.0f + expectedHeight, dpr1.visible[3]);
+    EXPECT_FLOAT_EQ(expectedHeight,
+                    dpr1.visible[3] - dpr1.visible[1]);
+    EXPECT_NE(16.0f, expectedWidth)
+        << "field-16 alternateScale is transient; final width is measured";
+    EXPECT_NE(16.0f, expectedHeight)
+        << "field-16 alternateScale must not survive as fixed geometry";
+    ASSERT_TRUE(dpr1.collision.hasSecondary);
+    for (size_t i = 0; i < 4; ++i) {
+        EXPECT_FLOAT_EQ(dpr1.visible[i], dpr1.collision.secondary[i])
+            << "official icon collision uses the exact icon frame";
+    }
+
+    officialFrame.devicePixelRatio = 2.0f;
+    ++officialFrame.frameId;
+    const Snapshot dpr2 = snapshot();
+    ASSERT_TRUE(dpr2.collision.hasSecondary);
+    for (size_t i = 0; i < 4; ++i) {
+        EXPECT_NEAR(dpr1.visible[i] * 2.0f, dpr2.visible[i], 1e-4f);
+        EXPECT_NEAR(dpr2.visible[i], dpr2.collision.secondary[i], 1e-4f)
+            << "DPR scales icon geometry once without collision inflation";
+    }
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialUtf16SplitIndicesRejectSurrogateSplitAndAcceptAstralEnd) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    FeatureRenderStyle style = layer_->style();
+    installTestOfficialLabelStyle(style);
+    layer_->setStyleForContractTest(style);
+
+    struct SplitSnapshot {
+        bool committed = false;
+        int indexCount = 0;
+        float firstGlyphTop = 0.0f;
+        float lastGlyphTop = 0.0f;
+    };
+    auto commitsLabel = [&](const std::string& name,
+                            std::vector<uint32_t> splitIndices, int x) {
+        Feature poi;
+        poi.type = GeometryType::Point;
+        poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+        poi.properties = {{"name", name},
+                          {"rank", "1"}, {"minzoom", "0"},
+                          {"maxzoom", "30"}};
+        poi.labelSplitIndicesUtf16 = std::move(splitIndices);
+        auto mesh = FeatureRenderLayer::tessellateTileMesh(
+            layer_->workerTessellationContext(), {poi});
+        layer_->commitTileMesh(
+            TileKey{SchemeId("XYZ-WebMercator"), 10, x, 200},
+            std::move(mesh));
+        const auto commands = build();
+        const auto label = std::find_if(commands.begin(), commands.end(),
+                                        [](const auto& command) {
+            return command.kind == RenderCommandKind::VectorLabel;
+        });
+        if (label == commands.end()) return SplitSnapshot{};
+        SplitSnapshot out;
+        out.committed = true;
+        out.indexCount = label->indexCount;
+        const auto* vb = dynamic_cast<const DummyBuffer*>(label->vertexBuffer);
+        if (vb && label->indexCount >= 12) {
+            constexpr size_t stride = 11;
+            const auto* values =
+                reinterpret_cast<const float*>(vb->bytes().data());
+            const size_t glyphCount = static_cast<size_t>(label->indexCount / 6);
+            out.firstGlyphTop = values[7];
+            out.lastGlyphTop = values[(glyphCount - 1) * 4 * stride + 7];
+        }
+        return out;
+    };
+
+    const std::string astral = "A\xF0\x9F\x98\x80" "B";
+    EXPECT_FALSE(commitsLabel(astral, {2, 4}, 100).committed)
+        << "a UTF-16 boundary inside an astral surrogate pair fails closed";
+    layer_ = std::make_unique<FeatureRenderLayer>(
+        "test-features-2", &device_, Ellipsoid::WGS84());
+    layer_->setStyleForContractTest(style);
+    EXPECT_TRUE(commitsLabel(astral, {3, 4}, 101).committed);
+    layer_ = std::make_unique<FeatureRenderLayer>(
+        "test-features-3", &device_, Ellipsoid::WGS84());
+    layer_->setStyleForContractTest(style);
+    const SplitSnapshot open = commitsLabel(astral, {3}, 102);
+    ASSERT_TRUE(open.committed)
+        << "official Mii is an open split list; the remaining suffix is a "
+           "final line";
+    EXPECT_GE(open.indexCount, 12)
+        << "the guaranteed A/B glyphs on both sides of the astral scalar draw";
+    EXPECT_GT(open.firstGlyphTop, open.lastGlyphTop)
+        << "the B suffix must occupy the second line, not remain on line one";
+    layer_ = std::make_unique<FeatureRenderLayer>(
+        "test-features-4", &device_, Ellipsoid::WGS84());
+    layer_->setStyleForContractTest(style);
+    EXPECT_FALSE(commitsLabel(astral, {5}, 103).committed)
+        << "a split beyond the UTF-16 string remains fail-closed";
+
+    layer_ = std::make_unique<FeatureRenderLayer>(
+        "test-features-5", &device_, Ellipsoid::WGS84());
+    layer_->setStyleForContractTest(style);
+    const SplitSnapshot splitTrimmed =
+        commitsLabel("A \xE3\x80\x80", {1}, 104);
+    ASSERT_TRUE(splitTrimmed.committed);
+    EXPECT_EQ(6, splitTrimmed.indexCount)
+        << "non-empty Mii applies only the final JavaScript /\\s+$/ trim";
+}
+
 TEST_F(FeatureRenderLayerTest, TileSymbolPaintOrderSplitsPointCommands) {
     FeatureTileMesh mesh;
     mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
@@ -614,16 +3050,14 @@ TEST_F(FeatureRenderLayerTest, TileSymbolPaintOrderSplitsPointCommands) {
     mesh.hasOrigin = true;
     TileSymbolCpu high;
     high.paintOrder = 100;
-    high.hasPaintOrder = true;
     high.lonRad = 6.01 * kDeg;
     high.latRad = 29.0 * kDeg;
-    high.colorPacked = 1.0f;
+    genericVisual(high).colorPacked = 1.0f;
     TileSymbolCpu low;
     low.paintOrder = 20;
-    low.hasPaintOrder = true;
     low.lonRad = 6.0 * kDeg;
     low.latRad = 29.0 * kDeg;
-    low.colorPacked = 1.0f;
+    genericVisual(low).colorPacked = 1.0f;
     mesh.symbols = {high, low};
 
     layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
@@ -652,8 +3086,94 @@ TEST_F(FeatureRenderLayerTest, TileSymbolCarriesAmapZoomWindow) {
         layer_->workerTessellationContext(), {poi});
     ASSERT_EQ(1u, mesh.symbols.size());
     EXPECT_EQ(-42, mesh.symbols[0].rank);
-    EXPECT_EQ(15, mesh.symbols[0].minZoom);
+    EXPECT_EQ(14, mesh.symbols[0].minZoom);
     EXPECT_EQ(21, mesh.symbols[0].maxZoom);
+}
+
+TEST_F(FeatureRenderLayerTest, SingleZoomAmapWindowRemainsOneDisplayZoom) {
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties["name"] = "PROVINCE";
+    poi.properties["amap_minzoom"] = "10";
+    poi.properties["amap_maxzoom"] = "10";
+
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(9, mesh.symbols[0].minZoom);
+    EXPECT_EQ(10, mesh.symbols[0].maxZoom);
+}
+
+TEST_F(FeatureRenderLayerTest, TileSymbolCarriesDataDrivenLabelSize) {
+    FeatureRenderStyle style = layer_->style();
+    style.labelSizePx = 23.0f;
+    style.labelSizeExpr = StyleExpression::match(
+        "amap_class",
+        {{"10002", StyleExpression::literal(32.0)}},
+        StyleExpression::literal(23.0));
+    layer_->setStyleForContractTest(style);
+
+    Feature city;
+    city.type = GeometryType::Point;
+    city.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    city.properties["name"] = "City";
+    city.properties["amap_class"] = "10002";
+    Feature poi = city;
+    poi.properties["amap_class"] = "12024";
+
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {city, poi});
+    ASSERT_EQ(2u, mesh.symbols.size());
+    ASSERT_TRUE(mesh.symbols[0].genericVisual);
+    ASSERT_TRUE(mesh.symbols[1].genericVisual);
+    EXPECT_FLOAT_EQ(32.0f, mesh.symbols[0].genericVisual->labelSizePx);
+    EXPECT_FLOAT_EQ(23.0f, mesh.symbols[1].genericVisual->labelSizePx);
+}
+
+TEST_F(FeatureRenderLayerTest, TileSymbolCarriesDataDrivenLabelOffset) {
+    FeatureRenderStyle style = layer_->style();
+    style.labelOffsetPx = 13.0f;
+    style.labelOffsetExpr = StyleExpression::match(
+        "amap_class",
+        {{"10002", StyleExpression::literal(0.0)}},
+        StyleExpression::literal(13.0));
+    layer_->setStyleForContractTest(style);
+
+    Feature city;
+    city.type = GeometryType::Point;
+    city.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    city.properties["name"] = "City";
+    city.properties["amap_class"] = "10002";
+    Feature poi = city;
+    poi.properties["amap_class"] = "12024";
+
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {city, poi});
+    ASSERT_EQ(2u, mesh.symbols.size());
+    ASSERT_TRUE(mesh.symbols[0].genericVisual);
+    ASSERT_TRUE(mesh.symbols[1].genericVisual);
+    EXPECT_FLOAT_EQ(0.0f, mesh.symbols[0].genericVisual->labelOffsetPx);
+    EXPECT_FLOAT_EQ(13.0f, mesh.symbols[1].genericVisual->labelOffsetPx);
+}
+
+TEST_F(FeatureRenderLayerTest, TransparentPoiPointBecomesLabelOnlySource) {
+    FeatureRenderStyle style = layer_->style();
+    style.pointColorExpr = StyleExpression::literal(
+        std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f});
+    style.labelOffsetExpr = StyleExpression::literal(0.0);
+    layer_->setStyleForContractTest(style);
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties["name"] = "Official text only";
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    ASSERT_TRUE(mesh.symbols[0].genericVisual);
+    EXPECT_FALSE(mesh.symbols[0].genericVisual->iconEnabled);
+    EXPECT_FLOAT_EQ(0.0f, mesh.symbols[0].genericVisual->labelOffsetPx);
 }
 
 TEST_F(FeatureRenderLayerTest, MissingOrMalformedZoomWindowStaysVisible) {
@@ -674,6 +3194,85 @@ TEST_F(FeatureRenderLayerTest, MissingOrMalformedZoomWindowStaysVisible) {
     ASSERT_EQ(1u, mesh.symbols.size());
     EXPECT_EQ(0, mesh.symbols[0].minZoom);
     EXPECT_EQ(30, mesh.symbols[0].maxZoom);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       StrictOfficialZoomWindowRejectsMissingPartialAndMalformed) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    installTestOfficialLabelStyle(style);
+    layer_->setStyleForContractTest(style);
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg)}};
+    poi.properties["amap_draworder"] = "1";
+    poi.properties["amap_rank"] = "1";
+    poi.properties["amap_class"] = "10002";
+    poi.properties["amap_subkey"] = "37";
+    EXPECT_TRUE(FeatureRenderLayer::tessellateTileMesh(
+                    layer_->workerTessellationContext(), {poi})
+                    .symbols.empty());
+
+    poi.properties["amap_minzoom"] = "15";
+    EXPECT_TRUE(FeatureRenderLayer::tessellateTileMesh(
+                    layer_->workerTessellationContext(), {poi})
+                    .symbols.empty());
+    poi.properties["amap_maxzoom"] = "bogus";
+    EXPECT_TRUE(FeatureRenderLayer::tessellateTileMesh(
+                    layer_->workerTessellationContext(), {poi})
+                    .symbols.empty());
+
+    poi.properties["amap_maxzoom"] = "21";
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    EXPECT_EQ(14, mesh.symbols.front().minZoom);
+    EXPECT_EQ(21, mesh.symbols.front().maxZoom);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       StrictOfficialZoomWindowRejectsFillAndLineBeforeGeometry) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Regions);
+    style.fillStyleGroupExpr = StyleExpression::literal(1.0);
+    layer_->setStyleForContractTest(style);
+
+    Feature polygon;
+    polygon.type = GeometryType::Polygon;
+    polygon.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg),
+                      Cartographic(6.01 * kDeg, 29.0 * kDeg),
+                      Cartographic(6.01 * kDeg, 29.01 * kDeg)}};
+    Feature line;
+    line.type = GeometryType::LineString;
+    line.rings = {{Cartographic(6.0 * kDeg, 29.0 * kDeg),
+                   Cartographic(6.01 * kDeg, 29.01 * kDeg)}};
+    polygon.properties["amap_draworder"] = "1";
+    line.properties["amap_draworder"] = "1";
+    polygon.properties["amap_class"] = "30001";
+    polygon.properties["amap_subkey"] = "1";
+    line.properties["amap_class"] = "20001";
+    line.properties["amap_subkey"] = "1";
+
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {polygon, line});
+    EXPECT_TRUE(mesh.fillIndices.empty());
+    EXPECT_TRUE(mesh.lineIndices.empty());
+
+    polygon.properties["amap_minzoom"] = "15";
+    polygon.properties["amap_maxzoom"] = "21";
+    line.properties["amap_minzoom"] = "15";
+    line.properties["amap_maxzoom"] = "bogus";
+    mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {polygon, line});
+    EXPECT_FALSE(mesh.fillIndices.empty());
+    EXPECT_TRUE(mesh.lineIndices.empty());
+
+    line.properties["amap_maxzoom"] = "21";
+    mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {polygon, line});
+    EXPECT_FALSE(mesh.fillIndices.empty());
+    EXPECT_FALSE(mesh.lineIndices.empty());
 }
 
 TEST_F(FeatureRenderLayerTest, TileSymbolZoomWindowGatesPointAndLabel) {
@@ -700,7 +3299,7 @@ TEST_F(FeatureRenderLayerTest, TileSymbolZoomWindowGatesPointAndLabel) {
     TileSymbolCpu far;
     far.lonRad = lon;
     far.latRad = lat;
-    far.colorPacked = 1.0f;
+    genericVisual(far).colorPacked = 1.0f;
     far.name = "FAR";
     far.minZoom = 0;
     far.maxZoom = 14;
@@ -776,7 +3375,7 @@ TEST_F(FeatureRenderLayerTest, TileLabelsBakeOnlyCurrentZoomWindowAndRebakeOnCha
     TileSymbolCpu coarse;
     coarse.lonRad = 0.0;
     coarse.latRad = 0.0;
-    coarse.colorPacked = 1.0f;
+    genericVisual(coarse).colorPacked = 1.0f;
     coarse.name = "A";
     coarse.minZoom = 0;
     coarse.maxZoom = 3;
@@ -816,7 +3415,7 @@ TEST_F(FeatureRenderLayerTest, TileSymbolCapacityPreservesIndependentZoomWindows
         TileSymbolCpu fine;
         fine.lonRad = i * 1e-7;
         fine.latRad = 0.0;
-        fine.colorPacked = 1.0f;
+        genericVisual(fine).colorPacked = 1.0f;
         fine.rank = 1;
         fine.minZoom = 18;
         fine.maxZoom = 30;
@@ -825,7 +3424,7 @@ TEST_F(FeatureRenderLayerTest, TileSymbolCapacityPreservesIndependentZoomWindows
     TileSymbolCpu coarse;
     coarse.lonRad = -1e-5;
     coarse.latRad = 0.0;
-    coarse.colorPacked = 1.0f;
+    genericVisual(coarse).colorPacked = 1.0f;
     coarse.rank = 9;
     coarse.minZoom = 0;
     coarse.maxZoom = 18;
@@ -873,23 +3472,24 @@ TEST_F(FeatureRenderLayerTest, TileLabelBakeGpuFailureRetriesWithoutZoomChange) 
     TileSymbolCpu symbol;
     symbol.lonRad = 0.0;
     symbol.latRad = 0.0;
-    symbol.colorPacked = 1.0f;
+    genericVisual(symbol).colorPacked = 1.0f;
     symbol.name = "AB";
     mesh.symbols.push_back(symbol);
     layer_->commitTileMesh(
         TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
         std::move(mesh));
 
-    // 当前 build 先重建 point VBO/IBO，随后第三次创建才是 label VBO。
-    device_.failBufferCreationAtAttempt =
-        device_.bufferCreationAttempts + 3;
+    // 精确命中下一次 Vertex 创建（此时 point buffers 已在 commit 中稳定，
+    // build 的下一次 Vertex 即 label VBO）。不要依赖全局 buffer 创建序号；
+    // 该序号会随符号重建策略变化，无法表达本测试真正要验证的故障边界。
+    device_.failNextBufferCreationOfType = BufferDesc::Type::Vertex;
     RenderCommandList commands = build();
     EXPECT_TRUE(layer_->hasPendingLabelWork());
     EXPECT_FALSE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
         return c.kind == RenderCommandKind::VectorLabel;
     }));
 
-    device_.failBufferCreationAtAttempt = -1;
+    device_.failNextBufferCreationOfType.reset();
     ++frame_.frameId;
     commands = build();
     EXPECT_TRUE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
@@ -905,7 +3505,7 @@ TEST_F(FeatureRenderLayerTest, PendingLabelTicketReleasesOutsideLayerZoomRange) 
     }
     FeatureRenderStyle style = layer_->style();
     style.maxZoom = 3.0;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
 
     FeatureTileMesh mesh;
     mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
@@ -914,7 +3514,7 @@ TEST_F(FeatureRenderLayerTest, PendingLabelTicketReleasesOutsideLayerZoomRange) 
     TileSymbolCpu symbol;
     symbol.lonRad = 0.0;
     symbol.latRad = 0.0;
-    symbol.colorPacked = 1.0f;
+    genericVisual(symbol).colorPacked = 1.0f;
     symbol.name = "AB";
     mesh.symbols.push_back(symbol);
     layer_->commitTileMesh(
@@ -972,7 +3572,7 @@ TEST_F(FeatureRenderLayerTest, SameActiveZoomWindowDoesNotRebuildTileLabels) {
     TileSymbolCpu symbol;
     symbol.lonRad = 0.0;
     symbol.latRad = 0.0;
-    symbol.colorPacked = 1.0f;
+    genericVisual(symbol).colorPacked = 1.0f;
     symbol.name = "AB";
     symbol.minZoom = 18;
     symbol.maxZoom = 30;
@@ -1010,7 +3610,7 @@ TEST_F(FeatureRenderLayerTest, TileSymbolsCappedByRankAscending) {
         TileSymbolCpu s;
         s.lonRad = (6.0 + i * 1e-5) * kDeg;
         s.latRad = 29.0 * kDeg;
-        s.colorPacked = 1.0f;
+        genericVisual(s).colorPacked = 1.0f;
         // 前 8 个 rank=1(必须活),其余 rank=9(截断候选)。
         s.rank = i < 8 ? 1 : 9;
         mesh.symbols.push_back(s);
@@ -1023,6 +3623,165 @@ TEST_F(FeatureRenderLayerTest, TileSymbolsCappedByRankAscending) {
     const int quadCount = commands[0].indexCount / 6;
     EXPECT_LT(quadCount, kOverfill) << "单瓦符号数没有上限,容量闸失效";
     EXPECT_GE(quadCount, 8) << "截断把高重要度符号也丢了";
+}
+
+TEST_F(FeatureRenderLayerTest, TileSymbolsUseSmallerBudgetAtBroadZoom) {
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    mesh.hasOrigin = true;
+    for (int i = 0; i < 80; ++i) {
+        TileSymbolCpu s;
+        s.lonRad = i * 1e-5;
+        s.latRad = 0.0;
+        s.rank = i;
+        s.minZoom = 0;
+        s.maxZoom = 30;
+        genericVisual(s).colorPacked = 1.0f;
+        mesh.symbols.push_back(s);
+    }
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+        std::move(mesh));
+    // Fixture camera is a broad view (zoom bucket <= 11): 16 candidates,
+    // while near-view tests retain the existing 128-symbol ceiling.
+    RenderCommandList commands = build();
+    int quads = 0;
+    for (const auto& command : commands) {
+        if (command.kind == RenderCommandKind::VectorPoint) {
+            quads += command.indexCount / 6;
+        }
+    }
+    EXPECT_LE(quads, 16);
+    EXPECT_GT(quads, 0);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialProviderSymbolsDoNotUseGenericPerTileBudget) {
+    build();
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage(
+        "official-budget-icon", 4, 4,
+        std::vector<uint8_t>(4u * 4u * 4u, 255)));
+    FeatureRenderStyle style = layer_->style();
+    style.pointStylePropertyA = "amap_class";
+    style.pointStylePropertyB = "amap_subkey";
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Poi);
+    style.pointStyleResolver = [](const std::string&, const std::string&,
+                                  const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle result;
+        result.enabled = true;
+        result.image = "official-budget-icon";
+        result.labelLayout.emplace();
+        result.labelLayout->iconWidthPx = 4.0f;
+        result.labelLayout->iconHeightPx = 4.0f;
+        result.labelLayout->iconAnchorXPx = 2.0f;
+        result.labelLayout->iconAnchorYPx = 2.0f;
+        return result;
+    };
+    layer_->setStyleForContractTest(style);
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.0, 0.0));
+    mesh.hasOrigin = true;
+    constexpr int kOfficialCount = 160;
+    for (int i = 0; i < kOfficialCount; ++i) {
+        TileSymbolCpu symbol;
+        symbol.lonRad = i * 1e-6;
+        symbol.latRad = 0.0;
+        symbol.rank = i;
+        symbol.minZoom = 0;
+        symbol.maxZoom = 30;
+        symbol.pointStyleKeyA = "12024";
+        symbol.pointStyleKeyB = std::to_string(i + 1);
+        mesh.symbols.push_back(std::move(symbol));
+    }
+    layer_->commitTileMesh(
+        TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+        std::move(mesh));
+
+    const RenderCommandList commands = build();
+    int quads = 0;
+    for (const auto& command : commands) {
+        if (command.kind == RenderCommandKind::VectorPoint) {
+            quads += command.indexCount / 6;
+        }
+    }
+    EXPECT_EQ(kOfficialCount, quads)
+        << "generic engine budget must not discard official provider records";
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialInsertionOrderIsGlobalAcrossTilesAndSurvivesRebuild) {
+    build();
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage(
+        "official-order-icon", 4, 4,
+        std::vector<uint8_t>(4u * 4u * 4u, 255)));
+    FeatureRenderStyle style = earth_engine::testing::amapOfficialStyleForTest(
+        FeatureRenderLayer::AmapClassicProfile::Poi);
+    installTestOfficialLabelStyle(style);
+    style.pointIdentityValidator = [](const std::string&,
+                                      const std::string&) { return true; };
+    style.pointStyleResolver = [](const std::string&, const std::string&,
+                                  const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle result;
+        result.enabled = true;
+        result.image = "official-order-icon";
+        result.labelLayout.emplace();
+        result.labelLayout->iconWidthPx = 4.0f;
+        result.labelLayout->iconHeightPx = 4.0f;
+        result.labelLayout->iconAnchorXPx = 2.0f;
+        result.labelLayout->iconAnchorYPx = 2.0f;
+        return result;
+    };
+    layer_->setStyleForContractTest(style);
+
+    const TileKey firstKey{SchemeId("XYZ-WebMercator"), 10, 100, 200};
+    const TileKey secondKey{SchemeId("XYZ-WebMercator"), 10, 101, 200};
+    const auto makeMesh = [](const char* name, double lon) {
+        FeatureTileMesh mesh;
+        mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic(lon, 0.0));
+        mesh.hasOrigin = true;
+        TileSymbolCpu symbol;
+        symbol.lonRad = lon;
+        symbol.latRad = 0.0;
+        symbol.name = name;
+        symbol.rank = -1;
+        symbol.minZoom = 0;
+        symbol.maxZoom = 30;
+        symbol.labelStyleGroup = 1;
+        symbol.pointStyleKeyA = "12024";
+        symbol.pointStyleKeyB = "1";
+        mesh.symbols.push_back(std::move(symbol));
+        return mesh;
+    };
+
+    layer_->commitTileMesh(firstKey, makeMesh("first", 0.0));
+    layer_->commitTileMesh(secondKey, makeMesh("second", 1e-5));
+    const auto first =
+        layer_->officialTileLabelInsertionOrderForTest(firstKey, "first");
+    const auto second =
+        layer_->officialTileLabelInsertionOrderForTest(secondKey, "second");
+    ASSERT_TRUE(first.has_value());
+    ASSERT_TRUE(second.has_value());
+    EXPECT_GT(*second, *first)
+        << "cross-tile order must follow admission, not unordered_map order";
+
+    build();  // zoom/terrain-safe symbol rebuild must retain the same stamp.
+    EXPECT_EQ(first, layer_->officialTileLabelInsertionOrderForTest(
+                         firstKey, "first"));
+    EXPECT_EQ(second, layer_->officialTileLabelInsertionOrderForTest(
+                          secondKey, "second"));
+
+    // A provider tile replacement constructs a new official label object and
+    // therefore receives a new worker-stamp-equivalent id. This is different
+    // from terrain/zoom/glyph rebuilds, which must preserve the existing id.
+    layer_->commitTileMesh(firstKey, makeMesh("first", 0.0));
+    const auto recommitted =
+        layer_->officialTileLabelInsertionOrderForTest(firstKey, "first");
+    ASSERT_TRUE(recommitted.has_value());
+    EXPECT_GT(*recommitted, *second);
 }
 
 // 符号刀C:跨瓦稳定 ID。同一 POI 在不同 zoom 瓦片里的 MVT 量化坐标略异,
@@ -1103,7 +3862,7 @@ TEST_F(FeatureRenderLayerTest, OutOfHorizonBucketEmitsNoCommands) {
     // 的桶不出命令。视野内 polygon 出 fill+outline 两条;150°E 的桶被裁。
     FeatureRenderStyle style = layer_->style();
     style.fillOutlineEnabled = true;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
     layer_->store().addFeature(makePolygon(150.0, 0.0, 0.1));
 
@@ -1120,7 +3879,7 @@ TEST_F(FeatureRenderLayerTest, OversizedFeatureDrawnRegardlessOfView) {
     // 其中心在地平线外,也保守出命令(不可漏画)。
     FeatureRenderStyle style = layer_->style();
     style.fillOutlineEnabled = true;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePolygon(150.0, 0.0, 5.0));
 
     RenderCommandList commands = build();
@@ -1214,7 +3973,7 @@ TEST_F(FeatureRenderLayerTest, DirtyBucketRebuildIsIncremental) {
     // 两个远隔要素 → 两个桶(cell 0.02rad,隔 >2° 必不同桶)
     FeatureRenderStyle style = layer_->style();
     style.fillOutlineEnabled = true;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     const FeatureId idA =
         layer_->store().addFeature(makePolygon(6.0, 29.0, 0.1));
     layer_->store().addFeature(makePolygon(10.0, 33.0, 0.1));
@@ -1257,7 +4016,7 @@ TEST_F(FeatureRenderLayerTest, SameBucketFeaturesShareOneCommandPair) {
     // 两个近邻小要素落同桶 → 仍是一对 fill/line 命令(合桶绘制)
     FeatureRenderStyle style = layer_->style();
     style.fillOutlineEnabled = true;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePolygon(6.000, 29.000, 0.002));
     layer_->store().addFeature(makePolygon(6.003, 29.003, 0.002));
 
@@ -1307,6 +4066,45 @@ TEST(GlyphAtlasTest, DecodeUtf8MixedText) {
     EXPECT_EQ(0x1F642u, cps[2]);
 }
 
+TEST(GlyphAtlasTest, AmapProviderUsesOfficialMetricsAndBatchedRevision) {
+    MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    GlyphAtlas atlas(&device);
+    std::vector<uint32_t> demanded;
+    atlas.activateAmapOfficialProviderForTest(
+        [&](uint32_t cp) { demanded.push_back(cp); });
+    ASSERT_TRUE(atlas.ready());
+    ASSERT_NE(nullptr, atlas.texture());
+    atlas.beginFrameGlyphBudget(1, 4.0);
+    atlas.beginFrameGlyphBudget(2, 4.0);
+    EXPECT_EQ(24.0f, atlas.metricPixelHeight());
+    EXPECT_EQ(GlyphAtlas::BudgetedGlyphResult::Deferred,
+              atlas.ensureGlyphBudgeted(37325));
+    EXPECT_EQ(GlyphAtlas::BudgetedGlyphResult::Deferred,
+              atlas.ensureGlyphBudgeted(37325));
+    ASSERT_EQ(1u, demanded.size());
+    EXPECT_EQ(37325u, demanded.front());
+
+    const uint64_t before = atlas.revision();
+    std::vector<uint8_t> pixels(64 * 32, 127);
+    std::vector<GlyphAtlas::ProviderGlyph> glyphs = {
+        {24198, 22, 22, 1, -2, 24, 0, 0},
+        {37325, 22, 21, 1, -2, 24, 32, 0},
+    };
+    ASSERT_TRUE(atlas.installAmapOfficialGlyphBatchForTest(
+        64, 32, pixels, glyphs));
+    EXPECT_EQ(before + 1, atlas.revision());
+    const auto* chong = atlas.ensureGlyph(37325);
+    const auto* qing = atlas.ensureGlyph(24198);
+    ASSERT_NE(nullptr, chong);
+    ASSERT_NE(nullptr, qing);
+    EXPECT_FLOAT_EQ(25.0f, chong->advance);
+    EXPECT_FLOAT_EQ(25.0f, qing->advance);
+    EXPECT_FLOAT_EQ(1.0f, chong->offsetX);
+    EXPECT_FLOAT_EQ(2.0f, chong->offsetY);
+    EXPECT_FLOAT_EQ(50.0f, chong->advance + qing->advance);
+}
+
 TEST(GlyphAtlasTest, RasterizesAndPacksGlyphs) {
     std::vector<uint8_t> font = loadHostFont();
     if (font.empty()) GTEST_SKIP() << "no host font available";
@@ -1346,6 +4144,37 @@ TEST(GlyphAtlasTest, RasterizesAndPacksGlyphs) {
     ASSERT_TRUE(atlas.setFontData(std::move(replacementFont)));
     EXPECT_EQ(2u, atlas.revision())
         << "ready→ready 换字体也必须通知已烘焙标签失效";
+}
+
+TEST(GlyphAtlasTest, AmapLetterSpacingExpandsOnlyInterGlyphGaps) {
+    EXPECT_FLOAT_EQ(0.0f,
+                    FeatureRenderLayer::labelLetterSpacingAdvancePx(
+                        1, 0.02f, 20.0f));
+    EXPECT_NEAR(1.2f,
+                FeatureRenderLayer::labelLetterSpacingAdvancePx(
+                    4, 0.02f, 20.0f),
+                1e-6f);
+    EXPECT_FLOAT_EQ(0.0f,
+                    FeatureRenderLayer::labelLetterSpacingAdvancePx(
+                        4, -0.02f, 20.0f));
+}
+
+TEST(GlyphAtlasTest, ClearFontInvalidatesOfficialRuntimeResidue) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    earth_engine::testing::MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    GlyphAtlas atlas(&device);
+    if (!atlas.setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+    ASSERT_NE(nullptr, atlas.ensureGlyph('A'));
+    const uint64_t before = atlas.revision();
+    atlas.clearFontData();
+    EXPECT_FALSE(atlas.ready());
+    EXPECT_EQ(0u, atlas.residentGlyphCount());
+    EXPECT_EQ(nullptr, atlas.ensureGlyph('A'));
+    EXPECT_GT(atlas.revision(), before);
 }
 
 TEST(GlyphAtlasTest, BudgetIsSharedOncePerRenderFrame) {
@@ -1415,7 +4244,7 @@ TEST_F(FeatureRenderLayerTest, TileSymbolLabelsRenderWhenFontReady) {
     TileSymbolCpu s;
     s.lonRad = 6.0 * kDeg;
     s.latRad = 29.0 * kDeg;
-    s.colorPacked = 1.0f;
+    genericVisual(s).colorPacked = 1.0f;
     s.name = "AB";
     mesh.symbols.push_back(s);
     layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
@@ -1427,8 +4256,60 @@ TEST_F(FeatureRenderLayerTest, TileSymbolLabelsRenderWhenFontReady) {
         if (cmd.kind == RenderCommandKind::VectorLabel) label = &cmd;
     }
     ASSERT_NE(nullptr, label) << "瓦片符号标签未出命令";
-    EXPECT_EQ(32, label->vertexStride);
+    EXPECT_EQ(44, label->vertexStride);
     EXPECT_EQ(12, label->indexCount);  // "AB" 2 字形 × 6
+}
+
+TEST_F(FeatureRenderLayerTest,
+       LabelHaloUsesStyleGroupAndGlobalDefault) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty()) GTEST_SKIP() << "no host font available";
+    if (!renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "host font not stbtt-parsable";
+    }
+
+    FeatureRenderStyle style = layer_->style();
+    style.labelHaloColor = {0.1f, 0.2f, 0.3f, 0.4f};
+    style.labelHaloColorByStyleGroup[78] = {1.0f, 1.0f, 1.0f, 0.8471f};
+    layer_->setStyleForContractTest(style);
+    build();
+
+    FeatureTileMesh mesh;
+    mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    mesh.hasOrigin = true;
+    TileSymbolCpu overridden;
+    overridden.paintOrder = 78;
+    overridden.labelPaintOrder = 78;
+    overridden.labelStyleGroup = 78;
+    overridden.lonRad = 6.0 * kDeg;
+    overridden.latRad = 29.0 * kDeg;
+    genericVisual(overridden).colorPacked = 1.0f;
+    overridden.name = "A";
+    TileSymbolCpu fallback = overridden;
+    fallback.paintOrder = 79;
+    fallback.labelPaintOrder = 79;
+    fallback.labelStyleGroup = 0;
+    fallback.lonRad = 6.1 * kDeg;
+    fallback.name = "B";
+    mesh.symbols = {overridden, fallback};
+    layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                           std::move(mesh));
+
+    const RenderCommandList commands = build();
+    const RenderCommand* overriddenCommand = nullptr;
+    const RenderCommand* fallbackCommand = nullptr;
+    for (const auto& command : commands) {
+        if (command.kind != RenderCommandKind::VectorLabel) continue;
+        if (command.vectorPaintOrder == 78) overriddenCommand = &command;
+        if (command.vectorPaintOrder == 79) fallbackCommand = &command;
+    }
+    ASSERT_NE(nullptr, overriddenCommand);
+    ASSERT_NE(nullptr, fallbackCommand);
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 0.8471f}),
+              overriddenCommand->vectorUniforms.haloColor);
+    EXPECT_EQ(style.labelHaloColor,
+              fallbackCommand->vectorUniforms.haloColor);
 }
 
 TEST_F(FeatureRenderLayerTest, TileLabelsRebakeAfterReadyFontReplacement) {
@@ -1447,7 +4328,7 @@ TEST_F(FeatureRenderLayerTest, TileLabelsRebakeAfterReadyFontReplacement) {
     TileSymbolCpu symbol;
     symbol.lonRad = 6.0 * kDeg;
     symbol.latRad = 29.0 * kDeg;
-    symbol.colorPacked = 1.0f;
+    genericVisual(symbol).colorPacked = 1.0f;
     symbol.name = "AB";
     mesh.symbols.push_back(symbol);
     layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
@@ -1485,17 +4366,17 @@ TEST_F(FeatureRenderLayerTest, TileSymbolPaintOrderSplitsLabelCommands) {
     mesh.hasOrigin = true;
     TileSymbolCpu high;
     high.paintOrder = 100;
-    high.hasPaintOrder = true;
+    high.labelPaintOrder = 100;
     high.lonRad = 6.01 * kDeg;
     high.latRad = 29.0 * kDeg;
-    high.colorPacked = 1.0f;
+    genericVisual(high).colorPacked = 1.0f;
     high.name = "B";
     TileSymbolCpu low;
     low.paintOrder = 20;
-    low.hasPaintOrder = true;
+    low.labelPaintOrder = 20;
     low.lonRad = 6.0 * kDeg;
     low.latRad = 29.0 * kDeg;
-    low.colorPacked = 1.0f;
+    genericVisual(low).colorPacked = 1.0f;
     low.name = "A";
     mesh.symbols = {high, low};
     layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
@@ -1531,7 +4412,7 @@ TEST_F(FeatureRenderLayerTest, TileSymbolLabelsBakeAfterLateFont) {
     TileSymbolCpu s;
     s.lonRad = 6.0 * kDeg;
     s.latRad = 29.0 * kDeg;
-    s.colorPacked = 1.0f;
+    genericVisual(s).colorPacked = 1.0f;
     s.name = "AB";
     mesh.symbols.push_back(s);
     layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
@@ -1579,7 +4460,7 @@ TEST_F(FeatureRenderLayerTest, CrossGenerationDedupNewerWins) {
         TileSymbolCpu s;
         s.lonRad = lonDeg * kDeg;
         s.latRad = latDeg * kDeg;
-        s.colorPacked = 1.0f;
+        genericVisual(s).colorPacked = 1.0f;
         s.name = name;
         mesh.symbols.push_back(s);
         layer_->commitTileMesh(
@@ -1628,7 +4509,7 @@ TEST_F(FeatureRenderLayerTest, DumpLabelLifecycleSevenStates) {
     TileSymbolCpu s;
     s.lonRad = 6.0 * kDeg;
     s.latRad = 29.0 * kDeg;
-    s.colorPacked = 1.0f;
+    genericVisual(s).colorPacked = 1.0f;
     s.name = "AB";
     mesh.symbols.push_back(s);
     layer_->commitTileMesh(TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
@@ -1682,7 +4563,7 @@ TEST_F(FeatureRenderLayerTest, PlacementThrottledBetweenIntervals) {
         TileSymbolCpu s;
         s.lonRad = lonDeg * kDeg;
         s.latRad = 29.0 * kDeg;
-        s.colorPacked = 1.0f;
+        genericVisual(s).colorPacked = 1.0f;
         s.name = name;
         mesh.symbols.push_back(s);
         layer_->commitTileMesh(
@@ -1735,7 +4616,7 @@ TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
         if (cmd.kind == RenderCommandKind::VectorLabel) label = &cmd;
     }
     ASSERT_NE(nullptr, label);
-    EXPECT_EQ(32, label->vertexStride);  // P5c:+opacity(4)
+    EXPECT_EQ(44, label->vertexStride);
     EXPECT_EQ(12, label->indexCount);  // 2 字形 × 6
     // [0]=字形图集,[1]=T2 地形深度槽(host 无深度通路 → nullptr 占位)。
     // 下标必须稳定:后端按下标 1:1 绑纹理单元,浮动会把深度绑错采样器。
@@ -1747,16 +4628,18 @@ TEST_F(FeatureRenderLayerTest, LabelCommandForNamedFeature) {
     EXPECT_FLOAT_EQ(0.0f, label->vectorUniforms.terrainOcclusion[0]);
     EXPECT_GT(label->vectorUniforms.sdfEdge, 0.0f);
     EXPECT_GE(label->vectorUniforms.sdfHaloDelta, 0.0f);
+    EXPECT_FLOAT_EQ(0.0f, label->vectorUniforms.sdfGamma)
+        << "generic labels must retain derivative-based antialiasing";
     EXPECT_EQ("color", label->pass);
     EXPECT_TRUE(label->blend);
 
-    // 顶点打包:2 字形 × 4 顶点 × 32B;offsetPx 水平居中(首字形 x < 0)
+    // 顶点打包:2 字形 × 4 顶点 × 44B;offsetPx 水平居中。
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
         label->vertexBuffer);
     ASSERT_NE(nullptr, vb);
-    ASSERT_EQ(2u * 4u * 32u, vb->bytes().size());
+    ASSERT_EQ(2u * 4u * 44u, vb->bytes().size());
     const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
-    EXPECT_LT(floats[3], 0.0f);  // 首顶点 offsetPx.x 在锚点左侧
+    EXPECT_LT(floats[6], 0.0f);  // 首顶点 offsetPx.x 在锚点左侧
 }
 
 // ============================================================
@@ -1886,7 +4769,7 @@ TEST_F(FeatureLabelPlacementTest, FadeIsGradualAndUploadsStopWhenSettled) {
     ASSERT_NE(nullptr, vb);
     const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
     const size_t count = vb->bytes().size() / sizeof(float);
-    for (size_t i = 5; i < count; i += 8) {
+    for (size_t i = 8; i < count; i += 11) {
         EXPECT_FLOAT_EQ(1.0f, floats[i]);
     }
 }
@@ -1922,7 +4805,7 @@ TEST_F(FeatureLabelPlacementTest, BucketRebuildResyncsSettledOpacity) {
     EXPECT_FLOAT_EQ(1.0f, layer_->labelOpacityForFeature(a));
 
     // setStyle 触发全桶重镶(顶点流 opacity 归 0)。
-    layer_->setStyle(layer_->style());
+    layer_->setStyleForContractTest(layer_->style());
     advanceFrames(1);
 
     RenderCommandList commands;
@@ -1937,7 +4820,7 @@ TEST_F(FeatureLabelPlacementTest, BucketRebuildResyncsSettledOpacity) {
     ASSERT_NE(nullptr, vb);
     const auto* floats = reinterpret_cast<const float*>(vb->bytes().data());
     const size_t count = vb->bytes().size() / sizeof(float);
-    for (size_t i = 5; i < count; i += 8) {
+    for (size_t i = 8; i < count; i += 11) {
         EXPECT_FLOAT_EQ(1.0f, floats[i]);
     }
 }
@@ -1960,7 +4843,220 @@ FeatureTerrainSampling makeFlatSampling(float height) {
     return s;
 }
 
+FeatureTerrainSampling makeGenerationSampling(
+    const std::shared_ptr<float>& height) {
+    FeatureTerrainSampling s;
+    s.makeAreaSampler = [height](const Rectangle&) {
+        return [height](double, double) -> std::optional<float> {
+            return *height;
+        };
+    };
+    s.revision = []() -> uint64_t {
+        return TerrainHeightService::heightmapGeneration();
+    };
+    return s;
+}
+
 } // namespace
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialVectorDerivativesReclampAfterHeightmapGenerationChanges) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty() ||
+        !renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "no host TrueType font for label VBO verification";
+    }
+    const std::vector<uint8_t> iconPixels(64 * 64 * 4, 255);
+    ASSERT_TRUE(renderer_->iconAtlas()->addImage(
+        "official-terrain-icon", 64, 64, iconPixels));
+
+    auto height = std::make_shared<float>(100.0f);
+    FeatureRenderLayer regions("official-terrain-regions", &device_,
+                               Ellipsoid::WGS84());
+    FeatureRenderLayer main("official-terrain-main", &device_,
+                            Ellipsoid::WGS84());
+    FeatureRenderLayer poi("official-terrain-poi", &device_,
+                           Ellipsoid::WGS84());
+    regions.installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Regions);
+    main.installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Main);
+
+    FeatureRenderStyle poiStyle =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Poi);
+    installTestOfficialLabelStyle(poiStyle);
+    poiStyle.pointStylePropertyA = "amap_class";
+    poiStyle.pointStylePropertyB = "amap_subkey";
+    poiStyle.pointStyleResolver = [](const std::string& cls,
+                                     const std::string& sub,
+                                     const std::string&, double, float) {
+        FeatureRenderStyle::ResolvedPointStyle out;
+        if (cls != "12024" || sub != "854") return out;
+        out.enabled = true;
+        out.image = "official-terrain-icon";
+        out.sizePx = 20.0f;
+        out.labelLayout.emplace();
+        out.labelLayout->iconWidthPx = 20.0f;
+        out.labelLayout->iconHeightPx = 20.0f;
+        return out;
+    };
+    poi.setStyleForContractTest(poiStyle);
+
+    regions.setTerrainSampling(makeGenerationSampling(height));
+    main.setTerrainSampling(makeGenerationSampling(height));
+    poi.setTerrainSampling(makeGenerationSampling(height));
+
+    Feature surface = makePolygon(6.0, 29.0, 0.002);
+    addOfficialMetadata(surface, "30001", "1", "73");
+    Feature road = makeLine(6.0, 29.0, 0.002);
+    addOfficialMetadata(road, "20001", "1", "90");
+    Feature building = makePolygon(6.003, 29.0, 0.002);
+    addOfficialMetadata(building, "55001", "1", "47");
+    building.properties["amap_height"] = "6";
+    Feature point;
+    point.type = GeometryType::Point;
+    point.rings = {{Cartographic(6.001 * kDeg, 29.001 * kDeg)}};
+    point.properties = {{"name", "terrain label"},
+                        {"amap_class", "12024"},
+                        {"amap_subkey", "854"}};
+    addOfficialMetadata(point, "12024", "854", "90");
+
+    const TileKey regionKey{SchemeId("XYZ-WebMercator"), 14, 100, 200};
+    const TileKey mainKey{SchemeId("XYZ-WebMercator"), 14, 101, 200};
+    const TileKey poiKey{SchemeId("XYZ-WebMercator"), 14, 102, 200};
+    auto regionMesh = FeatureRenderLayer::tessellateTileMesh(
+        regions.workerTessellationContext(), {surface});
+    auto mainMesh = FeatureRenderLayer::tessellateTileMesh(
+        main.workerTessellationContext(), {road, building});
+    auto poiMesh = FeatureRenderLayer::tessellateTileMesh(
+        poi.workerTessellationContext(), {point});
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              regions.commitTileMesh(regionKey, std::move(regionMesh)));
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              main.commitTileMesh(mainKey, std::move(mainMesh)));
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              poi.commitTileMesh(poiKey, std::move(poiMesh)));
+
+    auto buildAll = [&](double dt) {
+        frame_.deltaSeconds = dt;
+        RenderCommandList commands;
+        regions.buildRenderCommands(frame_, *renderer_, commands);
+        main.buildRenderCommands(frame_, *renderer_, commands);
+        poi.buildRenderCommands(frame_, *renderer_, commands);
+    };
+    const auto firstVertexHeight = [](const Buffer* buffer,
+                                      const Vec3& origin,
+                                      size_t strideFloats) {
+        const auto* dummy = dynamic_cast<const DummyBuffer*>(buffer);
+        EXPECT_NE(nullptr, dummy);
+        if (!dummy || dummy->bytes().size() < strideFloats * sizeof(float)) {
+            return std::numeric_limits<double>::quiet_NaN();
+        }
+        const auto* values =
+            reinterpret_cast<const float*>(dummy->bytes().data());
+        return Ellipsoid::WGS84().cartesianToCartographic(
+            origin + Vec3(values[0], values[1], values[2])).height();
+    };
+    const auto extrusionHeightRange = [](const Buffer* buffer,
+                                         const Vec3& origin) {
+        const auto* dummy = dynamic_cast<const DummyBuffer*>(buffer);
+        EXPECT_NE(nullptr, dummy);
+        std::pair<double, double> range{
+            std::numeric_limits<double>::max(),
+            std::numeric_limits<double>::lowest()};
+        if (!dummy) return range;
+        const auto* values =
+            reinterpret_cast<const float*>(dummy->bytes().data());
+        const size_t count = dummy->bytes().size() / sizeof(float);
+        for (size_t i = 0; i + 2 < count; i += 7) {
+            const double h = Ellipsoid::WGS84().cartesianToCartographic(
+                origin + Vec3(values[i], values[i + 1], values[i + 2]))
+                                 .height();
+            range.first = std::min(range.first, h);
+            range.second = std::max(range.second, h);
+        }
+        return range;
+    };
+    // First pass observes the current generation and queues every tile;
+    // second pass drains those queues and materializes stable derivatives.
+    buildAll(2.1);
+    for (int i = 0; i < 8; ++i) buildAll(1.0 / 60.0);
+    const auto regionsAt100 = regions.terrainReclampSnapshotForTest();
+    const auto mainAt100 = main.terrainReclampSnapshotForTest();
+    const auto poiAt100 = poi.terrainReclampSnapshotForTest();
+    ASSERT_NE(nullptr, regionsAt100.fillVertexBuffer);
+    ASSERT_NE(nullptr, mainAt100.lineVertexBuffer);
+    ASSERT_NE(nullptr, mainAt100.extrusionVertexBuffer);
+    ASSERT_NE(nullptr, poiAt100.pointVertexBuffer);
+    ASSERT_NE(nullptr, poiAt100.labelVertexBuffer);
+    ASSERT_TRUE(regionsAt100.origin.has_value());
+    ASSERT_TRUE(mainAt100.origin.has_value());
+    ASSERT_TRUE(poiAt100.origin.has_value());
+    ASSERT_TRUE(poiAt100.firstLabelAnchorHeightMeters.has_value());
+    EXPECT_NEAR(firstVertexHeight(regionsAt100.fillVertexBuffer,
+                                  *regionsAt100.origin, 4),
+                100.0, 1.0);
+    EXPECT_NEAR(firstVertexHeight(mainAt100.lineVertexBuffer,
+                                  *mainAt100.origin, 12),
+                100.0, 1.0);
+    EXPECT_NEAR(firstVertexHeight(poiAt100.pointVertexBuffer,
+                                  *poiAt100.origin, 9),
+                100.0, 1.0);
+    EXPECT_NEAR(firstVertexHeight(poiAt100.labelVertexBuffer,
+                                  *poiAt100.origin, 11),
+                100.0, 1.0);
+    const auto extrusionAt100 = extrusionHeightRange(
+        mainAt100.extrusionVertexBuffer, *mainAt100.origin);
+    EXPECT_NEAR(extrusionAt100.first, 100.0, 1.0);
+    EXPECT_NEAR(extrusionAt100.second, 106.0, 1.0);
+    EXPECT_NEAR(*poiAt100.firstLabelAnchorHeightMeters, 100.0, 1.0);
+
+    *height = 700.0f;
+    TileRenderContentState generationSource;
+    auto changedHeightmap = std::make_unique<DecodedHeightmap>();
+    changedHeightmap->tileSize = 1;
+    changedHeightmap->assignHeights(std::vector<float>{700.0f});
+    generationSource.setRetainedHeightmap(std::move(changedHeightmap));
+    const uint64_t changedGeneration =
+        TerrainHeightService::heightmapGeneration();
+
+    buildAll(2.1);               // observe generation and enqueue
+    for (int i = 0; i < 8; ++i) {
+        buildAll(1.0 / 60.0);    // bounded queue/glyph drain
+    }
+    const auto regionsAt700 = regions.terrainReclampSnapshotForTest();
+    const auto mainAt700 = main.terrainReclampSnapshotForTest();
+    const auto poiAt700 = poi.terrainReclampSnapshotForTest();
+
+    EXPECT_EQ(changedGeneration, regionsAt700.appliedRevision);
+    EXPECT_EQ(changedGeneration, mainAt700.appliedRevision);
+    EXPECT_EQ(changedGeneration, poiAt700.appliedRevision);
+    EXPECT_EQ(0u, regionsAt700.pendingBuckets);
+    EXPECT_EQ(0u, mainAt700.pendingBuckets);
+    EXPECT_EQ(0u, poiAt700.pendingBuckets);
+    ASSERT_TRUE(regionsAt700.origin.has_value());
+    ASSERT_TRUE(mainAt700.origin.has_value());
+    ASSERT_TRUE(poiAt700.origin.has_value());
+    EXPECT_NEAR(firstVertexHeight(regionsAt700.fillVertexBuffer,
+                                  *regionsAt700.origin, 4),
+                700.0, 1.0);
+    EXPECT_NEAR(firstVertexHeight(mainAt700.lineVertexBuffer,
+                                  *mainAt700.origin, 12),
+                700.0, 1.0);
+    EXPECT_NEAR(firstVertexHeight(poiAt700.pointVertexBuffer,
+                                  *poiAt700.origin, 9),
+                700.0, 1.0);
+    EXPECT_NEAR(firstVertexHeight(poiAt700.labelVertexBuffer,
+                                  *poiAt700.origin, 11),
+                700.0, 1.0);
+    const auto extrusionAt700 = extrusionHeightRange(
+        mainAt700.extrusionVertexBuffer, *mainAt700.origin);
+    EXPECT_NEAR(extrusionAt700.first, 700.0, 1.0);
+    EXPECT_NEAR(extrusionAt700.second, 706.0, 1.0);
+    ASSERT_TRUE(poiAt700.firstLabelAnchorHeightMeters.has_value());
+    EXPECT_NEAR(*poiAt700.firstLabelAnchorHeightMeters, 700.0, 1.0);
+}
 
 namespace {
 
@@ -2014,7 +5110,7 @@ void expectWatertight(const RenderCommand& vol) {
 TEST_F(FeatureRenderLayerTest, StencilVolumePairForClampedPolygon) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
 
@@ -2085,7 +5181,7 @@ TEST_F(FeatureRenderLayerTest, SelfIntersectingFillVolumeIsWatertight) {
     // z-fail 计数错乱 → fill 破碎/泄漏(真机复现)。
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
 
     Feature f;
@@ -2113,7 +5209,7 @@ TEST_F(FeatureRenderLayerTest, FillVolumeIsWatertight) {
     // 但**位置同源**,故按位置量化判边(与线墙带同一断言口径)。
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
 
@@ -2184,7 +5280,7 @@ TEST_F(FeatureRenderLayerTest, FillVolumeCoversInteriorPeakBetweenGridSamples) {
     // 断面。这里把尖峰放在网格缝隙里,验证 margin 是否兜得住。
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     // 面 0..0.08°,8×8 网格采样点在 0.01/0.02/.../0.07;尖峰放 0.045
     // (恰在 0.04 与 0.05 之间),半径 0.002° ≈ 220m。
     layer_->setTerrainSampling(
@@ -2217,7 +5313,9 @@ TEST_F(FeatureRenderLayerTest, StencilVolumePairsKeepFeaturePaintOrder) {
         {{"green", StyleExpression::literal(20.0)},
          {"water", StyleExpression::literal(50.0)}},
         StyleExpression::literal(0.0));
-    layer_->setStyle(style);
+    style.lineStyleGroupExpr = style.paintOrderExpr;
+    style.lineStyleGroupExpr = style.paintOrderExpr;
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
 
     Feature water = makePolygon(0.0, 0.0, 0.01);
@@ -2257,7 +5355,7 @@ TEST_F(FeatureRenderLayerTest, StencilFallsBackToSamplingWithoutSupport) {
     device_.stencilClassificationSupported = false;
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
 
@@ -2268,6 +5366,101 @@ TEST_F(FeatureRenderLayerTest, StencilFallsBackToSamplingWithoutSupport) {
         if (cmd.kind == RenderCommandKind::VectorFill) hasFill = true;
     }
     EXPECT_TRUE(hasFill);  // 回落方案 A(采样钳制 fill)
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialSurfaceClampDoesNotEnterGenericStencilColorContract) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Regions);
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyleForContractTest(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    Feature surface = makePolygon(0.0, 0.0, 0.01);
+    surface.properties = {{"amap_class", "30001"},
+                          {"amap_subkey", "1"},
+                          {"amap_draworder", "73"},
+                          {"amap_minzoom", "2"},
+                          {"amap_maxzoom", "30"}};
+    layer_->store().addFeature(std::move(surface));
+    const RenderCommandList commands = build();
+    ASSERT_FALSE(commands.empty());
+    for (const auto& command : commands)
+        EXPECT_NE(RenderCommandKind::VectorStencil, command.kind);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialSurfaceTileCommitSamplesTerrainAndKeepsReclampSource) {
+    FeatureRenderLayer layer("official-surface-terrain", &device_,
+                             Ellipsoid::WGS84());
+    layer.installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Regions);
+    layer.setTerrainSampling(makeFlatSampling(725.0f));
+    auto ctx = layer.workerTessellationContext();
+
+    Feature surface = makePolygon(6.0, 29.0, 0.002);
+    surface.properties = {{"amap_class", "30001"},
+                          {"amap_subkey", "1"},
+                          {"amap_draworder", "73"},
+                          {"amap_minzoom", "2"},
+                          {"amap_maxzoom", "30"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(ctx, {surface});
+    ASSERT_FALSE(mesh.fillVerts.empty());
+    ASSERT_FALSE(mesh.fillClampSource.empty());
+    EXPECT_EQ(mesh.fillClampSource.size(), mesh.fillVerts.size() / 4 * 3);
+    const Vec3 origin = mesh.origin;
+
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer.commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 14, 100, 200},
+                  std::move(mesh)));
+    RenderCommandList commands;
+    layer.buildRenderCommands(frame_, *renderer_, commands);
+    const RenderCommand* fill = nullptr;
+    for (const auto& command : commands) {
+        if (command.kind == RenderCommandKind::VectorFill) fill = &command;
+    }
+    ASSERT_NE(nullptr, fill);
+    const auto* buffer =
+        dynamic_cast<const earth_engine::testing::DummyBuffer*>(
+            fill->vertexBuffer);
+    ASSERT_NE(nullptr, buffer);
+    const float* vertex =
+        reinterpret_cast<const float*>(buffer->bytes().data());
+    const Cartographic position = Ellipsoid::WGS84().cartesianToCartographic(
+        origin + Vec3(vertex[0], vertex[1], vertex[2]));
+    EXPECT_NEAR(position.height(), 725.0, 1.0);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       BakedOfficialSurfaceSkipsFillCdtButKeepsBuildingExtrusionAndRoad) {
+    FeatureRenderLayer layer("official-baked-surface", &device_,
+                             Ellipsoid::WGS84());
+    layer.installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Main);
+    auto ctx = layer.workerTessellationContext();
+    ctx.bakeOfficialSurfaceFill = true;
+
+    Feature surface = makePolygon(6.0, 29.0, 0.002);
+    surface.properties = {{"amap_class", "30001"},
+                          {"amap_subkey", "1"},
+                          {"amap_draworder", "73"},
+                          {"amap_minzoom", "2"},
+                          {"amap_maxzoom", "30"}};
+    Feature building = surface;
+    building.properties["amap_class"] = "55001";
+    building.properties["amap_draworder"] = "47";
+    building.properties["amap_minzoom"] = "3";
+    building.properties["amap_maxzoom"] = "20";
+    building.properties["amap_height"] = "6";
+    Feature road = makeLine(6.0, 29.0, 0.002);
+    addOfficialMetadata(road, "20001", "1", "90");
+
+    const FeatureTileMesh mesh = FeatureRenderLayer::tessellateTileMesh(
+        ctx, {surface, building, road});
+    EXPECT_TRUE(mesh.fillIndices.empty());
+    EXPECT_EQ(0u, mesh.diagnostics.polygonCdtPointTriangleTests);
+    EXPECT_FALSE(mesh.extrudeIndices.empty());
+    EXPECT_FALSE(mesh.lineIndices.empty());
 }
 
 TEST_F(FeatureRenderLayerTest, AbsoluteModePolygonHasNoStencilVolume) {
@@ -2286,7 +5479,7 @@ TEST_F(FeatureRenderLayerTest, AbsoluteModePolygonHasNoStencilVolume) {
 TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makeLine(0.0, 0.0, 0.05));
 
@@ -2328,11 +5521,36 @@ TEST_F(FeatureRenderLayerTest, StencilLineVolumePairForClampedLineString) {
         << (validation ? validation->message : "");
 }
 
+TEST_F(FeatureRenderLayerTest,
+       OfficialTransportClampDoesNotEnterGenericStencilLineContract) {
+    FeatureRenderStyle style = layer_->style();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Main);
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    layer_->setStyleForContractTest(style);
+    layer_->setTerrainSampling(makeFlatSampling(50.0f));
+    Feature road = makeLine(0.0, 0.0, 0.05);
+    road.properties = {{"amap_class", "20001"},
+                       {"amap_subkey", "1"},
+                       {"amap_draworder", "82"},
+                       {"amap_minzoom", "3"},
+                       {"amap_maxzoom", "20"}};
+    layer_->store().addFeature(std::move(road));
+    const Vec3 target = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(0.01 * kDeg, 0.0));
+    camera_.lookAt(target + target.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.0)),
+                   target, Vec3(0, 0, 1));
+    const RenderCommandList commands = build();
+    ASSERT_FALSE(commands.empty());
+    for (const auto& command : commands)
+        EXPECT_NE(RenderCommandKind::VectorStencil, command.kind);
+}
+
 TEST_F(FeatureRenderLayerTest, ClampedPolygonOutlineBecomesClosedLineVolume) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
     style.fillOutlineEnabled = true;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
 
@@ -2370,7 +5588,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineDensifyDecoupledFromSchemeA) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
     style.clampDensifyMeters = 8.0;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     // 两段各 ~5.6km:100m 细分 → ~113 横截面;8m 会是 ~1400。
     layer_->store().addFeature(makeLine(0.0, 0.0, 0.05));
@@ -2401,7 +5619,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineDashSplitsIntoClosedBodies) {
     style.lineDashPeriodMeters = 300.0f;
     style.lineDashOnFraction = 0.5f;
     style.fillOutlineEnabled = true;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makePolygon(0.0, 0.0, 0.01));
 
@@ -2447,7 +5665,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineSolidWhenDashDisabled) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
     style.lineDashPeriodMeters = 0.0f;  // 实线
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makeLine(0.0, 0.0, 0.05));
 
@@ -2473,7 +5691,7 @@ TEST_F(FeatureRenderLayerTest, StencilLineFallsBackToRibbonWithoutSupport) {
     device_.stencilClassificationSupported = false;
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
     layer_->store().addFeature(makeLine(0.0, 0.0, 0.05));
 
@@ -2518,7 +5736,7 @@ TEST_F(FeatureRenderLayerTest, DataDrivenPointColorBakedPerFeature) {
         "kind",
         {{"tower", StyleExpression::literal({1.0f, 0.0f, 0.0f, 1.0f})}},
         StyleExpression::literal({0.0f, 0.0f, 1.0f, 1.0f}));
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makeKindPoint(6.0, "tower"));
     layer_->store().addFeature(makeKindPoint(6.001, "gate"));
 
@@ -2539,13 +5757,34 @@ TEST_F(FeatureRenderLayerTest, DataDrivenPointColorBakedPerFeature) {
     EXPECT_TRUE(commands[0].uniforms.empty());
 }
 
+TEST_F(FeatureRenderLayerTest, PropertyColorTableBakesTransitRouteColor) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineColor = {0.1f, 0.2f, 0.3f, 1.0f};
+    style.lineColorProperty = "route_style_key";
+    style.lineColorByProperty["20015:7"] =
+        {245.0f / 255.0f, 171.0f / 255.0f, 78.0f / 255.0f, 1.0f};
+    layer_->setStyleForContractTest(style);
+
+    Feature transit = makeLine(106.4, 29.5, 0.02);
+    transit.properties["route_style_key"] = "20015:7";
+    const auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {transit});
+    ASSERT_GE(mesh.lineVerts.size(), 12u);
+    uint32_t packed = 0;
+    std::memcpy(&packed, &mesh.lineVerts[11], sizeof(packed));
+    EXPECT_EQ(245u, packed & 0xffu);
+    EXPECT_EQ(171u, (packed >> 8) & 0xffu);
+    EXPECT_EQ(78u, (packed >> 16) & 0xffu);
+    EXPECT_EQ(255u, packed >> 24);
+}
+
 TEST_F(FeatureRenderLayerTest, ZoomDrivenLineWidthUniform) {
     FeatureRenderStyle style = layer_->style();
     style.lineWidthExpr = StyleExpression::interpolateLinear(
         StyleExpression::zoom(),
         {{0.0, StyleExpression::literal(2.0)},
          {24.0, StyleExpression::literal(26.0)}});
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
 
     // 相机高 ~8.6e6m → zoom = log2(4e7/高) ≈ 2.2 → 宽度 ≈ 2 + 2.2 ≈ 4.2
@@ -2557,6 +5796,1217 @@ TEST_F(FeatureRenderLayerTest, ZoomDrivenLineWidthUniform) {
     EXPECT_LT(width, 8.0f);
 }
 
+TEST_F(FeatureRenderLayerTest,
+       StyleGroupSelectsIndependentZoomWidthAndCasingCurves) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineCasingEnabled = true;
+    style.lineCasingExtraWidthPx = 10.0f;
+    style.paintOrderExpr = StyleExpression::match(
+        "roadClass", {{"minor", StyleExpression::literal(79.0)},
+                       {"major", StyleExpression::literal(82.0)}},
+        StyleExpression::literal(0.0));
+    style.lineStyleGroupExpr = StyleExpression::match(
+        "roadClass", {{"minor", StyleExpression::literal(79.0)},
+                       {"major", StyleExpression::literal(82.0)}},
+        StyleExpression::literal(0.0));
+    style.lineWidthExprByStyleGroup[79] = StyleExpression::literal(2.0);
+    style.lineWidthExprByStyleGroup[82] = StyleExpression::literal(6.0);
+    style.lineCasingWidthExprByStyleGroup[79] =
+        StyleExpression::literal(1.0);
+    style.lineCasingWidthExprByStyleGroup[82] =
+        StyleExpression::literal(3.0);
+    style.lineCasingColorByStyleGroup[79] = {0.1f, 0.2f, 0.3f, 0.4f};
+    style.lineCasingColorByStyleGroup[82] = {0.5f, 0.6f, 0.7f, 0.8f};
+    layer_->setStyleForContractTest(style);
+
+    Feature minor = makeLine(6.0, 29.0, 0.01);
+    minor.properties["roadClass"] = "minor";
+    Feature major = makeLine(6.02, 29.0, 0.01);
+    major.properties["roadClass"] = "major";
+    layer_->store().addFeature(std::move(minor));
+    layer_->store().addFeature(std::move(major));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(4u, commands.size());
+    for (const auto& cmd : commands) {
+        if (cmd.vectorPaintOrder == 79) {
+            EXPECT_FLOAT_EQ(cmd.vectorPaintSubOrder == 0 ? 3.0f : 2.0f,
+                            cmd.vectorUniforms.lineWidthPx);
+            if (cmd.vectorPaintSubOrder == 0) {
+                EXPECT_EQ(style.lineCasingColorByStyleGroup.at(79),
+                          cmd.vectorUniforms.color);
+            }
+        } else if (cmd.vectorPaintOrder == 82) {
+            EXPECT_FLOAT_EQ(cmd.vectorPaintSubOrder == 0 ? 9.0f : 6.0f,
+                            cmd.vectorUniforms.lineWidthPx);
+            if (cmd.vectorPaintSubOrder == 0) {
+                EXPECT_EQ(style.lineCasingColorByStyleGroup.at(82),
+                          cmd.vectorUniforms.color);
+            }
+        } else {
+            FAIL() << "unexpected paintOrder " << cmd.vectorPaintOrder;
+        }
+    }
+}
+
+TEST_F(FeatureRenderLayerTest,
+       StyleGroupCasingCurveDoesNotRequireGlobalFallbackWidth) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineCasingEnabled = true;
+    style.lineCasingExtraWidthPx = 0.0f;
+    style.paintOrderExpr = StyleExpression::literal(82.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(82.0);
+    style.lineWidthExprByStyleGroup[82] = StyleExpression::literal(4.0);
+    style.lineCasingWidthExprByStyleGroup[82] =
+        StyleExpression::literal(2.0);
+    layer_->setStyleForContractTest(style);
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    road.properties = {{"amap_draworder", "1"},
+                       {"amap_minzoom", "3"},
+                       {"amap_maxzoom", "20"}};
+    layer_->store().addFeature(std::move(road));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    EXPECT_EQ(0, commands[0].vectorPaintSubOrder);
+    EXPECT_FLOAT_EQ(6.0f, commands[0].vectorUniforms.lineWidthPx);
+    EXPECT_EQ(1, commands[1].vectorPaintSubOrder);
+    EXPECT_FLOAT_EQ(4.0f, commands[1].vectorUniforms.lineWidthPx);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       StyleGroupWidthsOverrideSharedPaintOrderWithoutChangingSortOrder) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineCasingEnabled = true;
+    style.lineCasingStyleGroups = {2000101, 2000105};
+    style.paintOrderExpr = StyleExpression::literal(82.0);
+    style.lineStyleGroupExpr = StyleExpression::match(
+        "amap_subkey", {{"1", StyleExpression::literal(2000101.0)},
+                         {"5", StyleExpression::literal(2000105.0)}},
+        StyleExpression::literal(82.0));
+    style.lineWidthExprByStyleGroup[82] = StyleExpression::literal(99.0);
+    style.lineWidthExprByStyleGroup[2000101] =
+        StyleExpression::literal(8.0);
+    style.lineWidthExprByStyleGroup[2000105] =
+        StyleExpression::literal(2.0);
+    style.lineCasingWidthExprByStyleGroup[2000101] =
+        StyleExpression::literal(2.0);
+    style.lineCasingWidthExprByStyleGroup[2000105] =
+        StyleExpression::literal(1.0);
+    style.lineSolidCapExprByStyleGroup[2000101] =
+        StyleExpression::literal(2.0);
+    style.lineCasingSolidCapExprByStyleGroup[2000101] =
+        StyleExpression::literal(2.0);
+    layer_->setStyleForContractTest(style);
+
+    Feature major = makeLine(6.0, 29.0, 0.01);
+    major.properties["amap_subkey"] = "1";
+    Feature narrow = makeLine(6.02, 29.0, 0.01);
+    narrow.properties["amap_subkey"] = "5";
+    layer_->store().addFeature(std::move(major));
+    layer_->store().addFeature(std::move(narrow));
+
+    const RenderCommandList commands = build();
+    ASSERT_EQ(4u, commands.size());
+    std::multiset<float> widths;
+    for (const auto& command : commands) {
+        EXPECT_EQ(82, command.vectorPaintOrder);
+        widths.insert(command.vectorUniforms.lineWidthPx);
+        if (command.vectorUniforms.lineWidthPx == 8.0f ||
+            command.vectorUniforms.lineWidthPx == 10.0f) {
+            EXPECT_FLOAT_EQ(2.0f,
+                            command.vectorUniforms.solidCapStyle);
+        }
+    }
+    EXPECT_EQ((std::multiset<float>{2.0f, 3.0f, 8.0f, 10.0f}), widths);
+}
+
+TEST_F(FeatureRenderLayerTest, StyleGroupRoadWidthsScaleWithOptInDpr) {
+    FeatureRenderStyle style = layer_->style();
+    style.scaleStylePixelsByDevicePixelRatio = true;
+    style.paintOrderExpr = StyleExpression::literal(82.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(2000101.0);
+    style.lineWidthExprByStyleGroup[2000101] =
+        StyleExpression::literal(8.0);
+    style.lineTypeExprByStyleGroup[2000101] =
+        StyleExpression::literal(3.0);
+    style.lineTypeResolver = [](int lineType)
+        -> std::optional<FeatureRenderStyle::LineDashPattern> {
+        if (lineType != 3) return std::nullopt;
+        return FeatureRenderStyle::LineDashPattern{
+            {12.0f, 12.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Butt};
+    };
+    layer_->setStyleForContractTest(style);
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    road.properties = {{"amap_draworder", "1"},
+                       {"amap_minzoom", "3"},
+                       {"amap_maxzoom", "20"}};
+    layer_->store().addFeature(std::move(road));
+    frame_.devicePixelRatio = 2.625f;
+
+    const RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_FLOAT_EQ(21.0f, commands.front().vectorUniforms.lineWidthPx);
+    EXPECT_FLOAT_EQ(2.0f,
+                    commands.front().vectorUniforms.dashPatternCount);
+    EXPECT_EQ((std::array<float, 4>{31.5f, 31.5f, 0.0f, 0.0f}),
+              commands.front().vectorUniforms.dashPattern);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialRoadUsesOfficialDefaultSolidForUnknownLineType) {
+    FeatureRenderStyle style = layer_->style();
+    constexpr int kOfficialRoad = 20001001;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Main);
+    style.lineTypeExprByStyleGroup[kOfficialRoad] =
+        StyleExpression::literal(99.0);
+    style.lineCasingTypeExprByStyleGroup[kOfficialRoad] =
+        StyleExpression::literal(99.0);
+    layer_->setStyleForContractTest(style);
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    road.properties = {{"amap_draworder", "1"},
+                       {"amap_minzoom", "3"},
+                       {"amap_maxzoom", "20"},
+                       {"amap_class", "20001"},
+                       {"amap_subkey", "1"}};
+    layer_->store().addFeature(std::move(road));
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    camera_.lookAt(surface + surface.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.0)),
+                   surface, Vec3(0.0, 0.0, 1.0));
+
+    const auto commands = build();
+    ASSERT_EQ(2u, commands.size());
+    for (const auto& command : commands) {
+        EXPECT_FLOAT_EQ(0.0f, command.vectorUniforms.dashPatternCount);
+        EXPECT_FLOAT_EQ(0.0f, command.vectorUniforms.dashPeriodMeters);
+    }
+}
+
+TEST_F(FeatureRenderLayerTest,
+       AmapOfficialScaleIsBinaryAndIgnoresGenericDashContracts) {
+    FeatureRenderStyle style = layer_->style();
+    constexpr int kOfficialRoad = 20001001;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Main);
+    style.lineTypeExprByStyleGroup[kOfficialRoad] = StyleExpression::literal(0.0);
+    style.lineCasingTypeExprByStyleGroup[kOfficialRoad] =
+        StyleExpression::literal(0.0);
+    style.lineDashByStyleGroup[kOfficialRoad] =
+        FeatureRenderStyle::LineDashPattern{
+            {3.0f, 7.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Butt};
+    style.lineCasingDashByStyleGroup[kOfficialRoad] =
+        FeatureRenderStyle::LineDashPattern{
+            {5.0f, 9.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Butt};
+    style.lineDashPeriodMeters = 120.0f;
+    style.lineCasingMinZoom = 20.0;
+    style.lineCasingMaxZoom = 20.0;
+    layer_->setStyleForContractTest(style);
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    road.properties = {{"amap_draworder", "1"},
+                       {"amap_minzoom", "3"},
+                       {"amap_maxzoom", "20"},
+                       {"amap_class", "20001"},
+                       {"amap_subkey", "1"}};
+    layer_->store().addFeature(std::move(road));
+    frame_.devicePixelRatio = 2.625f;
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    camera_.lookAt(surface + surface.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.0)),
+                   surface, Vec3(0.0, 0.0, 1.0));
+
+    const auto commands = build();
+    ASSERT_EQ(2u, commands.size());
+    std::multiset<float> widths;
+    for (const auto& command : commands) {
+        widths.insert(command.vectorUniforms.lineWidthPx);
+        EXPECT_FLOAT_EQ(0.0f, command.vectorUniforms.dashPatternCount);
+        EXPECT_FLOAT_EQ(0.0f, command.vectorUniforms.dashPeriodMeters);
+    }
+    EXPECT_EQ((std::multiset<float>{16.0f, 20.0f}), widths);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       AmapOfficialDashUsesBinaryRetinaScaleExactlyOnce) {
+    layer_->setStyleForContractTest(
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main));
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    addOfficialMetadata(road, "20010", "1", "90");
+    layer_->store().addFeature(std::move(road));
+
+    frame_.devicePixelRatio = 2.625f;
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    camera_.lookAt(surface + surface.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.2)),
+                   surface, Vec3(0.0, 0.0, 1.0));
+
+    const auto commands = build();
+    ASSERT_EQ(2u, commands.size());
+    const auto center = std::find_if(
+        commands.begin(), commands.end(), [](const auto& command) {
+            return command.vectorPaintSubOrder == 1;
+        });
+    ASSERT_NE(commands.end(), center);
+    EXPECT_FLOAT_EQ(2.0f, center->vectorUniforms.dashPatternCount);
+    EXPECT_EQ((std::array<float, 4>{24.0f, 24.0f, 0.0f, 0.0f}),
+              center->vectorUniforms.dashPattern);
+    EXPECT_FLOAT_EQ(4.0f, center->vectorUniforms.lineWidthPx);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialCenterAndCasingLineTypesReachIndependentFinalCommands) {
+    layer_->setStyleForContractTest(
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main));
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    addOfficialMetadata(road, "20002", "3", "90");
+    layer_->store().addFeature(std::move(road));
+
+    frame_.devicePixelRatio = 2.625f;
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    camera_.lookAt(surface + surface.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.2)),
+                   surface, Vec3(0.0, 0.0, 1.0));
+
+    const RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    const auto casing = std::find_if(
+        commands.begin(), commands.end(), [](const auto& command) {
+            return command.vectorPaintSubOrder == 0;
+        });
+    const auto center = std::find_if(
+        commands.begin(), commands.end(), [](const auto& command) {
+            return command.vectorPaintSubOrder == 1;
+        });
+    ASSERT_NE(commands.end(), casing);
+    ASSERT_NE(commands.end(), center);
+
+    // Official provider zoom 14: center lineType 14 is solid/round, while
+    // casingLineType 4 is an independent 2/2 CSS-pixel butt dash. The
+    // official retina branch is binary even when device DPR is 2.625.
+    EXPECT_FLOAT_EQ(0.0f, center->vectorUniforms.dashPatternCount);
+    EXPECT_FLOAT_EQ(2.0f, center->vectorUniforms.solidCapStyle);
+    EXPECT_FLOAT_EQ(12.0f, center->vectorUniforms.lineWidthPx);
+    EXPECT_FLOAT_EQ(2.0f, casing->vectorUniforms.dashPatternCount);
+    EXPECT_EQ((std::array<float, 4>{4.0f, 4.0f, 0.0f, 0.0f}),
+              casing->vectorUniforms.dashPattern);
+    EXPECT_FLOAT_EQ(0.0f, casing->vectorUniforms.dashCapStyle);
+    EXPECT_FLOAT_EQ(0.0f, casing->vectorUniforms.solidCapStyle)
+        << "center round-cap state must not leak into the dashed casing";
+    EXPECT_FLOAT_EQ(16.0f, casing->vectorUniforms.lineWidthPx);
+    EXPECT_EQ(center->vertexBuffer, casing->vertexBuffer);
+    EXPECT_EQ(center->indexBuffer, casing->indexBuffer);
+    EXPECT_GE(center->indexCount, 12)
+        << "official lineType 14 must retain endpoint candidate geometry";
+}
+
+TEST_F(FeatureRenderLayerTest,
+       AmapOfficialClampedRoundCapReachesFinalCommand) {
+    layer_->setStyleForContractTest(
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main));
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    addOfficialMetadata(road, "20001", "1", "90");
+    layer_->store().addFeature(std::move(road));
+
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    camera_.lookAt(surface + surface.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.2)),
+                   surface, Vec3(0.0, 0.0, 1.0));
+
+    const auto commands = build();
+    ASSERT_FALSE(commands.empty());
+    for (const auto& command : commands) {
+        EXPECT_FLOAT_EQ(2.0f, command.vectorUniforms.solidCapStyle);
+        EXPECT_GE(command.indexCount, 12);
+    }
+}
+
+TEST_F(FeatureRenderLayerTest,
+       AmapOfficialCasingIgnoresGenericCasingZoomWindow) {
+    FeatureRenderStyle style;
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Main);
+    style.lineCasingMinZoom = 24.0;
+    style.lineCasingMaxZoom = 24.0;
+    layer_->setStyleForContractTest(style);
+
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    road.properties = {{"amap_draworder", "1"},
+                       {"amap_minzoom", "3"},
+                       {"amap_maxzoom", "20"},
+                       {"amap_class", "20001"},
+                       {"amap_subkey", "1"}};
+    layer_->store().addFeature(std::move(road));
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    camera_.lookAt(surface + surface.normalized() *
+                       (4.0e7 / std::pow(2.0, 13.0)),
+                   surface, Vec3(0.0, 0.0, 1.0));
+
+    const auto commands = build();
+    ASSERT_EQ(2u, commands.size());
+    EXPECT_TRUE(std::any_of(commands.begin(), commands.end(), [](const auto& c) {
+        return c.vectorPaintSubOrder == 0;
+    }));
+}
+
+TEST_F(FeatureRenderLayerTest,
+       AmapPhysicalViewportDprSignatureScalesExactlyOnce) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style.lineStyleGroupExpr = amapClassicLineStyleGroupExpression();
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Main);
+    layer_->setStyleForContractTest(style);
+
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    road.properties["amap_class"] = "20001";
+    road.properties["amap_subkey"] = "1";
+    road.properties["amap_draworder"] = "9137";
+    road.properties["amap_minzoom"] = "3";
+    road.properties["amap_maxzoom"] = "20";
+    layer_->store().addFeature(std::move(road));
+
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg, 0.0));
+    const double height = 4.0e7 / std::pow(2.0, 13.0);
+    camera_.lookAt(surface + surface.normalized() * height, surface,
+                   Vec3(0.0, 0.0, 1.0));
+    // Official browser fixture: CSS viewport 1280x720, retina backing scale
+    // 2, hence a 2560x1440 drawing buffer. FrameState viewport is always the
+    // physical drawing-buffer size; DPR remains the CSS->physical conversion.
+    frame_.viewportWidthPixels = 2560;
+    frame_.viewportHeightPixels = 1440;
+    frame_.devicePixelRatio = 2.0f;
+
+    const RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    EXPECT_FLOAT_EQ(2560.0f, commands[0].vectorUniforms.viewport[0]);
+    EXPECT_FLOAT_EQ(1440.0f, commands[0].vectorUniforms.viewport[1]);
+    std::multiset<float> widths;
+    for (const auto& command : commands) {
+        widths.insert(command.vectorUniforms.lineWidthPx);
+        // Shader raster width = uniform width * actual viewport height /
+        // viewport-uniform height. Production keeps both physical heights
+        // equal, so the shader cannot apply a second DPR factor.
+        EXPECT_FLOAT_EQ(command.vectorUniforms.lineWidthPx,
+                        command.vectorUniforms.lineWidthPx * 1440.0f /
+                            command.vectorUniforms.viewport[1]);
+    }
+    EXPECT_EQ((std::multiset<float>{16.0f, 20.0f}), widths);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       StyleGroupEvaluatesCenterAndCasingColorStepsIndependently) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineCasingEnabled = true;
+    style.lineCasingStyleGroups.insert(82);
+    style.paintOrderExpr = StyleExpression::literal(82.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(82.0);
+    style.lineWidthExprByStyleGroup[82] = StyleExpression::literal(4.0);
+    style.lineCasingWidthExprByStyleGroup[82] =
+        StyleExpression::literal(2.0);
+    style.lineColorExprByStyleGroup[82] = StyleExpression::step(
+        StyleExpression::zoom(),
+        {{0.0, StyleExpression::literal({1.0f, 0.0f, 0.0f, 1.0f})},
+         {2.0, StyleExpression::literal({0.0f, 1.0f, 0.0f, 1.0f})},
+         {3.0, StyleExpression::literal({0.0f, 0.0f, 1.0f, 1.0f})}});
+    style.lineCasingColorExprByStyleGroup[82] = StyleExpression::step(
+        StyleExpression::zoom(),
+        {{0.0, StyleExpression::literal({0.1f, 0.1f, 0.1f, 1.0f})},
+         {2.0, StyleExpression::literal({0.2f, 0.3f, 0.4f, 1.0f})},
+         {3.0, StyleExpression::literal({0.8f, 0.8f, 0.8f, 1.0f})}});
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
+
+    // Fixture zoom is approximately 2.2: both expressions must select the
+    // z2 tier without interpolation, while paint order remains unchanged.
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    EXPECT_EQ(82, commands[0].vectorPaintOrder);
+    EXPECT_EQ(0, commands[0].vectorPaintSubOrder);
+    EXPECT_EQ((std::array<float, 4>{0.2f, 0.3f, 0.4f, 1.0f}),
+              commands[0].vectorUniforms.color);
+    EXPECT_EQ(82, commands[1].vectorPaintOrder);
+    EXPECT_EQ(1, commands[1].vectorPaintSubOrder);
+    EXPECT_EQ((std::array<float, 4>{0.0f, 1.0f, 0.0f, 1.0f}),
+              commands[1].vectorUniforms.color);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       SolidRoundCapAddsOnlyCandidateEndpointGeometry) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(82.0);
+    style.lineStyleGroupExpr = StyleExpression::match(
+        "cap", {{"round", StyleExpression::literal(2000101.0)}},
+        StyleExpression::literal(82.0));
+    style.lineSolidCapExprByStyleGroup[2000101] =
+        StyleExpression::literal(2.0);
+    layer_->setStyleForContractTest(style);
+
+    Feature round = makeLine(6.0, 29.0, 0.01);
+    round.properties["cap"] = "round";
+    Feature butt = makeLine(6.02, 29.0, 0.01);
+    butt.properties["cap"] = "butt";
+    layer_->store().addFeature(std::move(round));
+    layer_->store().addFeature(std::move(butt));
+
+    const RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    int roundIndices = 0;
+    int buttIndices = 0;
+    for (const auto& command : commands) {
+        EXPECT_EQ(82, command.vectorPaintOrder);
+        if (command.vectorUniforms.solidCapStyle > 1.5f) {
+            roundIndices = command.indexCount;
+        } else {
+            buttIndices = command.indexCount;
+        }
+    }
+    EXPECT_EQ(24, roundIndices);  // 2 segments + 2 endpoint quads.
+    EXPECT_EQ(12, buttIndices);   // no unconditional endpoint geometry.
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialClampToGroundRoadKeepsLineTypeEndpointCandidates) {
+    layer_->installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Main);
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    addOfficialMetadata(road, "20001", "1", "90");
+
+    auto officialContext = layer_->workerTessellationContext();
+    const FeatureTileMesh mesh = FeatureRenderLayer::tessellateTileMesh(
+        officialContext, {road});
+    ASSERT_EQ(1u, mesh.lineRanges.size());
+    EXPECT_EQ(amapClassicStyleIdentity(20001, 1),
+              mesh.lineRanges.front().styleGroup);
+
+    officialContext.style.lineSolidCapExprByStyleGroup.clear();
+    officialContext.style.lineCasingSolidCapExprByStyleGroup.clear();
+    const FeatureTileMesh withoutCandidates =
+        FeatureRenderLayer::tessellateTileMesh(officialContext, {road});
+    ASSERT_EQ(1u, withoutCandidates.lineRanges.size());
+    EXPECT_EQ(withoutCandidates.lineRanges.front().indexCount + 12,
+              mesh.lineRanges.front().indexCount)
+        << "two endpoint candidate quads are independent of clamp densify";
+}
+
+TEST_F(FeatureRenderLayerTest,
+       StyleGroupPixelDashIsIndependentFromWorldMeterDash) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(75.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(75.0);
+    style.lineWidthExprByStyleGroup[75] = StyleExpression::literal(3.0);
+    style.lineDashPeriodMeters = 120.0f;
+    style.lineDashOnFraction = 0.25f;
+    style.lineDashByStyleGroup[75] =
+        FeatureRenderStyle::LineDashPattern{
+            {2.0f, 2.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Butt};
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    const auto& u = commands[0].vectorUniforms;
+    EXPECT_FLOAT_EQ(3.0f, u.lineWidthPx);
+    EXPECT_FLOAT_EQ(0.0f, u.dashPeriodMeters);
+    EXPECT_FLOAT_EQ(2.0f, u.dashPatternCount);
+    EXPECT_EQ((std::array<float, 4>{2.0f, 2.0f, 0.0f, 0.0f}),
+              u.dashPattern);
+    EXPECT_FLOAT_EQ(0.0f, u.dashCapStyle);
+    // Reference contract: cumulative ground meters are converted with one
+    // command-level Web-Mercator pixels-per-meter scale.  It must be finite
+    // and positive, and does not depend on individual endpoint eye depth.
+    EXPECT_TRUE(std::isfinite(u.dashPixelsPerMeter));
+    EXPECT_GT(u.dashPixelsPerMeter, 0.0f);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       CenterAndCasingSelectIndependentPixelDashPatterns) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(82.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(82.0);
+    style.lineCasingEnabled = true;
+    style.lineCasingExtraWidthPx = 2.0f;
+    style.lineDashByStyleGroup[82] =
+        FeatureRenderStyle::LineDashPattern{
+            {6.0f, 3.0f, 2.0f, 3.0f}, 4,
+            FeatureRenderStyle::LineCap::Round};
+    style.lineCasingDashByStyleGroup[82] =
+        FeatureRenderStyle::LineDashPattern{
+            {12.0f, 12.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Square};
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    const auto& casing = commands[0].vectorUniforms;
+    const auto& center = commands[1].vectorUniforms;
+    EXPECT_FLOAT_EQ(2.0f, casing.dashPatternCount);
+    EXPECT_FLOAT_EQ(12.0f, casing.dashPattern[0]);
+    EXPECT_FLOAT_EQ(1.0f, casing.dashCapStyle);
+    EXPECT_FLOAT_EQ(4.0f, center.dashPatternCount);
+    EXPECT_FLOAT_EQ(2.0f, center.dashPattern[2]);
+    EXPECT_FLOAT_EQ(2.0f, center.dashCapStyle);
+    EXPECT_EQ(commands[0].vertexBuffer, commands[1].vertexBuffer);
+    EXPECT_EQ(commands[0].indexBuffer, commands[1].indexBuffer);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       StyleGroupLineTypeCurvesOverrideStaticDashIndependently) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(82.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(2000203.0);
+    style.lineCasingEnabled = true;
+    style.lineCasingStyleGroups.insert(2000203);
+    style.lineCasingExtraWidthPx = 2.0f;
+    style.lineTypeResolver = [](int lineType)
+        -> std::optional<FeatureRenderStyle::LineDashPattern> {
+        using P = FeatureRenderStyle::LineDashPattern;
+        if (lineType == 14) return P{};
+        if (lineType == 4) {
+            return P{{2.0f, 2.0f, 0.0f, 0.0f}, 2,
+                     FeatureRenderStyle::LineCap::Butt};
+        }
+        return std::nullopt;
+    };
+    style.lineTypeExprByStyleGroup[2000203] =
+        StyleExpression::literal(14.0);
+    style.lineCasingTypeExprByStyleGroup[2000203] =
+        StyleExpression::literal(4.0);
+    // Contradictory fallback patterns prove the dynamic full-identity curves
+    // own both commands when they resolve successfully.
+    style.lineDashByStyleGroup[82] =
+        FeatureRenderStyle::LineDashPattern{
+            {6.0f, 6.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Round};
+    style.lineCasingDashByStyleGroup[82] =
+        FeatureRenderStyle::LineDashPattern{
+            {12.0f, 12.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Square};
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
+
+    const RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    const auto& casing = commands[0].vectorUniforms;
+    const auto& center = commands[1].vectorUniforms;
+    EXPECT_FLOAT_EQ(2.0f, casing.dashPatternCount);
+    EXPECT_EQ((std::array<float, 4>{2.0f, 2.0f, 0.0f, 0.0f}),
+              casing.dashPattern);
+    EXPECT_FLOAT_EQ(0.0f, casing.dashCapStyle);
+    EXPECT_FLOAT_EQ(0.0f, center.dashPatternCount);
+    EXPECT_EQ((std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}),
+              center.dashPattern);
+}
+
+TEST_F(FeatureRenderLayerTest, LineCasingReusesGeometryAndPrecedesCenter) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineCasingEnabled = true;
+    style.lineCasingExtraWidthPx = 3.0f;
+    style.lineCasingWidthRatio = 0.5f;
+    style.lineCasingColor = {0.9f, 0.8f, 0.7f, 0.95f};
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    const RenderCommand& casing = commands[0];
+    const RenderCommand& center = commands[1];
+    ASSERT_EQ(RenderCommandKind::VectorLine, casing.kind);
+    ASSERT_EQ(RenderCommandKind::VectorLine, center.kind);
+    EXPECT_EQ(casing.vertexBuffer, center.vertexBuffer);
+    EXPECT_EQ(casing.indexBuffer, center.indexBuffer);
+    EXPECT_EQ(casing.indexOffset, center.indexOffset);
+    EXPECT_EQ(casing.indexCount, center.indexCount);
+    EXPECT_EQ(0, casing.vectorPaintSubOrder);
+    EXPECT_EQ(1, center.vectorPaintSubOrder);
+    EXPECT_FLOAT_EQ(center.vectorUniforms.lineWidthPx * 1.5f,
+                    casing.vectorUniforms.lineWidthPx);
+    EXPECT_EQ(style.lineCasingColor, casing.vectorUniforms.color);
+    EXPECT_FLOAT_EQ(0.0f, center.vectorUniforms.color[3]);
+}
+
+TEST_F(FeatureRenderLayerTest, LineCasingUsesOnlySemanticStyleGroupAllowList) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineCasingEnabled = true;
+    style.lineCasingExtraWidthPx = 3.0f;
+    style.lineCasingStyleGroups.insert(7501);
+    style.paintOrderExpr = StyleExpression::match(
+        "kind", {{"road", StyleExpression::literal(75.0)},
+                  {"boundary", StyleExpression::literal(65.0)}},
+        StyleExpression::literal(0.0));
+    style.lineStyleGroupExpr = StyleExpression::match(
+        "kind", {{"road", StyleExpression::literal(7501.0)},
+                  {"boundary", StyleExpression::literal(6501.0)}},
+        StyleExpression::literal(0.0));
+    layer_->setStyleForContractTest(style);
+
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    road.properties["kind"] = "road";
+    Feature boundary = makeLine(6.02, 29.0, 0.01);
+    boundary.properties["kind"] = "boundary";
+    layer_->store().addFeature(std::move(road));
+    layer_->store().addFeature(std::move(boundary));
+
+    RenderCommandList commands = build();
+    int roadCommands = 0;
+    int boundaryCommands = 0;
+    for (const auto& cmd : commands) {
+        if (cmd.kind != RenderCommandKind::VectorLine) continue;
+        if (cmd.vectorPaintOrder == 75) ++roadCommands;
+        if (cmd.vectorPaintOrder == 65) ++boundaryCommands;
+    }
+    EXPECT_EQ(2, roadCommands);
+    EXPECT_EQ(1, boundaryCommands);
+}
+
+TEST_F(FeatureRenderLayerTest, ExactCasingStyleGroupAllowListIsolated) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineCasingEnabled = true;
+    style.lineCasingExtraWidthPx = 1.0f;
+    style.lineCasingStyleGroups.insert(6201);
+    style.paintOrderExpr = StyleExpression::match(
+        "kind", {{"rail", StyleExpression::literal(62.0)},
+                  {"boundary", StyleExpression::literal(65.0)}},
+        StyleExpression::literal(0.0));
+    style.lineStyleGroupExpr = StyleExpression::match(
+        "kind", {{"rail", StyleExpression::literal(6201.0)},
+                  {"boundary", StyleExpression::literal(6501.0)}},
+        StyleExpression::literal(0.0));
+    layer_->setStyleForContractTest(style);
+    Feature rail = makeLine(6.0, 29.0, 0.01);
+    rail.properties["kind"] = "rail";
+    Feature boundary = makeLine(6.02, 29.0, 0.01);
+    boundary.properties["kind"] = "boundary";
+    layer_->store().addFeature(std::move(rail));
+    layer_->store().addFeature(std::move(boundary));
+    RenderCommandList commands = build();
+    int railCommands = 0, boundaryCommands = 0;
+    for (const auto& cmd : commands) {
+        if (cmd.kind != RenderCommandKind::VectorLine) continue;
+        if (cmd.vectorPaintOrder == 62) ++railCommands;
+        if (cmd.vectorPaintOrder == 65) ++boundaryCommands;
+    }
+    EXPECT_EQ(2, railCommands);
+    EXPECT_EQ(1, boundaryCommands);
+}
+
+TEST_F(FeatureRenderLayerTest, RailwayStyleGroupCarriesOfficialDashAndCasing) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineCasingEnabled = true;
+    style.lineCasingStyleGroups.insert(62);
+    style.paintOrderExpr = StyleExpression::literal(62.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(62.0);
+    style.lineWidthExprByStyleGroup[62] = StyleExpression::literal(2.0);
+    style.lineCasingWidthExprByStyleGroup[62] =
+        StyleExpression::literal(1.0);
+    style.lineDashByStyleGroup[62] =
+        FeatureRenderStyle::LineDashPattern{
+            {12.0f, 12.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Butt};
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    EXPECT_EQ(0, commands[0].vectorPaintSubOrder);
+    EXPECT_EQ(1, commands[1].vectorPaintSubOrder);
+    EXPECT_FLOAT_EQ(0.0f, commands[0].vectorUniforms.dashPatternCount);
+    EXPECT_FLOAT_EQ(2.0f, commands[1].vectorUniforms.dashPatternCount);
+    EXPECT_FLOAT_EQ(12.0f, commands[1].vectorUniforms.dashPattern[0]);
+    EXPECT_FLOAT_EQ(3.0f, commands[0].vectorUniforms.lineWidthPx);
+    EXPECT_FLOAT_EQ(2.0f, commands[1].vectorUniforms.lineWidthPx);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       LineStyleGroupSplitsSubkeysWithoutChangingPaintOrder) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(62.0);
+    style.lineStyleGroupExpr = StyleExpression::match(
+        "sub", {{"1", StyleExpression::literal(6201.0)},
+                 {"3", StyleExpression::literal(6203.0)}},
+        StyleExpression::literal(6203.0));
+    style.lineCasingEnabled = true;
+    style.lineCasingExtraWidthPx = 0.0f;
+    style.lineCasingStyleGroups.insert(6201);
+    style.lineWidthExprByStyleGroup[6201] = StyleExpression::literal(2.0);
+    style.lineWidthExprByStyleGroup[6203] = StyleExpression::literal(1.0);
+    style.lineCasingWidthExprByStyleGroup[6201] =
+        StyleExpression::literal(1.0);
+    style.lineDashByStyleGroup[6201] =
+        FeatureRenderStyle::LineDashPattern{
+            {12.0f, 12.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Butt};
+    layer_->setStyleForContractTest(style);
+    Feature rail = makeLine(6.0, 29.0, 0.01);
+    rail.properties["sub"] = "1";
+    Feature plain = makeLine(6.02, 29.0, 0.01);
+    plain.properties["sub"] = "3";
+    layer_->store().addFeature(std::move(rail));
+    layer_->store().addFeature(std::move(plain));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(3u, commands.size());
+    int dashed = 0, solid = 0, casing = 0;
+    for (const auto& cmd : commands) {
+        ASSERT_EQ(62, cmd.vectorPaintOrder);
+        if (cmd.vectorUniforms.lineWidthPx == 3.0f) {
+            ++casing;
+            EXPECT_EQ(0, cmd.vectorPaintSubOrder);
+            EXPECT_FLOAT_EQ(3.0f, cmd.vectorUniforms.lineWidthPx);
+        } else if (cmd.vectorUniforms.dashPatternCount > 0.0f) {
+            ++dashed;
+            EXPECT_EQ(1, cmd.vectorPaintSubOrder);
+            EXPECT_FLOAT_EQ(2.0f, cmd.vectorUniforms.lineWidthPx);
+        } else {
+            ++solid;
+            EXPECT_EQ(0, cmd.vectorPaintSubOrder);
+            EXPECT_FLOAT_EQ(1.0f, cmd.vectorUniforms.lineWidthPx);
+        }
+    }
+    EXPECT_EQ(1, casing);
+    EXPECT_EQ(1, dashed);
+    EXPECT_EQ(1, solid);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialRoadColorsAndSignedWidthsReachFinalCommandsAcrossZoom) {
+    layer_->setStyleForContractTest(
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main));
+    Feature road = makeLine(6.0, 29.0, 0.01);
+    addOfficialMetadata(road, "20025", "1", "90");
+    road.properties["amap_maxzoom"] = "30";
+    layer_->store().addFeature(std::move(road));
+    frame_.devicePixelRatio = 2.0f;
+
+    const Vec3 target = Ellipsoid::WGS84().cartographicToCartesian(
+        Cartographic(6.0 * kDeg, 29.0 * kDeg));
+    const Vec3 radial = target.normalized();
+    struct Snapshot {
+        RenderCommand casing;
+        RenderCommand center;
+    };
+    const auto atDisplayZoom = [&](double displayZoom) {
+        camera_.lookAt(target + radial *
+                           (4.0e7 / std::pow(2.0, displayZoom)),
+                       target, Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+        const RenderCommandList commands = build();
+        EXPECT_EQ(2u, commands.size());
+        Snapshot out;
+        for (const auto& command : commands) {
+            if (command.vectorPaintSubOrder == 0) out.casing = command;
+            if (command.vectorPaintSubOrder == 1) out.center = command;
+        }
+        return out;
+    };
+    const auto verifyColors = [](const Snapshot& snapshot) {
+        // Official road field 3 final center-color consumer.
+        EXPECT_EQ((std::array<float, 4>{0xce / 255.0f, 0xc2 / 255.0f,
+                                        0xc2 / 255.0f, 1.0f}),
+                  snapshot.center.vectorUniforms.color);
+        // Official road field 6 final casing-color consumer.
+        EXPECT_EQ((std::array<float, 4>{0xe6 / 255.0f, 0x37 / 255.0f,
+                                        0x19 / 255.0f, 1.0f}),
+                  snapshot.casing.vectorUniforms.color);
+    };
+
+    // Provider zoom 18: roadWidth 7 and signed borderWidth -5 produce a
+    // 2-CSS-pixel secondary stroke, scaled once by the retina branch.
+    const Snapshot z18 = atDisplayZoom(17.0);
+    verifyColors(z18);
+    // Official road field 5 final center-width consumer.
+    EXPECT_FLOAT_EQ(14.0f, z18.center.vectorUniforms.lineWidthPx);
+    // Official road field 4 final signed casing-width consumer.
+    EXPECT_FLOAT_EQ(4.0f, z18.casing.vectorUniforms.lineWidthPx);
+
+    // Provider zoom 19 narrows only the secondary pass: 7 + (-6) = 1 CSS px.
+    const Snapshot z19 = atDisplayZoom(18.0);
+    verifyColors(z19);
+    EXPECT_FLOAT_EQ(14.0f, z19.center.vectorUniforms.lineWidthPx);
+    EXPECT_FLOAT_EQ(2.0f, z19.casing.vectorUniforms.lineWidthPx);
+
+    // Provider zoom 20 changes both official widths: 9 + (-7) = 2 CSS px.
+    const Snapshot z20 = atDisplayZoom(19.0);
+    verifyColors(z20);
+    EXPECT_FLOAT_EQ(18.0f, z20.center.vectorUniforms.lineWidthPx);
+    EXPECT_FLOAT_EQ(4.0f, z20.casing.vectorUniforms.lineWidthPx);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       EveryOfficialRoadIdentityReachesMatchingFinalCenterAndCasingCommands) {
+    const auto identities = amapClassicRoadIdentitiesForTest();
+    ASSERT_EQ(429u, identities.size());
+    std::vector<Feature> roads;
+    std::map<int, AmapClassicRoadIdentityForTest> byPaintOrder;
+    for (size_t i = 0; i < identities.size(); ++i) {
+        const int paintOrder = 3000 + static_cast<int>(i);
+        byPaintOrder.emplace(paintOrder, identities[i]);
+        const double x = (i % 24) * 0.00015;
+        const double y = (i / 24) * 0.00015;
+        Feature road = makeLine(x, y, 0.00008);
+        road.properties = {
+            {"amap_class", std::to_string(identities[i].classCode)},
+            {"amap_subkey", std::to_string(identities[i].subKey)},
+            {"amap_draworder", std::to_string(paintOrder)},
+            {"amap_minzoom", "1"}, {"amap_maxzoom", "30"}};
+        roads.push_back(std::move(road));
+    }
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main);
+    layer_->setStyleForContractTest(style);
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), roads);
+    ASSERT_EQ(identities.size(), mesh.lineRanges.size());
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                  std::move(mesh)));
+
+    const auto numberAt = [](const auto& table, int group, double zoom) {
+        const auto it = table.find(group);
+        if (it == table.end() || !it->second) return std::optional<double>{};
+        const auto value = it->second->evaluate(nullptr, zoom);
+        if (!value || value->kind() != StyleValue::Kind::Number)
+            return std::optional<double>{};
+        return std::optional<double>{value->number()};
+    };
+    const auto colorAt = [](const auto& table, int group, double zoom) {
+        const auto it = table.find(group);
+        if (it == table.end() || !it->second)
+            return std::optional<std::array<float, 4>>{};
+        const auto value = it->second->evaluate(nullptr, zoom);
+        if (!value || value->kind() != StyleValue::Kind::Color)
+            return std::optional<std::array<float, 4>>{};
+        return std::optional<std::array<float, 4>>{value->color()};
+    };
+    struct Pair {
+        const RenderCommand* subOrderZero = nullptr;
+        const RenderCommand* center = nullptr;
+    };
+    const double radius = Ellipsoid::WGS84().radii().x();
+    frame_.devicePixelRatio = 1.0f;
+    for (int displayZoom = 1; displayZoom <= 24; ++displayZoom) {
+        const double height = 4.0e7 / std::pow(2.0, displayZoom);
+        camera_.lookAt(Vec3(radius + height, 0.0, 0.0),
+                       Vec3(radius, 0.0, 0.0), Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+        const auto commands = build();
+        std::map<int, Pair> actual;
+        for (const auto& command : commands) {
+            if (command.kind != RenderCommandKind::VectorLine) continue;
+            auto& pair = actual[command.vectorPaintOrder];
+            if (command.vectorPaintSubOrder == 0)
+                pair.subOrderZero = &command;
+            if (command.vectorPaintSubOrder == 1) pair.center = &command;
+        }
+        for (const auto& [paintOrder, identity] : byPaintOrder) {
+            const int group = amapClassicStyleIdentity(
+                identity.classCode, identity.subKey);
+            const bool inWindow = identity.minZoom <= displayZoom + 1 &&
+                                  displayZoom + 1 <= identity.maxZoom;
+            const auto centerWidth = numberAt(
+                style.lineWidthExprByStyleGroup, group, displayZoom);
+            const auto centerColor = colorAt(
+                style.lineColorExprByStyleGroup, group, displayZoom);
+            const auto centerType = numberAt(
+                style.lineTypeExprByStyleGroup, group, displayZoom);
+            const bool centerVisible = inWindow && centerWidth && centerColor &&
+                centerType && *centerWidth > 0.0 && (*centerColor)[3] > 0.0f;
+            const auto casingWidth = numberAt(
+                style.lineCasingWidthExprByStyleGroup, group, displayZoom);
+            const auto casingColor = colorAt(
+                style.lineCasingColorExprByStyleGroup, group, displayZoom);
+            const auto casingType = numberAt(
+                style.lineCasingTypeExprByStyleGroup, group, displayZoom);
+            const bool casingVisible = inWindow && casingWidth && casingColor &&
+                casingType && centerWidth &&
+                *centerWidth + *casingWidth > 0.0 &&
+                (*casingColor)[3] > 0.0f &&
+                style.lineCasingStyleGroups.count(group) != 0;
+            const auto found = actual.find(paintOrder);
+            const Pair empty{};
+            const Pair& pair = found == actual.end() ? empty : found->second;
+            // Suborder zero is intentionally overloaded by the renderer: it
+            // is the casing when both strokes exist, but remains the center
+            // when an identity has no visible casing.  Resolve that ABI from
+            // the independently evaluated official visibility contract.
+            const RenderCommand* centerCommand =
+                pair.center ? pair.center
+                            : (!casingVisible ? pair.subOrderZero : nullptr);
+            const RenderCommand* casingCommand =
+                casingVisible ? pair.subOrderZero : nullptr;
+            EXPECT_EQ(centerVisible, centerCommand != nullptr)
+                << identity.classCode << ':' << identity.subKey
+                << " center visibility mismatch at display zoom " << displayZoom;
+            EXPECT_EQ(casingVisible, casingCommand != nullptr)
+                << identity.classCode << ':' << identity.subKey
+                << " casing visibility mismatch at display zoom " << displayZoom;
+            const auto verify = [&](const RenderCommand* command,
+                                    double width,
+                                    const std::array<float, 4>& color,
+                                    int lineType) {
+                ASSERT_NE(nullptr, command);
+                EXPECT_FLOAT_EQ(static_cast<float>(width),
+                                command->vectorUniforms.lineWidthPx);
+                EXPECT_EQ(color, command->vectorUniforms.color);
+                const auto dash = amapClassicRoadDashForLineType(lineType);
+                ASSERT_TRUE(dash.has_value());
+                EXPECT_FLOAT_EQ(static_cast<float>(dash->count),
+                                command->vectorUniforms.dashPatternCount);
+                EXPECT_EQ(dash->lengths,
+                          command->vectorUniforms.dashPattern);
+                EXPECT_FLOAT_EQ(static_cast<float>(dash->cap),
+                                dash->count == 0
+                                    ? command->vectorUniforms.solidCapStyle
+                                    : command->vectorUniforms.dashCapStyle);
+            };
+            if (centerVisible) verify(centerCommand, *centerWidth, *centerColor,
+                                      static_cast<int>(std::lround(*centerType)));
+            if (casingVisible) verify(casingCommand,
+                                      *centerWidth + *casingWidth,
+                                      *casingColor,
+                                      static_cast<int>(std::lround(*casingType)));
+        }
+    }
+}
+
+TEST_F(FeatureRenderLayerTest, LineStyleGroupHasIndependentZoomWindow) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(65.0);
+    style.lineStyleGroupExpr = StyleExpression::match(
+        "sub", {{"short", StyleExpression::literal(6501.0)},
+                 {"long", StyleExpression::literal(6502.0)}},
+        StyleExpression::literal(6502.0));
+    // Fixture is roughly display zoom 2.2: short is already sunset, long is on.
+    style.lineMaxZoomByStyleGroup[6501] = 2.0;
+    style.lineMinZoomByStyleGroup[6502] = 2.0;
+    layer_->setStyleForContractTest(style);
+    Feature shortLine = makeLine(6.0, 29.0, 0.01);
+    shortLine.properties["sub"] = "short";
+    Feature longLine = makeLine(6.02, 29.0, 0.01);
+    longLine.properties["sub"] = "long";
+    layer_->store().addFeature(std::move(shortLine));
+    layer_->store().addFeature(std::move(longLine));
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(65, commands[0].vectorPaintOrder);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       LineStyleGroupSelectsCommandColorAndFourPartDash) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(65.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(6506.0);
+    style.lineWidthExprByStyleGroup[6506] = StyleExpression::literal(1.0);
+    style.lineColorExprByStyleGroup[6506] = StyleExpression::literal(
+        {0.1f, 0.2f, 0.3f, 0.4f});
+    style.lineDashByStyleGroup[6506] =
+        FeatureRenderStyle::LineDashPattern{
+            {6.0f, 3.0f, 2.0f, 3.0f}, 4,
+            FeatureRenderStyle::LineCap::Butt};
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(65, commands[0].vectorPaintOrder);
+    EXPECT_EQ((std::array<float, 4>{0.1f, 0.2f, 0.3f, 0.4f}),
+              commands[0].vectorUniforms.color);
+    EXPECT_FLOAT_EQ(4.0f,
+                    commands[0].vectorUniforms.dashPatternCount);
+    EXPECT_EQ((std::array<float, 4>{6.0f, 3.0f, 2.0f, 3.0f}),
+              commands[0].vectorUniforms.dashPattern);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       CasingOnlyStyleGroupKeepsPaintOrderAndOwnsDashAndColor) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(66.0);
+    style.lineStyleGroupExpr = StyleExpression::literal(6604.0);
+    style.lineCasingEnabled = true;
+    style.lineCasingStyleGroups.insert(6604);
+    style.lineCasingExtraWidthPx = 0.0f;
+    style.lineWidthExprByStyleGroup[6604] = StyleExpression::literal(0.0);
+    style.lineColorExprByStyleGroup[6604] =
+        StyleExpression::literal({0.0f, 0.0f, 0.0f, 0.0f});
+    style.lineCasingWidthExprByStyleGroup[6604] =
+        StyleExpression::literal(1.0);
+    style.lineCasingColorByStyleGroup[6604] = {1.0f, 1.0f, 1.0f, 1.0f};
+    style.lineCasingDashByStyleGroup[6604] =
+        FeatureRenderStyle::LineDashPattern{
+            {12.0f, 12.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Butt};
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(2u, commands.size());
+    EXPECT_EQ(66, commands[0].vectorPaintOrder);
+    EXPECT_EQ(0, commands[0].vectorPaintSubOrder);
+    EXPECT_FLOAT_EQ(1.0f, commands[0].vectorUniforms.lineWidthPx);
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
+              commands[0].vectorUniforms.color);
+    EXPECT_FLOAT_EQ(2.0f, commands[0].vectorUniforms.dashPatternCount);
+    EXPECT_FLOAT_EQ(12.0f, commands[0].vectorUniforms.dashPattern[0]);
+    EXPECT_EQ(1, commands[1].vectorPaintSubOrder);
+    EXPECT_FLOAT_EQ(0.0f, commands[1].vectorUniforms.lineWidthPx);
+    EXPECT_EQ((std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}),
+              commands[1].vectorUniforms.color);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       TransitStyleGroupsKeepPaintOrderAndIndependentGeometryContracts) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(90.0);
+    style.lineStyleGroupExpr = StyleExpression::match(
+        "amap_subkey",
+        {{"1", StyleExpression::literal(
+                   amapClassicStyleIdentity(20015, 1))}},
+        StyleExpression::literal(amapClassicStyleIdentity(20015, 3)));
+    style.lineCasingEnabled = true;
+    style.lineCasingExtraWidthPx = 0.0f;
+    const int transit1 = amapClassicStyleIdentity(20015, 1);
+    const int transit3 = amapClassicStyleIdentity(20015, 3);
+    style.lineCasingStyleGroups.insert(transit1);
+    style.lineCasingStyleGroups.insert(transit3);
+    style.lineWidthExprByStyleGroup[transit1] = StyleExpression::literal(0.0);
+    style.lineCasingWidthExprByStyleGroup[transit1] =
+        StyleExpression::literal(2.0);
+    style.lineCasingDashByStyleGroup[transit1] =
+        FeatureRenderStyle::LineDashPattern{
+            {2.0f, 2.0f, 0.0f, 0.0f}, 2,
+            FeatureRenderStyle::LineCap::Butt};
+    style.lineWidthExprByStyleGroup[transit3] = StyleExpression::literal(2.0);
+    style.lineCasingWidthExprByStyleGroup[transit3] =
+        StyleExpression::literal(1.0);
+    layer_->setStyleForContractTest(style);
+
+    Feature railway = makeLine(6.0, 29.0, 0.01);
+    railway.properties["amap_subkey"] = "1";
+    Feature metro = makeLine(6.02, 29.0, 0.01);
+    metro.properties["amap_subkey"] = "7";
+    layer_->store().addFeature(std::move(railway));
+    layer_->store().addFeature(std::move(metro));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(4u, commands.size());
+    int railwayCasing = 0;
+    int railwayCenter = 0;
+    int metroCasing = 0;
+    int metroCenter = 0;
+    for (const auto& cmd : commands) {
+        EXPECT_EQ(90, cmd.vectorPaintOrder);
+        if (cmd.vectorPaintSubOrder == 0 &&
+            cmd.vectorUniforms.dashPatternCount == 2.0f) {
+            ++railwayCasing;
+            EXPECT_FLOAT_EQ(2.0f, cmd.vectorUniforms.lineWidthPx);
+            EXPECT_EQ((std::array<float, 4>{2.0f, 2.0f, 0.0f, 0.0f}),
+                      cmd.vectorUniforms.dashPattern);
+        } else if (cmd.vectorPaintSubOrder == 1 &&
+                   cmd.vectorUniforms.lineWidthPx == 0.0f) {
+            ++railwayCenter;
+        } else if (cmd.vectorPaintSubOrder == 0) {
+            ++metroCasing;
+            EXPECT_FLOAT_EQ(3.0f, cmd.vectorUniforms.lineWidthPx);
+            EXPECT_FLOAT_EQ(0.0f, cmd.vectorUniforms.dashPatternCount);
+        } else {
+            ++metroCenter;
+            EXPECT_FLOAT_EQ(2.0f, cmd.vectorUniforms.lineWidthPx);
+        }
+    }
+    EXPECT_EQ(1, railwayCasing);
+    EXPECT_EQ(1, railwayCenter);
+    EXPECT_EQ(1, metroCasing);
+    EXPECT_EQ(1, metroCenter);
+}
+
+TEST_F(FeatureRenderLayerTest, LineCasingRespectsZoomWindow) {
+    FeatureRenderStyle style = layer_->style();
+    style.lineCasingEnabled = true;
+    style.lineCasingExtraWidthPx = 3.0f;
+    // The fixture camera is a broad view at roughly zoom 2.2.
+    style.lineCasingMinZoom = 10.0;
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makeLine(6.0, 29.0, 0.05));
+
+    RenderCommandList commands = build();
+    ASSERT_EQ(1u, commands.size());
+    EXPECT_EQ(RenderCommandKind::VectorLine, commands[0].kind);
+    EXPECT_EQ(0, commands[0].vectorPaintSubOrder);
+}
+
+TEST_F(FeatureRenderLayerTest, FillStyleGroupRespectsDisplayZoomWindow) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(37.0);
+    style.fillStyleGroupExpr = StyleExpression::literal(37.0);
+    // Fixture zoom is approximately 2.2.
+    style.fillMinZoomByStyleGroup[37] = 3.0;
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makePolygon(6.0, 29.0, 0.02));
+
+    RenderCommandList hidden = build();
+    EXPECT_TRUE(std::none_of(hidden.begin(), hidden.end(), [](const auto& cmd) {
+        return cmd.kind == RenderCommandKind::VectorFill;
+    }));
+
+    style.fillMinZoomByStyleGroup[37] = 2.0;
+    layer_->setStyleForContractTest(style);
+    RenderCommandList visible = build();
+    EXPECT_TRUE(std::any_of(visible.begin(), visible.end(), [](const auto& cmd) {
+        return cmd.kind == RenderCommandKind::VectorFill &&
+               cmd.vectorPaintOrder == 37;
+    }));
+
+    // maxZoom is exclusive, matching point/label and line style windows.
+    style.fillMaxZoomByStyleGroup[37] = 2.0;
+    layer_->setStyleForContractTest(style);
+    RenderCommandList expired = build();
+    EXPECT_TRUE(std::none_of(expired.begin(), expired.end(), [](const auto& cmd) {
+        return cmd.kind == RenderCommandKind::VectorFill;
+    }));
+}
+
+TEST_F(FeatureRenderLayerTest,
+       ProviderVisibilityWindowUsesOptInFractionalZoomSelector) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::literal(37.0);
+    style.fillStyleGroupExpr = StyleExpression::literal(37.0);
+    style.fillMinZoomByStyleGroup[37] = 3.0;
+    style.visibilityZoomCeilFraction = 0.8;
+    layer_->setStyleForContractTest(style);
+    layer_->store().addFeature(makePolygon(0.0, 0.0, 0.02));
+
+    const double radius = Ellipsoid::WGS84().radii().x();
+    auto setZoom = [&](double zoom) {
+        const double height = 4.0e7 / std::pow(2.0, zoom);
+        camera_.lookAt(Vec3(radius + height, 0.0, 0.0), Vec3(radius, 0.0, 0.0),
+                       Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+    };
+    const auto hasFill = [](const RenderCommandList& commands) {
+        return std::any_of(commands.begin(), commands.end(), [](const auto& cmd) {
+            return cmd.kind == RenderCommandKind::VectorFill &&
+                   cmd.vectorPaintOrder == 37;
+        });
+    };
+
+    setZoom(2.79);
+    EXPECT_FALSE(hasFill(build()));
+    setZoom(2.80);
+    EXPECT_TRUE(hasFill(build()));
+}
+
 TEST_F(FeatureRenderLayerTest, StencilVolumesGroupedByResolvedColor) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
@@ -2564,7 +7014,7 @@ TEST_F(FeatureRenderLayerTest, StencilVolumesGroupedByResolvedColor) {
         "kind",
         {{"tower", StyleExpression::literal({1.0f, 0.0f, 0.0f, 0.5f})}},
         StyleExpression::literal({0.0f, 0.0f, 1.0f, 0.5f}));
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->setTerrainSampling(makeFlatSampling(50.0f));
 
     Feature a = makePolygon(0.0, 0.0, 0.01);
@@ -2610,7 +7060,7 @@ TEST_F(FeatureRenderLayerTest, OutOfScopeExpressionsFallBackToLiterals) {
         {{0.0, StyleExpression::literal({1.0f, 0.0f, 0.0f, 1.0f})},
          {24.0, StyleExpression::literal({0.0f, 0.0f, 1.0f, 1.0f})}});
     style.lineWidthExpr = StyleExpression::get("width");
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     EXPECT_EQ(nullptr, layer_->style().pointColorExpr);
     EXPECT_EQ(nullptr, layer_->style().lineWidthExpr);
 
@@ -2711,10 +7161,24 @@ TEST(IconAtlasTest, PageFullRejectIsCountedNotSilent) {
     EXPECT_EQ(1, atlas.pageFullRejectCount());
 }
 
+TEST(IconAtlasTest, RemovingOfficialNamespacePreservesGenericImages) {
+    earth_engine::testing::MockRenderDevice device;
+    device.textureRegionUploadSucceeds = true;
+    IconAtlas atlas(&device);
+    ASSERT_TRUE(atlas.addImage("generic", 4, 4, solidRgba(4, 4, 1)));
+    ASSERT_TRUE(atlas.addImage("amap-icons-4-7", 4, 4,
+                               solidRgba(4, 4, 2)));
+    const uint64_t before = atlas.revision();
+    atlas.removeNamePrefix("amap-icons-");
+    EXPECT_NE(nullptr, atlas.frame("generic"));
+    EXPECT_EQ(nullptr, atlas.frame("amap-icons-4-7"));
+    EXPECT_GT(atlas.revision(), before);
+}
+
 TEST_F(FeatureRenderLayerTest, BuiltinShapeBakedIntoVertexShape) {
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "star";
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePointAt(6.0));
 
     RenderCommandList commands = build();
@@ -2733,7 +7197,7 @@ TEST_F(FeatureRenderLayerTest, BuiltinShapeBakedIntoVertexShape) {
 TEST_F(FeatureRenderLayerTest, PinShapeIsBottomAnchored) {
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "pin";
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePointAt(6.0));
 
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
@@ -2750,7 +7214,7 @@ TEST_F(FeatureRenderLayerTest, PinShapeIsBottomAnchored) {
 TEST_F(FeatureRenderLayerTest, UnknownImageNameFallsBackToCircle) {
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "no-such-icon";
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePointAt(6.0));
 
     const auto* vb = dynamic_cast<const earth_engine::testing::DummyBuffer*>(
@@ -2767,7 +7231,7 @@ TEST_F(FeatureRenderLayerTest, AtlasIconBakesUvAspectAndBindsTexture) {
                                                  solidRgba(32, 16, 128)));
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "marker";
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePointAt(6.0));
 
     RenderCommandList commands = build();
@@ -2797,7 +7261,7 @@ TEST_F(FeatureRenderLayerTest, IconInjectedAfterBucketBuildTriggersRebuild) {
     // 下一帧应重镶成图集通道。
     FeatureRenderStyle style = layer_->style();
     style.pointImage = "late";
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePointAt(6.0));
     {
         const auto* vb =
@@ -2825,7 +7289,7 @@ TEST_F(FeatureRenderLayerTest, DataDrivenImageExpressionPerFeature) {
     style.pointImageExpr = StyleExpression::match(
         "kind", {{"tower", StyleExpression::literalString("triangle")}},
         StyleExpression::literalString("square"));
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makeKindPoint(6.0, "tower"));
     layer_->store().addFeature(makeKindPoint(6.001, "gate"));
 
@@ -2847,7 +7311,7 @@ TEST_F(FeatureRenderLayerTest, ZoomDrivenImageExpressionStripped) {
         StyleExpression::zoom(),
         {{0.0, StyleExpression::literalString("star")},
          {24.0, StyleExpression::literalString("pin")}});
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     EXPECT_EQ(nullptr, layer_->style().pointImageExpr);
 
     layer_->store().addFeature(makePointAt(6.0));
@@ -2946,10 +7410,10 @@ TEST_F(FeatureRenderLayerTest, TileRibbonClampDensifiesAtEllipsoidAndSkipsStenci
     ASSERT_FALSE(mesh.lineIndices.empty());
     // 0.1°≈11km、100m 细分 → 顶点数远大于未细分的 3 顶点 ribbon(6)。
     EXPECT_GT(mesh.lineVerts.size(), 12u * 6u);
-    // E 方案 P2:worker 无采样 → 产出钳高源(每 ribbon 顶点 3 float:
-    // lon/lat/colorPacked),供渲染线程 commit/重钳同源采样。
+    // worker 无采样 → 产出完整钳高源(每最终 line vertex 9 float)，
+    // 供渲染线程 commit/重钳同源采样且保留 join/cap。
     ASSERT_FALSE(mesh.lineClampSource.empty());
-    EXPECT_EQ(mesh.lineClampSource.size(), mesh.lineVerts.size() / 12 * 3);
+    EXPECT_EQ(mesh.lineClampSource.size(), mesh.lineVerts.size() / 12 * 9);
     EXPECT_NEAR(mesh.lineClampSource[0], 6.0 * kDeg, 1e-6);
     EXPECT_NEAR(mesh.lineClampSource[1], 29.0 * kDeg, 1e-6);
     // 顶点落在椭球面(高≈0),而非山地范围中点(1250m)。
@@ -3017,7 +7481,10 @@ TEST_F(FeatureRenderLayerTest, BuildingExtrusionEmitsVectorExtrusionCommand) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::Absolute;
     style.buildingExtrusion = true;
-    layer_->setStyle(style);
+    style.fillStyleGroupExpr = StyleExpression::literal(1.0);
+    style.extrusionRoofColorByStyleGroup[1] = {1, 1, 1, 1};
+    style.extrusionWallColorByStyleGroup[1] = {1, 1, 1, 1};
+    layer_->setStyleForContractTest(style);
     Feature b = makePolygon(6.0, 29.0, 0.01);
     b.properties["amap_height"] = "25";
     layer_->store().addFeature(std::move(b));
@@ -3044,13 +7511,569 @@ TEST_F(FeatureRenderLayerTest, BuildingExtrusionEmitsVectorExtrusionCommand) {
     }
 }
 
+TEST_F(FeatureRenderLayerTest,
+       OfficialBuildingColorAndWindowReachFinalExtrusionCommand) {
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main);
+    style.globeFillMaxEdgeMeters = 0.0;
+    layer_->setStyleForContractTest(style);
+
+    Feature building = makePolygon(6.0, 29.0, 0.01);
+    building.properties = {{"amap_class", "55001"},
+                           {"amap_subkey", "21"},
+                           {"amap_draworder", "47"},
+                           {"amap_minzoom", "3"},
+                           {"amap_maxzoom", "30"},
+                           {"amap_height", "25"}};
+    layer_->store().addFeature(std::move(building));
+
+    const Cartographic center((6.005) * kDeg, (29.005) * kDeg);
+    const Vec3 surface = Ellipsoid::WGS84().cartographicToCartesian(center);
+    const Vec3 radial = surface.normalized();
+    auto setZoom = [&](double zoom) {
+        const double height = 4.0e7 / std::pow(2.0, zoom);
+        camera_.lookAt(surface + radial * height, surface,
+                       Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+    };
+    const auto extrusion = [](const RenderCommandList& commands)
+        -> const RenderCommand* {
+        const auto it = std::find_if(
+            commands.begin(), commands.end(), [](const RenderCommand& cmd) {
+                return cmd.kind == RenderCommandKind::VectorExtrusion;
+            });
+        return it == commands.end() ? nullptr : &*it;
+    };
+    const auto unpackColor = [](float packed) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &packed, sizeof(bits));
+        return std::array<int, 4>{
+            static_cast<int>(bits & 0xFF),
+            static_cast<int>((bits >> 8) & 0xFF),
+            static_cast<int>((bits >> 16) & 0xFF),
+            static_cast<int>((bits >> 24) & 0xFF)};
+    };
+
+    // Official provider minZoom 17 maps to display zoom 16 and uses the
+    // shared fractional selector: 15.79 stays hidden, 15.80 becomes visible.
+    setZoom(15.79);
+    EXPECT_EQ(nullptr, extrusion(build()));
+
+    setZoom(15.80);
+    const RenderCommandList visible = build();
+    const RenderCommand* command = extrusion(visible);
+    ASSERT_NE(nullptr, command);
+    EXPECT_EQ(47, command->vectorPaintOrder);
+    EXPECT_TRUE(command->depthTest);
+    EXPECT_FALSE(command->depthWrite);
+    EXPECT_TRUE(command->blend)
+        << "official subKey 21 alpha=0x80 must reach command state";
+    ASSERT_EQ(28, command->vertexStride);
+    const auto* vb = dynamic_cast<const DummyBuffer*>(command->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    ASSERT_EQ(0u, vb->bytes().size() % (7u * sizeof(float)));
+    const auto* vertices =
+        reinterpret_cast<const float*>(vb->bytes().data());
+    const size_t vertexCount = vb->bytes().size() / (7u * sizeof(float));
+    ASSERT_GT(vertexCount, 0u);
+    for (size_t i = 0; i < vertexCount; ++i) {
+        EXPECT_EQ((std::array<int, 4>{77, 166, 255, 128}),
+                  unpackColor(vertices[i * 7 + 6]));
+    }
+
+    // All official building records currently end at provider zoom 30 while
+    // the production camera contract caps view zoom at 24. The max gate is
+    // covered by the all-record style oracle; it is intentionally not faked
+    // here with an unreachable camera state.
+}
+
+TEST_F(FeatureRenderLayerTest,
+       EveryOfficialBuildingIdentityReachesMatchingFinalExtrusionCommand) {
+    const auto records = amapClassicBuildingRecordsForTest();
+    ASSERT_EQ(25u, records.size());
+    std::vector<Feature> buildings;
+    std::map<int, AmapClassicBuildingRecordForTest> byPaintOrder;
+    for (size_t i = 0; i < records.size(); ++i) {
+        const int paintOrder = 2000 + static_cast<int>(i);
+        byPaintOrder.emplace(paintOrder, records[i]);
+        Feature building = makePolygon(
+            (i % 8) * 0.0002, (i / 8) * 0.0002, 0.0001);
+        building.properties = {
+            {"amap_class", "55001"},
+            {"amap_subkey", std::to_string(records[i].subKey)},
+            {"amap_draworder", std::to_string(paintOrder)},
+            {"amap_minzoom", "1"}, {"amap_maxzoom", "30"},
+            {"amap_height", "12"}};
+        buildings.push_back(std::move(building));
+    }
+
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Main);
+    style.globeFillMaxEdgeMeters = 0.0;
+    layer_->setStyleForContractTest(style);
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), buildings);
+    ASSERT_EQ(records.size(), mesh.extrudeRanges.size());
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 16, 100, 200},
+                  std::move(mesh)));
+
+    const auto rgba8 = [](const std::array<float, 4>& color) {
+        return std::array<int, 4>{
+            static_cast<int>(std::lround(color[0] * 255.0f)),
+            static_cast<int>(std::lround(color[1] * 255.0f)),
+            static_cast<int>(std::lround(color[2] * 255.0f)),
+            static_cast<int>(std::lround(color[3] * 255.0f))};
+    };
+    const auto unpackColor = [](float packed) {
+        uint32_t bits = 0;
+        std::memcpy(&bits, &packed, sizeof(bits));
+        return std::array<int, 4>{
+            static_cast<int>(bits & 0xff),
+            static_cast<int>((bits >> 8) & 0xff),
+            static_cast<int>((bits >> 16) & 0xff),
+            static_cast<int>((bits >> 24) & 0xff)};
+    };
+    const double radius = Ellipsoid::WGS84().radii().x();
+    for (int displayZoom = 15; displayZoom <= 24; ++displayZoom) {
+        const double height = 4.0e7 / std::pow(2.0, displayZoom);
+        camera_.lookAt(Vec3(radius + height, 0.0, 0.0),
+                       Vec3(radius, 0.0, 0.0), Vec3(0.0, 0.0, 1.0));
+        ++frame_.frameId;
+        const auto commands = build();
+        std::map<int, const RenderCommand*> actual;
+        for (const auto& command : commands) {
+            if (command.kind == RenderCommandKind::VectorExtrusion)
+                actual.emplace(command.vectorPaintOrder, &command);
+        }
+        for (const auto& [paintOrder, record] : byPaintOrder) {
+            const bool visible = record.minZoom <= displayZoom + 1 &&
+                                 displayZoom + 1 <= record.maxZoom;
+            const auto found = actual.find(paintOrder);
+            if (!visible) {
+                EXPECT_EQ(actual.end(), found)
+                    << "55001:" << record.subKey
+                    << " must be absent at display zoom " << displayZoom;
+                continue;
+            }
+            ASSERT_NE(actual.end(), found)
+                << "55001:" << record.subKey
+                << " missing final extrusion at display zoom " << displayZoom;
+            const RenderCommand& command = *found->second;
+            const bool translucent = record.roofColor[3] < 0.999f ||
+                                     record.wallColor[3] < 0.999f;
+            EXPECT_EQ(translucent, command.blend);
+            EXPECT_EQ(!translucent, command.depthWrite);
+            const auto* vb = dynamic_cast<const DummyBuffer*>(command.vertexBuffer);
+            const auto* ib = dynamic_cast<const DummyBuffer*>(command.indexBuffer);
+            ASSERT_NE(nullptr, vb);
+            ASSERT_NE(nullptr, ib);
+            const auto* vertices =
+                reinterpret_cast<const float*>(vb->bytes().data());
+            const auto* indices =
+                reinterpret_cast<const uint32_t*>(ib->bytes().data());
+            const auto expectedRoof = rgba8(record.roofColor);
+            const auto expectedWall = rgba8(record.wallColor);
+            for (int i = 0; i < command.indexCount; ++i) {
+                const uint32_t vertex = indices[command.indexOffset + i];
+                const auto actualColor = unpackColor(vertices[vertex * 7 + 6]);
+                EXPECT_TRUE(actualColor == expectedRoof ||
+                            actualColor == expectedWall)
+                    << "55001:" << record.subKey
+                    << " vertex color escaped official roof/wall contract";
+            }
+        }
+    }
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialGuideFrameReachesExactAtlasDemandWithoutFallbackCommand) {
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Poi);
+    layer_->setStyleForContractTest(style);
+    build();  // Cache renderer-owned atlases before committing tile symbols.
+    std::vector<int> demandedAtlases;
+    layer_->setOfficialIconAtlasDemandForTest(
+        [&](int atlas) { demandedAtlases.push_back(atlas); });
+
+    Feature guide;
+    guide.type = GeometryType::Point;
+    guide.rings = {{Cartographic(0.0, 0.0)}};
+    guide.properties = {{"amap_class", "40001"},
+                        {"amap_subkey", "110100"},
+                        {"amap_draworder", "90"},
+                        {"amap_minzoom", "3"},
+                        {"amap_maxzoom", "20"},
+                        {"amap_rank", "1"},
+                        {"name", "ABCD"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(), {guide});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                  std::move(mesh)));
+
+    const double radius = Ellipsoid::WGS84().radii().x();
+    const double height = 4.0e7 / std::pow(2.0, 10.0);
+    camera_.lookAt(Vec3(radius + height, 0.0, 0.0),
+                   Vec3(radius, 0.0, 0.0), Vec3(0.0, 0.0, 1.0));
+    ++frame_.frameId;
+    const RenderCommandList commands = build();
+
+    EXPECT_EQ((std::vector<int>{1}), demandedAtlases)
+        << "official guide field-8 frame must demand its exact atlas";
+    EXPECT_TRUE(std::none_of(
+        commands.begin(), commands.end(), [](const RenderCommand& command) {
+            return command.kind == RenderCommandKind::VectorPoint ||
+                   command.kind == RenderCommandKind::VectorLabel;
+        })) << "missing official atlas must not fall back to a synthetic icon or bare text";
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialGuideFrameReachesFinalUvAndShieldGeometry) {
+    const AmapClassicPoiIconStyle guideIcon =
+        resolveAmapClassicPoiIconStyle(40001, 110100, 10.0);
+    ASSERT_TRUE(guideIcon.enabled);
+    EXPECT_EQ(1, guideIcon.atlas);         // Official guide field 3.
+    EXPECT_EQ(114, guideIcon.iconIndex);   // Official guide field 4.
+    EXPECT_EQ(64, guideIcon.cellWidth);    // Official guide field 5.
+    EXPECT_EQ(64, guideIcon.cellHeight);   // Official guide field 6.
+    EXPECT_EQ(512, guideIcon.atlasWidth);  // Official guide field 7.
+    EXPECT_EQ(1024, guideIcon.atlasHeight);// Official guide field 8.
+
+    MockPlatformBridge bridge;
+    DecodedImage atlasImage;
+    atlasImage.width = 512;
+    atlasImage.height = 1024;
+    atlasImage.channels = 4;
+    atlasImage.pixels.resize(512u * 1024u * 4u);
+    for (int y = 0; y < atlasImage.height; ++y) {
+        for (int x = 0; x < atlasImage.width; ++x) {
+            const size_t offset =
+                (static_cast<size_t>(y) * atlasImage.width + x) * 4u;
+            atlasImage.pixels[offset] = static_cast<uint8_t>(x & 0xff);
+            atlasImage.pixels[offset + 1] = static_cast<uint8_t>(y & 0xff);
+            atlasImage.pixels[offset + 2] =
+                static_cast<uint8_t>((x / 64) | ((y / 64) << 4));
+            atlasImage.pixels[offset + 3] = 255;
+        }
+    }
+    bridge.setDecodedImage(std::move(atlasImage));
+    Engine engine(&device_);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 1.0f);
+    auto pool = std::make_shared<ThreadPool>(1);
+    const AmapClassicRuntime* runtime = engine.installAmapClassicRuntime(
+        bridge, pool, pool, pool, {});
+    ASSERT_NE(nullptr, runtime);
+    Renderer* officialRenderer = const_cast<Renderer*>(engine.renderer());
+    ASSERT_NE(nullptr, officialRenderer);
+
+    FeatureRenderLayer officialLayer(
+        "guide-atlas1-official", &device_, Ellipsoid::WGS84());
+    FrameState officialFrame = frame_;
+    Camera officialCamera;
+    officialFrame.camera = &officialCamera;
+    auto buildOfficial = [&]() {
+        RenderCommandList commands;
+        officialLayer.buildRenderCommands(
+            officialFrame, *officialRenderer, commands);
+        return commands;
+    };
+
+    GlyphAtlas* glyphAtlas = officialRenderer->glyphAtlas();
+    ASSERT_NE(nullptr, glyphAtlas);
+    glyphAtlas->activateAmapOfficialProviderForTest([](uint32_t) {});
+    std::vector<uint8_t> glyphPixels(128u * 32u, 127);
+    const std::vector<GlyphAtlas::ProviderGlyph> guideGlyphs = {
+        {19968, 22, 22, 1, -2, 24, 0, 0},
+        {20108, 22, 22, 1, -2, 24, 32, 0},
+        {19977, 22, 22, 1, -2, 24, 64, 0},
+        {22235, 22, 22, 1, -2, 24, 96, 0},
+    };
+    ASSERT_TRUE(glyphAtlas->installAmapOfficialGlyphBatchForTest(
+        128, 32, glyphPixels, guideGlyphs));
+    buildOfficial();
+    ASSERT_TRUE(const_cast<AmapClassicRuntime*>(runtime)
+                    ->installAtlasForContractTest(
+                        1, {0x89, 0x50, 0x4e, 0x47}));
+    const IconAtlas::Frame* frame =
+        officialRenderer->iconAtlas()->frame("amap-icons-1-114");
+    ASSERT_NE(nullptr, frame);
+    const auto exactIndex114Payload = std::find_if(
+        device_.textureRegionPayloads.begin(),
+        device_.textureRegionPayloads.end(), [](const auto& pixels) {
+            constexpr size_t kCellBytes = 64u * 64u * 4u;
+            if (pixels.size() != kCellBytes) return false;
+            // atlas1 has eight columns. One-based index114 maps to zero-based
+            // cell113: x=64, y=14*64=896.
+            return pixels[0] == 64 && pixels[1] == 128 &&
+                   pixels[2] == 0xe1 && pixels[3] == 255 &&
+                   pixels[kCellBytes - 4] == 127 &&
+                   pixels[kCellBytes - 3] == 191 &&
+                   pixels[kCellBytes - 2] == 0xe1 &&
+                   pixels[kCellBytes - 1] == 255;
+        });
+    ASSERT_NE(device_.textureRegionPayloads.end(), exactIndex114Payload)
+        << "guide index/cell/atlas dimensions must crop source cell "
+           "(64,896)-(127,959)";
+
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Poi);
+    officialLayer.setStyleForContractTest(style);
+    Feature guide;
+    guide.type = GeometryType::Point;
+    guide.rings = {{Cartographic(0.0, 0.0)}};
+    guide.properties = {{"amap_class", "40001"},
+                        {"amap_subkey", "110100"},
+                        {"amap_draworder", "90"},
+                        {"amap_minzoom", "3"},
+                        {"amap_maxzoom", "20"},
+                        {"amap_rank", "1"},
+                        {"name", "一二三四"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        officialLayer.workerTessellationContext(), {guide});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              officialLayer.commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 10, 100, 200},
+                  std::move(mesh)));
+    const double radius = Ellipsoid::WGS84().radii().x();
+    const double height = 4.0e7 / std::pow(2.0, 10.0);
+    officialCamera.lookAt(Vec3(radius + height, 0.0, 0.0),
+                          Vec3(radius, 0.0, 0.0),
+                          Vec3(0.0, 0.0, 1.0));
+    officialFrame.devicePixelRatio = 1.0f;
+    ++officialFrame.frameId;
+    const RenderCommandList commands = buildOfficial();
+    const auto point = std::find_if(
+        commands.begin(), commands.end(), [](const RenderCommand& command) {
+            return command.kind == RenderCommandKind::VectorPoint;
+    });
+    ASSERT_NE(commands.end(), point);
+    EXPECT_FLOAT_EQ(1.0f, point->vectorUniforms.pointSizePx);
+    const auto* pointVb = dynamic_cast<const DummyBuffer*>(point->vertexBuffer);
+    ASSERT_NE(nullptr, pointVb);
+    ASSERT_EQ(4u * 9u * sizeof(float), pointVb->bytes().size());
+    const auto* pointVertices =
+        reinterpret_cast<const float*>(pointVb->bytes().data());
+    EXPECT_FLOAT_EQ(frame->u0, pointVertices[5]);
+    EXPECT_FLOAT_EQ(frame->v1, pointVertices[6]);
+    EXPECT_FLOAT_EQ(frame->u1, pointVertices[2 * 9 + 5]);
+    EXPECT_FLOAT_EQ(frame->v0, pointVertices[2 * 9 + 6]);
+    EXPECT_FLOAT_EQ(24.0f * 9.0f / 7.0f,
+                    pointVertices[2 * 9 + 3] - pointVertices[3]);
+    EXPECT_FLOAT_EQ(24.0f,
+                    pointVertices[2 * 9 + 4] - pointVertices[4]);
+    const auto label = std::find_if(
+        commands.begin(), commands.end(), [](const RenderCommand& command) {
+            return command.kind == RenderCommandKind::VectorLabel;
+        });
+    ASSERT_NE(commands.end(), label);
+    EXPECT_EQ((std::array<float, 4>{1.0f, 1.0f, 1.0f, 1.0f}),
+              label->vectorUniforms.color);
+    EXPECT_EQ((std::array<float, 4>{0.0f, 0.0f, 0.0f, 0.0f}),
+              label->vectorUniforms.haloColor);
+    EXPECT_FLOAT_EQ(6.0f, FeatureRenderLayer::resolvedLabelSizePx(
+                              style, -110100, 10.0, 0.0f));
+    EXPECT_FLOAT_EQ(0.0f, FeatureRenderLayer::resolvedLabelHaloWidthPx(
+                              style, -110100, 10.0));
+    EXPECT_NEAR(0.78125f, label->vectorUniforms.sdfEdge, 1e-6f);
+    EXPECT_NEAR(0.0f, label->vectorUniforms.sdfHaloDelta, 1e-6f);
+    EXPECT_NEAR(1.4142f * 1.5f / 6.0f,
+                label->vectorUniforms.sdfGamma, 1e-6f);
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialAtlas50CellReachesFinalUvAndNineteenCssPixelQuad) {
+    MockPlatformBridge bridge;
+    DecodedImage atlasImage;
+    atlasImage.width = 512;
+    atlasImage.height = 1024;
+    atlasImage.channels = 4;
+    atlasImage.pixels.resize(512u * 1024u * 4u, 255);
+    bridge.setDecodedImage(std::move(atlasImage));
+    Engine engine(&device_);
+    engine.onSurfaceCreated();
+    engine.onSurfaceChanged(800, 600, 2.0f);
+    auto pool = std::make_shared<ThreadPool>(1);
+    const AmapClassicRuntime* runtime = engine.installAmapClassicRuntime(
+        bridge, pool, pool, pool, {});
+    ASSERT_NE(nullptr, runtime);
+    ASSERT_TRUE(const_cast<AmapClassicRuntime*>(runtime)
+                    ->installAtlasForContractTest(
+                        50, {0x89, 0x50, 0x4e, 0x47}));
+    Renderer* officialRenderer = const_cast<Renderer*>(engine.renderer());
+    ASSERT_NE(nullptr, officialRenderer);
+    const IconAtlas::Frame* frame =
+        officialRenderer->iconAtlas()->frame("amap-icons-50-31");
+    ASSERT_NE(nullptr, frame);
+    // Official label field 4 final atlas consumer.
+    // Official label field 5 final one-based icon-index consumer.
+    // Official label field 8 final source-atlas-width consumer.
+    EXPECT_FLOAT_EQ(48.0f, frame->widthPx);
+    // Official label field 6 final cell-width consumer.
+    EXPECT_FLOAT_EQ(48.0f, frame->heightPx);
+    // Official label field 7 final cell-height consumer.
+
+    FeatureRenderLayer officialLayer(
+        "atlas50-official", &device_, Ellipsoid::WGS84());
+    FeatureRenderStyle style =
+        earth_engine::testing::amapOfficialStyleForTest(
+            FeatureRenderLayer::AmapClassicProfile::Poi);
+    officialLayer.setStyleForContractTest(style);
+    FrameState officialFrame = frame_;
+    officialFrame.devicePixelRatio = 2.0f;
+
+    Feature poi;
+    poi.type = GeometryType::Point;
+    poi.rings = {{Cartographic(0.0, 0.0)}};
+    poi.properties = {{"amap_class", "10037"},
+                      {"amap_subkey", "43"},
+                      {"amap_draworder", "90"},
+                      {"amap_minzoom", "3"},
+                      {"amap_maxzoom", "20"},
+                      {"amap_rank", "1"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        officialLayer.workerTessellationContext(), {poi});
+    ASSERT_EQ(1u, mesh.symbols.size());
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              officialLayer.commitTileMesh(
+                  TileKey{SchemeId("XYZ-WebMercator"), 17, 100, 200},
+                  std::move(mesh)));
+
+    const double radius = Ellipsoid::WGS84().radii().x();
+    const double height = 4.0e7 / std::pow(2.0, 17.0);
+    Camera officialCamera;
+    officialCamera.lookAt(Vec3(radius + height, 0.0, 0.0),
+                          Vec3(radius, 0.0, 0.0),
+                          Vec3(0.0, 0.0, 1.0));
+    officialFrame.camera = &officialCamera;
+    ++officialFrame.frameId;
+    RenderCommandList commands;
+    officialLayer.buildRenderCommands(
+        officialFrame, *officialRenderer, commands);
+    const auto point = std::find_if(
+        commands.begin(), commands.end(), [](const RenderCommand& command) {
+            return command.kind == RenderCommandKind::VectorPoint;
+        });
+    ASSERT_NE(commands.end(), point);
+    EXPECT_FLOAT_EQ(2.0f, point->vectorUniforms.pointSizePx);
+    const auto* vb = dynamic_cast<const DummyBuffer*>(point->vertexBuffer);
+    ASSERT_NE(nullptr, vb);
+    ASSERT_EQ(4u * 9u * sizeof(float), vb->bytes().size());
+    const auto* vertices =
+        reinterpret_cast<const float*>(vb->bytes().data());
+    EXPECT_LT(vertices[8], 0.0f);
+    EXPECT_FLOAT_EQ(frame->u0, vertices[5]);
+    EXPECT_FLOAT_EQ(frame->v1, vertices[6]);
+    EXPECT_FLOAT_EQ(frame->u1, vertices[2 * 9 + 5]);
+    EXPECT_FLOAT_EQ(frame->v0, vertices[2 * 9 + 6]);
+    EXPECT_FLOAT_EQ(38.0f,
+                    (vertices[2 * 9 + 3] - vertices[3]) *
+                        point->vectorUniforms.pointSizePx);
+    // Official label field 10 final display-width consumer.
+    EXPECT_FLOAT_EQ(38.0f,
+                    (vertices[2 * 9 + 4] - vertices[4]) *
+                        point->vectorUniforms.pointSizePx);
+    // Official label field 9 final display-height consumer.
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialBuildingRejectsTransparentAndUnknownBeforeTessellation) {
+    FeatureRenderStyle style = layer_->style();
+    style.paintOrderExpr = StyleExpression::get("amap_draworder");
+    style = earth_engine::testing::amapOfficialStyleForTest(FeatureRenderLayer::AmapClassicProfile::Regions);
+    FeatureRenderLayer::TessellationContext ctx{style, Ellipsoid::WGS84()};
+
+    auto building = [](const char* subKey) {
+        Feature feature = makePolygon(6.0, 29.0, 0.01);
+        feature.properties["amap_class"] = "55001";
+        feature.properties["amap_subkey"] = subKey;
+        feature.properties["amap_draworder"] = "47";
+        feature.properties["amap_height"] = "6";
+        feature.properties["amap_minzoom"] = "3";
+        feature.properties["amap_maxzoom"] = "20";
+        return feature;
+    };
+
+    auto visible = FeatureRenderLayer::tessellateTileMesh(ctx, {building("1")});
+    ASSERT_FALSE(visible.extrudeIndices.empty());
+    ASSERT_EQ(1u, visible.extrudeRanges.size());
+    EXPECT_EQ(47, visible.extrudeRanges[0].paintOrder);
+    EXPECT_EQ(55001001, visible.extrudeRanges[0].styleGroup);
+
+    auto inherited =
+        FeatureRenderLayer::tessellateTileMesh(ctx, {building("2")});
+    EXPECT_FALSE(inherited.extrudeIndices.empty());
+
+    auto unknown =
+        FeatureRenderLayer::tessellateTileMesh(ctx, {building("5")});
+    EXPECT_TRUE(unknown.extrudeIndices.empty());
+    EXPECT_TRUE(unknown.fillIndices.empty());
+
+    Feature zeroHeight = building("1");
+    zeroHeight.properties["amap_height"] = "0";
+    auto zero = FeatureRenderLayer::tessellateTileMesh(ctx, {zeroHeight});
+    EXPECT_TRUE(zero.extrudeIndices.empty());
+    EXPECT_TRUE(zero.fillIndices.empty())
+        << "official building height=0 must not revive planar fill";
+
+    Feature negativeHeight = building("1");
+    negativeHeight.properties["amap_height"] = "-1";
+    auto negative =
+        FeatureRenderLayer::tessellateTileMesh(ctx, {negativeHeight});
+    EXPECT_TRUE(negative.extrudeIndices.empty());
+    EXPECT_TRUE(negative.fillIndices.empty())
+        << "invalid official building height must fail closed";
+}
+
+TEST_F(FeatureRenderLayerTest,
+       OfficialBuildingCommitAddsRelativeHeightToSampledTerrain) {
+    FeatureRenderLayer layer("official-building-terrain", &device_,
+                             Ellipsoid::WGS84());
+    layer.installAmapClassicProfile(
+        FeatureRenderLayer::AmapClassicProfile::Main);
+    layer.setTerrainSampling(makeFlatSampling(600.0f));
+
+    Feature building = makePolygon(6.0, 29.0, 0.002);
+    building.properties = {{"amap_class", "55001"},
+                           {"amap_subkey", "1"},
+                           {"amap_draworder", "47"},
+                           {"amap_minzoom", "3"},
+                           {"amap_maxzoom", "20"},
+                           {"amap_height", "6"}};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer.workerTessellationContext(), {building});
+    ASSERT_FALSE(mesh.extrudeVerts.empty());
+    ASSERT_FALSE(mesh.extrudeClampSource.empty());
+    EXPECT_EQ(mesh.extrudeClampSource.size(), mesh.extrudeVerts.size());
+    const Vec3 origin = mesh.origin;
+    layer.clampTileMeshForTest(mesh);
+    const float* vertices = mesh.extrudeVerts.data();
+    const Cartographic wallBase =
+        Ellipsoid::WGS84().cartesianToCartographic(
+            origin + Vec3(vertices[0], vertices[1], vertices[2]));
+    const Cartographic wallTop =
+        Ellipsoid::WGS84().cartesianToCartographic(
+            origin + Vec3(vertices[21], vertices[22], vertices[23]));
+    EXPECT_NEAR(wallBase.height(), 600.0, 1.0);
+    EXPECT_NEAR(wallTop.height(), 606.0, 1.0);
+}
+
 TEST_F(FeatureRenderLayerTest, DisabledStencilFillFallsBackToSinglePassFill) {
     FeatureRenderStyle style = layer_->style();
     style.altitudeMode = FeatureAltitudeMode::ClampToGround;
     style.terrainClampRibbon = true;  // 镜像 demo:描边走 ribbon,不进 stencil
     style.stencilFillEnabled = false;
     style.heightOffset = 2.5;
-    layer_->setStyle(style);
+    layer_->setStyleForContractTest(style);
     layer_->store().addFeature(makePolygon(6.0, 29.0, 0.02));
 
     RenderCommandList commands = build();

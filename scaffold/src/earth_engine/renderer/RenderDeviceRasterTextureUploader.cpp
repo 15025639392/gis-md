@@ -24,8 +24,13 @@ std::unique_ptr<Texture> RenderDeviceRasterTextureUploader::uploadRasterTexture(
     TextureDesc desc;
     desc.width = image.width;
     desc.height = image.height;
-    desc.format = (image.channels == 4) ? TextureDesc::Format::RGBA8
-                                        : TextureDesc::Format::RGB8;
+    // Keep single-channel mask pages single-channel on the GPU.  Treating
+    // channels==1 as RGB8 makes the byte-count/format contract disagree with
+    // the upload buffer and silently rejects the 256² R8 surface-mask path.
+    desc.format = (image.channels == 1)
+        ? TextureDesc::Format::R8
+        : ((image.channels == 4) ? TextureDesc::Format::RGBA8
+                                  : TextureDesc::Format::RGB8);
     desc.data = texData;
     desc.dataSize = texSize;
     desc.mipmap = options.generateMipmaps;

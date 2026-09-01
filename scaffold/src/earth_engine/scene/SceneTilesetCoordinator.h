@@ -25,6 +25,11 @@ public:
     void setPrimary(std::unique_ptr<Tileset> tileset);
     void stagePrimaryReplacement(std::unique_ptr<Tileset> tileset);
     void addContent(std::unique_ptr<Tileset> tileset);
+    /// Tear down every tileset before an owner of borrowed overlay state is
+    /// destroyed.  This is intentionally explicit rather than relying on
+    /// member destruction order because overlays are owned outside the
+    /// coordinator (SDK facade) while Tileset only borrows them.
+    void clearAll();
 
     Tileset* primary() const { return primary_.get(); }
     Tileset* pendingPrimary() { return pendingPrimary_.get(); }

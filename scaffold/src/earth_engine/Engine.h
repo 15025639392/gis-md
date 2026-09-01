@@ -3,9 +3,10 @@
 #include "core/math/Vec3.h"
 #include "core/resources/SceneFrameResourceArbiter.h"
 #include "data/MvtVectorSource.h"
+#include "style/AmapClassicRuntime.h"
 #include "scene/Diagnostics.h"
 #include "scene/FrameState.h"
-#include "style/StyleDocument.h"
+#include "renderer/GlyphAtlas.h"
 #include "threading/CancellationToken.h"
 #include "tiling/TileKey.h"
 #include "tiling/TileOcclusionCallback.h"
@@ -13,6 +14,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -35,8 +37,9 @@ class TerrainDisplacementTemplatePool;
 class Tileset;
 class FeatureRenderLayer;
 class VectorLayer;
-class VectorDrapeImageryProvider;
-class RoadFieldSource;
+class PlatformBridge;
+class ThreadPool;
+class EarthEngineSdkFacade;
 struct PresentationTrace;
 struct InputEvent;
 struct PickResult;
@@ -113,7 +116,14 @@ public:
                             std::unique_ptr<FeatureRenderLayer> layer);
     bool removeMvtVectorSource(const std::string& layerId);
     size_t mvtVectorSourceCount() const;
-    FeatureRenderLayer* mvtVectorLayer(const std::string& layerId) const;
+
+    const AmapClassicRuntime* installAmapClassicRuntime(
+        PlatformBridge& platformBridge,
+        std::shared_ptr<ThreadPool> type1DecodePool,
+        std::shared_ptr<ThreadPool> poiDecodePool,
+        std::shared_ptr<ThreadPool> tessellationPool,
+    AmapClassicRuntime::Options options);
+    bool hasAmapClassicRuntime() const;
 
     /// 矢量标注字体注入(P5b):应用层读字体文件供字节(引擎不碰文件系统)。
     /// TrueType/ttc 首字体;CFF/OTF 不支持返回 false。渲染线程调用。
@@ -127,6 +137,7 @@ public:
                       int width,
                       int height,
                       const std::vector<uint8_t>& rgba);
+    bool hasIconImage(const std::string& name) const;
 
     /// cesium-native 对齐：设置统一 Tileset。
     void setTileset(std::unique_ptr<Tileset> tileset);
@@ -215,15 +226,15 @@ public:
 
     /// 北极星 Phase 2b 虚拟纹理 C 方案 PoC(默认关,测量台专用):每帧跑
     /// feedback→回读→页表整链,量移动端固定开销(回读 stall),数报进 EarthPerf。
-    void setVirtualTexturePocEnabled(bool enabled);
+    bool setVirtualTexturePocEnabled(bool enabled);
 
     /// 北极星 Phase 2b B 方案(逐瓦片合成)PoC(默认关,测量台专用):每帧对当前
     /// 可见瓦片数做 N 个离屏 bake pass,量 B 的每帧烘焙开销,数报进 EarthPerf。
-    void setTileCompositeBakePocEnabled(bool enabled);
+    bool setTileCompositeBakePocEnabled(bool enabled);
 
     /// 北极星 Phase 2b 合成方案「门①」原型(默认关,测量台专用):一屏 fill 量
     /// 逐片元间接采样倍率(baseline vs descent),数报进 EarthPerf 头行。
-    void setVtIndirectionSamplePocEnabled(bool enabled);
+    bool setVtIndirectionSamplePocEnabled(bool enabled);
 
     /// 北极星 合成方案「门③ Step3」页存储原型(默认关):建一张 texture2DArray
     /// 页存储,挂到一个 capped 真实地形瓦片,terrain 片元按页表 layer 采样。
@@ -302,7 +313,10 @@ public:
     /// C-2c:页上传后的 GPU 叠画钩子(矢量走这条)。页存储可能因 surface 重建而
     /// 重新创建,故指针存在 Engine 上、每次建store时重新挂上。不持有。
     /// C-2c:渲染器(叠画方拿着色器用)。场景未就绪时为 nullptr。
-    Renderer* renderer() const;
+    /// Read-only renderer diagnostics. Resource mutation must go through the
+    /// guarded Engine/Scene APIs so a caller cannot replace sealed official
+    /// fonts or icon frames through an atlas back door.
+    const Renderer* renderer() const;
 
     /// 北极星 Phase 2c 地形 GPU 位移(默认关,flag-gated A/B):启用后地形瓦片改用
     /// 共享位移模板 VBO/IBO(同 {LOD,row} 复用,§5 有界)+ per-tile 刚体帧。Stage A
@@ -318,55 +332,38 @@ public:
     void setGpuHeightBakeEnabled(bool enabled);
     bool gpuHeightBakeEnabled() const { return gpuHeightBakeEnabled_; }
 
-    /// 刀2 路网 SDF 场:注入页存储"第二平面"的生产回调(签名/契约见
-    /// TerrainPageStore::Config::roadFieldRequest)、线色与分级宽度 ramp
-    /// (z0, halfPx0, z1, halfPx1;线半宽设备px,FS 在局部 zoom 上线性插值,
-    /// 语义见 Config::roadFieldWidthRamp)。**request 回调须在首帧渲染前
-    /// 注入**(页存储 lazy 初始化时快照 Config,之后注入不生效);样式
-    /// (线色/ramp/分级)自 V26 一期起运行期可换,见下方三个失效入口。
-    /// fieldMaxZoom:场页 zoom 封顶,= max(场数据 maxZoom, 样式最后一个
-    /// zoom 分级档)(语义详见 TerrainPageStore::Config::roadFieldMaxZoom)。
-    void setRoadFieldSource(
-        std::function<void(const TileKey&, CancellationToken,
-                           std::function<void(std::vector<uint8_t>)>)>
-            request,
-        std::array<float, 4> lineColor,
-        std::array<float, 4> widthRampPx,
-        int fieldMaxZoom);
-
-    /// ==== V26 一期:运行期换样式的失效通路(渲染线程)。====
-    /// 与 setRoadFieldSource 的"首帧前"限定互补:request 回调(换数据源)仍
-    /// 只能首帧前注入;**样式**自此运行期可换,走下面三个入口,按成本类分流。
-    ///
-    /// Uniform 类(零重烘):改场线色/宽度 ramp。任意时刻可调:首帧前落成员
-    /// (随 Config 快照带入),首帧后直写页存储,下一帧生效。
-    void setRoadFieldStyleUniforms(std::array<float, 4> lineColor,
-                                   std::array<float, 4> widthRampPx);
-    /// Re-bake 类(线):场分级样式已换(RoadFieldSource::setStyle 之后)→
-    /// 作废全部场页触发重烘(含清跳烘门,否则旧样式静默复活);
-    /// fieldMaxZoom >= 0 同步改场页 zoom 封顶。页存储未建时只落成员。
-    /// 瞬态:重烘期间路网短暂消失(换肤是低频操作,可接受;设计文档 §4.3)。
-    void invalidateRoadFieldPages(int fieldMaxZoom = -1);
-    /// Re-bake 类(面):面 drape 样式已换(VectorDrapeImageryProvider::
-    /// setStyle 之后)→ 作废全部合成页触发重栅格化(影像源同页重合成,
-    /// fetch 走 HttpCache 通常为热)。页存储未建时 no-op。
-    void invalidateComposedTerrainPages();
-
-    /// ==== V26 三期:样式文档一口气分发(渲染线程)。====
-    /// 目标注册:宿主建层后注册,teardown 前清(全传空)。drape 为裸指针
-    /// (overlay 持有,注册方负责生命周期纪律 —— 与 demo gDrapeProviderRaw
-    /// 同一套);场 shared;symbol 层须已 addFeatureRenderLayer(Engine 只借
-    /// 引用,不持有)。任一目标为空 = 该路不分发(文档对应层被忽略)。
-    void setStyleTargets(VectorDrapeImageryProvider* drapeProvider,
-                         std::shared_ptr<RoadFieldSource> fieldSource,
-                         FeatureRenderLayer* symbolLayer);
-    /// 应用样式 JSON:parse → compile(能力契约 fail-loud)→ planStyleApply
-    /// (成本类路由:Uniform 直写 / Re-bake 面页重栅格化 / Re-bake 场页重烘 /
-    /// Re-tess 符号全桶重镶)→ 按 plan 分发。返回错误清单;**非空 = 整份
-    /// 拒收,现行样式不动**(不半应用)。
-    std::vector<StyleError> applyStyleDocument(const std::string& jsonText);
-
 private:
+    struct FrameWakeGate {
+        std::mutex mutex;
+        Engine* engine = nullptr;
+        std::function<void()> hostCallback;
+    };
+    friend class AmapClassicAssets;
+    friend class AmapClassicRuntime;
+    friend class AmapClassicSourceBundle;
+    friend class EarthEngineSdkFacade;
+    bool addOfficialFeatureRenderLayer(
+        std::unique_ptr<FeatureRenderLayer> layer);
+    std::unique_ptr<FeatureRenderLayer> removeOfficialFeatureRenderLayer(
+        const std::string& layerId);
+    void activateAmapClassicOfficialGlyphProvider(
+        std::function<void(uint32_t)> demand);
+    bool installAmapClassicOfficialGlyphBatch(
+        int imageWidth, int imageHeight,
+        const std::vector<uint8_t>& grayscale,
+        const std::vector<GlyphAtlas::ProviderGlyph>& glyphs);
+    bool addOfficialIconImage(const std::string& name, int width, int height,
+                              const std::vector<uint8_t>& rgba);
+    void clearAmapClassicOfficialAssets();
+    bool installAmapClassicTerrainTileset(std::unique_ptr<Tileset> tileset);
+    /// Internal teardown bridge used by the SDK facade before releasing the
+    /// ActivatedRasterOverlay objects borrowed by the official Tileset.
+    void clearAmapClassicTerrainTileset();
+    /// Internal SDK bridge: the official runtime remains Scene-owned, but the
+    /// facade may borrow its const source bundle while constructing the one
+    /// sealed AMap surface-mask overlay. The returned pointer is non-owning
+    /// and valid only while hasAmapClassicRuntime() is true.
+    AmapClassicRuntime* amapClassicRuntimeForSdk();
     /// Phase B(WorkLedger 接管 gating)的活性判据。仅当 kEnableWorkLedgerGating
     /// 翻转为 true 时被 needsFrame 调用;默认关,当前为死代码骨架(见其定义处注释)。
     bool ledgerGatingNeedsFrame(const char** reason);
@@ -382,9 +379,13 @@ private:
     /// Phase B 平台级唤醒回调(见 setFrameRequestCallback)。非空 = 宿主已接
     /// 唤醒,ledger gating 方可安全启用。
     std::function<void()> frameRequestCallback_;
+    std::shared_ptr<FrameWakeGate> frameWakeGate_ =
+        std::make_shared<FrameWakeGate>();
 
     RenderDevice* device_;
     std::unique_ptr<Scene> scene_;
+    bool genericLabelFontInstalled_ = false;
+    bool genericIconInstalled_ = false;
     std::unique_ptr<OffscreenPostProcess> offscreenPostProcess_;
     std::unique_ptr<VirtualTexturePoc> virtualTexturePoc_;
     std::unique_ptr<TileCompositeBakePoc> tileCompositeBakePoc_;
@@ -460,20 +461,6 @@ private:
     bool terrainGpuDisplacementEnabled_ = true;
     // B:GPU 高度烘焙开关(默认关,CPU 烘焙路径;真机 A/B 用)。
     bool gpuHeightBakeEnabled_ = false;
-    // 刀2 路网场注入(页存储 lazy init 时快照进 Config)。
-    std::function<void(const TileKey&, CancellationToken,
-                       std::function<void(std::vector<uint8_t>)>)>
-        roadFieldRequest_;
-    // V26 三期:样式文档分发目标(宿主注册,Engine 只借引用)与上次编译产物
-    // (成本类路由的 old 侧)。均渲染线程独占。
-    VectorDrapeImageryProvider* styleDrapeTarget_ = nullptr;
-    std::shared_ptr<RoadFieldSource> styleFieldTarget_;
-    FeatureRenderLayer* styleSymbolTarget_ = nullptr;
-    std::optional<CompiledStyle> lastCompiledStyle_;
-
-    std::array<float, 4> roadFieldColor_{0.96f, 0.96f, 0.94f, 0.86f};
-    std::array<float, 4> roadFieldWidthRampPx_{12.0f, 1.05f, 16.0f, 3.15f};
-    int roadFieldMaxZoom_ = 15;
     // 本帧场景 pass 是否画进了离屏目标(决定帧尾要不要后处理 pass)。
     bool offscreenPassActive_ = false;
     int surfaceWidthPixels_ = 0;

@@ -97,6 +97,10 @@ bool WorkLedger::consumeLanded(const char** outLabel) {
     return true;
 }
 
+bool WorkLedger::hasUnconsumedLanding() const {
+    return landed_.load(std::memory_order_acquire);
+}
+
 bool WorkLedger::anyOutstanding(const char** outLabel) const {
     const bool busy = landing_.load(std::memory_order_acquire) > 0 ||
                       pumped_.load(std::memory_order_acquire) > 0;

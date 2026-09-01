@@ -26,6 +26,7 @@ struct TileRenderCommandPrepareContext {
     float transitionOpacity = 1.0f;
     bool allowSynchronousMeshPrep = true;
     std::optional<std::array<float, 4>> surfaceClipUv;
+    const TilesetTile* terrainFillMaskOwner = nullptr;
     const TilesetTile* surfaceClipDescendant = nullptr;  // 机制 A,见 GltfDrawCommandBuildContext
     const TerrainEdgeLutTableMap* edgeLutTables = nullptr;  // ①-1 A′,同上
 };
@@ -142,6 +143,7 @@ public:
                     context.generation,
                     context.transitionOpacity,
                     context.surfaceClipUv,
+                    context.terrainFillMaskOwner,
                     context.surfaceClipDescendant,
                     context.edgeLutTables},
                 timings ? &timings->drawCommand : nullptr);
@@ -177,6 +179,7 @@ public:
                     context.generation,
                     context.transitionOpacity,
                     context.surfaceClipUv,
+                    context.terrainFillMaskOwner,
                     context.surfaceClipDescendant,
                     context.edgeLutTables},
                 timings ? &timings->drawCommand : nullptr);

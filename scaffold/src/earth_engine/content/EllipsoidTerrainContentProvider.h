@@ -1,6 +1,7 @@
 #pragma once
 
 #include "GltfContentProvider.h"
+#include "EllipsoidTerrainMeshBuilder.h"
 #include "../tiling/TileKey.h"
 
 #include <string>

@@ -17,6 +17,34 @@ struct TessellatedFill {
     std::vector<uint32_t> outlineIndices;  ///< 描边线索引(每 2 个,环边界)
 };
 
+struct PolygonTessellationDiagnostics {
+    double setupMs = 0.0;
+    double globeDensifyMs = 0.0;
+    double intersectionMs = 0.0;
+    double cdtMs = 0.0;
+    double cdtSuperTriangleMs = 0.0;
+    double cdtPointInsertMs = 0.0;
+    double cdtConstraintInsertMs = 0.0;
+    double cdtExtractInsideMs = 0.0;
+    double ecefMs = 0.0;
+    size_t inputPoints = 0;
+    size_t initialConstraints = 0;
+    size_t densifiedPoints = 0;
+    size_t intersectionConstraints = 0;
+    size_t intersectionPairs = 0;
+    size_t intersectionCandidatePairs = 0;
+    size_t triangleCount = 0;
+    size_t cdtPointTriangleTests = 0;
+    size_t cdtPointBadTriangles = 0;
+    size_t cdtConstraintEdgeTests = 0;
+    size_t cdtConstraintCrossTests = 0;
+    size_t cdtConstraintsAlreadyPresent = 0;
+    size_t cdtConstraintsInserted = 0;
+    size_t cdtPeakTriangles = 0;
+    size_t cdtPointCapacityGrowths = 0;
+    size_t cdtTriangleCapacityGrowths = 0;
+};
+
 /// 多边形 fill 镶嵌器。
 ///
 /// Feature(polygon,rings[0]=外环 rings[1..]=孔)→ 受约束 Delaunay 三角化 → ECEF
@@ -40,7 +68,8 @@ public:
         const Ellipsoid& ellipsoid,
         double heightOffset = 0.0,
         const std::vector<Cartographic>* steinerPoints = nullptr,
-        double maxEdgeMeters = 0.0);
+        double maxEdgeMeters = 0.0,
+        PolygonTessellationDiagnostics* diagnostics = nullptr);
 };
 
 } // namespace earth_engine

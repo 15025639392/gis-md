@@ -10,8 +10,11 @@
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/debug/Contracts.h"
 #include "earth_engine/debug/Policies.h"
+#include "earth_engine/renderer/Renderer.h"
 #include "earth_engine/renderer/TerrainInstanceBatcher.h"
 #include "earth_engine/renderer/TerrainPageStore.h"
+
+#include "../../helpers/MockRenderDevice.h"
 
 #include <algorithm>
 #include <string>
@@ -234,6 +237,44 @@ TEST(ContractBatchTemplateGrid, DegenerateInputsAreNotJudged) {
         TerrainInstanceBatcher::batchTemplateGridIsUniform(nullptr, 0));
     EXPECT_FLOAT_EQ(
         -1.0f, TerrainInstanceBatcher::firstMismatchedTemplateGrid(nullptr, 0));
+}
+
+TEST(ContractTerrainFillMask, MaskedTerrainCommandsStayOutOfInstanceBatches) {
+    testing::MockRenderDevice device;
+    Renderer renderer(&device);
+    ASSERT_TRUE(renderer.initialize());
+
+    BufferDesc vbDesc;
+    vbDesc.size = 32u * 3u;
+    vbDesc.type = BufferDesc::Type::Vertex;
+    std::unique_ptr<Buffer> vertexBuffer = device.createBuffer(vbDesc);
+    ASSERT_NE(nullptr, vertexBuffer);
+
+    RenderCommand command;
+    command.kind = RenderCommandKind::GltfPrimitive;
+    command.terrainRenderContent = true;
+    command.terrainSurfaceSource = TerrainSurfaceCommandSource::RealTerrain;
+    command.hasTerrainDisplacementFrame = true;
+    command.vertexStride = 32;
+    command.vertexBuffer = vertexBuffer.get();
+    command.gltfUniforms.pageStoreParams[0] = 1.0f;
+    command.terrainPageStoreFullyResident = true;
+    command.terrainFillMaskActive = true;
+
+    RenderCommandList commands{command, command};
+    TerrainInstanceBatcher batcher;
+    const TerrainInstanceBatcher::Stats stats =
+        batcher.assemble(commands, &device, renderer);
+
+    EXPECT_TRUE(stats.shaderReady);
+    EXPECT_EQ(0, stats.eligibleCommands);
+    EXPECT_EQ(
+        2,
+        stats.rejects[static_cast<size_t>(
+            TerrainInstanceBatcher::RejectReason::HasTerrainFillMask)]);
+    ASSERT_EQ(2u, commands.size());
+    EXPECT_EQ(RenderCommandKind::GltfPrimitive, commands[0].kind);
+    EXPECT_EQ(RenderCommandKind::GltfPrimitive, commands[1].kind);
 }
 
 // ---- 存在条件(闸):区分「该跑却没跑」与「被配置关掉」 ----

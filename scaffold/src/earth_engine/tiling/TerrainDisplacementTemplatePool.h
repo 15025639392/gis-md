@@ -275,7 +275,10 @@ public:
     // 照旧),本函数在 build 之后、submit 之前调用,按 array 把待传层拼成一段
     // 连续内存一次灌入(depth=层数),把「每瓦每帧一次小上传」摊成每 array
     // 每帧一次 —— 运动期 frameState 6.8-14.6ms 的 LUT 上传 burst 根因。
-    void flushEdgeLutUploads();
+    /// Returns true when every pending batch was committed. On false callers
+    /// must clear the command LUT-valid bit for this frame so shaders do not
+    /// sample stale rows left by an earlier frame.
+    bool flushEdgeLutUploads();
 
 private:
     // 模板槽位:一个 {z,row,gridSize} 的共享模板 VBO(资源本体 + 诊断)。

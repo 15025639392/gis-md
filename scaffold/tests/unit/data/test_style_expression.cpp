@@ -87,6 +87,29 @@ TEST(StyleExpressionTest, InterpolateMixedStopKindsFails) {
     EXPECT_FALSE(expr->evaluate(nullptr, 5.0).has_value());
 }
 
+TEST(StyleExpressionTest, StepUsesHardStopsAndClamps) {
+    const auto expr = Expr::step(
+        Expr::zoom(),
+        {{6.0, Expr::literal(kRed)}, {8.0, Expr::literal(kBlue)},
+         {10.0, Expr::literal(std::array<float, 4>{0, 1, 0, 1})}});
+    EXPECT_EQ(kRed, expr->evaluate(nullptr, 3.0)->color());
+    EXPECT_EQ(kRed, expr->evaluate(nullptr, 7.999)->color());
+    EXPECT_EQ(kBlue, expr->evaluate(nullptr, 8.0)->color());
+    EXPECT_EQ(kBlue, expr->evaluate(nullptr, 9.999)->color());
+    EXPECT_FLOAT_EQ(1.0f, expr->evaluate(nullptr, 20.0)->color()[1]);
+    EXPECT_FALSE(expr->evaluate(nullptr, kNaN).has_value());
+}
+
+TEST(StyleExpressionTest, DiscreteZoomSwitchesAtConfiguredFraction) {
+    const auto expr = StyleExpression::discreteZoom(0.8);
+    ASSERT_TRUE(expr->referencesZoom());
+    EXPECT_DOUBLE_EQ(9.0, expr->evaluate(nullptr, 9.79)->number());
+    EXPECT_DOUBLE_EQ(10.0, expr->evaluate(nullptr, 9.80)->number());
+    EXPECT_DOUBLE_EQ(10.0, expr->evaluate(nullptr, 10.0)->number());
+    EXPECT_DOUBLE_EQ(-2.0, expr->evaluate(nullptr, -1.21)->number());
+    EXPECT_DOUBLE_EQ(-1.0, expr->evaluate(nullptr, -1.20)->number());
+}
+
 TEST(StyleExpressionTest, ReferenceFlags) {
     EXPECT_FALSE(Expr::literal(1.0)->referencesProperties());
     EXPECT_FALSE(Expr::literal(1.0)->referencesZoom());
@@ -112,6 +135,11 @@ TEST(StyleExpressionTest, ReferenceFlags) {
         Expr::get("h"), {{0.0, Expr::literal(1.0)}});
     EXPECT_TRUE(dataInterp->referencesProperties());
     EXPECT_FALSE(dataInterp->referencesZoom());
+
+    const auto zoomStep = Expr::step(
+        Expr::zoom(), {{0.0, Expr::literal(1.0)}});
+    EXPECT_TRUE(zoomStep->referencesZoom());
+    EXPECT_FALSE(zoomStep->referencesProperties());
 }
 
 TEST(StyleExpressionTest, NestedMatchIntoInterpolate) {

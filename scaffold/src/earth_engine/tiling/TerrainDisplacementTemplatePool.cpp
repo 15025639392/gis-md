@@ -716,10 +716,11 @@ void TerrainDisplacementTemplatePool::enqueueEdgeLutUpload(
     pendingEdgeLutUploads_.push_back(std::move(p));
 }
 
-void TerrainDisplacementTemplatePool::flushEdgeLutUploads() {
+bool TerrainDisplacementTemplatePool::flushEdgeLutUploads() {
     if (pendingEdgeLutUploads_.empty()) {
-        return;
+        return true;
     }
+    bool allCommitted = true;
     // 按 array 分组(coarse/dense 至多两组),每组一次批量上传。
     struct Group {
         HeightArray* arr = nullptr;
@@ -747,6 +748,7 @@ void TerrainDisplacementTemplatePool::flushEdgeLutUploads() {
     for (auto& group : groups) {
         HeightArray* arr = group.arr;
         if (!arr || !arr->texture) {
+            allCommitted = false;
             continue;
         }
         int minLayer = -1;
@@ -794,6 +796,7 @@ void TerrainDisplacementTemplatePool::flushEdgeLutUploads() {
             arr->texture.get(), 0, n, n, kEdgeLutRows, minLayer, layerCount,
             buffer.data(), static_cast<size_t>(n) * 4u);
         if (!ok) {
+            allCommitted = false;
             platformLog(LogLevel::Warning, "GltfDrawCmd",
                         "edge LUT batch upload failed layers=%d-%d", minLayer,
                         maxLayer);
@@ -810,6 +813,7 @@ void TerrainDisplacementTemplatePool::flushEdgeLutUploads() {
             }
         }
     }
+    return allCommitted;
 }
 
 void TerrainDisplacementTemplatePool::touchHeightTexture(const TileKey& key,

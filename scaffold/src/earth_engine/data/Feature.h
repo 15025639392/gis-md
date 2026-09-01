@@ -37,6 +37,10 @@ struct Feature {
 
     std::unordered_map<std::string, std::string> properties;
 
+    /// Provider-authored UTF-16 split indices for label layout. Kept out
+    /// of the visible name string so identity and provider text stay exact.
+    std::vector<uint32_t> labelSplitIndicesUtf16;
+
     /// 经纬度包围盒(radian)。约定为非跨反经线矩形(west <= east)。
     Rectangle bounds;
 

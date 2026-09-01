@@ -35,6 +35,7 @@ void TilesetRenderFrameExecutor::buildRenderCommands(
                    float transitionOpacity,
                    bool allowSynchronousMeshPrep,
                    const std::optional<std::array<float, 4>>& surfaceClipUv,
+                   const TilesetTile* terrainFillMaskOwner,
                    const TilesetTile* surfaceClipDescendant) {
             context.buildTileDrawCommand(
                 renderer,
@@ -43,6 +44,7 @@ void TilesetRenderFrameExecutor::buildRenderCommands(
                 transitionOpacity,
                 allowSynchronousMeshPrep,
                 surfaceClipUv,
+                terrainFillMaskOwner,
                 surfaceClipDescendant);
         },
         [&context](bool cachePressure) {

@@ -42,6 +42,9 @@ RejectReason rejectReasonFor(const RenderCommand& cmd) {
     if (cmd.gltfUniforms.hasBaseColorTexture > 0.5f) {
         return RejectReason::HasBaseColorTexture;
     }
+    if (cmd.terrainFillMaskActive) {
+        return RejectReason::HasTerrainFillMask;
+    }
     if (cmd.blend) return RejectReason::Blended;
     return RejectReason::Count;  // 全通过
 }
@@ -93,6 +96,7 @@ const char* TerrainInstanceBatcher::rejectReasonName(RejectReason reason) {
         case RejectReason::NotFullyResident:    return "notFullyResident";
         case RejectReason::HasWaterMask:        return "waterMask";
         case RejectReason::HasBaseColorTexture: return "baseColorTex";
+        case RejectReason::HasTerrainFillMask:  return "terrainFillMask";
         case RejectReason::Blended:             return "blend";
         case RejectReason::Count:               break;
     }
@@ -195,8 +199,7 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
             rec.dispMorph[3] = packPageCellDescriptor(
                 static_cast<int>(m.gltfUniforms.pageStoreParams[1] + 0.5f),
                 static_cast<int>(m.gltfUniforms.pageStoreParams[2] + 0.5f),
-                static_cast<int>(m.gltfUniforms.pageStoreParams[3]) % 8,
-                static_cast<int>(m.gltfUniforms.roadFieldParams[1] + 0.5f));
+                static_cast<int>(m.gltfUniforms.pageStoreParams[3]) % 8);
             rec.clipUv[0] = m.gltfUniforms.clipUv[0];
             rec.clipUv[1] = m.gltfUniforms.clipUv[1];
             rec.clipUv[2] = m.gltfUniforms.clipUv[2];
@@ -290,16 +293,6 @@ TerrainInstanceBatcher::Stats TerrainInstanceBatcher::assemble(
         batch.gltfUniforms.baseColor = first.gltfUniforms.baseColor;
         // 批级 params 只留 enabled;cell 网格逐实例给(见 rec.dispMorph[3])。
         batch.gltfUniforms.pageStoreParams = {1.0f, 0.0f, 0.0f, 0.0f};
-        // 刀2 路网场 uniform 承自首实例,理由同上面几条:资格闸保证整批共享同一
-        // 份纹理状态(u_roadField 已随 batch.textures 承接)。**漏承的代价**:
-        // roadFieldParams.x 停在默认 0 → 实例化 FS 的场分支恒关 → 合批瓦片路网
-        // 消失;而运动中瓦片在「合批↔逐瓦」间随驻留态切换,表现为路网闪烁 ——
-        // 真机"线一瞬出现又消失"的根因正是这里。
-        batch.gltfUniforms.roadFieldParams = first.gltfUniforms.roadFieldParams;
-        batch.gltfUniforms.roadFieldColor = first.gltfUniforms.roadFieldColor;
-        // 宽度 ramp 是全局样式(批内同值);cellZoom 不承批级——逐实例在
-        // pageCellDesc 里(见 packPageCellDescriptor)。
-        batch.gltfUniforms.roadFieldWidth = first.gltfUniforms.roadFieldWidth;
         batch.hasWorldSortCenter = first.hasWorldSortCenter;
         batch.worldSortCenter = first.worldSortCenter;
         batch.cullFace = first.cullFace;

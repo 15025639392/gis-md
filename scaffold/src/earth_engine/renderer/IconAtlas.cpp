@@ -97,11 +97,27 @@ const IconAtlas::Frame* IconAtlas::frame(const std::string& name) const {
     return it == impl_->frames.end() ? nullptr : &it->second;
 }
 
+void IconAtlas::removeNamePrefix(const std::string& prefix) {
+    if (prefix.empty()) return;
+    bool removed = false;
+    for (auto it = impl_->frames.begin(); it != impl_->frames.end();) {
+        if (it->first.rfind(prefix, 0) == 0) {
+            it = impl_->frames.erase(it);
+            removed = true;
+        } else {
+            ++it;
+        }
+    }
+    if (removed) ++impl_->revision;
+}
+
 bool IconAtlas::empty() const { return impl_->frames.empty(); }
 
 int IconAtlas::pageFullRejectCount() const { return impl_->pageFullRejects; }
 
-Texture* IconAtlas::texture() const { return impl_->texture.get(); }
+Texture* IconAtlas::texture() { return impl_->texture.get(); }
+
+const Texture* IconAtlas::texture() const { return impl_->texture.get(); }
 
 uint64_t IconAtlas::revision() const { return impl_->revision; }
 

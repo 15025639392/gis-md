@@ -8,18 +8,17 @@
 
 namespace earth_engine {
 
+#if defined(EARTH_ENGINE_TESTING)
 struct AmapDecodedTile {
     std::vector<AmapDecodedLayerPart> parts;
 };
 
 struct AmapDecodedTileDecodeTraits {
     static bool decode(const uint8_t* data, size_t size,
-                       AmapDecodedTile& out, std::string* error) {
-        return decodeAmapTile(data, size, out.parts, error);
-    }
-
+                       AmapDecodedTile& out, std::string* error);
     static size_t approxBytes(const AmapDecodedTile& tile);
 };
+#endif
 
 /// 高德瓦片几何 → 引擎 Feature(lon/lat 弧度,WGS84)。
 ///
@@ -28,12 +27,13 @@ struct AmapDecodedTileDecodeTraits {
 /// 参考 amap_geometry.js/amap_reproject.js 实测结论)。各层 type 的原始
 /// extent 不同,解码器产出原始整数坐标,这里按层 type/zoom 取 coordScale
 /// 抬进规范空间:
-///   type0 POI 标签:z6-14 → scale 4(原始 2048×1024),z3 → 8;
+///   type0/type4 point 标签:使用 PointFeatureSameStyle.resolution 的显式
+///                           2^(14-resolution) 倍率;
 ///   type1 线 / type4 轨道:z14+ → scale 2(原始 4096×2048),
 ///                          z6-12 → 4,z3 → 8;
 ///   type2/type4 区域:默认 scale 4(原始 2048×1024),kind 60/64/80
 ///                     改走对应 zoom 的 line-grid scale;
-///   type3 建筑:scale 1/16(原始 131072×65536)。
+///   type3 建筑:由 BuildingSameStyle.resolution 决定。
 /// 转换后可选 GCJ-02 → WGS84 反偏移(引擎已有 Gcj02CoordinateTransform)。
 /// 层类型 → tile-local 原始整数坐标抬进规范 8192×4096 空间的倍率。
 /// type0 POI 标签:z6-14 → 4(2048×1024),z3 → 8(1024×512);
@@ -41,8 +41,17 @@ struct AmapDecodedTileDecodeTraits {
 /// type2 区域:默认恒 4(2048×1024,任意 zoom),**大区域 kind 60/80
 /// (type4 的 kind 64)例外** —— 它们走 line-grid(同 type1,见
 /// xinzhi-map decodeRegionFeature LINE_GRID_REGION_KINDS);
-/// type3 建筑:1/16(131072×65536)。
-double amapCoordScale(int layerType, int layerZ, int regionKind = 0);
+/// type3 建筑倍率 = 2^(14-resolution)。官方默认 resolution=12 对应
+/// 2048×1024、倍率 4；当前真实 payload resolution=18 对应
+/// 131072×65536、倍率 1/16。
+double amapCoordScale(int layerType, int layerZ, int regionKind = 0,
+                      int buildingResolution = 12);
+
+/// Validates the official runtime's
+/// `getCoordShift(z, resolution) = 33 - resolution - z` contract.
+/// Invalid provider values fail closed instead of wrapping a JS bit shift or
+/// selecting a local fallback grid.
+bool amapBuildingResolutionIsValid(int layerZ, int buildingResolution);
 
 /// 大区域 kind 是否走 line-grid(而非 type2 恒定的 2048×1024 网格)。
 /// 参考 xinzhi-map LINE_GRID_REGION_KINDS = {60, 64, 80}。
@@ -50,11 +59,8 @@ bool amapRegionUsesLineGrid(int regionKind);
 
 /// canonical tile-local → 经纬度(返回弧度)。canonical Y 与高德参考实现
 /// `loadGeometry()` 的输出一致：y=0 在瓦片北缘、y=4096 在南缘。
-/// `flipY=false` 仅保留旧的 south-up 兼容分支；解码得到的 raw bottom-up Y
-/// 必须先转换为 `4096 - rawY * scale`，不能直接传入本函数。
 Cartographic amapTileLocalToLngLat(int tileX, int tileY, int z,
-                                   double localX, double localY,
-                                   bool flipY = true);
+                                   double localX, double localY);
 
 /// 高德区域环归一化(参考 xinzhi-map amap_geometry.js
 /// `normalizeEvenOddWinding`)。
@@ -90,22 +96,14 @@ std::vector<std::pair<double, double>> amapClipPolygonRing(
     double minX, double maxX, double minY, double maxY);
 
 /// 一个解码层 → 引擎 Feature 列表。
+/// - type0 与 type4 content.#2:每个 point 输出一个 Point;
 /// - type1 与 type4 content.#1:每个 ring 一条 LineString;
 /// - type2、type3 与 type4 content.#3:区域环经 winding 归一化后输出
 ///   Polygon；type4 的 line/area 由 feature 显式语义区分。
 /// toWgs84=true 时做 GCJ 反偏移(默认)。
+#if defined(EARTH_ENGINE_TESTING)
 std::vector<Feature> amapDecodedPartToFeatures(
     const AmapDecodedLayerPart& part, bool toWgs84 = true);
-
-/// 完整瓦片字节流 → 引擎 Feature 列表(解码 + 逐层转换)。
-///
-/// E3 通路:高德瓦片容器(4 字节 BE 长度 + gzip protobuf)直接解码成
-/// Feature,供 VectorTileSourceT 的 DecodeTraits 注入。regionsOnly 过滤
-/// 在解码阶段做(粗源 z10 只要 type2 面,主源 z14 只要 type1/3/4)——
-/// 与旧 demo 切片 amapLoadDemoTile 的过滤语义一致,但提前到 worker 解码
-/// 期,减少传输/缓存里的无关要素。
-bool amapBytesToFeatures(const uint8_t* data, size_t size,
-                         bool regionsOnly, std::vector<Feature>& out,
-                         std::string* error = nullptr);
+#endif
 
 }  // namespace earth_engine

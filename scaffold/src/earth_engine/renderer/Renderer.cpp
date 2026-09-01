@@ -217,16 +217,13 @@ uniform highp sampler2DArray u_pageStore;
 // 合批 Step 2:per-tile 间接纹理搬共享 texture2DArray(固定 64² 每层,texel 写
 // 左上 gridN² 区),层号由 u_terrainLayers.y 给出,texelFetch 整数寻址。
 uniform highp sampler2DArray u_pageStoreIndir;
+uniform sampler2D u_terrainFillMask;
+uniform float u_terrainFillMaskEnabled;
 uniform vec4 u_pageStoreParams;
 uniform vec4 u_pageStoreUv;
 uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(片元)
 // 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
-uniform highp sampler2DArray u_roadField;
-uniform highp sampler2DArray u_roadFieldIndir;  // 步3 场间接纹理
-uniform vec4 u_roadFieldParams;  // x=enable y=cellZoom z=场纹素边长 w=D2 偏移编码范围
-uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
-uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
 uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
 
@@ -506,8 +503,10 @@ void main() {
         base = eePageStoreCompose(
             base, psUv, vec4(u_pageStoreUv.xy, u_pageStoreUv.z, 0.0),
             vec2(0.0, u_pageStoreUv.w), psPhase, cells,
-            int(u_terrainLayers.y + 0.5), u_roadFieldParams.y,
-            u_roadFieldParams, u_roadFieldWidth, u_roadFieldColor);
+            int(u_terrainLayers.y + 0.5));
+    }
+    if (u_terrainFillMaskEnabled > 0.5) {
+        base = alphaOver(base, texture(u_terrainFillMask, v_texcoord01.xy), 1.0);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     // B2 刀2:HDR 下把 sRGB 反照率解到线性(glTF PBR 本为线性设计),BRDF 随之在
@@ -857,6 +856,7 @@ uniform float u_clipEnabled;
 out vec3 v_normal;
 out vec3 v_position;
 out vec4 v_texcoord01;
+out vec2 v_selectedTileUv;
 // 裙墙标志(1=裙顶点)。片元据此跳过法线场——裙墙是竖直墙面,其朝向不由高度场
 // 决定,套用高度场法线会把墙照成"平地"。
 out float v_skirt;
@@ -988,6 +988,10 @@ void main() {
     }
     v_normal = normalize(a_normal);
     v_position = morphPos;
+    // Keep selected-tile local UV independent from ancestor height remapping.
+    // Fill pages are exact selected footprints and must never sample tileUv,
+    // which may have been remapped into an ancestor window above.
+    v_selectedTileUv = a_texcoord01.xy;
     v_texcoord01 = vec4(tileUv, a_texcoord01.zw);
     v_skirt = skirt;
     gl_PointSize = 1.0;
@@ -1001,6 +1005,7 @@ precision highp float;
 in vec3 v_normal;
 in vec3 v_position;
 in vec4 v_texcoord01;
+in vec2 v_selectedTileUv;
 // 裙墙标志:裙墙是竖直墙面,其朝向不由高度场决定,必须跳过法线贴图。
 in float v_skirt;
 
@@ -1025,6 +1030,8 @@ uniform sampler2D u_directRasterTexture1;
 uniform sampler2D u_directRasterTexture2;
 uniform sampler2D u_directRasterTexture3;
 uniform sampler2D u_gltfWaterMaskTexture;
+uniform sampler2D u_terrainFillMask;
+uniform float u_terrainFillMaskEnabled;
 uniform float u_directRasterTextureCount;
 uniform vec4 u_directRasterTileUV0;
 uniform vec4 u_directRasterTileUV1;
@@ -1054,11 +1061,6 @@ uniform highp sampler2DArray u_pageStoreIndir;
 uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(片元)
 // 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
-uniform highp sampler2DArray u_roadField;
-uniform highp sampler2DArray u_roadFieldIndir;  // 步3 场间接纹理
-uniform vec4 u_roadFieldParams;  // x=enable y=cellZoom z=场纹素边长 w=D2 偏移编码范围
-uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
-uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
 uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
 
@@ -1254,8 +1256,13 @@ void main() {
         // u_pageStoreUv——GCJ 下差出瓦包围矩形翘曲,瓦界错缝 ~30m。
         base = eePageStoreCompose(
             base, psUv, u_pageGeomA, u_pageGeomB.xy, psPhase, cells,
-            int(u_terrainLayers.y + 0.5), u_roadFieldParams.y,
-            u_roadFieldParams, u_roadFieldWidth, u_roadFieldColor);
+            int(u_terrainLayers.y + 0.5));
+    }
+    // Exact selected footprint, composed after imagery/page-store and before
+    // terrain water/light. This UV is the original template UV, never the
+    // ancestor-remapped terrainUv or surface clip window.
+    if (u_terrainFillMaskEnabled > 0.5) {
+        base = alphaOver(base, texture(u_terrainFillMask, v_selectedTileUv), 1.0);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
@@ -1468,11 +1475,6 @@ uniform highp sampler2DArray u_pageStoreIndir;
 uniform highp sampler2DArray u_heightTexture;
 // 刀2 路网 SDF 场"第二平面"(R8,与页存储影像页同层号驻留):
 // 反向编码 0=远/1=线内/0.5=边缘(0 是失败安全值:未绑定采样恒 0 = 无线)。
-uniform highp sampler2DArray u_roadField;
-uniform highp sampler2DArray u_roadFieldIndir;  // 步3 场间接纹理
-uniform vec4 u_roadFieldParams;  // x=enable y=cellZoom z=场纹素边长 w=D2 偏移编码范围
-uniform vec4 u_roadFieldColor;   // 线色(RGBA 非预乘)
-uniform vec4 u_roadFieldWidth;   // 宽度 ramp (z0,halfPx0,z1,halfPx1)
 uniform vec4 u_pageGeomA;        // [瓦界对齐] 几何仿射 c0.xy, dU.xy
 uniform vec4 u_pageGeomB;        // [瓦界对齐] 几何仿射 dV.xy
 
@@ -1551,7 +1553,6 @@ void main() {
     vec2 cells = max(vec2(mod(packed, 128.0),
                           mod(floor(packed / 128.0), 128.0)), vec2(1.0));
     float psSet = mod(floor(packed / 16384.0), 8.0);
-    float psCellZoom = floor(packed / 131072.0);
     int indirLayer = int(v_pageParams.y + 0.5);
     // 实例化地形顶点只带 texcoord01 两套;set 0 是地形 scheme 的投影,GCJ 的
     // UV 烘在 set 1。硬编码 set 0 = 该特性静默失效。
@@ -1568,8 +1569,7 @@ void main() {
     // dU=pageUv.zw,dV=pageAux.zw;相位=pageAux.xy)。
     base = eePageStoreCompose(
         base, psUv, v_pageUv, v_pageAux.zw, v_pageAux.xy, cells,
-        int(v_pageParams.y + 0.5), psCellZoom,
-        u_roadFieldParams, u_roadFieldWidth, u_roadFieldColor);
+        int(v_pageParams.y + 0.5));
 
     // GE 式半球光照(与 terrainShader 共用 TerrainSurfaceLightGLSL.h 的单一
     // 函数;由 withTerrainLight() 注入)。
@@ -1671,10 +1671,12 @@ static const char* kVectorFillFragmentGLSL = R"glsl(#version 300 es
 precision mediump float;
 
 in vec4 v_color;
+uniform vec4 u_color;  // alpha>0 = command-time surface color
 out vec4 fragColor;
 
 void main() {
-    fragColor = vec4(encodeSceneOutput(v_color.rgb), v_color.a);
+    vec4 color = u_color.a > 0.0 ? u_color : v_color;
+    fragColor = vec4(encodeSceneOutput(color.rgb), color.a);
 }
 )glsl";
 
@@ -1710,8 +1712,10 @@ struct VectorFillFragmentIn {
     float4 color;
 };
 
-fragment float4 vectorFillFragment(VectorFillFragmentIn in [[stage_in]]) {
-    return in.color;
+fragment float4 vectorFillFragment(
+        VectorFillFragmentIn in [[stage_in]],
+        constant float4& u_color [[buffer(0)]]) {
+    return u_color.a > 0.0f ? u_color : in.color;
 }
 )msl";
 
@@ -1882,9 +1886,14 @@ layout(location = 5) in vec4 a_color;   // P6b 数据驱动色(RGBA8 归一化)
 uniform mat4 u_modelViewProjection;
 uniform vec2 u_viewport;      // 视口像素 (w, h)
 uniform float u_lineWidthPx;  // 全线宽(px),半宽 = /2
+uniform float u_dashPixelsPerMeter;
 
 out float v_lengthSoFar;
 out vec4 v_color;
+out vec2 v_joinCoord;
+out float v_joinPrimitive;
+out float v_lineUnits;
+out float v_strokeSide;
 
 // miter 长度下限对应 miter-limit(尖角防爆);挤出上限防近地平线
 // w→0 时发散(设计 §6.2 锁定)。
@@ -1897,6 +1906,10 @@ void main() {
     vec4 cnx = u_modelViewProjection * vec4(a_next, 1.0);
     v_lengthSoFar = a_lengthSoFar;
     v_color = a_color;
+    v_joinCoord = vec2(0.0);
+    v_joinPrimitive = 0.0;
+    v_lineUnits = 0.0;
+    v_strokeSide = a_side;
 
     // 相机后方顶点不挤出(除法翻向会把 ribbon 拉花;段的可见部分由
     // 另一端撑开 + clip 收尾)。
@@ -1904,8 +1917,34 @@ void main() {
         gl_Position = cp;
         return;
     }
+    v_lineUnits = a_lengthSoFar * u_dashPixelsPerMeter /
+        max(u_lineWidthPx, 1e-6);
 
     float aspect = u_viewport.x / max(u_viewport.y, 1.0);
+    float halfWidthNdc = u_lineWidthPx / max(u_viewport.y, 1.0);
+    if (a_side >= 2.0) {
+        bool endpointCap = a_side >= 6.0;
+        int corner = int(a_side - (endpointCap ? 6.0 : 2.0) + 0.5);
+        vec2 unit = vec2((corner & 1) == 0 ? -1.0 : 1.0,
+                         (corner & 2) == 0 ? -1.0 : 1.0);
+        v_joinCoord = unit;
+        v_joinPrimitive = endpointCap ? 2.0 : 1.0;
+        vec2 offsetUnit = unit;
+        if (endpointCap) {
+            vec2 s = cp.xy / cp.w; s.x *= aspect;
+            vec2 other = cpr.w > 0.0 && distance(cpr.xyz, cp.xyz) > 1e-7
+                ? cpr.xy / cpr.w : cnx.xy / cnx.w;
+            other.x *= aspect;
+            vec2 tangent = normalize(s - other);
+            if (distance(cpr.xyz, cp.xyz) <= 1e-7) tangent = -tangent;
+            vec2 normal = vec2(-tangent.y, tangent.x);
+            offsetUnit = tangent * unit.x + normal * unit.y;
+        }
+        vec2 offset = offsetUnit * halfWidthNdc;
+        offset.x /= aspect;
+        gl_Position = cp + vec4(offset * cp.w, 0.0, 0.0);
+        return;
+    }
     // NDC → 各向同性空间(x 乘 aspect),屏幕角度才是真角度
     vec2 s  = cp.xy  / cp.w;  s.x  *= aspect;
     vec2 sp = cpr.xy / cpr.w; sp.x *= aspect;
@@ -1939,7 +1978,6 @@ void main() {
 
     vec2 normal = vec2(-dir.y, dir.x);
     // 半宽(px) → NDC:1px = 2/vpH NDC → halfWidth*2/vpH = lineWidth/vpH
-    float halfWidthNdc = u_lineWidthPx / max(u_viewport.y, 1.0);
     vec2 offset = normal * a_side * halfWidthNdc * scale;
     float offLen = length(offset);
     if (offLen > kMaxExtrudeNdc) {
@@ -1955,17 +1993,73 @@ precision mediump float;
 
 in float v_lengthSoFar;   // 沿线累计弧长(m)
 in vec4 v_color;          // P6b 顶点色(逐要素,镶嵌期表达式求值烘入)
+in vec2 v_joinCoord;
+in float v_joinPrimitive;
+in float v_lineUnits;
+in float v_strokeSide;
+uniform vec4 u_color;      // alpha>0 时 command 级纯色覆盖(casing)
 uniform float u_dashPeriodMeters;  // P6d dash:<=0 = 实线(与 stencil 路径同语义)
 uniform float u_dashOnFraction;
+uniform vec4 u_dashPattern;
+uniform float u_dashPatternCount;
+uniform float u_dashCapStyle;  // 0=butt, 1=square, 2=round
+uniform float u_solidCapStyle; // 0=butt/discard, 1=square, 2=round
 out vec4 fragColor;
 
+bool pixelDashVisible(float lineUnits, float side) {
+    float period = u_dashPattern.x + u_dashPattern.y;
+    if (u_dashPatternCount > 3.5) {
+        period += u_dashPattern.z + u_dashPattern.w;
+    }
+    if (period <= 0.0) return true;
+    float p = mod(max(lineUnits, 0.0), period);
+    float start = 0.0;
+    for (int i = 0; i < 4; ++i) {
+        if (float(i) >= u_dashPatternCount) break;
+        float span = u_dashPattern[i];
+        float end = start + span;
+        if ((i & 1) == 0) {
+            if (p >= start && p < end) return true;
+            if (u_dashCapStyle > 0.5) {
+                float ds = abs(p - start);
+                float de = abs(p - end);
+                ds = min(ds, period - ds);
+                de = min(de, period - de);
+                float d = min(ds, de);
+                if (u_dashCapStyle < 1.5 && d <= 0.5)
+                    return true;
+                if (u_dashCapStyle > 1.5 &&
+                    d <= 0.5 && d * d + side * side * 0.25 <= 0.25)
+                    return true;
+            }
+        }
+        start = end;
+    }
+    return false;
+}
+
 void main() {
-    float a = v_color.a;
+    if (v_joinPrimitive > 1.5) {
+        if (u_solidCapStyle < 0.5) discard;
+        if (u_solidCapStyle > 1.5 &&
+            dot(v_joinCoord, v_joinCoord) > 1.0) discard;
+    } else if (v_joinPrimitive > 0.5 &&
+               dot(v_joinCoord, v_joinCoord) > 1.0) {
+        discard;
+    }
+    vec4 color = u_color.a > 0.0 ? u_color : v_color;
+    float a = color.a;
     if (u_dashPeriodMeters > 0.0) {
         float phase = fract(v_lengthSoFar / u_dashPeriodMeters);
         if (phase >= u_dashOnFraction) a = 0.0;
     }
-    fragColor = vec4(encodeSceneOutput(v_color.rgb), a);
+    if (u_dashPatternCount > 1.5) {
+        // cp.w is positive eye depth for this perspective path.  Converting
+        // world arclength by local projected scale keeps the authored dash in
+        // stroke-width units under zoom without CPU retessellation.
+        if (!pixelDashVisible(v_lineUnits, abs(v_strokeSide))) a = 0.0;
+    }
+    fragColor = vec4(encodeSceneOutput(color.rgb), a);
 }
 )glsl";
 
@@ -1988,6 +2082,10 @@ struct VectorLineVertexOut {
     float4 position [[position]];
     float lengthSoFar;
     float4 color;
+    float2 joinCoord;
+    float joinPrimitive;
+    float lineUnits;
+    float strokeSide;
 };
 
 constant float kMiterMin = 0.25;
@@ -1997,17 +2095,49 @@ vertex VectorLineVertexOut vectorLineVertex(
         VectorLineVertexIn in [[stage_in]],
         constant float4x4& u_modelViewProjection [[buffer(1)]],
         constant float2& u_viewport [[buffer(2)]],
-        constant float& u_lineWidthPx [[buffer(3)]]) {
+        constant float& u_lineWidthPx [[buffer(3)]],
+        constant float& u_dashPixelsPerMeter [[buffer(4)]]) {
     VectorLineVertexOut out;
     float4 cp = u_modelViewProjection * float4(in.position, 1.0);
     float4 cpr = u_modelViewProjection * float4(in.prev, 1.0);
     float4 cnx = u_modelViewProjection * float4(in.next, 1.0);
     out.lengthSoFar = in.lengthSoFar;
     out.color = in.color;
+    out.joinCoord = float2(0.0f);
+    out.joinPrimitive = 0.0f;
+    out.lineUnits = 0.0f;
+    out.strokeSide = in.side;
     out.position = cp;
     if (cp.w <= 0.0) return out;
 
+    out.lineUnits = in.lengthSoFar * u_dashPixelsPerMeter /
+        max(u_lineWidthPx, 1e-6f);
+
     float aspect = u_viewport.x / max(u_viewport.y, 1.0f);
+    float halfWidthNdc = u_lineWidthPx / max(u_viewport.y, 1.0f);
+    if (in.side >= 2.0f) {
+        bool endpointCap = in.side >= 6.0f;
+        int corner = int(in.side - (endpointCap ? 6.0f : 2.0f) + 0.5f);
+        float2 unit = float2((corner & 1) == 0 ? -1.0f : 1.0f,
+                             (corner & 2) == 0 ? -1.0f : 1.0f);
+        out.joinCoord = unit;
+        out.joinPrimitive = endpointCap ? 2.0f : 1.0f;
+        float2 offsetUnit = unit;
+        if (endpointCap) {
+            float2 s = cp.xy / cp.w; s.x *= aspect;
+            bool hasPrev = cpr.w > 0.0f && distance(cpr.xyz, cp.xyz) > 1e-7f;
+            float2 other = hasPrev ? cpr.xy / cpr.w : cnx.xy / cnx.w;
+            other.x *= aspect;
+            float2 tangent = normalize(s - other);
+            if (!hasPrev) tangent = -tangent;
+            float2 normal = float2(-tangent.y, tangent.x);
+            offsetUnit = tangent * unit.x + normal * unit.y;
+        }
+        float2 offset = offsetUnit * halfWidthNdc;
+        offset.x /= aspect;
+        out.position = cp + float4(offset * cp.w, 0.0, 0.0);
+        return out;
+    }
     float2 s = cp.xy / cp.w;   s.x *= aspect;
     float2 sp = cpr.xy / cpr.w; sp.x *= aspect;
     float2 sn = cnx.xy / cnx.w; sn.x *= aspect;
@@ -2036,7 +2166,6 @@ vertex VectorLineVertexOut vectorLineVertex(
     }
 
     float2 normal = float2(-dir.y, dir.x);
-    float halfWidthNdc = u_lineWidthPx / max(u_viewport.y, 1.0f);
     float2 offset = normal * in.side * halfWidthNdc * scale;
     float offLen = length(offset);
     if (offLen > kMaxExtrudeNdc) {
@@ -2055,18 +2184,70 @@ using namespace metal;
 struct VectorLineFragmentIn {
     float lengthSoFar;
     float4 color;
+    float2 joinCoord;
+    float joinPrimitive;
+    float lineUnits;
+    float strokeSide;
 };
+
+bool pixelDashVisible(float lineUnits, float side, float4 pattern,
+                      float patternCount, float capStyle) {
+    float period = pattern.x + pattern.y;
+    if (patternCount > 3.5f) period += pattern.z + pattern.w;
+    if (period <= 0.0f) return true;
+    float p = fmod(max(lineUnits, 0.0f), period);
+    float start = 0.0f;
+    for (int i = 0; i < 4; ++i) {
+        if (float(i) >= patternCount) break;
+        float span = pattern[i];
+        float end = start + span;
+        if ((i & 1) == 0) {
+            if (p >= start && p < end) return true;
+            if (capStyle > 0.5f) {
+                float ds = abs(p - start);
+                float de = abs(p - end);
+                ds = min(ds, period - ds);
+                de = min(de, period - de);
+                float d = min(ds, de);
+                if (capStyle < 1.5f && d <= 0.5f)
+                    return true;
+                if (capStyle > 1.5f &&
+                    d <= 0.5f && d * d + side * side * 0.25f <= 0.25f)
+                    return true;
+            }
+        }
+        start = end;
+    }
+    return false;
+}
 
 fragment float4 vectorLineFragment(
         VectorLineFragmentIn in [[stage_in]],
         constant float& u_dashPeriodMeters [[buffer(0)]],
-        constant float& u_dashOnFraction [[buffer(1)]]) {
-    float a = in.color.a;
+        constant float& u_dashOnFraction [[buffer(1)]],
+        constant float4& u_color [[buffer(2)]],
+        constant float4& u_dashPattern [[buffer(3)]],
+        constant float& u_dashPatternCount [[buffer(4)]],
+        constant float& u_dashCapStyle [[buffer(5)]],
+        constant float& u_solidCapStyle [[buffer(6)]]) {
+    if (in.joinPrimitive > 1.5f) {
+        if (u_solidCapStyle < 0.5f) discard_fragment();
+        if (u_solidCapStyle > 1.5f &&
+            dot(in.joinCoord, in.joinCoord) > 1.0f) discard_fragment();
+    } else if (in.joinPrimitive > 0.5f &&
+               dot(in.joinCoord, in.joinCoord) > 1.0f) {
+        discard_fragment();
+    }
+    float4 color = u_color.a > 0.0f ? u_color : in.color;
+    float a = color.a;
     if (u_dashPeriodMeters > 0.0) {
         float phase = fract(in.lengthSoFar / u_dashPeriodMeters);
         if (phase >= u_dashOnFraction) a = 0.0;
     }
-    return float4(in.color.rgb, a);
+    if (u_dashPatternCount > 1.5f &&
+        !pixelDashVisible(in.lineUnits, abs(in.strokeSide), u_dashPattern,
+                          u_dashPatternCount, u_dashCapStyle)) a = 0.0f;
+    return float4(color.rgb, a);
 }
 )msl";
 
@@ -2227,7 +2408,9 @@ layout(location = 4) in float a_shape;      // >=0 内置形状;<0 图集
 
 uniform mat4 u_modelViewProjection;
 uniform vec2 u_viewport;       // 视口像素
-uniform float u_pointSizePx;   // 符号基准尺寸(px:圆直径/方边长/图标高)
+// Generic: physical artwork size. Official AMap: binary Support.scale (1/2),
+// because the exact provider CSS-pixel artwork bounds are already in VBO.
+uniform float u_pointSizePx;
 // >0 = 高空模式:深度顶到近平面(z/w = 该值,reverse-Z 近=1)。billboard
 // 是锚点常数深度,高空下 quad 覆盖数百 km 地面,地形逐像素深度会把符号
 // 斜切/整吞;该高度下地形起伏不足一像素,遮挡语义已无意义。背面点不会
@@ -2437,7 +2620,8 @@ fragment float4 vectorPointFragment(
 // ============================================================
 // Vector Label Shader (矢量 P5b SDF 文字标注 + P5c placement opacity)
 // 顶点 32B:anchor(12)+offsetPx(8)+uv(8)+opacity(4),对应 GLES
-// VectorLabel32。锚点投影后按像素偏移屏幕展开(billboard);opacity 由
+// VectorLabel44。锚点与切向参考点投影后旋转像素偏移；普通点标签两点
+// 相同，自动保持水平。opacity 由
 // CPU placement fade 回写(0 = 避让隐藏,顶点直接折叠裁掉不进光栅);
 // fragment 采 SDF 图集 smoothstep 出字 + halo 描边(单 pass 双阈值)。
 // ============================================================
@@ -2445,10 +2629,11 @@ fragment float4 vectorPointFragment(
 static const std::string kVectorLabelVertexGLSL =
     std::string(R"glsl(#version 300 es
 layout(location = 0) in vec3 a_anchor;
+layout(location = 1) in vec3 a_tangent;
 // xy = 相对锚点屏幕像素偏移(y 向上);z = placement fade opacity(0 = 隐藏)。
 // opacity 并进 offset 而非独立 attribute:三属性布局(0/1/2)。
-layout(location = 1) in vec3 a_offsetPx;
-layout(location = 2) in vec2 a_uv;
+layout(location = 2) in vec3 a_offsetPx;
+layout(location = 3) in vec2 a_uv;
 
 uniform mat4 u_modelViewProjection;
 uniform vec2 u_viewport;
@@ -2460,6 +2645,7 @@ out float v_opacity;
 )glsl") + kSymbolTerrainOcclusionBody + R"glsl(
 void main() {
     vec4 cp = u_modelViewProjection * vec4(a_anchor, 1.0);
+    vec4 tp = u_modelViewProjection * vec4(a_tangent, 1.0);
     v_uv = a_uv;
     // T2:遮挡淡出乘进 placement fade —— 两者都是"这个标注该显示多少",
     // 相乘即可,不需要新的 varying。
@@ -2469,7 +2655,16 @@ void main() {
         gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
         return;
     }
-    vec2 offsetNdc = a_offsetPx.xy * 2.0 / u_viewport;
+    vec2 dir = vec2(1.0, 0.0);
+    if (tp.w > 0.0) {
+        vec2 deltaPx = (tp.xy / tp.w - cp.xy / cp.w) * 0.5 * u_viewport;
+        if (dot(deltaPx, deltaPx) > 1e-6) dir = normalize(deltaPx);
+    }
+    // 文字始终保持从左到右，避免道路方向反向时整行倒置。
+    if (dir.x < 0.0) dir = -dir;
+    vec2 normal = vec2(-dir.y, dir.x);
+    vec2 rotatedPx = dir * a_offsetPx.x + normal * a_offsetPx.y;
+    vec2 offsetNdc = rotatedPx * 2.0 / u_viewport;
     gl_Position = cp + vec4(offsetNdc * cp.w, 0.0, 0.0);
     if (u_depthPushNdc > 0.0) {
         gl_Position.z = gl_Position.w * u_depthPushNdc;
@@ -2485,6 +2680,7 @@ uniform vec4 u_color;
 uniform vec4 u_haloColor;
 uniform float u_sdfEdge;       // 轮廓阈值(kSdfOnEdge/255)
 uniform float u_sdfHaloDelta;  // halo 宽换算的 SDF 值差
+uniform float u_sdfGamma;      // official AMap explicit transition width
 
 in vec2 v_uv;
 in float v_opacity;
@@ -2492,7 +2688,7 @@ out vec4 fragColor;
 
 void main() {
     float d = texture(u_glyphAtlas, vec3(v_uv, 0.0)).r;
-    float w = fwidth(d);
+    float w = u_sdfGamma > 0.0 ? u_sdfGamma : fwidth(d);
     float fill = smoothstep(u_sdfEdge - w, u_sdfEdge + w, d);
     float halo = smoothstep(u_sdfEdge - u_sdfHaloDelta - w,
                             u_sdfEdge - u_sdfHaloDelta + w, d);
@@ -2503,6 +2699,20 @@ void main() {
 }
 )glsl";
 
+static const char* kVectorLabelBackgroundFragmentGLSL = R"glsl(#version 300 es
+precision mediump float;
+uniform sampler2D u_iconAtlas;
+in vec2 v_uv;
+in float v_opacity;
+out vec4 fragColor;
+void main() {
+    vec4 tex = texture(u_iconAtlas, v_uv);
+    float alpha = tex.a * v_opacity;
+    if (alpha <= 0.004) discard;
+    fragColor = vec4(encodeSceneOutput(tex.rgb), alpha);
+}
+)glsl";
+
 // MSL 双份约定;Metal 端矢量路径当前不出货,未经真机验证。
 static const char* kVectorLabelVertexMSL = R"msl(
 #include <metal_stdlib>
@@ -2510,8 +2720,9 @@ using namespace metal;
 
 struct VectorLabelVertexIn {
     float3 anchor [[attribute(0)]];
-    float3 offsetPx [[attribute(1)]];  // z = placement opacity
-    float2 uv [[attribute(2)]];
+    float3 tangent [[attribute(1)]];
+    float3 offsetPx [[attribute(2)]];  // z = placement opacity
+    float2 uv [[attribute(3)]];
 };
 
 struct VectorLabelVertexOut {
@@ -2527,13 +2738,22 @@ vertex VectorLabelVertexOut vectorLabelVertex(
         constant float& u_depthPushNdc [[buffer(3)]]) {
     VectorLabelVertexOut out;
     float4 cp = u_modelViewProjection * float4(in.anchor, 1.0);
+    float4 tp = u_modelViewProjection * float4(in.tangent, 1.0);
     out.uv = in.uv;
     out.opacity = in.offsetPx.z;
     if (cp.w <= 0.0 || in.offsetPx.z <= 0.0) {
         out.position = float4(0.0, 0.0, 2.0, 1.0);
         return out;
     }
-    float2 offsetNdc = in.offsetPx.xy * 2.0 / u_viewport;
+    float2 dir = float2(1.0, 0.0);
+    if (tp.w > 0.0) {
+        float2 deltaPx = (tp.xy / tp.w - cp.xy / cp.w) * 0.5 * u_viewport;
+        if (dot(deltaPx, deltaPx) > 1e-6) dir = normalize(deltaPx);
+    }
+    if (dir.x < 0.0) dir = -dir;
+    float2 normal = float2(-dir.y, dir.x);
+    float2 rotatedPx = dir * in.offsetPx.x + normal * in.offsetPx.y;
+    float2 offsetNdc = rotatedPx * 2.0 / u_viewport;
     out.position = cp + float4(offsetNdc * cp.w, 0.0, 0.0);
     // 语义见 GLSL 版注释:高空深度顶近平面(reverse-Z 近=1)。
     if (u_depthPushNdc > 0.0) {
@@ -2559,9 +2779,10 @@ fragment float4 vectorLabelFragment(
         constant float4& u_color [[buffer(0)]],
         constant float4& u_haloColor [[buffer(1)]],
         constant float& u_sdfEdge [[buffer(2)]],
-        constant float& u_sdfHaloDelta [[buffer(3)]]) {
+        constant float& u_sdfHaloDelta [[buffer(3)]],
+        constant float& u_sdfGamma [[buffer(4)]]) {
     float d = u_glyphAtlas.sample(u_sampler, in.uv, 0).r;
-    float w = fwidth(d);
+    float w = u_sdfGamma > 0.0 ? u_sdfGamma : fwidth(d);
     float fill = smoothstep(u_sdfEdge - w, u_sdfEdge + w, d);
     float halo = smoothstep(u_sdfEdge - u_sdfHaloDelta - w,
                             u_sdfEdge - u_sdfHaloDelta + w, d);
@@ -2569,6 +2790,21 @@ fragment float4 vectorLabelFragment(
     if (alpha <= 0.004) discard_fragment();
     float3 rgb = mix(u_haloColor.rgb, u_color.rgb, fill);
     return float4(rgb, alpha);
+}
+)msl";
+
+static const char* kVectorLabelBackgroundFragmentMSL = R"msl(
+#include <metal_stdlib>
+using namespace metal;
+struct VectorLabelFragmentIn { float2 uv; float opacity; };
+fragment float4 vectorLabelBackgroundFragment(
+        VectorLabelFragmentIn in [[stage_in]],
+        texture2d<float> u_iconAtlas [[texture(0)]],
+        sampler u_sampler [[sampler(0)]]) {
+    float4 tex = u_iconAtlas.sample(u_sampler, in.uv);
+    float alpha = tex.a * in.opacity;
+    if (alpha <= 0.004) discard_fragment();
+    return float4(tex.rgb, alpha);
 }
 )msl";
 
@@ -2700,11 +2936,9 @@ struct GltfUniforms {
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
-    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=cellZoom z=边长 w=偏移范围
-    packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
-    packed_float4 roadFieldWidth;  // 宽度 ramp (z0,halfPx0,z1,halfPx1)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
     packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留
+    float terrainFillMaskEnabled;
 };
 
 float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
@@ -2949,8 +3183,7 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              // 合批 Step 2:间接纹理搬 array(64² 每层,层号 u.terrainLayers.y)。
                              texture2d_array<float> u_pageStore [[texture(20)]],
                              texture2d_array<float> u_pageStoreIndir [[texture(21)]],
-                             texture2d_array<float> u_roadField [[texture(23)]],
-                             texture2d_array<float> u_roadFieldIndir [[texture(24)]],
+                             texture2d<float> u_terrainFillMask [[texture(23)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -3044,14 +3277,17 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
         // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
         // 本变体 UV = details 逐顶点 texcoord,轴对齐 origin/span 退化仿射传入。
         base = eePageStoreCompose(
-            u_pageStore, u_pageStoreIndir, u_roadField, u_roadFieldIndir,
-            u_tileSharedSampler,
+            u_pageStore, u_pageStoreIndir, u_tileSharedSampler,
             base, psUv,
             float4(u.pageStoreUv.x, u.pageStoreUv.y, u.pageStoreUv.z, 0.0),
             float2(0.0, u.pageStoreUv.w), psPhase, cells,
-            int(u.terrainLayers.y + 0.5), float(u.roadFieldParams[1]),
-            float4(u.roadFieldParams), float4(u.roadFieldWidth),
-            float4(u.roadFieldColor));
+            int(u.terrainLayers.y + 0.5));
+    }
+    if (u.terrainFillMaskEnabled > 0.5) {
+        base = gltfAlphaOver(
+            base,
+            u_terrainFillMask.sample(u_tileSharedSampler, in.texcoord01.xy),
+            1.0);
     }
     base = gltfApplyWaterMask(
         base,
@@ -3363,6 +3599,7 @@ struct TerrainVertexOut {
     float3 normal;
     float3 localPosition;
     float4 texcoord01;
+    float2 selectedTileUv;
 };
 
 // Phase 2c P2 morph:反量化 RG 16bit 高度纹素→米(mr = (minHeight, heightRange))。
@@ -3420,6 +3657,7 @@ vertex TerrainVertexOut terrainVertex(
     out.position = u_modelViewProjection * float4(morphPos, 1.0);
     out.normal = normalize(in.normal.xyz);
     out.localPosition = morphPos;
+    out.selectedTileUv = in.texcoord01.xy;
     out.texcoord01 = in.texcoord01;
     return out;
 }
@@ -3510,11 +3748,9 @@ struct GltfUniforms {
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
     packed_float4 terrainLayers;   // 合批 Step 1:x=高度纹理 array 层号(顶点消费)
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
-    packed_float4 roadFieldParams; // 刀2 场解算:x=enable y=cellZoom z=边长 w=偏移范围
-    packed_float4 roadFieldColor;  // 线色(RGBA 非预乘)
-    packed_float4 roadFieldWidth;  // 宽度 ramp (z0,halfPx0,z1,halfPx1)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
     packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留
+    float terrainFillMaskEnabled;
 };
 
 // TerrainVertexOut is provided by the vertex MSL (the backend concatenates the
@@ -3600,8 +3836,7 @@ fragment float4 terrainFragment(
     // 稀疏虚拟纹理(Step B1):间接纹理(RGBA8 编 layer 索引)。合批 Step 2:搬
     // array(64² 每层,层号 u.terrainLayers.y),read() 整数寻址不占 sampler 槽。
     texture2d_array<float> u_pageStoreIndir [[texture(21)]],
-                             texture2d_array<float> u_roadField [[texture(23)]],
-                             texture2d_array<float> u_roadFieldIndir [[texture(24)]],
+    texture2d<float> u_terrainFillMask [[texture(23)]],
     // Metal argument tables cap samplers at 0-15; terrain imagery all uses the
     // same clamp/linear sampling, so a single shared sampler at slot 0 covers
     // the base color, raster overlay (textures 15-18) and water mask (19)
@@ -3639,28 +3874,28 @@ fragment float4 terrainFragment(
             base, in, u_directRasterTexture0, u_terrainSampler,
             u.directRasterTexCoordSet[0],
             float4(u.directRasterTileUv[0]), u.directRasterOpacity[0],
-            u.clipUv, u.clipEnabled);
+            u.clipUV, u.clipEnabled);
     }
     if (u.directRasterTextureCount > 1.5) {
         base = terrainApplyDirectRaster(
             base, in, u_directRasterTexture1, u_terrainSampler,
             u.directRasterTexCoordSet[1],
             float4(u.directRasterTileUv[1]), u.directRasterOpacity[1],
-            u.clipUv, u.clipEnabled);
+            u.clipUV, u.clipEnabled);
     }
     if (u.directRasterTextureCount > 2.5) {
         base = terrainApplyDirectRaster(
             base, in, u_directRasterTexture2, u_terrainSampler,
             u.directRasterTexCoordSet[2],
             float4(u.directRasterTileUv[2]), u.directRasterOpacity[2],
-            u.clipUv, u.clipEnabled);
+            u.clipUV, u.clipEnabled);
     }
     if (u.directRasterTextureCount > 3.5) {
         base = terrainApplyDirectRaster(
             base, in, u_directRasterTexture3, u_terrainSampler,
             u.directRasterTexCoordSet[3],
             float4(u.directRasterTileUv[3]), u.directRasterOpacity[3],
-            u.clipUv, u.clipEnabled);
+            u.clipUV, u.clipEnabled);
     }
     // 合成方案页存储(Step 3,镜像 GLSL 侧):目标 capped 瓦片改采页存储,
     // 覆盖上采样 directComposite → 真实高清影像。enabled=0 恒不进,零回归。
@@ -3675,21 +3910,24 @@ fragment float4 terrainFragment(
         // 个 LOD 窗口(一阶误差,远大于 GCJ 本身)。GCJ 空间的精确 scale-bias 与
         // mercator 的略有差异,但 warp 在单瓦片内近似仿射,二阶量可忽略。
         if (fmod(psPack, 8.0) > 0.5 && u.clipEnabled > 1.5) {
-            psUv = float2(u.clipUv.x, u.clipUv.y) +
-                   psUv * float2(u.clipUv.z, u.clipUv.w);
+            psUv = float2(u.clipUV.x, u.clipUV.y) +
+                   psUv * float2(u.clipUV.z, u.clipUV.w);
         }
         float2 cells = max(float2(u.pageStoreParams.y, u.pageStoreParams.z),
                            float2(1.0));
         // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
         // [瓦界对齐] 位移路径 UV = 共享模板几何 UV,传逐瓦仿射 pageGeomA/B。
         base = eePageStoreCompose(
-            u_pageStore, u_pageStoreIndir, u_roadField, u_roadFieldIndir,
-            u_terrainSampler,
+            u_pageStore, u_pageStoreIndir, u_terrainSampler,
             base, psUv, float4(u.pageGeomA),
             float2(u.pageGeomB.x, u.pageGeomB.y), psPhase, cells,
-            int(u.terrainLayers.y + 0.5), float(u.roadFieldParams[1]),
-            float4(u.roadFieldParams), float4(u.roadFieldWidth),
-            float4(u.roadFieldColor));
+            int(u.terrainLayers.y + 0.5));
+    }
+    if (u.terrainFillMaskEnabled > 0.5) {
+        base = terrainAlphaOver(
+            base,
+            u_terrainFillMask.sample(u_terrainSampler, in.selectedTileUv),
+            1.0);
     }
     base = terrainApplyWaterMask(
         base, in, u_gltfWaterMaskTexture, u_terrainSampler,
@@ -3899,11 +4137,6 @@ fragment float4 terrainInstancedFragment(
     constant TerrainInstancedFragUniforms& u [[buffer(0)]],
     texture2d_array<float> u_pageStore [[texture(20)]],
     texture2d_array<float> u_pageStoreIndir [[texture(21)]],
-    // 刀2 场纹理已随命令绑定;实例化 MSL 的 frag uniforms 是精简 struct
-    // (无 roadFieldParams),场解算暂缺 —— 与 Metal 侧 depth-only/法线场
-    // 同类特性滞后,补齐时机见 GLES 版注释。参数保留占位。
-    texture2d_array<float> u_roadField [[texture(23)]],
-                             texture2d_array<float> u_roadFieldIndir [[texture(24)]],
     sampler u_pageSampler [[sampler(0)]]) {
     float2 terrainUv = in.texcoord01.xy;
     if (in.pageParams.z > 0.5 &&
@@ -3937,15 +4170,10 @@ fragment float4 terrainInstancedFragment(
     float2 psUv = psSet > 0.5 ? in.texcoord01.zw : in.texcoord01.xy;
     // 采样链收进单一治理点 eePageStoreCompose(PageStoreSamplingGLSL.h)。
     // [瓦界对齐] UV = 共享模板几何 UV,仿射经实例流传入。
-    // ⚠️ instanced MSL 的精简 uniform struct 尚无场参数 → 场参数传 0(场支路
-    // 死代码),特性滞后同 depth-only;Metal 补齐时把 roadFieldParams/Color
-    // 加进 TerrainInstancedFragUniforms 并改此两参即可。
     base = eePageStoreCompose(
-        u_pageStore, u_pageStoreIndir, u_roadField, u_roadFieldIndir,
-        u_pageSampler, base, psUv,
+        u_pageStore, u_pageStoreIndir, u_pageSampler, base, psUv,
         float4(in.pageUv), float2(in.pageAux.z, in.pageAux.w),
-        float2(in.pageAux.x, in.pageAux.y), cells, int(indirLayer),
-        0.0, float4(0.0), float4(0.0), float4(0.0));
+        float2(in.pageAux.x, in.pageAux.y), cells, int(indirLayer));
 
     // GE 式半球光照(与 GLSL 侧共用 TerrainSurfaceLightGLSL.h 的单一函数;由
     // withTerrainLight() 注入 kTerrainLightMSL)。
@@ -3957,6 +4185,10 @@ fragment float4 terrainInstancedFragment(
 
 
 namespace renderer_testing {
+
+const char* vectorFillFragmentMSL() {
+    return kVectorFillFragmentMSL;
+}
 
 const char* gltfVertexGLSL() {
     return kGltfVertexGLSL;
@@ -3976,6 +4208,14 @@ const char* gltfInstancedVertexGLSL() {
 
 const char* gltfInstancedVertexMSL() {
     return kGltfInstancedVertexMSL;
+}
+
+const char* vectorLineFragmentGLSL() {
+    return kVectorLineFragmentGLSL;
+}
+
+const char* vectorLineFragmentMSL() {
+    return kVectorLineFragmentMSL;
 }
 
 const char* terrainVertexGLSL() {
@@ -4125,6 +4365,7 @@ struct Renderer::Impl {
     // 矢量文字标注(P5b):SDF 字形图集 + 文字 shader。
     std::unique_ptr<GlyphAtlas> glyphAtlas;
     std::unique_ptr<ShaderProgram> vectorLabelShader;
+    std::unique_ptr<ShaderProgram> vectorLabelBackgroundShader;
 
     bool initialized = false;
 };
@@ -4136,6 +4377,11 @@ struct Renderer::Impl {
 Renderer::Renderer(RenderDevice* device)
     : impl_(std::make_unique<Impl>()) {
     impl_->device = device;
+}
+
+RenderDevice::Backend Renderer::backendType() const {
+    return impl_->device ? impl_->device->backendType()
+                         : RenderDevice::Backend::Vulkan;
 }
 
 Renderer::~Renderer() {
@@ -4372,6 +4618,14 @@ bool Renderer::initialize() {
         // 非致命:标注不出图,其余矢量/地形不受影响
         fprintf(stderr, "[Renderer] vectorLabelShader failed — vector labels unavailable\n");
     }
+    ShaderDesc vectorLabelBackgroundSd;
+    vectorLabelBackgroundSd.vertexSource =
+        isMetal ? kVectorLabelVertexMSL : kVectorLabelVertexGLSL;
+    vectorLabelBackgroundSd.fragmentSource = isMetal
+        ? kVectorLabelBackgroundFragmentMSL
+        : withSceneOutput(kVectorLabelBackgroundFragmentGLSL);
+    impl_->vectorLabelBackgroundShader =
+        dev->createShader(vectorLabelBackgroundSd);
     impl_->glyphAtlas = std::make_unique<GlyphAtlas>(dev);
     // 图标图集(矢量 P6c):纹理延迟到首次 addImage 才建,无图标零开销。
     impl_->iconAtlas = std::make_unique<IconAtlas>(dev);
@@ -4400,6 +4654,7 @@ void Renderer::dispose() {
     impl_->vectorLineStencilShader.reset();
     impl_->vectorPointShader.reset();
     impl_->vectorLabelShader.reset();
+    impl_->vectorLabelBackgroundShader.reset();
     impl_->glyphAtlas.reset();
     impl_->iconAtlas.reset();
     impl_->initialized = false;
@@ -4448,11 +4703,36 @@ ShaderProgram* Renderer::vectorPointShader() const {
 ShaderProgram* Renderer::vectorLabelShader() const {
     return impl_->vectorLabelShader.get();
 }
-GlyphAtlas* Renderer::glyphAtlas() const { return impl_->glyphAtlas.get(); }
+ShaderProgram* Renderer::vectorLabelBackgroundShader() const {
+    return impl_->vectorLabelBackgroundShader.get();
+}
+GlyphAtlas* Renderer::glyphAtlas() { return impl_->glyphAtlas.get(); }
+const GlyphAtlas* Renderer::glyphAtlas() const { return impl_->glyphAtlas.get(); }
 
-IconAtlas* Renderer::iconAtlas() const { return impl_->iconAtlas.get(); }
+IconAtlas* Renderer::iconAtlas() { return impl_->iconAtlas.get(); }
+const IconAtlas* Renderer::iconAtlas() const { return impl_->iconAtlas.get(); }
 Texture* Renderer::surfacePlaceholderTexture() const {
     return impl_->surfacePlaceholderTexture.get();
+}
+
+std::unique_ptr<Texture> Renderer::uploadTerrainFillMask(
+    const std::vector<uint8_t>& pixels) const {
+    constexpr int kSize = 256;
+    constexpr size_t kExpectedBytes =
+        static_cast<size_t>(kSize) * kSize * 4u;
+    if (!impl_->device || pixels.size() != kExpectedBytes) return nullptr;
+    TextureDesc desc;
+    desc.width = kSize;
+    desc.height = kSize;
+    desc.format = TextureDesc::Format::RGBA8;
+    desc.data = pixels.data();
+    desc.dataSize = pixels.size();
+    desc.mipmap = false;
+    desc.minFilter = TextureDesc::Filter::Linear;
+    desc.magFilter = TextureDesc::Filter::Linear;
+    desc.wrapS = TextureDesc::Wrap::Clamp;
+    desc.wrapT = TextureDesc::Wrap::Clamp;
+    return impl_->device->createTexture(desc);
 }
 ShaderProgram* Renderer::gltfShader() const { return impl_->gltfShader.get(); }
 

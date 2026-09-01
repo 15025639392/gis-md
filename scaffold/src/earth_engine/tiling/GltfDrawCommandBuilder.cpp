@@ -14,6 +14,7 @@
 #include "../debug/PerfTimer.h"
 #include "../debug/PlatformLog.h"
 #include "TerrainEdgeLutTable.h"
+#include "TileSurfaceClip.h"
 
 #include <algorithm>
 #include <string>
@@ -441,6 +442,7 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
                     u.heightDisplace = {
                         ht->minHeight * reliefFade, ht->heightRange * reliefFade,
                         1.0f, static_cast<float>(gridSize)};
+                    cmd.terrainVisibleFade = reliefFade;
                     // 合批 Step 1:高度数据在共享 array 的层号进 uniform;
                     // (layer, epoch) 记在命令上供 build 侧 staleness 校验。
                     u.terrainLayers[0] = static_cast<float>(ht->layer);
@@ -636,19 +638,43 @@ void applyPerFrameCommandState(
         u.renderOpacity = 1.0f;
         // 机制 B 边吸附:TileEdgeSnapResolver 每帧算好的 4 边打包步长。
         // terrainLayers.z 原为保留位,uniform 契约零改动。
-        float snapPacked = tile.selectionFrameState.edgeSnapPacked;
+        // Edge snap is implemented only by terrainShader's displacement
+        // path. Baked/legacy terrain commands use gltfShader and must expose
+        // the surface they actually draw, rather than carrying a snap state
+        // that only the CPU visible-surface sampler could observe.
+        float snapPacked =
+            renderer.supportsTerrainEdgeSnap() &&
+                    cmd.hasTerrainDisplacementFrame
+                ? tile.selectionFrameState.edgeSnapPacked
+                : 0.0f;
         // ①-1:把「粗邻居在吸附节点处实际渲染出的高度」与本瓦片该纹素的差值
         // 传上去,shader 加到自纹理吸附值上 → 两侧在共享边上求值同一个函数。
         // 上传失败(层不在驻留/尺寸不符)时不置有效位,shader 退回自吸附 ——
         // 差值形式让这条失效路径恰好等于改前行为,不会更差。
+        const TerrainEdgeLutTable* visibleEdgeLut = nullptr;
+        if (context.edgeLutTables) {
+            const auto it = context.edgeLutTables->find(
+                terrainEdgeCellKey(tile.key));
+            if (it != context.edgeLutTables->end()) {
+                visibleEdgeLut = &it->second;
+            }
+        }
         if (snapPacked > 0.5f &&
             uploadTerrainEdgeLut(renderer, tile, cmd,
                                  context.edgeLutTables)) {
             snapPacked += 4096.0f;  // 有效位;组合后 ≤8191,实例流打包仍精确
+            cmd.terrainVisibleEdgeLutTable = visibleEdgeLut;
         }
         u.terrainLayers[2] = snapPacked;
+        cmd.terrainVisibleEdgeSnapPacked = snapPacked;
         logEdgeLutStats(context.frameNumber);
     }
+    // A selected-tile mask may sample raw a_texcoord01 only when the submitted
+    // geometry footprint is the selected tile itself. Ancestor height remap
+    // swaps in the descendant template and therefore restores that invariant;
+    // the legacy ancestor-discard fallback does not, so it must not bind an
+    // exact selected page with ancestor UVs.
+    bool selectedLocalMaskUvAvailable = !context.surfaceClipUv.has_value();
     if (cmd.terrainRenderContent && context.surfaceClipUv) {
         // 机制 A(无缝北极星 P1):祖先回退不再"画祖先几何+片元 discard 裁剪"
         // (切边是像素级的,无裙墙 → 掠视透天细缝,cesium-native#269 列为最差
@@ -660,7 +686,9 @@ void applyPerFrameCommandState(
         // 失败)回落旧 discard 路径 —— 视觉与改前逐帧等价,零风险闸。
         // 全部盖在帧副本上,常驻缓存不变式不动(clip 本就是每帧盖章)。
         bool remapped = false;
-        if (context.surfaceClipDescendant &&
+        if (renderer.backendType() == RenderDevice::Backend::OpenGLES &&
+            context.surfaceClipDescendant &&
+            TileSurfaceClip::supportsTerrainHeightRemap(tile) &&
             cmd.terrainSurfaceSource ==
                 TerrainSurfaceCommandSource::RealTerrain) {
             TerrainDisplacementTemplatePool* pool =
@@ -714,11 +742,14 @@ void applyPerFrameCommandState(
                     u.heightDisplace = {ht->minHeight * fade,
                                         ht->heightRange * fade, 1.0f,
                                         static_cast<float>(texGrid)};
+                    cmd.terrainVisibleFade = fade;
                     u.terrainLayers[0] = static_cast<float>(ht->layer);
                     // remap 不做 geomorph(fine/coarse 同源同值),morph 钉 1。
                     u.geomorphUpFactor = {0.0f, 0.0f, 1.0f, 1.0f};
                     // remap 自身不吸附(数据即祖先平滑场,邻居向它吸)。
                     u.terrainLayers[2] = 0.0f;
+                    cmd.terrainVisibleEdgeSnapPacked = 0.0f;
+                    cmd.terrainVisibleEdgeLutTable = nullptr;
                     cmd.terrainHeightLayer = ht->layer;
                     cmd.terrainHeightLayerEpoch = ht->epoch;
                     cmd.terrainHeightGridSize = texGrid;
@@ -729,6 +760,7 @@ void applyPerFrameCommandState(
                     u.clipUv = *context.surfaceClipUv;
                     u.clipEnabled = 2.0f;
                     remapped = true;
+                    selectedLocalMaskUvAvailable = true;
                     pool->noteSurfaceClipRemap(context.frameNumber);
                 }
             }
@@ -845,6 +877,30 @@ void applyPerFrameCommandState(
     // 未启用(指针空)或非目标瓦片时 no-op → 逐字节走现状路径,零回归。
     if (TerrainPageStore* pageStore = renderer.terrainPageStore()) {
         pageStore->applyToTerrainCommand(cmd, tile);
+    }
+
+    // Selected-tile local fill mask: unlike terrain height remapping, this
+    // page never follows an ancestor.  The owner is supplied by the render
+    // entry (selectedTile) and can therefore differ from `tile`, which may be
+    // the ancestor geometry used for this frame. Reset the per-frame gate on
+    // every copy so a previously cached binding cannot leak across frames.
+    cmd.terrainFillMaskActive = false;
+    u.terrainFillMaskEnabled = 0.0f;
+    if (cmd.terrainRenderContent && selectedLocalMaskUvAvailable &&
+        context.terrainFillMaskOwner) {
+        Texture* mask = context.terrainFillMaskOwner->content.renderContent
+                            .terrainFillMaskTexture();
+        if (mask) {
+            if (cmd.textures.size() <=
+                static_cast<size_t>(kGltfTerrainFillMaskTextureSlot)) {
+                cmd.textures.resize(
+                    static_cast<size_t>(kGltfTerrainFillMaskTextureSlot) + 1u,
+                    nullptr);
+            }
+            cmd.textures[kGltfTerrainFillMaskTextureSlot] = mask;
+            cmd.terrainFillMaskActive = true;
+            u.terrainFillMaskEnabled = 1.0f;
+        }
     }
 }
 

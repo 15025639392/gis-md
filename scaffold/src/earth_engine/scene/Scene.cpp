@@ -27,6 +27,8 @@
 #include "../tiling/Tileset.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../renderer/TerrainPageStore.h"
+#include "../renderer/AmapTerrainFillMaskStore.h"
+#include "../style/AmapClassicRuntime.h"
 
 #include <utility>
 #include <algorithm>
@@ -117,6 +119,18 @@ Scene::Scene()
 }
 
 Scene::~Scene() {
+    // Tilesets borrow ActivatedRasterOverlay instances owned by the SDK
+    // facade/runtime.  Release every tile tree before tearing down the
+    // official runtime so no late tile/provider callback can observe a dead
+    // overlay or source bundle.
+    if (tilesets_) {
+        tilesets_->clearAll();
+    }
+    if (renderer_) {
+        renderer_->setTerrainFillMaskStore(nullptr);
+    }
+    terrainFillMaskStore_ = nullptr;
+    amapClassicRuntime_.reset();
     clearMvtVectorSources();
     renderer_.reset();
 }
@@ -155,6 +169,8 @@ bool Scene::setRenderDevice(RenderDevice* device) {
         renderPipeline_.reset();
         return false;
     }
+    renderer_->setTerrainFillMaskStore(
+        terrainFillMaskStore_);
 
     environment_->initializeRenderResources(device);
 
@@ -177,8 +193,10 @@ void Scene::update(double deltaSeconds) {
             cameraSystem_.get(),
             renderer_.get(),
             *tilesets_,
-            !mvtSources_.empty(),
-            static_cast<uint32_t>(mvtSources_.size()),
+            !mvtSources_.empty() || amapClassicRuntime_ != nullptr,
+            static_cast<uint32_t>(amapClassicRuntime_
+                                      ? 3
+                                      : mvtSources_.size()),
             terrainPageStore_ != nullptr &&
                 tilesets_->hasAnyRasterOverlay(),
             deltaSeconds,
@@ -200,6 +218,14 @@ void Scene::update(double deltaSeconds) {
         const Rectangle viewRect = MvtVectorSource::horizonViewRectangle(
             cameraCarto, minRadius);
         const double cameraHeight = std::max(1.0, cameraCarto.height());
+        SceneFrameResourceArbiter& arbiter =
+            frameRuntime_.resourceArbiter();
+        if (amapClassicRuntime_) {
+            amapClassicRuntime_->update(viewRect, cameraHeight, arbiter);
+            telemetry_->diagnostics().mvtVectorUpdateMs =
+                perf::nowMs() - mvtStartMs;
+            return;
+        }
         std::vector<MvtVectorSource*> activeSources;
         activeSources.reserve(mvtSources_.size());
         for (auto& runtime : mvtSources_) {
@@ -208,8 +234,6 @@ void Scene::update(double deltaSeconds) {
         if (!activeSources.empty()) {
             mvtUpdateCursor_ %= activeSources.size();
         }
-        SceneFrameResourceArbiter& arbiter =
-            frameRuntime_.resourceArbiter();
         const auto fairShare = [&arbiter](
             SceneFrameResourceStage stage, size_t remainingSources) {
             const uint32_t remaining = arbiter.remaining(
@@ -297,9 +321,10 @@ bool Scene::render() {
         environment_->skyGradient(),
         tilesets_->primary(),
         tilesets_->pendingPrimary(),
+        terrainFillMaskStore_,
         tilesets_->contentTilesets(),
         layers_->vectorLayers(),
-        layers_->featureRenderLayers(),
+        layers_->mutableFeatureRenderLayers(),
         [this]() { updatePresentationTrace(); },
         renderDevice_,
         sceneRenderTarget_,
@@ -343,6 +368,10 @@ bool Scene::hasConvergingWork(const char** outReason) const {
         renderer_->terrainPageStore()->hasWorkInFlight()) {
         return hit("pageStoreInFlight");
     }
+    if (terrainFillMaskStore_ &&
+        terrainFillMaskStore_->hasWorkInFlight()) {
+        return hit("amapTerrainFillMaskInFlight");
+    }
 
     // ④ V27 标注收敛:字形烘焙/换代 placement/fade 三段全在渲染帧里推进,
     //    停帧 = 新标注永远停在 opacity=0(冷启动 POI 隐形到用户缩放为止)。
@@ -367,6 +396,11 @@ bool Scene::hasConvergingWork(const char** outReason) const {
             return hit("mvtVectorPending");
         }
     }
+    if (amapClassicRuntime_) {
+        if (amapClassicRuntime_->sources().hasPendingWork()) {
+            return hit("amapOfficialPending");
+        }
+    }
 
     if (outReason) *outReason = "idle";
     return false;
@@ -389,6 +423,12 @@ void Scene::auditWorkLedger() const {
     // 本函数让旧 hasConvergingWork 反过来检查账本 —— 目的是回答"账本权威后,
     // 旧判据是否还有它自己的多余来源或漏源"。
     // 只打不一致,一致时静默(健康态刷屏会让人学会无视这条日志)。
+    const uint64_t frameId = frameState().frameId;
+    if (lastWorkLedgerAuditFrameId_ == frameId) {
+        return;
+    }
+    lastWorkLedgerAuditFrameId_ = frameId;
+
     WorkLedger& ledger = WorkLedger::shared();
 
     // ① 对账完整性:令牌数 vs 从注册表重新数的真值。不等 = 漏接迁移点。
@@ -428,11 +468,53 @@ void Scene::auditWorkLedger() const {
     bool sourceTicketed = false;
     if (oldReason && std::strcmp(oldReason, "labelConverge") == 0) {
         sourceTicketed =
-            ledger.outstandingForLabel("labelConverge") > 0;
+            ledger.outstandingForLabel("labelConverge") > 0 ||
+            // GlyphAtlas publishes individual ready results before the
+            // coalesced glyphRasterBatch Landing ticket is released. During
+            // that interval the legacy predicate is correctly busy, but the
+            // layer Pumped ticket is intentionally not held yet. The batch
+            // Landing ticket is the authoritative source and will wake the
+            // next frame when the remaining glyphs seal.
+            ledger.outstandingForLabel("glyphRasterBatch") > 0 ||
+            // A glyph worker may release its Landing ticket after the last
+            // layer build but before this audit.  The release itself owns the
+            // wake pulse; the layer Pumped ticket is re-established by the
+            // next build, so this short window is valid and must not be
+            // reported as a missing source ticket.
+            // Landing labels share one coalesced wake pulse. Concurrent tile
+            // and glyph completions may overwrite the diagnostic last-label,
+            // but any unconsumed pulse still guarantees the next build. A
+            // genuine missing ticket is reported after that pulse is consumed
+            // if the old busy predicate remains true.
+            ledger.hasUnconsumedLanding();
     } else if (oldReason &&
                std::strcmp(oldReason, "pageStoreInFlight") == 0) {
         sourceTicketed =
             ledger.outstandingForLabel("terrainPageUpload") > 0;
+    } else if (oldReason &&
+               std::strcmp(oldReason,
+                           "amapTerrainFillMaskInFlight") == 0) {
+        sourceTicketed =
+            ledger.outstandingForLabel(
+                "amapTerrainFillMaskFetch") > 0 ||
+            // The callback publishes the page before releasing its Landing
+            // ticket.  Until the release pulse is consumed, the legacy store
+            // predicate can still observe the just-landed entry as pending on
+            // an adjacent snapshot without representing a missing wakeup.
+            ledger.hasUnconsumedLanding();
+    } else if (oldReason &&
+               (std::strcmp(oldReason, "amapOfficialPending") == 0 ||
+                std::strcmp(oldReason, "mvtVectorPending") == 0)) {
+        // AMap official sources use the same VectorTileSourceT machinery and
+        // therefore the same fetch/tessellate/commit/retry ticket labels as a
+        // generic MVT source.  This branch is audit classification only; it
+        // does not create a second ticket or keep network work at full FPS.
+        sourceTicketed =
+            ledger.outstandingForLabel("mvtVectorFetch") > 0 ||
+            ledger.outstandingForLabel("mvtVectorTessellate") > 0 ||
+            ledger.outstandingForLabel("mvtVectorCommit") > 0 ||
+            ledger.outstandingForLabel("mvtVectorRetry") > 0 ||
+            ledger.hasUnconsumedLanding();
     } else {
         // terrainPending / pendingPrimary / contentPending can be backed by a
         // terrain content request, raster request, raster upload, or tile GPU
@@ -561,12 +643,20 @@ void Scene::addTileset(std::unique_ptr<Tileset> tileset) {
     tilesets_->addContent(std::move(tileset));
 }
 
+void Scene::clearTilesets() {
+    tilesets_->clearAll();
+}
+
 Tileset* Scene::tileset() const {
     return tilesets_->primary();
 }
 
 size_t Scene::additionalTilesetCount() const {
     return tilesets_->contentTilesetCount();
+}
+
+bool Scene::hasAnyTileset() const {
+    return tilesets_->hasAnyTileset();
 }
 
 bool Scene::hasTerrain() const {
@@ -584,17 +674,53 @@ std::unique_ptr<VectorLayer> Scene::removeVectorLayer(const std::string& layerId
 }
 
 void Scene::addFeatureRenderLayer(std::unique_ptr<FeatureRenderLayer> layer) {
+    if (layer && layer->style().usesOfficialProviderContract() &&
+        !layer->hasSealedOfficialProfile()) {
+        platformLog(LogLevel::Error, "Scene",
+                    "reject unsealed official FeatureRenderLayer '%s'",
+                    layer->id().c_str());
+        return;
+    }
     layers_->addFeatureRenderLayer(std::move(layer));
+}
+
+bool Scene::addOfficialFeatureRenderLayer(
+    std::unique_ptr<FeatureRenderLayer> layer) {
+    if (!layer || !layer->hasSealedOfficialProfile() ||
+        !layer->style().usesOfficialProviderContract()) return false;
+    layer->setRenderDevice(renderDevice_);
+    return layers_->addFeatureRenderLayer(std::move(layer));
 }
 
 std::unique_ptr<FeatureRenderLayer> Scene::removeFeatureRenderLayer(
     const std::string& layerId) {
+    return removeFeatureRenderLayerInternal(layerId, false);
+}
+
+std::unique_ptr<FeatureRenderLayer> Scene::removeOfficialFeatureRenderLayer(
+    const std::string& layerId) {
+    return removeFeatureRenderLayerInternal(layerId, true);
+}
+
+std::unique_ptr<FeatureRenderLayer> Scene::removeFeatureRenderLayerInternal(
+    const std::string& layerId, bool allowOfficial) {
     // An MVT source and its sink-bound layer are one lifecycle unit.  Route
     // the legacy generic removal entry point through the source teardown
     // protocol instead of detaching the layer while Scene keeps updating the
     // source.  The source-aware API intentionally returns no detached layer.
     if (removeMvtVectorSource(layerId)) {
         return nullptr;
+    }
+    if (!allowOfficial) {
+        for (const auto& layer : layers_->featureRenderLayers()) {
+            if (layer && layer->id() == layerId &&
+                layer->hasSealedOfficialProfile()) {
+                platformLog(LogLevel::Error, "Scene",
+                            "reject standalone removal of official layer '%s'",
+                            layerId.c_str());
+                return nullptr;
+            }
+        }
     }
     return layers_->removeFeatureRenderLayer(layerId);
 }
@@ -603,6 +729,12 @@ bool Scene::addMvtVectorSource(
     std::unique_ptr<MvtVectorSource> source,
     std::unique_ptr<FeatureRenderLayer> layer) {
     if (!source || !layer || layer->id().empty()) return false;
+    if (layer->style().usesOfficialProviderContract()) {
+        platformLog(LogLevel::Error, "Scene",
+                    "reject generic MVT source for official layer '%s'",
+                    layer->id().c_str());
+        return false;
+    }
     const std::string layerId = layer->id();
     for (const auto& runtime : mvtSources_) {
         if (runtime.layerId == layerId) return false;
@@ -630,15 +762,35 @@ bool Scene::removeMvtVectorSource(const std::string& layerId) {
 
 size_t Scene::mvtVectorSourceCount() const { return mvtSources_.size(); }
 
-FeatureRenderLayer* Scene::mvtVectorLayer(const std::string& layerId) const {
-    const auto it = std::find_if(
-        mvtSources_.begin(), mvtSources_.end(),
-        [&](const MvtRuntime& runtime) { return runtime.layerId == layerId; });
-    if (it == mvtSources_.end()) return nullptr;
-    for (const auto& layer : layers_->featureRenderLayers()) {
-        if (layer && layer->id() == it->layerId) return layer.get();
+const AmapClassicRuntime* Scene::installAmapClassicRuntime(
+    std::unique_ptr<AmapClassicRuntime> runtime) {
+    if (!runtime || amapClassicRuntime_) return nullptr;
+    const bool hasGenericFeatureLayer = std::any_of(
+        layers_->featureRenderLayers().begin(),
+        layers_->featureRenderLayers().end(), [](const auto& layer) {
+            return layer && !layer->hasSealedOfficialProfile();
+        });
+    if (layers_->vectorLayerCount() != 0 || !mvtSources_.empty() ||
+        hasGenericFeatureLayer || tilesets_->hasAnyTileset() ||
+        terrainPageStore_ != nullptr) {
+        platformLog(LogLevel::Error, "Scene",
+                    "reject AMap official runtime beside generic vector/raster contracts");
+        return nullptr;
     }
-    return nullptr;
+    amapClassicRuntime_ = std::move(runtime);
+    terrainFillMaskStore_ = amapClassicRuntime_->terrainFillMaskStore();
+    if (renderer_) {
+        renderer_->setTerrainFillMaskStore(terrainFillMaskStore_);
+    }
+    return amapClassicRuntime_.get();
+}
+
+void Scene::removeAmapClassicRuntime() {
+    if (renderer_) {
+        renderer_->setTerrainFillMaskStore(nullptr);
+    }
+    terrainFillMaskStore_ = nullptr;
+    amapClassicRuntime_.reset();
 }
 
 void Scene::clearMvtVectorSources() {
@@ -658,6 +810,11 @@ bool Scene::addIconImage(const std::string& name,
                          const std::vector<uint8_t>& rgba) {
     if (!renderer_ || !renderer_->iconAtlas()) return false;
     return renderer_->iconAtlas()->addImage(name, width, height, rgba);
+}
+
+bool Scene::hasIconImage(const std::string& name) const {
+    return renderer_ && renderer_->iconAtlas() &&
+           renderer_->iconAtlas()->frame(name) != nullptr;
 }
 
 size_t Scene::vectorLayerCount() const {
@@ -698,7 +855,7 @@ SceneInteractionContext Scene::interactionContext() const {
         cameraSystem_.get(),
         tilesets_->primary(),
         &layers_->vectorLayers(),
-        &layers_->featureRenderLayers(),
+        &layers_->mutableFeatureRenderLayers(),
         &frameRuntime_.frameState());
 }
 

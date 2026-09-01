@@ -239,3 +239,25 @@ TEST(PolygonTessellatorTest, SubMaxEdgePolygonSkipsGlobeGrid) {
     EXPECT_EQ(4u, fill.positions.size());
     EXPECT_EQ(6u, fill.fillIndices.size());
 }
+
+TEST(PolygonTessellatorTest, DiagnosticsDoNotChangeGeometry) {
+    Feature f = polygon({square(0.0, 0.0, 0.02, 0.02, false)});
+    PolygonTessellationDiagnostics diagnostics;
+    const auto measured = PolygonTessellator::tessellate(
+        f, Ellipsoid::WGS84(), 0.0, nullptr, 10000.0, &diagnostics);
+    const auto plain = PolygonTessellator::tessellate(
+        f, Ellipsoid::WGS84(), 0.0, nullptr, 10000.0);
+    EXPECT_EQ(plain.positions, measured.positions);
+    EXPECT_EQ(plain.fillIndices, measured.fillIndices);
+    EXPECT_EQ(plain.outlineIndices, measured.outlineIndices);
+    EXPECT_GT(diagnostics.inputPoints, 0u);
+    EXPECT_GT(diagnostics.initialConstraints, 0u);
+    EXPECT_GT(diagnostics.densifiedPoints, 0u);
+    EXPECT_GT(diagnostics.triangleCount, 0u);
+    EXPECT_GT(diagnostics.cdtPointTriangleTests, 0u);
+    EXPECT_GT(diagnostics.cdtPointBadTriangles, 0u);
+    EXPECT_GT(diagnostics.cdtConstraintsAlreadyPresent +
+                  diagnostics.cdtConstraintsInserted,
+              0u);
+    EXPECT_GT(diagnostics.cdtPeakTriangles, 0u);
+}

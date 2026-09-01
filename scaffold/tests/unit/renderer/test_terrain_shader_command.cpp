@@ -48,6 +48,18 @@ GltfPrimitiveRenderResources makePrimitive(RenderDevice& device,
     return primitive;
 }
 
+void makeTerrainTileDrawable(
+    earth_engine::testing::MockRenderDevice& device,
+    TilesetTile& tile) {
+    tile.content.renderContent.prepareGltfContent(
+        std::make_unique<GltfModel>(),
+        Mat4::identity());
+    tile.content.renderContent.setTerrainRenderContent(true);
+    tile.content.renderContent.addGltfPrimitiveResource(
+        makePrimitive(device, /*terrainVertexFormat=*/true));
+    tile.content.renderContent.setGltfResourcesReady(true);
+}
+
 } // namespace
 
 // ── makeTerrainPrimitiveCommand shape ──
@@ -162,6 +174,89 @@ TEST(TerrainShaderCommandTest, NonTerrainPrimitiveUsesGltfShaderAndStride) {
     EXPECT_NE(renderer.terrainShader(), cmd.shader);
 }
 
+TEST(TerrainShaderCommandTest, ExactSelectedTileOwnsTerrainFillMaskBinding) {
+    earth_engine::testing::MockRenderDevice device;
+    Renderer renderer(&device);
+    ASSERT_TRUE(renderer.initialize());
+
+    TilesetTile renderTile(
+        TileKey{"Geographic-TMS", 8, 80, 48},
+        Rectangle::fromDegrees(105.0, 29.0, 106.0, 30.0));
+    TilesetTile selectedTile(
+        TileKey{"Geographic-TMS", 9, 160, 96},
+        Rectangle::fromDegrees(105.0, 29.5, 105.5, 30.0));
+    makeTerrainTileDrawable(device, renderTile);
+
+    TextureDesc textureDesc;
+    textureDesc.width = 256;
+    textureDesc.height = 256;
+    std::unique_ptr<Texture> renderMask = device.createTexture(textureDesc);
+    std::unique_ptr<Texture> selectedMask = device.createTexture(textureDesc);
+    Texture* renderMaskPtr = renderMask.get();
+    Texture* selectedMaskPtr = selectedMask.get();
+    renderTile.content.renderContent.setTerrainFillMaskTexture(
+        std::move(renderMask), 10);
+    selectedTile.content.renderContent.setTerrainFillMaskTexture(
+        std::move(selectedMask), 20);
+
+    GltfDrawCommandBuildContext context{
+        earth_engine::testing::emptyRasterOverlayFrame()};
+    context.terrainFillMaskOwner = &selectedTile;
+    RenderCommandList commands;
+    GltfDrawCommandBuilder::build(renderer, renderTile, commands, context);
+
+    ASSERT_EQ(1u, commands.size());
+    const RenderCommand& cmd = commands.front();
+    ASSERT_GT(cmd.textures.size(),
+              static_cast<size_t>(kGltfTerrainFillMaskTextureSlot));
+    EXPECT_TRUE(cmd.terrainRenderContent);
+    EXPECT_TRUE(cmd.terrainFillMaskActive);
+    EXPECT_FLOAT_EQ(1.0f, cmd.gltfUniforms.terrainFillMaskEnabled);
+    EXPECT_EQ(selectedMaskPtr,
+              cmd.textures[kGltfTerrainFillMaskTextureSlot]);
+    EXPECT_NE(renderMaskPtr,
+              cmd.textures[kGltfTerrainFillMaskTextureSlot]);
+}
+
+TEST(TerrainShaderCommandTest, LegacyAncestorClipDisablesExactFillMask) {
+    earth_engine::testing::MockRenderDevice device;
+    Renderer renderer(&device);
+    ASSERT_TRUE(renderer.initialize());
+
+    TilesetTile renderTile(
+        TileKey{"Geographic-TMS", 8, 80, 48},
+        Rectangle::fromDegrees(105.0, 29.0, 106.0, 30.0));
+    TilesetTile selectedTile(
+        TileKey{"Geographic-TMS", 9, 160, 96},
+        Rectangle::fromDegrees(105.0, 29.5, 105.5, 30.0));
+    makeTerrainTileDrawable(device, renderTile);
+
+    TextureDesc textureDesc;
+    textureDesc.width = 256;
+    textureDesc.height = 256;
+    selectedTile.content.renderContent.setTerrainFillMaskTexture(
+        device.createTexture(textureDesc), 20);
+
+    GltfDrawCommandBuildContext context{
+        earth_engine::testing::emptyRasterOverlayFrame()};
+    context.surfaceClipUv = std::array<float, 4>{0.0f, 0.0f, 0.5f, 0.5f};
+    context.terrainFillMaskOwner = &selectedTile;
+    context.surfaceClipDescendant = &selectedTile;
+    RenderCommandList commands;
+    GltfDrawCommandBuilder::build(renderer, renderTile, commands, context);
+
+    ASSERT_EQ(1u, commands.size());
+    const RenderCommand& cmd = commands.front();
+    EXPECT_FLOAT_EQ(1.0f, cmd.surfaceClipEnabled);
+    EXPECT_FLOAT_EQ(1.0f, cmd.gltfUniforms.clipEnabled);
+    EXPECT_FALSE(cmd.terrainFillMaskActive);
+    EXPECT_FLOAT_EQ(0.0f, cmd.gltfUniforms.terrainFillMaskEnabled);
+    if (cmd.textures.size() >
+        static_cast<size_t>(kGltfTerrainFillMaskTextureSlot)) {
+        EXPECT_EQ(nullptr, cmd.textures[kGltfTerrainFillMaskTextureSlot]);
+    }
+}
+
 // ── Terrain shader source hygiene (parity with the design constraints) ──
 
 TEST(TerrainShaderCommandTest, TerrainShadersDropPbrExtensionUniforms) {
@@ -205,6 +300,44 @@ TEST(TerrainShaderCommandTest, TerrainShadersDropPbrExtensionUniforms) {
         std::string::npos,
         mslF.find(
             "setIndex == 1 ? in.texcoord01.zw : in.texcoord01.xy"));
+}
+
+TEST(TerrainShaderCommandTest,
+     TerrainFillMaskComposesAfterPageStoreBeforeWaterAndUsesBackendSlots) {
+    const std::string glsl = renderer_testing::terrainFragmentGLSL();
+    const size_t glslPage = glsl.find("if (u_pageStoreParams.x > 0.5)");
+    const size_t glslMask =
+        glsl.find("if (u_terrainFillMaskEnabled > 0.5)");
+    const size_t glslWater = glsl.find("base = applyGltfWaterMask");
+    ASSERT_NE(std::string::npos, glslPage);
+    ASSERT_NE(std::string::npos, glslMask);
+    ASSERT_NE(std::string::npos, glslWater);
+    EXPECT_LT(glslPage, glslMask);
+    EXPECT_LT(glslMask, glslWater);
+    EXPECT_NE(std::string::npos,
+              glsl.find("texture(u_terrainFillMask, v_selectedTileUv)"));
+
+    const std::string msl = renderer_testing::terrainFragmentMSL();
+    const size_t mslPage = msl.find("if (u.pageStoreParams.x > 0.5)");
+    const size_t mslMask =
+        msl.find("if (u.terrainFillMaskEnabled > 0.5)");
+    const size_t mslWater = msl.find("base = terrainApplyWaterMask");
+    ASSERT_NE(std::string::npos, mslPage);
+    ASSERT_NE(std::string::npos, mslMask);
+    ASSERT_NE(std::string::npos, mslWater);
+    EXPECT_LT(mslPage, mslMask);
+    EXPECT_LT(mslMask, mslWater);
+    EXPECT_NE(std::string::npos,
+              msl.find("u_terrainFillMask [[texture(23)]]"));
+    EXPECT_NE(std::string::npos,
+              msl.find("u_terrainFillMask.sample(u_terrainSampler, in.selectedTileUv)"));
+
+    EXPECT_EQ(23, kGltfTerrainFillMaskTextureSlot);
+    EXPECT_EQ(13,
+              glesGltfTextureUnit(kGltfTerrainFillMaskTextureSlot));
+    EXPECT_EQ(-1, glesGltfTextureUnit(5));
+    EXPECT_EQ(kGlesGltfWaterUnit,
+              glesGltfTextureUnit(kGltfWaterMaskTextureSlot));
 }
 
 // ── Metal name -> [[buffer(N)]] parity, all indices <= 30 ──

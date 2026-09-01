@@ -6,8 +6,18 @@
 
 #include <unordered_map>
 #include <vector>
+#include <array>
 
 namespace earth_engine {
+
+struct LabelCollisionPart {
+    Vec3 anchorEcef;
+    Vec3 tangentEcef;
+    float minXPx = 0.0f;
+    float minYPx = 0.0f;
+    float maxXPx = 0.0f;
+    float maxYPx = 0.0f;
+};
 
 /// placement 候选(collect 段产物):每个可标注要素一条。
 /// 碰撞盒是相对锚点屏幕投影位置的像素矩形(y 向上,与标签顶点
@@ -15,11 +25,36 @@ namespace earth_engine {
 struct LabelCandidate {
     FeatureId featureId = kInvalidFeatureId;
     int rank = 6;       ///< 数据侧重要度；更小者优先进入碰撞网格
+    /// Sealed AMap placement uses provider rank, then the worker's numeric
+    /// Util.stamp id in descending order. Zero means generic provider; generic
+    /// layers retain the engine's distance/id tie-break contract.
+    uint64_t officialInsertionOrder = 0;
+    uint32_t officialFragmentOrder = 0;
     Vec3 anchorEcef;   ///< 绝对 ECEF(double,不减桶原点)
+    Vec3 tangentEcef;  ///< 方向参考；与 anchor 相同表示水平标签
     float boxMinXPx = 0.0f;
     float boxMinYPx = 0.0f;
     float boxMaxXPx = 0.0f;
     float boxMaxYPx = 0.0f;
+    bool hasSecondaryBox = false;
+    float secondaryBoxMinXPx = 0.0f;
+    float secondaryBoxMinYPx = 0.0f;
+    float secondaryBoxMaxXPx = 0.0f;
+    float secondaryBoxMaxYPx = 0.0f;
+    uint64_t repeatGroup = 0;       ///< 0=不启用同名重复间距
+    float repeatDistancePx = 0.0f;  ///< 同组已放置锚点的最小屏幕距离
+    float angleRad = 0.0f;          ///< 局部 east/north 切线角
+    float paddingXPx = 0.0f;        ///< 候选专属水平碰撞留白
+    float paddingYPx = 0.0f;        ///< 候选专属垂直碰撞留白
+    /// Official `canCovered`: the candidate does not search for and reject
+    /// lower-priority labels, but it may still be rejected by a previously
+    /// accepted higher-priority ordinary label. It never enters the accepted
+    /// collision grid, so lower-priority labels are not blocked by it.
+    bool officialCanCovered = false;
+    /// Along-path labels preserve the actual per-glyph anchors and tangents.
+    /// When non-empty these parts are the sole text collision geometry; the
+    /// centered primary box is not used as a compatibility fallback.
+    std::vector<LabelCollisionPart> collisionParts;
 };
 
 /// placement 诊断计数(每帧覆写)。
@@ -28,6 +63,7 @@ struct LabelPlacementStats {
     int culledProjection = 0;  ///< 相机背后 / 屏幕外
     int culledHorizon = 0;     ///< 椭球地平线遮挡(球背面)
     int collided = 0;          ///< 碰撞落选
+    int repeated = 0;          ///< 同 repeatGroup 距离过近落选
     int placed = 0;            ///< 本帧目标可见
 };
 
@@ -58,6 +94,12 @@ public:
     /// 落入 [0, band) 线性渐隐(见 .cpp margin 注释)。
     static constexpr double kHorizonFadeBand = 0.12;
     static constexpr float kGridCellPx = 64.0f;
+
+    static std::array<double, 2> readableScreenDirection(double dx,
+                                                         double dy);
+    static std::array<double, 4> rotatedScreenBounds(
+        float minX, float minY, float maxX, float maxY,
+        double directionX, double directionY);
 
     struct FrameInput {
         Mat4 viewProj;          ///< double viewProjection(绝对 ECEF)

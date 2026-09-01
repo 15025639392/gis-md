@@ -1,6 +1,7 @@
 #include "earth_engine/data/AmapVectorSource.h"
 #include "earth_engine/data/MvtTileFetchCache.h"
 #include "earth_engine/tiling/TileScheme.h"
+#include "../../helpers/AmapOfficialTestAdapters.h"
 
 #include <gtest/gtest.h>
 #include <zlib.h>
@@ -9,11 +10,18 @@
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <vector>
 
 using namespace earth_engine;
+using namespace earth_engine::testing;
 
 namespace {
+
+std::filesystem::path defaultMainFixture() {
+    return std::filesystem::path(AMAP_TEST_FIXTURE_ROOT) /
+           "samples/main-13038_5505_14.pbf";
+}
 
 constexpr double kPi = 3.14159265358979323846;
 
@@ -31,10 +39,10 @@ struct FakeAmapFetch {
     int statusCode = 200;
     std::vector<TileKey> requested;
 
-    std::shared_ptr<AmapType1TileCache> cache() {
-        return std::make_shared<AmapType1TileCache>(
+    std::shared_ptr<AmapType1TileCacheForTest> cache() {
+        return std::make_shared<AmapType1TileCacheForTest>(
             [this](const TileKey& key,
-                   AmapType1TileCache::FetchCallback cb) {
+                   AmapType1TileCacheForTest::FetchCallback cb) {
                 requested.push_back(key);
                 cb(statusCode, body);
             },
@@ -201,8 +209,8 @@ TEST(AmapVectorSource, AmapSchemeTileRectangleCoversChongqing) {
 
 TEST(AmapVectorSource, PipelineDecodesAndCommitsRealSample) {
     const char* path = std::getenv("AMAP_SAMPLE_TILE");
-    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
-    FILE* f = std::fopen(path, "rb");
+    const std::filesystem::path defaultPath = defaultMainFixture();
+    FILE* f = std::fopen(path ? path : defaultPath.c_str(), "rb");
     ASSERT_NE(nullptr, f);
     std::fseek(f, 0, SEEK_END);
     const long len = std::ftell(f);
@@ -214,9 +222,9 @@ TEST(AmapVectorSource, PipelineDecodesAndCommitsRealSample) {
     FakeAmapFetch fetch;
     fetch.body = std::move(raw);
     FakeSinks sinks;
-    AmapMainVectorSource source(
+    AmapMainVectorSourceForTest source(
         [] {
-            AmapMainVectorSource::Options opt;
+            AmapMainVectorSourceForTest::Options opt;
             opt.tree.minZoom = 14;
             opt.tree.maxZoom = 14;
             opt.tree.scheme = TileScheme::createAmapGeographic();
@@ -224,7 +232,7 @@ TEST(AmapVectorSource, PipelineDecodesAndCommitsRealSample) {
             opt.maxTileCommitsPerUpdate = 0;
             return opt;
         }(),
-        sinks.fn<AmapMainVectorSource>(), fetch.cache());
+        sinks.fn<AmapMainVectorSourceForTest>(), fetch.cache());
 
     // 视口 = 样本瓦片附近(约 1 瓦,避免 z14 枚举海量 key)。
     const Rectangle view = rectDeg(106.47, 29.515, 106.49, 29.525);
@@ -243,8 +251,8 @@ TEST(AmapVectorSource, PipelineDecodesAndCommitsRealSample) {
 
 TEST(AmapVectorSource, RegionsOnlyFiltersType2FromRealSample) {
     const char* path = std::getenv("AMAP_SAMPLE_TILE");
-    if (!path) GTEST_SKIP() << "AMAP_SAMPLE_TILE unset";
-    FILE* f = std::fopen(path, "rb");
+    const std::filesystem::path defaultPath = defaultMainFixture();
+    FILE* f = std::fopen(path ? path : defaultPath.c_str(), "rb");
     ASSERT_NE(nullptr, f);
     std::fseek(f, 0, SEEK_END);
     const long len = std::ftell(f);
@@ -256,9 +264,9 @@ TEST(AmapVectorSource, RegionsOnlyFiltersType2FromRealSample) {
     FakeAmapFetch fetch;
     fetch.body = std::move(raw);
     FakeSinks sinks;
-    AmapRegionsVectorSource source(
+    AmapRegionsVectorSourceForTest source(
         [] {
-            AmapRegionsVectorSource::Options opt;
+            AmapRegionsVectorSourceForTest::Options opt;
             opt.tree.minZoom = 14;
             opt.tree.maxZoom = 14;
             opt.tree.scheme = TileScheme::createAmapGeographic();
@@ -266,7 +274,7 @@ TEST(AmapVectorSource, RegionsOnlyFiltersType2FromRealSample) {
             opt.maxTileCommitsPerUpdate = 0;
             return opt;
         }(),
-        sinks.fn<AmapRegionsVectorSource>(), fetch.cache());
+        sinks.fn<AmapRegionsVectorSourceForTest>(), fetch.cache());
 
     const Rectangle view = rectDeg(106.47, 29.515, 106.49, 29.525);
     source.update(view, heightForZoom(14));
@@ -284,7 +292,7 @@ TEST(AmapVectorSource, RegionsAndMainShareOneType1DecodeCache) {
     FakeSinks regionSinks;
     FakeSinks mainSinks;
     auto options = [] {
-        AmapRegionsVectorSource::Options opt;
+        AmapRegionsVectorSourceForTest::Options opt;
         opt.tree.minZoom = 14;
         opt.tree.maxZoom = 14;
         opt.tree.scheme = TileScheme::createAmapGeographic();
@@ -292,13 +300,13 @@ TEST(AmapVectorSource, RegionsAndMainShareOneType1DecodeCache) {
         opt.maxTileCommitsPerUpdate = 0;
         return opt;
     }();
-    AmapRegionsVectorSource regions(
-        options, regionSinks.fn<AmapRegionsVectorSource>(), sharedCache);
-    AmapMainVectorSource::Options mainOptions;
+    AmapRegionsVectorSourceForTest regions(
+        options, regionSinks.fn<AmapRegionsVectorSourceForTest>(), sharedCache);
+    AmapMainVectorSourceForTest::Options mainOptions;
     mainOptions.tree = options.tree;
     mainOptions.maxTileCommitsPerUpdate = 0;
-    AmapMainVectorSource main(
-        mainOptions, mainSinks.fn<AmapMainVectorSource>(), sharedCache);
+    AmapMainVectorSourceForTest main(
+        mainOptions, mainSinks.fn<AmapMainVectorSourceForTest>(), sharedCache);
 
     const Rectangle view = rectDeg(106.47, 29.515, 106.49, 29.525);
     regions.update(view, heightForZoom(14));
@@ -312,6 +320,127 @@ TEST(AmapVectorSource, RegionsAndMainShareOneType1DecodeCache) {
     main.update(view, heightForZoom(14));
     EXPECT_GT(regionSinks.lastFeatureCount, 0u);
     EXPECT_GT(mainSinks.lastFeatureCount, 0u);
+}
+
+TEST(AmapVectorSource, FineSurfacePreservesAllOfficialType2Payload) {
+    auto tile = std::make_shared<AmapDecodedTile>();
+    AmapDecodedLayerPart part;
+    part.type = 2;
+    part.z = 14;
+    auto surface = [](int kind, int subKey) {
+        AmapDecodedFeature feature;
+        feature.classCode = 30001;
+        feature.kind = kind;
+        feature.subKey = subKey;
+        feature.rings = {{{0, 0}, {10, 0}, {10, 10}}};
+        return feature;
+    };
+    part.features = {surface(63, 2), surface(15, 6), surface(61, 3),
+                     surface(63, 3), surface(15, 2)};
+    const std::array<int, 5> expectedKinds{63, 15, 61, 63, 15};
+    const std::array<int, 5> expectedSubKeys{2, 6, 3, 3, 2};
+    tile->parts.push_back(std::move(part));
+
+    const auto main = AmapMainToFeaturesForTest{}(TileKey{}, tile, {}, {});
+    ASSERT_EQ(5u, main.size());
+    for (size_t i = 0; i < main.size(); ++i) {
+        EXPECT_EQ(std::to_string(expectedKinds[i]),
+                  main[i].properties.at("amap_kind"));
+        EXPECT_EQ(std::to_string(expectedSubKeys[i]),
+                  main[i].properties.at("amap_subkey"));
+    }
+}
+
+TEST(AmapVectorSource, MainRejectsPoiAndUnknownLayerTypes) {
+    auto tile = std::make_shared<AmapDecodedTile>();
+    AmapDecodedLayerPart poi;
+    poi.type = 0;
+    poi.z = 14;
+    AmapDecodedFeature point;
+    point.classCode = 12024;
+    point.subKey = 5;
+    point.rings = {{{1.0, 1.0}}};
+    poi.features.push_back(point);
+    tile->parts.push_back(poi);
+
+    AmapDecodedLayerPart unknown = poi;
+    unknown.type = 9;
+    tile->parts.push_back(std::move(unknown));
+
+    EXPECT_TRUE(AmapMainToFeaturesForTest{}(TileKey{}, tile, {}, {}).empty());
+}
+
+TEST(AmapVectorSource,
+     OfficialConvertersDropUnknownPolygonBeforeGeometryAllocation) {
+    auto tile = std::make_shared<AmapDecodedTile>();
+    AmapDecodedLayerPart part;
+    part.type = 2;
+    part.z = 14;
+    AmapDecodedFeature official;
+    official.classCode = 30001;
+    official.subKey = 2;
+    official.kind = 63;
+    official.rings = {{{0, 0}, {10, 0}, {10, 10}}};
+    AmapDecodedFeature unknown = official;
+    unknown.classCode = 39999;
+    unknown.subKey = 999;
+    part.features = {official, unknown};
+    tile->parts.push_back(std::move(part));
+
+    const auto main = AmapMainToFeaturesForTest{}(TileKey{}, tile, {}, {});
+    ASSERT_EQ(1u, main.size());
+    EXPECT_EQ("30001", main.front().properties.at("amap_class"));
+
+    const auto regions = amapRegionsToFeaturesForContractTest(tile);
+    ASSERT_EQ(1u, regions.size());
+    EXPECT_EQ("30001", regions.front().properties.at("amap_class"));
+}
+
+TEST(AmapVectorSource,
+     OfficialConvertersDropUnknownLineAndPointIdentities) {
+    auto type1 = std::make_shared<AmapDecodedTile>();
+    AmapDecodedLayerPart roads;
+    roads.type = 1;
+    roads.z = 14;
+    AmapDecodedFeature officialRoad;
+    officialRoad.classCode = 20009;
+    officialRoad.subKey = 1;
+    officialRoad.rings = {{{0, 0}, {10, 10}}};
+    AmapDecodedFeature unknownRoad = officialRoad;
+    unknownRoad.classCode = 29999;
+    unknownRoad.subKey = 999;
+    roads.features = {officialRoad, unknownRoad};
+    type1->parts.push_back(std::move(roads));
+
+    const auto main = AmapMainToFeaturesForTest{}(TileKey{}, type1, {}, {});
+    ASSERT_EQ(1u, main.size());
+    EXPECT_EQ("20009", main.front().properties.at("amap_class"));
+
+    auto type2 = std::make_shared<AmapDecodedTile>();
+    AmapDecodedLayerPart points;
+    points.type = 0;
+    points.z = 14;
+    AmapDecodedFeature officialPoi;
+    officialPoi.classCode = 12024;
+    officialPoi.subKey = 5;
+    officialPoi.rings = {{{1, 1}}};
+    AmapDecodedFeature unknownPoi = officialPoi;
+    unknownPoi.classCode = 19999;
+    unknownPoi.subKey = 999;
+    points.features = {officialPoi, unknownPoi};
+
+    AmapDecodedLayerPart roadNames;
+    roadNames.type = 1;
+    roadNames.z = 14;
+    roadNames.features = {officialRoad, unknownRoad};
+    type2->parts = {std::move(points), std::move(roadNames)};
+
+    const auto poi = AmapPoiToFeaturesForTest{}(TileKey{}, type2, {}, {});
+    ASSERT_EQ(2u, poi.size());
+    EXPECT_EQ(GeometryType::Point, poi[0].type);
+    EXPECT_EQ("12024", poi[0].properties.at("amap_class"));
+    EXPECT_EQ(GeometryType::LineString, poi[1].type);
+    EXPECT_EQ("20009", poi[1].properties.at("amap_class"));
 }
 
 }  // namespace

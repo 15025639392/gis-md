@@ -23,8 +23,8 @@ namespace earth_engine {
 /// ClassGroup { classCode #1, subKey #2, resolution #3,
 ///              repeated Feature #4 }
 /// Feature  { ..., repeated Part #4;区域面使用 #6 { repeated ring #1=blob } }
-/// Part     { blob #3 = 几何(全 zigzag 增量), height #5(参考 varint;实测
-///            当前版本为 bytes,待校准——见 decodeAmapTile 注释) }
+/// Part     { blob #3 = 几何(全 zigzag 增量), height #5 = protobuf int32
+///            varint；缺失按官方 ShapeFeature 默认 6m }
 ///
 /// 几何 blob:首点也 zigzag 编码,随后 zigzag(dx,dy) 增量;产出瓦片局部
 /// 坐标(整数),extent/coordScale 按 layer type 不同,由调用方换算经纬度
@@ -32,6 +32,10 @@ namespace earth_engine {
 struct AmapDecodedFeature {
     int classCode = 0;
     int geomType = 0;
+    /// Provider payload role, independent from official style identity.
+    /// The POI type-1 stream supplies road-name paths but carries the real
+    /// road class/subKey; it must not synthesize a local style identity.
+    bool roadNameGeometry = false;
     /// type2 content.#2 carries boundary/coastline line features alongside
     /// the region polygons in content.#1. Keep this semantic bit separate
     /// from the enclosing layer type so conversion cannot fill the lines.
@@ -40,6 +44,10 @@ struct AmapDecodedFeature {
     /// content.#1. The enclosing layer is still type4, so retain the area
     /// semantic explicitly instead of treating every type4 feature as a line.
     bool polygonGeometry = false;
+    /// PoiLayer points and TransitLayer content.#2 points share the official
+    /// PointFeatureSameStyle schema. Keep the point role explicit because a
+    /// type-4 container also carries lines and polygons.
+    bool pointGeometry = false;
     /// Optional schema-specific multiplier into canonical 8192x4096 space.
     /// Zero means derive it from layer type/zoom/kind. Amap class 20017 uses
     /// a dedicated 16384x8192 detail grid at z14, so its multiplier is 0.5.
@@ -49,18 +57,42 @@ struct AmapDecodedFeature {
     int kind = 0;
     /// 环/折线:rings[0] = 一条;建筑每个 Part 一个环。坐标 = 瓦片局部整数。
     std::vector<std::vector<std::pair<double, double>>> rings;
-    /// 建筑高度(米;type 3)。当前版本编码待校准,解析失败保持 0。
-    double height = 0.0;
+    /// Official BuildingSameStyle ShapeFeature #5 mainBuildingHeight (meters).
+    /// The protobuf default is 6 when field #5 is absent.
+    double height = 6.0;
+    bool hasHeight = false;
+    /// BuildingSameStyle #3 resolution. Official protobuf default is 12.
+    int buildingResolution = 0;
     /// 名称(道路名/POI 标签;Feature 字段 6 若为 string)。
     std::string name;
+    /// Official Language.Mii repeated UTF-16 split indices for the
+    /// selected PointFeature nameLoc. The default formatter selects the first
+    /// nameLoc and builds u6t=[0,...Mii]; keep this separate from `name` so
+    /// name identity, city exceptions and cross-tile ids remain unchanged.
+    std::vector<uint32_t> nameSplitIndicesUtf16;
+    /// RoadLine official fields #3/#4. A non-empty shield replaces the
+    /// ordinary along-line name with a centered road-sign billboard.
+    std::string shield;
+    int shieldType = 0;
     /// POI 点标签(参考 xinzhi-map decodePoiFeature):
     /// minZoom/maxZoom = 显示级窗口(onset/hide),rank = 碰撞优先级。
     /// 仅 type 0/4 点标签层有;默认 minZoom=18/maxZoom=30/rank=0。
     int minZoom = 18;
     int maxZoom = 30;
+    bool hasMinZoom = false;
+    bool hasMaxZoom = false;
     int rank = 0;
-    /// POI 类别 subKey(PointFeatureSameStyle #2;默认 1)。
-    int subKey = 1;
+    /// PointFeature #6. Official protobuf default is 1. This is provider
+    /// identity data, not a locally synthesized feature id.
+    uint64_t uid = 1;
+    /// Official renderer z-order carried by the production tile schema.
+    /// RoadLineMulti/LineFeatureMulti/PolygonFeatureMulti use field #3;
+    /// point labels carry drawOrder on PointFeature field #2.
+    int drawOrder = 0;
+    bool hasDrawOrder = false;
+    /// POI/line/surface official ClassGroup subKey (#2). Zero means the
+    /// provider omitted the identity and must remain fail-closed.
+    int subKey = 0;
 };
 
 struct AmapDecodedLayerPart {
@@ -73,6 +105,7 @@ struct AmapDecodedLayerPart {
 
 /// 解码一个 building/region/road 组(type=1 请求)容器。
 /// 失败返回 false(长度头不匹配 / gzip 失败 / protobuf 畸形),error 可选。
+#if defined(EARTH_ENGINE_TESTING)
 bool decodeAmapTile(const uint8_t* data, size_t size,
                     std::vector<AmapDecodedLayerPart>& out,
                     std::string* error = nullptr);
@@ -82,5 +115,6 @@ bool decodeAmapTile(const uint8_t* data, size_t size,
 bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                        std::vector<AmapDecodedLayerPart>& out,
                        std::string* error = nullptr);
+#endif
 
 }  // namespace earth_engine

@@ -30,6 +30,20 @@ struct HeightSource {
     /// 解码出来的就是 fade×真高。⚠️ 不乘它,算出的既不是这一侧也不是那一侧
     /// 真正渲染的高度 —— 探针首版漏了,z6~8 段读出 max=428m 的假错位。
     float fade = 1.0f;
+    bool quantizedTexture = false;
+    float quantizationMinHeight = 0.0f;
+    float quantizationHeightRange = 1.0f;
+    /// Exact shader `mr` values. They already include relief fade because the
+    /// command uploads `{minHeight * fade, heightRange * fade}`. Recovering
+    /// the unfaded pair by division and multiplying decoded heights again is
+    /// algebraically similar but not float32-equivalent to the GPU.
+    float textureMinHeight = 0.0f;
+    float textureHeightRange = 1.0f;
+    /// HeightmapTerrainContentProvider bakes legacy mesh vertices by mapping
+    /// geodetic latitude through WebMercator before sampling DEM rows. The
+    /// displacement texture path intentionally uses its own linear tile UV
+    /// and leaves this false.
+    bool webMercatorHeightV = false;
     bool valid() const { return heightmap && bounds && gridSize > 0; }
 };
 
@@ -63,12 +77,20 @@ inline HeightSource sourceOf(const TileRenderEntry& e) {
 /// gridN 栅格上的 u = j/(gridN/2)),故复用同一个函数换档位传参即可。
 inline float renderedHeight(const HeightSource& s, double lonRad,
                             double latRad) {
-    const float fine = DecodedHeightmapSampler::sampleHeightRenderGrid(
-        *s.heightmap, *s.bounds, lonRad, latRad, s.gridSize);
-    if (s.morph >= 0.999f) return fine * s.fade;
-    const float coarse = DecodedHeightmapSampler::sampleHeightRenderGrid(
-        *s.heightmap, *s.bounds, lonRad, latRad, std::max(1, s.gridSize / 2));
-    return (coarse + (fine - coarse) * s.morph) * s.fade;
+    if (s.quantizedTexture) {
+        return DecodedHeightmapSampler::
+            sampleHeightRenderGridQuantizedDecodedMorphed(
+                *s.heightmap, *s.bounds, lonRad, latRad, s.gridSize,
+                s.morph, s.quantizationMinHeight,
+                s.quantizationHeightRange, s.textureMinHeight,
+                s.textureHeightRange);
+    }
+    const float height = s.webMercatorHeightV
+        ? DecodedHeightmapSampler::sampleHeightRenderGridMorphedWebMercatorV(
+              *s.heightmap, *s.bounds, lonRad, latRad, s.gridSize, s.morph)
+        : DecodedHeightmapSampler::sampleHeightRenderGridMorphed(
+              *s.heightmap, *s.bounds, lonRad, latRad, s.gridSize, s.morph);
+    return height * s.fade;
 }
 
 /// 边 index 与 shader 打包序一致:0=W 1=E 2=N 3=S;v=0 为北。

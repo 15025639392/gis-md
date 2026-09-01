@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -100,10 +101,18 @@ public:
         return std::make_unique<DummyTexture>(desc.width, desc.height);
     }
 
-    bool updateTextureRegion(Texture*, int, int, int, int,
-                             const uint8_t*, size_t, int layer = 0) override {
+    bool updateTextureRegion(Texture*, int x, int y, int width, int height,
+                             const uint8_t* data, size_t rowBytes,
+                             int layer = 0) override {
         ++textureRegionUpdateCount;
         textureRegionUpdateLayers.push_back(layer);
+        lastTextureRegionX = x;
+        lastTextureRegionY = y;
+        lastTextureRegionWidth = width;
+        lastTextureRegionHeight = height;
+        const size_t uploadBytes = rowBytes * static_cast<size_t>(height);
+        lastTextureRegionBytes.assign(data, data + uploadBytes);
+        textureRegionPayloads.emplace_back(data, data + uploadBytes);
         if (textureRegionScriptIndex < textureRegionUploadScript.size()) {
             return textureRegionUploadScript[textureRegionScriptIndex++];
         }
@@ -124,6 +133,11 @@ public:
 
     std::unique_ptr<Buffer> createBuffer(const BufferDesc& desc) override {
         ++bufferCreationAttempts;
+        if (failNextBufferCreationOfType &&
+            *failNextBufferCreationOfType == desc.type) {
+            failNextBufferCreationOfType.reset();
+            return nullptr;
+        }
         if (failBufferCreationAtAttempt == bufferCreationAttempts) {
             return nullptr;
         }
@@ -257,6 +271,12 @@ public:
     int createdTextureCount = 0;
     int textureRegionUpdateCount = 0;
     std::vector<int> textureRegionUpdateLayers;
+    int lastTextureRegionX = 0;
+    int lastTextureRegionY = 0;
+    int lastTextureRegionWidth = 0;
+    int lastTextureRegionHeight = 0;
+    std::vector<uint8_t> lastTextureRegionBytes;
+    std::vector<std::vector<uint8_t>> textureRegionPayloads;
     std::vector<bool> textureRegionUploadScript;
     size_t textureRegionScriptIndex = 0;
     /// region 上传结果。默认 false 是历史行为(多数用例只关心是否发起
@@ -269,6 +289,7 @@ public:
     size_t totalBufferUpdateBytes = 0;
     int bufferCreationAttempts = 0;
     int failBufferCreationAtAttempt = -1;
+    std::optional<BufferDesc::Type> failNextBufferCreationOfType;
     int shaderCount = 0;
     int submitCount = 0;
     int frameCount = 0;

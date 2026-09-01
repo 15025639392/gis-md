@@ -93,6 +93,10 @@ public:
     /// **消费一次**(exchange 语义):不消费的话一次落地会让循环永远跑下去。
     bool consumeLanded(const char** outLabel);
 
+    /// Whether a Landing release is waiting to be consumed by the next frame.
+    /// This is a non-consuming snapshot for diagnostics/audits.
+    bool hasUnconsumedLanding() const;
+
     /// 任意种类有在途。并行验证期用它与 hasConvergingWork 对拍 —— 那条判据
     /// 表达的是"有没有在途",不区分两类。
     bool anyOutstanding(const char** outLabel) const;

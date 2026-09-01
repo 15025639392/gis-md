@@ -1,4 +1,5 @@
 #include "AmapVectorTile.h"
+#include "AmapVectorSourceInternal.h"
 
 #include <zlib.h>
 
@@ -101,6 +102,15 @@ int64_t zigzag(uint64_t v) {
            -static_cast<int64_t>(v & 1);
 }
 
+bool assignNonnegativeInt(uint64_t value, int& target, Reader& reader) {
+    if (value > static_cast<uint64_t>(std::numeric_limits<int>::max())) {
+        reader.ok = false;
+        return false;
+    }
+    target = static_cast<int>(value);
+    return true;
+}
+
 void decodeBlob(const uint8_t* blob, size_t len,
                 std::vector<std::pair<double, double>>& ring) {
     Reader r;
@@ -142,11 +152,11 @@ void parseFeature(Reader& f, int classCode, int geomType, int layerType,
             // decodeRegionFeature 的 #4 kind / #1 rank。
             if ((layerType == 2 || polygonGeometry) && field == 1 &&
                 feat.rank == 0) {
-                feat.rank = static_cast<int>(v);
+                assignNonnegativeInt(v, feat.rank, f);
             }
             if ((layerType == 2 || polygonGeometry) && field == 4 &&
                 feat.kind == 0) {
-                feat.kind = static_cast<int>(v);
+                assignNonnegativeInt(v, feat.kind, f);
             }
         } else if (wire == 2) {
             const uint64_t len = f.varint();
@@ -166,8 +176,18 @@ void parseFeature(Reader& f, int classCode, int geomType, int layerType,
                 while (pr.tag(pf, pw)) {
                     if (pw == 0) {
                         const uint64_t v = pr.varint();
-                        if (pf == 5 && feat.height == 0.0) {
-                            feat.height = static_cast<double>(v);
+                        if (pf == 5 && !feat.hasHeight) {
+                            // ShapeFeature.mainBuildingHeight is protobuf
+                            // int32, not uint64 and not sint32. Negative int32
+                            // values are therefore encoded as a ten-byte,
+                            // sign-extended varint. Narrow through uint32_t
+                            // before interpreting the sign so malformed or
+                            // negative provider values cannot become enormous
+                            // positive extrusion heights.
+                            feat.height = static_cast<double>(
+                                static_cast<int32_t>(
+                                    static_cast<uint32_t>(v)));
+                            feat.hasHeight = true;
                         }
                     } else if (pw == 2) {
                         const uint64_t plen = pr.varint();
@@ -183,8 +203,9 @@ void parseFeature(Reader& f, int classCode, int geomType, int layerType,
                         } else if (pf == 3 && partBlobField == 5) {
                             // type1 线:blob 在 #5;若有 #3(实测未见)忽略。
                         } else if (pf == 5 && layerType != 1) {
-                            // 建筑高度 varint 已在上面 wire==0 分支读取;
-                            // 此处兜底字符串不适用,忽略。
+                            // Building ShapeFeature #5 is the official varint
+                            // mainBuildingHeight; length-delimited #5 is not a
+                            // second compatible representation.
                             feat.name.assign(
                                 reinterpret_cast<const char*>(psub),
                                 static_cast<size_t>(plen));
@@ -280,10 +301,10 @@ bool decodeInflatedContainer(const uint8_t* data, size_t size,
             while (l.tag(lf, lw)) {
                 if (lw == 0) {
                     const uint64_t v = l.varint();
-                    if (lf == 1) part.z = static_cast<int>(v);
-                    if (lf == 2) part.x = static_cast<int>(v);
-                    if (lf == 3) part.y = static_cast<int>(v);
-                    if (lf == 4) part.type = static_cast<int>(v);
+                    if (lf == 1) assignNonnegativeInt(v, part.z, l);
+                    if (lf == 2) assignNonnegativeInt(v, part.x, l);
+                    if (lf == 3) assignNonnegativeInt(v, part.y, l);
+                    if (lf == 4) assignNonnegativeInt(v, part.type, l);
                 } else if (lw == 2) {
                     const uint64_t clen = l.varint();
                     if (!l.ok || clen > std::numeric_limits<size_t>::max()) {
@@ -318,36 +339,50 @@ bool decodeInflatedContainer(const uint8_t* data, size_t size,
                     }
                     const uint8_t* cg = nullptr;
                     if (!c.bytes(static_cast<size_t>(clen), cg)) break;
-                    // ClassGroup:实测在 content 字段 1;放宽接受任一
-                    // len 字段(参考文档未钉字段号)。
+                    // Initialize from the official protobuf message defaults;
+                    // an explicitly encoded zero still overwrites them and is
+                    // rejected downstream. This is the provider contract, not
+                    // a local compatibility fallback.
                     Reader g;
                     g.p = cg;
                     g.n = static_cast<size_t>(clen);
                     const bool boundaryGroup = part.type == 2 && cf == 2;
                     const bool type4RegionGroup = part.type == 4 && cf == 3;
-                    // classCode 只在字段 1(实测 type1=20009 在 #1);
-                    // type2 区域 #1 缺省 30001;boundary #2 缺省 20016;
-                    // type3 建筑合成 90001。
-                    const int defaultClass =
-                        part.type == 1 ? 20004
-                        : (part.type == 2 || type4RegionGroup)
-                              ? (boundaryGroup ? 20016 : 30001)
-                              : 90001;
-                    int classCode = defaultClass, geomType = 0, kind = 0,
-                        subKey = 1;
+                    int classCode =
+                        part.type == 3
+                            ? 55001
+                            : (boundaryGroup ? 20016 : 0);
+                    if (part.type == 1) classCode = 20004;
+                    if (part.type == 2 && !boundaryGroup) classCode = 30001;
+                    if (part.type == 4 && !type4RegionGroup) classCode = 20016;
+                    if (type4RegionGroup) classCode = 30001;
+                    int geomType = 0;
+                    int kind = 0;
+                    int subKey = 1;
+                    int buildingResolution = part.type == 3 ? 12 : 0;
                     int gf = 0, gw = 0;
                     std::vector<const uint8_t*> feats;
                     std::vector<size_t> featLens;
                     while (g.tag(gf, gw)) {
                         if (gw == 0) {
                             const uint64_t v = g.varint();
-                            if (gf == 1) classCode = static_cast<int>(v);
+                            if (gf == 1) assignNonnegativeInt(v, classCode, g);
                             if (gf == 2) {
-                                kind = static_cast<int>(v);
-                                subKey = static_cast<int>(v);
+                                assignNonnegativeInt(v, kind, g);
+                                subKey = kind;
                             }
-                            if (gf == 2 || gf == 3) {
-                                geomType = static_cast<int>(v);
+                            if (part.type == 3 && gf == 3) {
+                                // Keep malformed unsigned protobuf values out
+                                // of the signed coordinate contract. The
+                                // adapter performs the z-dependent official
+                                // shift validation and fails the group closed.
+                                buildingResolution =
+                                    v <= static_cast<uint64_t>(
+                                             std::numeric_limits<int>::max())
+                                        ? static_cast<int>(v)
+                                        : 0;
+                            } else if (gf == 2 || gf == 3) {
+                                assignNonnegativeInt(v, geomType, g);
                             }
                         } else if (gw == 2) {
                             const uint64_t flen = g.varint();
@@ -369,6 +404,60 @@ bool decodeInflatedContainer(const uint8_t* data, size_t size,
                         fr.p = feats[fi];
                         fr.n = featLens[fi];
                         AmapDecodedFeature feat;
+                        if (part.type == 3) {
+                            feat.minZoom = 15;
+                            feat.maxZoom = 30;
+                            feat.drawOrder = 0;
+                            feat.hasMinZoom = true;
+                            feat.hasMaxZoom = true;
+                            feat.hasDrawOrder = true;
+                            feat.buildingResolution = buildingResolution;
+                        } else {
+                            feat.minZoom = 2;
+                            feat.maxZoom = 30;
+                            feat.drawOrder = 0;
+                            feat.hasMinZoom = true;
+                            feat.hasMaxZoom = true;
+                            feat.hasDrawOrder = true;
+                        }
+                        // ClassGroup #4 is a *FeatureMulti wrapper.  The old
+                        // decoder relied on its nested #4 layout to reach the
+                        // geometry but silently discarded the wrapper's
+                        // official drawOrder.  Preserve it before parsing the
+                        // nested feature; runtime assigns this field directly
+                        // to zIndex and sorts ascending.
+                        {
+                            Reader multi = fr;
+                            int mf = 0, mw = 0;
+                            while (multi.tag(mf, mw)) {
+                                if (mw == 0) {
+                                    const uint64_t v = multi.varint();
+                                    if (mf == 1) {
+                                        assignNonnegativeInt(v, feat.minZoom,
+                                                             multi);
+                                        feat.hasMinZoom = true;
+                                    } else if (mf == 2) {
+                                        assignNonnegativeInt(v, feat.maxZoom,
+                                                             multi);
+                                        feat.hasMaxZoom = true;
+                                    } else if (mf == 3) {
+                                        assignNonnegativeInt(v, feat.drawOrder,
+                                                             multi);
+                                        feat.hasDrawOrder = true;
+                                    }
+                                } else if (mw == 2) {
+                                    const uint64_t skip = multi.varint();
+                                    const uint8_t* ignored = nullptr;
+                                    if (!multi.bytes(static_cast<size_t>(skip),
+                                                     ignored)) {
+                                        break;
+                                    }
+                                } else {
+                                    multi.ok = false;
+                                    break;
+                                }
+                            }
+                        }
             // 区域的 kind 在 **Feature #4 varint**(参考
             // xinzhi-map decodeRegionFeature),ClassGroup #2 的
             // kind 不是同一语义(实测 ClassGroup #2 得 3/5,
@@ -414,16 +503,17 @@ bool decodeContainer(const uint8_t* data, size_t size,
 
 }  // namespace
 
-bool decodeAmapTile(const uint8_t* data, size_t size,
-                    std::vector<AmapDecodedLayerPart>& out,
-                    std::string* error) {
-    out.clear();
-    return decodeContainer(data, size, out, error);
+bool AmapClassicSourceBundle::Impl::decodeType1(
+    const uint8_t* data, size_t size, DecodedTile& out,
+    std::string* error) {
+    out.parts.clear();
+    return decodeContainer(data, size, out.parts, error);
 }
 
-bool decodeAmapPoiTile(const uint8_t* data, size_t size,
-                       std::vector<AmapDecodedLayerPart>& out,
-                       std::string* error) {
+bool AmapClassicSourceBundle::Impl::decodePoi(
+    const uint8_t* data, size_t size, DecodedTile& tile,
+    std::string* error) {
+    auto& out = tile.parts;
     // POI 组(参考 xinzhi-map decodeAmapPoiTile):
     //   type 0 = 通用 POI 点标签层;type 4 = 轨道线 + 站点标签;
     //   type 1 = 路名;type 2 = 边界线。
@@ -432,26 +522,11 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
     std::vector<uint8_t> inflated;
     if (!inflateContainer(data, size, inflated, error)) return false;
 
-    // 主解码(完整):复用上面已 inflate 的 protobuf，避免 POI
-    // 每瓦对同一 gzip 再解压一次。
+    // POI has its own official PointFeature/RoadLine schema. Do not run the
+    // generic polygon/building decoder first and then erase its bogus output:
+    // that was a second, non-authoritative decode path with avoidable geometry
+    // allocation. Parse type 0/1 directly from the already-inflated payload.
     out.clear();
-    if (!decodeInflatedContainer(inflated.data(), inflated.size(), out,
-                                 error)) {
-        return false;
-    }
-    // The generic building/region decoder does not know the POI label schema:
-    // it interprets label/id payloads as Part geometry and emits bogus type-0
-    // rings (often class 90001, empty name).  Keep generic type 1/2/4 entries
-    // that this container legitimately shares, but discard every generic
-    // type-0 part before appending the authoritative POI-label decode below.
-    // Otherwise the POI source would render those id bytes as real points
-    // and they can occupy the per-tile symbol budget before named POIs.
-    out.erase(std::remove_if(out.begin(), out.end(),
-                             [](const AmapDecodedLayerPart& part) {
-                                 return part.type == 0;
-                             }),
-              out.end());
-    // 对 type 0 层用 POI 标签解码覆盖(主解码不含 POI 点标签语义)。
 
     Reader root;
     root.p = inflated.data();
@@ -493,10 +568,10 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
             while (l.tag(lf, lw)) {
                 if (lw == 0) {
                     const uint64_t v = l.varint();
-                    if (lf == 1) part.z = static_cast<int>(v);
-                    if (lf == 2) part.x = static_cast<int>(v);
-                    if (lf == 3) part.y = static_cast<int>(v);
-                    if (lf == 4) part.type = static_cast<int>(v);
+                    if (lf == 1) assignNonnegativeInt(v, part.z, l);
+                    if (lf == 2) assignNonnegativeInt(v, part.x, l);
+                    if (lf == 3) assignNonnegativeInt(v, part.y, l);
+                    if (lf == 4) assignNonnegativeInt(v, part.type, l);
                 } else if (lw == 2) {
                     const uint64_t clen = l.varint();
                     if (!l.ok || clen > std::numeric_limits<size_t>::max()) {
@@ -514,9 +589,160 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                     break;
                 }
             }
-            // 仅 type 0(通用 POI 点)走标签解码;其余类型暂跳过。
-            if (!content || part.type != 0) {
-                if (part.type == 0) {
+            // type 1 is the dedicated road-name payload, not ordinary road
+            // geometry. Preserve the payload's real road class/subKey and
+            // mark only its non-visual geometry role; never synthesize a
+            // local synthetic style identity.
+            if (content && part.type == 1) {
+                AmapDecodedLayerPart roadNames = part;
+                roadNames.features.clear();
+                Reader c;
+                c.p = content;
+                c.n = contentLen;
+                int cf = 0, cw = 0;
+                while (c.tag(cf, cw)) {
+                    if (cw != 2) {
+                        (void)c.varint();
+                        continue;
+                    }
+                    const uint64_t glen = c.varint();
+                    if (!c.ok || glen > std::numeric_limits<size_t>::max()) break;
+                    const uint8_t* gb = nullptr;
+                    if (!c.bytes(static_cast<size_t>(glen), gb)) break;
+                    Reader g;
+                    g.p = gb;
+                    g.n = static_cast<size_t>(glen);
+                    int roadClass = 20004, subKey = 1;
+                    int gf = 0, gw = 0;
+                    while (g.tag(gf, gw)) {
+                        if (gw == 0) {
+                            const uint64_t v = g.varint();
+                            if (gf == 1) assignNonnegativeInt(v, roadClass, g);
+                            if (gf == 2) assignNonnegativeInt(v, subKey, g);
+                            continue;
+                        }
+                        if (gw != 2) {
+                            g.ok = false;
+                            break;
+                        }
+                        const uint64_t mlen = g.varint();
+                        if (!g.ok || mlen > std::numeric_limits<size_t>::max()) break;
+                        const uint8_t* mb = nullptr;
+                        if (!g.bytes(static_cast<size_t>(mlen), mb)) break;
+                        if (gf != 4) continue;
+                        Reader multi;
+                        multi.p = mb;
+                        multi.n = static_cast<size_t>(mlen);
+                        int minZoom = 2, maxZoom = 30, drawOrder = 0;
+                        bool hasMinZoom = true, hasMaxZoom = true;
+                        bool hasDrawOrder = true;
+                        int mf = 0, mw = 0;
+                        while (multi.tag(mf, mw)) {
+                            if (mw == 0) {
+                                const uint64_t v = multi.varint();
+                                if (mf == 1) {
+                                    assignNonnegativeInt(v, minZoom, multi);
+                                    hasMinZoom = true;
+                                }
+                                if (mf == 2) {
+                                    assignNonnegativeInt(v, maxZoom, multi);
+                                    hasMaxZoom = true;
+                                }
+                                if (mf == 3) {
+                                    assignNonnegativeInt(v, drawOrder, multi);
+                                    hasDrawOrder = true;
+                                }
+                                continue;
+                            }
+                            if (mw != 2) {
+                                multi.ok = false;
+                                break;
+                            }
+                            const uint64_t plen = multi.varint();
+                            if (!multi.ok || plen > std::numeric_limits<size_t>::max()) break;
+                            const uint8_t* pb = nullptr;
+                            if (!multi.bytes(static_cast<size_t>(plen), pb)) break;
+                            if (mf != 4) continue;
+                            Reader line;
+                            line.p = pb;
+                            line.n = static_cast<size_t>(plen);
+                            AmapDecodedFeature feat;
+                            feat.classCode = roadClass;
+                            feat.geomType = 2;
+                            feat.lineGeometry = true;
+                            feat.roadNameGeometry = true;
+                            feat.subKey = subKey;
+                            feat.minZoom = minZoom;
+                            feat.maxZoom = maxZoom;
+                            feat.drawOrder = drawOrder;
+                            feat.hasMinZoom = hasMinZoom;
+                            feat.hasMaxZoom = hasMaxZoom;
+                            feat.hasDrawOrder = hasDrawOrder;
+                            int pf = 0, pw = 0;
+                            while (line.tag(pf, pw)) {
+                                if (pw == 0) {
+                                    const uint64_t v = line.varint();
+                                    if (pf == 2)
+                                        assignNonnegativeInt(v, feat.rank, line);
+                                    if (pf == 4)
+                                        assignNonnegativeInt(v, feat.shieldType,
+                                                             line);
+                                    continue;
+                                }
+                                if (pw != 2) {
+                                    line.ok = false;
+                                    break;
+                                }
+                                const uint64_t flen = line.varint();
+                                if (!line.ok || flen > std::numeric_limits<size_t>::max()) break;
+                                const uint8_t* fb = nullptr;
+                                if (!line.bytes(static_cast<size_t>(flen), fb)) break;
+                                if (pf == 3) {
+                                    feat.shield.assign(
+                                        reinterpret_cast<const char*>(fb),
+                                        static_cast<size_t>(flen));
+                                } else if (pf == 1) {
+                                    Reader nameBox;
+                                    nameBox.p = fb;
+                                    nameBox.n = static_cast<size_t>(flen);
+                                    int nf = 0, nw = 0;
+                                    while (nameBox.tag(nf, nw)) {
+                                        if (nf == 1 && nw == 2) {
+                                            const uint64_t slen = nameBox.varint();
+                                            const uint8_t* sb = nullptr;
+                                            if (!nameBox.bytes(static_cast<size_t>(slen), sb)) break;
+                                            feat.name.assign(reinterpret_cast<const char*>(sb),
+                                                             static_cast<size_t>(slen));
+                                        } else if (nw == 0) {
+                                            (void)nameBox.varint();
+                                        } else {
+                                            nameBox.ok = false;
+                                            break;
+                                        }
+                                    }
+                                } else if (pf == 5) {
+                                    std::vector<std::pair<double, double>> ring;
+                                    decodeBlob(fb, static_cast<size_t>(flen), ring);
+                                    if (!ring.empty()) feat.rings.push_back(std::move(ring));
+                                }
+                            }
+                            if ((!feat.name.empty() || !feat.shield.empty()) &&
+                                !feat.rings.empty()) {
+                                roadNames.features.push_back(std::move(feat));
+                            }
+                        }
+                    }
+                }
+                if (!roadNames.features.empty()) out.push_back(std::move(roadNames));
+                continue;
+            }
+
+            // PoiLayer(type 0) content.#1 and TransitLayer(type 4)
+            // content.#2 share PointFeatureSameStyle. The official runtime
+            // sends type-4 points to subwayLabel; do not discard them or run
+            // them through the type-4 line decoder.
+            if (!content || (part.type != 0 && part.type != 4)) {
+                if (part.type == 0 || part.type == 4) {
                     out.push_back(std::move(part));
                 }
                 continue;
@@ -536,21 +762,23 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                 if (!c.ok || clen > std::numeric_limits<size_t>::max()) break;
                 const uint8_t* cg = nullptr;
                 if (!c.bytes(static_cast<size_t>(clen), cg)) break;
+                if (part.type == 4 && cf != 2) continue;
+                if (part.type == 0 && cf != 1) continue;
 
-                // ClassGroup:PointFeatureSameStyle { mainKey #1, subKey #2,
-                // Feature #4 }。默认 mainKey=12024(商户)、subKey=1。
+                // PointFeatureSameStyle official protobuf defaults.
                 Reader g;
                 g.p = cg;
                 g.n = static_cast<size_t>(clen);
-                int classCode = 12024, subKey = 1;
+                int classCode = 12024, subKey = 1, resolution = 12;
                 std::vector<const uint8_t*> feats;
                 std::vector<size_t> featLens;
                 int gf = 0, gw = 0;
                 while (g.tag(gf, gw)) {
                     if (gw == 0) {
                         const uint64_t v = g.varint();
-                        if (gf == 1) classCode = static_cast<int>(v);
-                        if (gf == 2) subKey = static_cast<int>(v);
+                        if (gf == 1) assignNonnegativeInt(v, classCode, g);
+                        if (gf == 2) assignNonnegativeInt(v, subKey, g);
+                        if (gf == 3) assignNonnegativeInt(v, resolution, g);
                     } else if (gw == 2) {
                         const uint64_t flen = g.varint();
                         if (!g.ok ||
@@ -569,6 +797,8 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                         break;
                     }
                 }
+                if (!g.ok || classCode == 0 || subKey == 0 ||
+                    resolution < 0 || resolution > 30) continue;
                 for (size_t fi = 0; fi < feats.size(); ++fi) {
                     Reader fr;
                     fr.p = feats[fi];
@@ -576,14 +806,21 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                     // Feature:PointFeatureMulti { minZoom #1, maxZoom #2,
                     // rank #3, repeated label #4 }。
                     int minZoom = 18, maxZoom = 30, rank = 0;
+                    bool hasMinZoom = true, hasMaxZoom = true;
                     std::vector<std::pair<const uint8_t*, size_t>> labels;
                     int ff = 0, fw = 0;
                     while (fr.tag(ff, fw)) {
                         if (fw == 0) {
                             const uint64_t v = fr.varint();
-                            if (ff == 1) minZoom = static_cast<int>(v);
-                            if (ff == 2) maxZoom = static_cast<int>(v);
-                            if (ff == 3) rank = static_cast<int>(v);
+                            if (ff == 1) {
+                                assignNonnegativeInt(v, minZoom, fr);
+                                hasMinZoom = true;
+                            }
+                            if (ff == 2) {
+                                assignNonnegativeInt(v, maxZoom, fr);
+                                hasMaxZoom = true;
+                            }
+                            if (ff == 3) assignNonnegativeInt(v, rank, fr);
                         } else if (fw == 2) {
                             const uint64_t ll = fr.varint();
                             if (!fr.ok ||
@@ -610,16 +847,39 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                         feat.subKey = subKey;
                         feat.minZoom = minZoom;
                         feat.maxZoom = maxZoom;
+                        feat.hasMinZoom = hasMinZoom;
+                        feat.hasMaxZoom = hasMaxZoom;
+                        // PointFeature.drawOrder has the official protobuf
+                        // default 0. Omission is semantically present and must
+                        // not be confused with a malformed/missing local key.
+                        feat.drawOrder = 0;
+                        feat.hasDrawOrder = true;
                         feat.rank = rank;
                         feat.geomType = 1;  // Point
+                        feat.pointGeometry = true;
+                        feat.coordScale = std::ldexp(1.0, 14 - resolution);
                         int lf2 = 0, lw2 = 0;
                         int nf = 0, nw = 0;
                         const uint8_t* sb = nullptr;
                         std::pair<double, double> anchor;
                         bool hasAnchor = false;
+                        bool selectedNameLoc = false;
                         while (lr.tag(lf2, lw2)) {
+                            if (lw2 == 0) {
+                                const uint64_t v = lr.varint();
+                                if (lf2 == 2) {
+                                    assignNonnegativeInt(v, feat.drawOrder, lr);
+                                    feat.hasDrawOrder = true;
+                                }
+                                if (lf2 == 6) {
+                                    feat.uid = v;
+                                }
+                                continue;
+                            }
                             if (lf2 == 1 && lw2 == 2) {
-                                // name { name #1 (utf-8 str) }
+                                // repeated nameLoc Language { name #1,
+                                // repeated Mii #4 }. Official default s6t
+                                // selects nameLoc[0], not the last occurrence.
                                 const uint64_t nl = lr.varint();
                                 if (!lr.ok ||
                                     nl > std::numeric_limits<size_t>::max()) {
@@ -631,13 +891,49 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                                 Reader nr;
                                 nr.p = nb;
                                 nr.n = static_cast<size_t>(nl);
+                                std::string candidateName;
+                                std::vector<uint32_t> candidateSplitIndices;
                                 while (nr.tag(nf, nw)) {
                                     if (nf == 1 && nw == 2) {
                                         const uint64_t sl = nr.varint();
                                         if (!nr.bytes(static_cast<size_t>(sl), sb)) break;
-                                        feat.name.assign(
+                                        candidateName.assign(
                                             reinterpret_cast<const char*>(sb),
                                             static_cast<size_t>(sl));
+                                    } else if (nf == 4 && nw == 0) {
+                                        const uint64_t boundary = nr.varint();
+                                        if (boundary >
+                                            std::numeric_limits<uint32_t>::max()) {
+                                            nr.ok = false;
+                                            break;
+                                        }
+                                        candidateSplitIndices.push_back(
+                                            static_cast<uint32_t>(boundary));
+                                    } else if (nf == 4 && nw == 2) {
+                                        const uint64_t packedLength = nr.varint();
+                                        if (!nr.ok || packedLength >
+                                            std::numeric_limits<size_t>::max()) {
+                                            nr.ok = false;
+                                            break;
+                                        }
+                                        const uint8_t* packed = nullptr;
+                                        if (!nr.bytes(
+                                                static_cast<size_t>(packedLength),
+                                                packed)) break;
+                                        Reader pr;
+                                        pr.p = packed;
+                                        pr.n = static_cast<size_t>(packedLength);
+                                        while (pr.i < pr.n) {
+                                            const uint64_t boundary = pr.varint();
+                                            if (!pr.ok || boundary >
+                                                std::numeric_limits<uint32_t>::max()) {
+                                                pr.ok = false;
+                                                break;
+                                            }
+                                            candidateSplitIndices.push_back(
+                                                static_cast<uint32_t>(boundary));
+                                        }
+                                        if (!pr.ok) nr.ok = false;
                                     } else if (nw == 2) {
                                         const uint64_t sl = nr.varint();
                                         sb = nullptr;
@@ -648,6 +944,16 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                                         nr.ok = false;
                                         break;
                                     }
+                                }
+                                if (!nr.ok) {
+                                    lr.ok = false;
+                                    break;
+                                }
+                                if (!selectedNameLoc) {
+                                    feat.name = std::move(candidateName);
+                                    feat.nameSplitIndicesUtf16 =
+                                        std::move(candidateSplitIndices);
+                                    selectedNameLoc = true;
                                 }
                             } else if (lf2 == 4 && lw2 == 2) {
                                 // 坐标 blob:单点 plain unsigned(x 后 y,
@@ -682,9 +988,8 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
                                 break;
                             }
                         }
-                        if (hasAnchor) {
-                            feat.rings = {{{anchor.first, anchor.second}}};
-                        }
+                        if (!lr.ok || !hasAnchor) continue;
+                        feat.rings = {{{anchor.first, anchor.second}}};
                         part.features.push_back(std::move(feat));
                     }
                 }
@@ -694,5 +999,26 @@ bool decodeAmapPoiTile(const uint8_t* data, size_t size,
     }
     return true;
 }
+#if defined(EARTH_ENGINE_TESTING)
+bool decodeAmapTile(const uint8_t* data, size_t size,
+                    std::vector<AmapDecodedLayerPart>& out,
+                    std::string* error) {
+    AmapClassicSourceBundle::Impl::DecodedTile tile;
+    const bool ok = AmapClassicSourceBundle::Impl::decodeType1(
+        data, size, tile, error);
+    out = std::move(tile.parts);
+    return ok;
+}
+
+bool decodeAmapPoiTile(const uint8_t* data, size_t size,
+                       std::vector<AmapDecodedLayerPart>& out,
+                       std::string* error) {
+    AmapClassicSourceBundle::Impl::DecodedTile tile;
+    const bool ok = AmapClassicSourceBundle::Impl::decodePoi(
+        data, size, tile, error);
+    out = std::move(tile.parts);
+    return ok;
+}
+#endif
 
 }  // namespace earth_engine

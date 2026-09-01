@@ -1103,112 +1103,6 @@ TEST(TerrainPageStoreGpuLifetime,
     EXPECT_NE(newIndirectionLayer, oldIndirectionLayer);
 }
 
-TEST(TerrainPageStoreGpuLifetime,
-     FieldRebakeUsesCopyOnWriteBeforeCompletion) {
-    MockRenderDevice device;
-    device.autoAdvanceCompletion = false;
-    device.textureRegionUploadSucceeds = true;
-
-    TerrainPageStore store;
-    TerrainPageStore::Config cfg;
-    cfg.maxPages = 2;
-    cfg.maxFieldPages = 2;
-    cfg.pageSizeTexels = 4;
-    cfg.maxUploadsPerFrame = 4;
-    cfg.roadFieldMaxZoom = 0;
-    cfg.roadFieldRequest = [](const TileKey&, CancellationToken,
-                              std::function<void(std::vector<uint8_t>)> cb) {
-        cb(std::vector<uint8_t>(4u * 4u * 4u, 255u));
-    };
-    ASSERT_TRUE(store.initialize(&device, cfg));
-
-    auto scheme = TileScheme::createXYZWebMercator();
-    PageDomainImageryProvider imagery(
-        scheme->id(), /*maxZoom=*/2, /*tileSize=*/4);
-    imagery.returnImage = true;
-    RasterOverlayTileProvider tiles(imagery, *scheme);
-    const TileKey tileKey{scheme->id(), 2, 0, 0};
-    const TileKey fieldKey{scheme->id(), 0, 0, 0};
-    const uint64_t fieldPacked =
-        TerrainPageStore::packKeyForTest(fieldKey);
-    TilesetTile terrainTile(tileKey, scheme->tileToRectangle(tileKey));
-    terrainTile.content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::HeightmapTerrain);
-    terrainTile.selectionFrameState.screenSpaceError = 0.0;
-    std::vector<TilesetTile*> visible{&terrainTile};
-    SelectorView view;
-
-    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
-    store.tick();
-    view.position = Vec3(1.0, 0.0, 0.0);
-    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
-    const int oldFieldLayer = store.debugFieldLayerForTest(fieldPacked);
-    ASSERT_GE(oldFieldLayer, 0);
-
-    RenderCommand command;
-    command.terrainRenderContent = true;
-    command.terrainSurfaceSource = TerrainSurfaceCommandSource::RealTerrain;
-    store.applyToTerrainCommand(command, terrainTile);
-    device.beginFrame();
-    device.endFrame();
-    store.onFrameSubmitted(device.submittedSerial());
-
-    store.invalidateFieldPages();
-    store.tick();
-    const int newFieldLayer = store.debugFieldLayerForTest(fieldPacked);
-    ASSERT_GE(newFieldLayer, 0);
-    EXPECT_NE(newFieldLayer, oldFieldLayer);
-}
-
-TEST(TerrainPageStoreGpuLifetime,
-     PartialIndirectionUploadFailureDoesNotImmediatelyReuseGpuSlice) {
-    MockRenderDevice device;
-    device.autoAdvanceCompletion = false;
-    device.textureRegionUploadScript = {true, false, true, true};
-
-    TerrainPageStore store;
-    TerrainPageStore::Config cfg;
-    cfg.maxPages = 2;
-    cfg.maxFieldPages = 2;
-    cfg.pageSizeTexels = 4;
-    cfg.roadFieldMaxZoom = 0;
-    cfg.roadFieldRequest = [](const TileKey&, CancellationToken,
-                              std::function<void(std::vector<uint8_t>)> cb) {
-        cb(std::vector<uint8_t>(4u * 4u * 4u, 255u));
-    };
-    ASSERT_TRUE(store.initialize(&device, cfg));
-
-    auto scheme = TileScheme::createXYZWebMercator();
-    PageDomainImageryProvider imagery(
-        scheme->id(), /*maxZoom=*/0, /*tileSize=*/4);
-    imagery.returnImage = true;
-    RasterOverlayTileProvider tiles(imagery, *scheme);
-    const TileKey tileKey{scheme->id(), 0, 0, 0};
-    const uint64_t packed = TerrainPageStore::packKeyForTest(tileKey);
-    TilesetTile terrainTile(tileKey, scheme->tileToRectangle(tileKey));
-    terrainTile.content.renderContent.setSurfaceSource(
-        SurfaceDrawableSource::HeightmapTerrain);
-    terrainTile.selectionFrameState.screenSpaceError = 0.0;
-    std::vector<TilesetTile*> visible{&terrainTile};
-    SelectorView view;
-
-    // Image indirection reaches slice 0, then the companion field upload
-    // fails. Even without an endFrame/submission, slice 0 may still be in a
-    // GLES PBO transfer and must retire instead of returning to the free list.
-    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
-    EXPECT_EQ(store.debugIndirectionLayerForTest(packed), -1);
-    ASSERT_EQ(device.textureRegionUpdateLayers.size(), 2u);
-    EXPECT_EQ(device.textureRegionUpdateLayers[0], 0);
-    EXPECT_EQ(device.textureRegionUpdateLayers[1], 0);
-
-    view.position = Vec3(1.0, 0.0, 0.0);
-    store.updateVisiblePages(view, visible, pageSources({&tiles}), 16.0);
-    ASSERT_EQ(device.textureRegionUpdateLayers.size(), 4u);
-    EXPECT_EQ(device.textureRegionUpdateLayers[2], 1);
-    EXPECT_EQ(device.textureRegionUpdateLayers[3], 1);
-    EXPECT_EQ(store.debugIndirectionLayerForTest(packed), 1);
-}
-
 TEST(TerrainPageStoreFallback,
      UploadFailureKeepsDirectPresentationUntilPageStoreCanPublish) {
     MockRenderDevice device;
@@ -1350,7 +1244,6 @@ TEST(TerrainPageStore, SubmissionLeaseRejectsCpuMutationUntilReleased) {
     TerrainPageStore store;
     ASSERT_TRUE(store.initialize(&device, TerrainPageStore::Config{}));
     const uint64_t generation = store.pageDomainGeneration();
-    const auto originalColor = store.roadFieldStyleColor();
 
     {
         auto lease = store.beginSubmission(77);
@@ -1359,17 +1252,11 @@ TEST(TerrainPageStore, SubmissionLeaseRejectsCpuMutationUntilReleased) {
         EXPECT_EQ(store.submissionLeaseFrameId(), 77u);
         store.tick();
         store.invalidateComposedPages();
-        store.setRoadFieldStyleUniforms(
-            {0.1f, 0.2f, 0.3f, 0.4f}, {1.0f, 2.0f, 3.0f, 4.0f});
         EXPECT_EQ(store.pageDomainGeneration(), generation);
-        EXPECT_EQ(store.roadFieldStyleColor(), originalColor);
-        EXPECT_EQ(store.rejectedSubmissionMutationCount(), 3u);
+        EXPECT_EQ(store.rejectedSubmissionMutationCount(), 2u);
     }
 
     EXPECT_FALSE(store.submissionLeaseActive());
-    store.setRoadFieldStyleUniforms(
-        {0.1f, 0.2f, 0.3f, 0.4f}, {1.0f, 2.0f, 3.0f, 4.0f});
-    EXPECT_FLOAT_EQ(store.roadFieldStyleColor()[0], 0.1f);
 }
 
 TEST(TerrainPageStoreDomain, EmptyProviderStackIsRejected) {
@@ -1932,7 +1819,7 @@ TEST(TerrainPageStoreIndir, EncodeDecodeRoundTrip) {
         for (bool resident : {true, false}) {
             for (int depth : {0, 1, 3, 6}) {  // §16.3:d 独立于 layer round-trip
                 uint8_t rgba[4] = {0, 0, 0, 0};
-                TerrainPageStore::encodeLayerRGBA8(layer, resident, /*fieldReady=*/true, depth, rgba);
+                TerrainPageStore::encodeLayerRGBA8(layer, resident, depth, rgba);
                 EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), layer)
                     << "layer=" << layer << " resident=" << resident
                     << " depth=" << depth;
@@ -1947,48 +1834,42 @@ TEST(TerrainPageStoreIndir, EncodeDecodeRoundTrip) {
 // 负数 → 0,超 6 → 6;解码回值 = clamp 后。layer 编码不受 depth 影响。
 TEST(TerrainPageStoreIndir, DepthClampToMaxDetDepth) {
     uint8_t rgba[4] = {0, 0, 0, 0};
-    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*fieldReady=*/true, /*depth=*/-3, rgba);
+    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*depth=*/-3, rgba);
     EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), 0);
     EXPECT_EQ(TerrainPageStore::decodeLayerRGBA8(rgba), 42);
-    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*fieldReady=*/true, /*depth=*/6, rgba);
+    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*depth=*/6, rgba);
     EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), 6);
-    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*fieldReady=*/true, /*depth=*/99, rgba);
+    TerrainPageStore::encodeLayerRGBA8(42, /*resident=*/true, /*depth=*/99, rgba);
     EXPECT_EQ(TerrainPageStore::decodeDepthRGBA8(rgba), 6);  // clamp 到 6
 }
 
 // 编码约定:R=layer&0xFF、G=(layer>>8)&0xFF、B=depth(§16.3)、A=resident?255:0。
 TEST(TerrainPageStoreIndir, EncodeChannelLayout) {
     uint8_t rgba[4] = {9, 9, 9, 9};
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 0);
     EXPECT_EQ(rgba[1], 0);
     EXPECT_EQ(rgba[2], 0);    // B = depth 0
     EXPECT_EQ(rgba[3], 255);  // A = resident → 255
 
     // B 通道 = depth(渐变 LOD 级数),独立于 layer/resident。
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*fieldReady=*/true, /*depth=*/2, rgba);
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*depth=*/2, rgba);
     EXPECT_EQ(rgba[2], 2);
 
-    // A 通道三态门控(刀2):miss(resident=false)→ 0;影像 resident + 场未 ready
-    // → 128(片元采影像不采场);影像+场都 ready → 255。
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/false, /*fieldReady=*/true, /*depth=*/0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/false, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[3], 0) << "miss → A=0";
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*fieldReady=*/false, /*depth=*/0, rgba);
-    EXPECT_EQ(rgba[3], 128) << "影像 resident + 场 pending → A=128";
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
-    EXPECT_EQ(rgba[3], 255) << "影像+场 ready → A=255";
-    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/false, /*fieldReady=*/false, /*depth=*/0, rgba);
-    EXPECT_EQ(rgba[3], 0) << "miss 恒 0(fieldReady 无关)";
+    TerrainPageStore::encodeLayerRGBA8(0, /*resident=*/true, /*depth=*/0, rgba);
+    EXPECT_EQ(rgba[3], 255) << "resident → A=255";
 
-    TerrainPageStore::encodeLayerRGBA8(255, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(255, /*resident=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 255);  // R 满
     EXPECT_EQ(rgba[1], 0);
 
-    TerrainPageStore::encodeLayerRGBA8(256, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(256, /*resident=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 0);    // R 归零
     EXPECT_EQ(rgba[1], 1);    // 进 G 位
 
-    TerrainPageStore::encodeLayerRGBA8(513, /*resident=*/true, /*fieldReady=*/true, /*depth=*/0, rgba);
+    TerrainPageStore::encodeLayerRGBA8(513, /*resident=*/true, /*depth=*/0, rgba);
     EXPECT_EQ(rgba[0], 1);    // 513 = 1 + 2*256
     EXPECT_EQ(rgba[1], 2);
 }
@@ -2455,55 +2336,12 @@ TEST(TerrainPageStoreGeomAffine, GcjSharedEdgeCornersAgreeAcrossTiles) {
     EXPECT_GT(std::abs(A[3]), 0.01f) << "dU.y 交叉项(沿边 GCJ-y 变化)";
 }
 
-// ---------------- V26 一期:运行期换样式的失效通路 ----------------
-// 端到端(determination 驱动建页→失效→重烘)需 RealTerrain 瓦片全套测试台,
-// 未纳入 host(与"源列表变了全作废"共用 clearAllComposedPages,同构保证);
-// 这里锁 host 可判定的部分:uniform 直写生效、封顶同步、空态/未初始化安全。
-
-TEST(TerrainPageStoreRestyle, SetRoadFieldStyleUniformsWritesConfig) {
-    MockRenderDevice device;
-    TerrainPageStore store;
-    TerrainPageStore::Config cfg;
-    cfg.maxPages = 8;
-    ASSERT_TRUE(store.initialize(&device, cfg));
-
-    const std::array<float, 4> color{0.1f, 0.2f, 0.3f, 0.4f};
-    const std::array<float, 4> ramp{10.0f, 0.5f, 14.0f, 2.0f};
-    store.setRoadFieldStyleUniforms(color, ramp);
-    EXPECT_EQ(store.roadFieldStyleColor(), color);
-    EXPECT_EQ(store.roadFieldStyleWidthRamp(), ramp);
-}
-
-TEST(TerrainPageStoreRestyle, InvalidateFieldPagesUpdatesZoomCap) {
-    MockRenderDevice device;
-    TerrainPageStore store;
-    TerrainPageStore::Config cfg;
-    cfg.maxPages = 8;
-    // 场平面开启态(request 非空才建场纹理与跳烘门数组)。
-    cfg.roadFieldRequest = [](const TileKey&, CancellationToken,
-                              std::function<void(std::vector<uint8_t>)> cb) {
-        cb({});
-    };
-    cfg.roadFieldMaxZoom = 15;
-    ASSERT_TRUE(store.initialize(&device, cfg));
-    EXPECT_EQ(store.roadFieldZoomCap(), 15);
-
-    store.invalidateFieldPages(/*newFieldMaxZoom=*/16);
-    EXPECT_EQ(store.roadFieldZoomCap(), 16) << "新样式分级档变了封顶要跟着变";
-    EXPECT_EQ(store.ledgerFieldPageCount(), 0);
-
-    store.invalidateFieldPages();  // 缺省不改封顶
-    EXPECT_EQ(store.roadFieldZoomCap(), 16);
-}
-
 TEST(TerrainPageStoreRestyle, InvalidateIsSafeOnEmptyAndUninitialized) {
     // 未初始化:全部容器为空,调用必须是安全 no-op(宿主可能在页存储建立
     // 前就响应换肤指令)。
     TerrainPageStore cold;
     cold.invalidateComposedPages();
-    cold.invalidateFieldPages(16);
     EXPECT_EQ(cold.ledgerPageCount(), 0);
-    EXPECT_EQ(cold.ledgerFieldPageCount(), 0);
 
     // 已初始化但空账本:同样安全,计数保持 0。
     MockRenderDevice device;
@@ -2512,9 +2350,7 @@ TEST(TerrainPageStoreRestyle, InvalidateIsSafeOnEmptyAndUninitialized) {
     cfg.maxPages = 8;
     ASSERT_TRUE(store.initialize(&device, cfg));
     store.invalidateComposedPages();
-    store.invalidateFieldPages();
     EXPECT_EQ(store.ledgerPageCount(), 0);
-    EXPECT_EQ(store.ledgerFieldPageCount(), 0);
 }
 
 // V28 原子换手的 drain 换手判据真值表。端到端(旧合成顶住→新合成 complete→

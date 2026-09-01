@@ -67,12 +67,10 @@ public:
     /// 可表示,不丢位。cellZoom 逐实例带是分级宽度的反台阶前提:批级
     /// uniform 承首实例会让批内异 zoom 瓦片的线宽错档(瓦界宽度跳变)。
     static constexpr float packPageCellDescriptor(int cellsX, int cellsY,
-                                                  int texCoordSet,
-                                                  int cellZoom) {
+                                                  int texCoordSet) {
         return static_cast<float>(cellsX) +
                128.0f * static_cast<float>(cellsY) +
-               16384.0f * static_cast<float>(texCoordSet) +
-               131072.0f * static_cast<float>(cellZoom);
+               16384.0f * static_cast<float>(texCoordSet);
     }
 
     /// 批内位移模板栅格边长(layers[3])是否全部一致。
@@ -105,6 +103,7 @@ public:
         NotFullyResident,       // 页未全 cell 驻留(会采 directComposite 回落)
         HasWaterMask,           // 带水面掩码,走别的着色路径
         HasBaseColorTexture,    // 带基色纹理
+        HasTerrainFillMask,     // 每瓦片 fill page 不能复用批首纹理表
         Blended,                // 混合(淡入淡出期)
         Count
     };

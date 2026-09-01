@@ -75,12 +75,6 @@ def check_feature_plumbing(page_store, batcher, uniform_h):
     # B 每个页存储特性:uniform 表 + applyToTerrainCommand + 合批搬运,三处齐
     features = [
         # (uniform 表条目, applyToTerrainCommand 写入指纹, 合批搬运指纹)
-        ('EE_GLTF_ENTRY("u_roadFieldParams"', "roadFieldParams[0] = 1.0f",
-         "rec.pageAux[0]"),  # 场 enable 经批级 uniform 承接(见下一条)
-        ('EE_GLTF_ENTRY("u_roadFieldColor"', "roadFieldColor = config_",
-         None),
-        ('EE_GLTF_ENTRY("u_roadFieldWidth"', "roadFieldWidth = config_",
-         None),
         ('EE_GLTF_ENTRY("u_pageGeomA"',
          "pageGeomA = {\n        binding.sample.geomAffine[0]",
          "m.terrainPageGeomAffine[0]"),
@@ -95,16 +89,6 @@ def check_feature_plumbing(page_store, batcher, uniform_h):
         if batch_fp:
             require(batcher, batch_fp, "TerrainInstanceBatcher.cpp",
                     "合批实例流未搬运该特性(9043e20fe 同型漏配)")
-    # 场 uniform 的批级承接(批命令拷首实例)——9043e20fe 的直接回归锁
-    require(batcher,
-            "batch.gltfUniforms.roadFieldParams = first.gltfUniforms.roadFieldParams",
-            "TerrainInstanceBatcher.cpp", "批命令漏拷场 uniform(9043e20fe 回归)")
-    require(batcher,
-            "batch.gltfUniforms.roadFieldColor = first.gltfUniforms.roadFieldColor",
-            "TerrainInstanceBatcher.cpp", "批命令漏拷场线色(9043e20fe 回归)")
-    require(batcher,
-            "batch.gltfUniforms.roadFieldWidth = first.gltfUniforms.roadFieldWidth",
-            "TerrainInstanceBatcher.cpp", "批命令漏拷场宽度 ramp(9043e20fe 同型)")
 
 
 def check_phase_packing(page_store, batcher, batcher_h, renderer):
@@ -121,17 +105,13 @@ def check_phase_packing(page_store, batcher, batcher_h, renderer):
     n = renderer.count("psPack / 8.0") + renderer.count("psPack / 8.0f")
     if n < 2:
         fail(f"[Renderer.cpp] shader 相位解包(÷8)只剩 {n} 处,应 ≥2(GLSL+MSL)")
-    # C2 pageCellDesc 打包口径(cellsX +128·cellsY +16384·texSet +131072·zoom):
+    # C2 pageCellDesc 打包口径(cellsX +128·cellsY +16384·texSet):
     # 打包端(batcher)↔ 实例化 shader 解包端(GLES+MSL)。texSet 解包必须
-    # fmod 8 —— 不 fmod 会把 zoom 位吞进 texSet(psSet>0.5 恒真,UV 集错选)。
-    require(batcher_h, "131072.0f * static_cast<float>(cellZoom)",
-            "TerrainInstanceBatcher.h", "pageCellDesc 的 cellZoom 打包(×131072)丢失")
+    # fmod 8，避免高位污染 UV 集选择。
     n = renderer.count("floor(packed / 16384.0), 8.0)")
     if n != 2:
         fail(f"[Renderer.cpp] pageCellDesc texSet 解包(fmod 8)应恰 2 处"
              f"(GLES+MSL instanced),实为 {n}")
-    require(renderer, "floor(packed / 131072.0)", "Renderer.cpp",
-            "GLES instanced 的 cellZoom 解包(÷131072)丢失")
 
 
 def msl_struct_fields(renderer, start_needle):
@@ -160,7 +140,7 @@ def cpp_struct_fields(uniform_h):
 def check_msl_mirrors(renderer, uniform_h):
     # D MSL 两份 GltfUniforms 镜像必须与 C++ 字段同名同序(memcpy 语义)。
     cpp = cpp_struct_fields(uniform_h)
-    if not cpp or "roadFieldColor" not in cpp:
+    if not cpp or "pageStoreParams" not in cpp:
         fail("[GltfUniformBlock.h] C++ 字段解析失败(结构名/格式变了?守卫需跟修)")
         return
     starts = [m.start() for m in re.finditer(r"struct GltfUniforms \{", renderer)]
@@ -169,7 +149,7 @@ def check_msl_mirrors(renderer, uniform_h):
         return
     for k, pos in enumerate(starts):
         msl = msl_struct_fields(renderer[pos:], "struct GltfUniforms {")
-        # 只强校验从 pageStoreParams 起的**尾段**(页存储/场/仿射特性区)
+        # 只强校验从 pageStoreParams 起的**尾段**(页存储/仿射特性区)
         # 同名同序；前段材质纹理变换由独立表与 shader 编译守卫覆盖：
         # 这是历史上唯一发生过增删的活跃区,也是错位代价最高的区段。
         try:

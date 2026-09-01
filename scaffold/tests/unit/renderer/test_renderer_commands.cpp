@@ -1,18 +1,23 @@
 #include <gtest/gtest.h>
 
 #include "earth_engine/renderer/Renderer.h"
+#include "earth_engine/renderer/VectorUniformBlock.h"
 
+#include <algorithm>
 #include <string>
 
 using namespace earth_engine;
 
 namespace earth_engine {
 namespace renderer_testing {
+const char* vectorFillFragmentMSL();
 const char* gltfVertexGLSL();
 const char* gltfFragmentGLSL();
 const char* gltfFragmentMSL();
 const char* gltfInstancedVertexGLSL();
 const char* gltfInstancedVertexMSL();
+const char* vectorLineFragmentGLSL();
+const char* vectorLineFragmentMSL();
 } // namespace renderer_testing
 } // namespace earth_engine
 
@@ -31,6 +36,51 @@ private:
 };
 
 } // namespace
+
+TEST(RendererCommandTest, VectorFillMetalColorUsesFragmentSlotZero) {
+    const std::string msl = renderer_testing::vectorFillFragmentMSL();
+    EXPECT_NE(std::string::npos,
+              msl.find("constant float4& u_color [[buffer(0)]]"));
+    EXPECT_EQ(std::string::npos, msl.find("u_color [[buffer(2)]]"));
+}
+
+TEST(RendererCommandTest, VectorDashCapsUsePerEndpointCircularDistance) {
+    const std::string glsl = renderer_testing::vectorLineFragmentGLSL();
+    const std::string msl = renderer_testing::vectorLineFragmentMSL();
+    for (const std::string* source : {&glsl, &msl}) {
+        EXPECT_NE(std::string::npos, source->find("ds = min(ds, period - ds)"));
+        EXPECT_NE(std::string::npos, source->find("de = min(de, period - de)"));
+        EXPECT_NE(std::string::npos, source->find("float d = min(ds, de)"));
+    }
+
+    auto circularDistance = [](float p, float endpoint, float period) {
+        const float direct = std::abs(p - endpoint);
+        return std::min(direct, period - direct);
+    };
+    const float period = 12.0f;
+    const float p = 11.8f;
+    const float d = std::min(circularDistance(p, 0.0f, period),
+                             circularDistance(p, 6.0f, period));
+    EXPECT_NEAR(0.2f, d, 1e-5f);
+    EXPECT_LE(d, 0.5f);  // next-cycle leading square/round cap is visible
+}
+
+TEST(RendererCommandTest, SolidEndpointPrimitivesAreCommandTimeGated) {
+    const std::string glsl = renderer_testing::vectorLineFragmentGLSL();
+    const std::string msl = renderer_testing::vectorLineFragmentMSL();
+    for (const std::string* source : {&glsl, &msl}) {
+        EXPECT_NE(std::string::npos,
+                  source->find("solidCapStyle < 0.5"));
+        EXPECT_NE(std::string::npos,
+                  source->find("solidCapStyle > 1.5"));
+    }
+    const auto& table = vectorUniformTable();
+    EXPECT_NE(table.end(), std::find_if(
+                               table.begin(), table.end(), [](const auto& e) {
+                                   return std::string(e.name) ==
+                                          "u_solidCapStyle";
+                               }));
+}
 
 // ── Basic surface tile command creation ──
 
@@ -466,7 +516,9 @@ TEST(RendererCommandTest, GltfFragmentShaderStaysWithinGlesSamplerLimit) {
     EXPECT_LE(samplerCount, 16u)
         << "GLES glTF fragment shader declares " << samplerCount
         << " sampler2D; must stay <= 16 to link on GL_MAX_TEXTURE_IMAGE_UNITS==16";
-    EXPECT_EQ(samplerCount, 10u);
+    // Selected-tile fill adds one terrain-only sampler. Eleven remains below
+    // the GLES 3.0 fragment-stage floor of 16 texture units.
+    EXPECT_EQ(samplerCount, 11u);
 
     // The samplers the engine actually feeds must remain real declarations.
     for (const char* kept : {
@@ -859,6 +911,127 @@ TEST(RendererCommandTest, MvpSortUsesVectorPaintOrderAcrossSameMvpPass) {
     EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
 }
 
+TEST(RendererCommandTest, MvpSortUsesVectorPaintSubOrderAcrossTiles) {
+    RenderCommand center;
+    center.kind = RenderCommandKind::VectorLine;
+    center.owner = "tile-a-center";
+    center.vectorPaintOrder = 80;
+    center.vectorPaintSubOrder = 1;
+
+    RenderCommand casing;
+    casing.kind = RenderCommandKind::VectorLine;
+    casing.owner = "tile-b-casing";
+    casing.vectorPaintOrder = 80;
+    casing.vectorPaintSubOrder = 0;
+
+    RenderCommand centerB = center;
+    centerB.owner = "tile-b-center";
+    RenderCommand casingA = casing;
+    casingA.owner = "tile-a-casing";
+
+    RenderCommandList commands;
+    commands.push_back(std::move(casingA));
+    commands.push_back(std::move(center));
+    commands.push_back(std::move(casing));
+    commands.push_back(std::move(centerB));
+    EXPECT_TRUE(mvpRenderCommandsNeedSort(commands));
+    sortMvpRenderCommands(commands);
+
+    ASSERT_EQ(4u, commands.size());
+    EXPECT_EQ(0, commands[0].vectorPaintSubOrder);
+    EXPECT_EQ(0, commands[1].vectorPaintSubOrder);
+    EXPECT_EQ(1, commands[2].vectorPaintSubOrder);
+    EXPECT_EQ(1, commands[3].vectorPaintSubOrder);
+    EXPECT_FALSE(mvpRenderCommandsNeedSort(commands));
+}
+
+TEST(RendererCommandTest, MvpSortPreservesOfficialOrderBeforeStrokeSubOrder) {
+    auto makeRoad = [](int paintOrder, int subOrder, const char* owner) {
+        RenderCommand cmd;
+        cmd.kind = RenderCommandKind::VectorLine;
+        cmd.owner = owner;
+        cmd.vectorPaintOrder = paintOrder;
+        cmd.vectorPaintSubOrder = subOrder;
+        return cmd;
+    };
+    RenderCommandList commands;
+    commands.push_back(makeRoad(79, 1, "minor-center"));
+    commands.push_back(makeRoad(82, 0, "major-casing"));
+    commands.push_back(makeRoad(82, 1, "major-center"));
+    commands.push_back(makeRoad(79, 0, "minor-casing"));
+    sortMvpRenderCommands(commands);
+
+    ASSERT_EQ(4u, commands.size());
+    EXPECT_EQ("minor-casing", commands[0].owner);
+    EXPECT_EQ("minor-center", commands[1].owner);
+    EXPECT_EQ("major-casing", commands[2].owner);
+    EXPECT_EQ("major-center", commands[3].owner);
+}
+
+TEST(RendererCommandTest, MvpSortIsTransitiveAcrossMixedVectorKinds) {
+    RenderCommand casing;
+    casing.kind = RenderCommandKind::VectorLine;
+    casing.owner = "major-casing";
+    casing.vectorPaintOrder = 82;
+    casing.vectorPaintSubOrder = 0;
+
+    RenderCommand center;
+    center.kind = RenderCommandKind::VectorLine;
+    center.owner = "minor-center";
+    center.vectorPaintOrder = 79;
+    center.vectorPaintSubOrder = 1;
+
+    RenderCommand fill;
+    fill.kind = RenderCommandKind::VectorFill;
+    fill.owner = "fill";
+    fill.vectorPaintOrder = 80;
+
+    std::array<RenderCommand, 3> source{casing, center, fill};
+    for (auto& cmd : source) {
+        cmd.pass = "color";
+        cmd.frameId = 7;
+        cmd.depthTest = true;
+        cmd.depthWrite = false;
+        cmd.blend = true;
+        cmd.cullFace = false;
+    }
+    std::array<int, 3> order{0, 1, 2};
+    do {
+        RenderCommandList commands;
+        for (int i : order) commands.push_back(source[i]);
+        sortMvpRenderCommands(commands);
+        ASSERT_EQ(3u, commands.size());
+        EXPECT_EQ("minor-center", commands[0].owner);
+        EXPECT_EQ("fill", commands[1].owner);
+        EXPECT_EQ("major-casing", commands[2].owner);
+        EXPECT_FALSE(mvpRenderCommandsNeedSort(commands));
+        EXPECT_FALSE(validateMvpRenderCommands(commands, 7).has_value());
+    } while (std::next_permutation(order.begin(), order.end()));
+}
+
+TEST(RendererCommandTest, MvpValidatorRejectsVectorPaintSubOrderRegression) {
+    RenderCommand center;
+    center.kind = RenderCommandKind::VectorLine;
+    center.owner = "center";
+    center.pass = "color";
+    center.frameId = 7;
+    center.vectorPaintOrder = 80;
+    center.vectorPaintSubOrder = 1;
+    center.depthTest = true;
+    center.depthWrite = false;
+    center.blend = true;
+    center.cullFace = false;
+
+    RenderCommand casing = center;
+    casing.owner = "casing";
+    casing.vectorPaintSubOrder = 0;
+    RenderCommandList commands{center, casing};
+
+    const auto error = validateMvpRenderCommands(commands, 7);
+    ASSERT_TRUE(error.has_value());
+    EXPECT_NE(std::string::npos, error->message.find("sub-order"));
+}
+
 TEST(RendererCommandTest, MvpSortKeepsStableTiesAndHeavyPayloads) {
     auto makeFill = [](const char* owner) {
         RenderCommand cmd;
@@ -878,6 +1051,8 @@ TEST(RendererCommandTest, MvpSortKeepsStableTiesAndHeavyPayloads) {
     RenderCommand late;
     late.kind = RenderCommandKind::VectorLabel;
     late.owner = "label";
+    late.vectorPaintOrder = 30;
+    late.vectorPaintSubOrder = 3;
     late.pass = "color";
     late.depthTest = false;
     late.depthWrite = false;
@@ -972,7 +1147,7 @@ TEST(RendererCommandTest, MvpSortInterleavesStencilWithVectorPaintOrder) {
     EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
 }
 
-TEST(RendererCommandTest, VectorExtrusionIsBeforeLabels) {
+TEST(RendererCommandTest, OfficialDrawOrderPrecedesVectorKind) {
     RenderCommand extrusion;
     extrusion.kind = RenderCommandKind::VectorExtrusion;
     extrusion.owner = "building";
@@ -987,6 +1162,8 @@ TEST(RendererCommandTest, VectorExtrusionIsBeforeLabels) {
     label.kind = RenderCommandKind::VectorLabel;
     label.owner = "label";
     label.pass = "color";
+    label.vectorPaintOrder = 59;
+    label.vectorPaintSubOrder = 3;
     label.depthTest = false;
     label.depthWrite = false;
     label.blend = true;
@@ -995,8 +1172,8 @@ TEST(RendererCommandTest, VectorExtrusionIsBeforeLabels) {
     RenderCommandList commands{label, extrusion};
     sortMvpRenderCommands(commands);
     ASSERT_EQ(2u, commands.size());
-    EXPECT_EQ(RenderCommandKind::VectorExtrusion, commands[0].kind);
-    EXPECT_EQ(RenderCommandKind::VectorLabel, commands[1].kind);
+    EXPECT_EQ(RenderCommandKind::VectorLabel, commands[0].kind);
+    EXPECT_EQ(RenderCommandKind::VectorExtrusion, commands[1].kind);
     EXPECT_FALSE(validateMvpRenderCommands(commands).has_value());
 }
 

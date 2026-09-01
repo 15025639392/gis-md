@@ -82,7 +82,6 @@ struct TerrainSourceConfig {
     bool ellipsoidFallback = false;
     int ellipsoidFallbackMaxZoom = 13;
     int ellipsoidFallbackGridSize = 16;
-
     // 高度图地形字段（kind == Heightmap 时用；复用 urlTemplate/minimumZoom/
     // maximumZoom/attribution）。网格分辨率由解码后的 heightmap 尺寸自动决定
     // （gridSize = tileSize − 1），不单独配置。
@@ -231,7 +230,6 @@ struct MvtSourceConfig {
     /// Explicitly shared cache for consumers of the same provider namespace
     /// (for example raster drape + symbol source). Empty = source-local cache.
     std::shared_ptr<MvtTileFetchCache> sharedCache;
-    FeatureRenderStyle style;
 };
 
 struct EarthSceneConfig {

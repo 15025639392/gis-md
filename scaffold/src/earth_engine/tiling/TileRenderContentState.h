@@ -446,6 +446,26 @@ public:
     Texture* surfaceWaterMaskTexture() const {
         return surfaceWaterMaskTexture_.get();
     }
+    Texture* terrainFillMaskTexture() const {
+        return terrainFillMaskTexture_.get();
+    }
+    uint64_t terrainFillMaskRevision() const {
+        return terrainFillMaskRevision_;
+    }
+    void setTerrainFillMaskTexture(
+        std::unique_ptr<Texture> texture, uint64_t revision) {
+        if (terrainFillMaskTexture_ || texture) {
+            markRetainedResourcesChanged();
+        }
+        terrainFillMaskTexture_ = std::move(texture);
+        terrainFillMaskRevision_ = terrainFillMaskTexture_ ? revision : 0;
+    }
+    void clearTerrainFillMaskTexture() {
+        if (!terrainFillMaskTexture_ && terrainFillMaskRevision_ == 0) return;
+        terrainFillMaskTexture_.reset();
+        terrainFillMaskRevision_ = 0;
+        markRetainedResourcesChanged();
+    }
     const Vec3& renderLocalOrigin() const { return surface_.localOrigin; }
     const std::vector<GltfPrimitiveRenderResources>&
     gltfPrimitiveResourcesForDraw() const {
@@ -694,6 +714,10 @@ public:
             bytes += static_cast<int64_t>(
                 surfaceWaterMaskTexture_->sizeBytes());
         }
+        if (terrainFillMaskTexture_) {
+            bytes += static_cast<int64_t>(
+                terrainFillMaskTexture_->sizeBytes());
+        }
         for (const std::unique_ptr<Texture>& texture : gltfTextureResources) {
             if (texture) {
                 bytes += static_cast<int64_t>(texture->sizeBytes());
@@ -925,6 +949,7 @@ public:
         const bool hadTextures = !gltfTextureResources.empty();
         const bool hadPrimitives = !gltfPrimitiveResources.empty();
         clearSurfaceMeshResources();
+        clearTerrainFillMaskTexture();
         surface_.heightmap.reset();
         gltfModel.reset();
         gltfContentTransform = Mat4::identity();
@@ -1050,6 +1075,8 @@ private:
     uint64_t drawCommandReadSetRevision_ = 1;
     uint64_t cachedDrawCommandsBuiltRevision_ = 0;
     std::unique_ptr<Texture> surfaceWaterMaskTexture_;
+    std::unique_ptr<Texture> terrainFillMaskTexture_;
+    uint64_t terrainFillMaskRevision_ = 0;
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 gltfContentTransform = Mat4::identity();
     bool gltfResourcesReady_ = false;

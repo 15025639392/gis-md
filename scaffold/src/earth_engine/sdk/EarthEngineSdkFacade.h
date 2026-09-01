@@ -57,7 +57,6 @@ public:
     void resetCamera();
 
     const EarthSceneConfig& config() const { return config_; }
-    FeatureRenderLayer* mvtVectorLayer(const std::string& id) const;
 
 private:
     bool installMvtSource(const MvtSourceConfig& config);

@@ -22,10 +22,10 @@
 #include <future>
 #include <memory>
 #include <mutex>
-#include <condition_variable>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "earth_engine/renderer/Renderer.h"
 #include "earth_engine/renderer/GlyphAtlas.h"
@@ -36,25 +36,13 @@
 #include "earth_engine/camera/controllers/TetheredController.h"
 #include "earth_engine/core/geodesy/Ellipsoid.h"
 #include "earth_engine/core/geodesy/Cartographic.h"
-#include "earth_engine/data/FeatureClusterIndex.h"
 #include "earth_engine/layers/FeatureRenderLayer.h"
-#include "earth_engine/data/FeatureSnapQuery.h"
 #include "earth_engine/core/async/AsyncSystem.h"
-#include "earth_engine/data/MvtFeatureConverter.h"
-#include "earth_engine/data/MvtVectorSource.h"
-#include "earth_engine/data/StyleFilter.h"
 #include "earth_engine/layers/RasterOverlay.h"
 #include "earth_engine/platform/bridge/CurlMultiRequestScheduler.h"
-#include "earth_engine/data/MvtTileFetchCache.h"
-#include "earth_engine/data/AmapTileManifest.h"
-#include "earth_engine/data/AmapVectorTile.h"
-#include "earth_engine/data/AmapGeometry.h"
 #include "earth_engine/data/AmapVectorSource.h"
-#include "earth_engine/providers/RoadFieldSource.h"
 #include <nlohmann/json.hpp>
-#include "earth_engine/style/StyleDocument.h"
-#include "earth_engine/providers/VectorDrapeImageryProvider.h"
-#include "earth_engine/providers/AmapDrapeImageryProvider.h"
+#include "earth_engine/style/AmapClassicRuntime.h"
 #include "earth_engine/tiling/TileScheme.h"
 #include "earth_engine/scene/Camera.h"
 #include "earth_engine/scene/PresentationTrace.h"
@@ -68,7 +56,6 @@
 
 #include "MinimalGlobeDiagnostics.h"
 #include "MinimalGlobeDemoConfig.h"
-#include "MinimalGlobeDemoLayers.h"
 
 #define LOG_TAG "MinimalGlobe"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -212,6 +199,7 @@ static EGLContext gContext = EGL_NO_CONTEXT;
 static ANativeWindow* gWindow = nullptr;
 // 宽高被 UI 线程（触摸事件整形）与渲染线程（EGL/引擎）两侧读写，用原子避免撕裂
 static std::atomic<int> gWidth{0}, gHeight{0};
+static std::atomic<float> gDisplayDensity{1.0f};
 
 // 每帧发布相机方位角(弧度),UI 指北针无锁读取。
 static std::atomic<float> gHeadingRadians{0.0f};
@@ -222,6 +210,7 @@ static std::unique_ptr<RenderDeviceGLES> gRenderDevice;
 static std::unique_ptr<Engine> gEngine;
 static std::unique_ptr<AndroidPlatformBridge> gPlatformBridge;
 static std::unique_ptr<EarthEngineSdkFacade> gSdkFacade;
+static const AmapClassicRuntime* gAmapOfficialRuntime = nullptr;
 static bool gEngineReady = false;
 
 // JNI_OnLoad — 存储 JavaVM 引用
@@ -244,391 +233,56 @@ static bool gTouchMoved = false;
 // Debug panel state
 static bool gDebugPinchActive = false;
 
-// ---- 矢量 P2 demo 编辑流(应用层最小实现) ----
-// 引擎只出 pick/snap/预览接口;会话状态/undo 栈全在这里(demo 即参考实现)。
-// gEditMode 由 UI 线程写、两线程读;其余编辑态仅渲染线程访问。
-static std::atomic<bool> gEditMode{false};
-static FeatureRenderLayer* gDemoFeatureLayer = nullptr;  // Engine 持有所有权
-struct EditDragState {
-    bool active = false;
-    FeatureId featureId = kInvalidFeatureId;
-    int ringIndex = -1;
-    int vertexIndex = -1;
-    double vertexHeight = 0.0;
-    std::vector<std::vector<Cartographic>> rings;  // 工作副本
-};
-static EditDragState gEditDrag;
-static std::vector<Feature> gEditUndoStack;  // 抓取时的编辑前快照
-// P5a 编辑手柄(应用层):抓取时把被编辑环的顶点灌成 Point 要素,专用
-// 手柄层渲染;拖拽实时更新被拖顶点,松手/取消清空。引擎只出点渲染能力。
-static FeatureRenderLayer* gEditHandleLayer = nullptr;  // Engine 持有所有权
-
-// ---- P6c 聚合演示(应用层)。引擎只出层级聚合索引与查询,聚合点怎么画、
-// 何时刷新全在这里:源数据存在本地 FeatureStore(不进渲染),按相机 zoom
-// 查询索引 → 结果写进一个普通 FeatureRenderLayer 当"显示层"。 ----
-static FeatureStore gClusterSourceStore;
-static FeatureClusterIndex gClusterIndex;
-static FeatureRenderLayer* gClusterLayer = nullptr;  // Engine 持有所有权
-static int gClusterShownLevel = -9999;               // 上次刷新用的 zoom 档
-static std::vector<FeatureId> gEditHandleIds;
-
-// ---- P4 MVT 只读底图(应用层接线)。引擎侧 MvtVectorSource 只出
-// 选择/解码/灌注,网络与样式在这里:fetch 走 CurlScheduler,渲染挂
-// 一个普通 FeatureRenderLayer(store 即 source 的灌注目标)。 ----
-static FeatureRenderLayer* gMvtBasemapLayer = nullptr;  // Engine 持有所有权
-
-// ---- C2/E3:高德矢量。type2 面:无地形时走 VectorFill(V30 地球网格);
-// drape overlay 仍注册,无页则不出。路网/建筑/POI 仍主源 FeatureRenderLayer。 ----
-static std::shared_ptr<AmapDrapeImageryProvider::RegionCache> gAmapRegionCache;
-static std::unique_ptr<AmapRegionsVectorSource> gAmapRegionsSource;
-static std::unique_ptr<AmapWaterVectorSource> gAmapWater12Source;
-static std::unique_ptr<AmapMainVectorSource> gAmapMainSource;
-static std::unique_ptr<AmapPoiVectorSource> gAmapPoiSource;
-static FeatureRenderLayer* gAmapRegionsLayer = nullptr;  // Engine 持有
-static FeatureRenderLayer* gAmapWater12Layer = nullptr;  // Engine 持有
-static FeatureRenderLayer* gAmapMainLayer = nullptr;  // Engine 持有
-static FeatureRenderLayer* gAmapPoiLayer = nullptr;  // Engine 持有
-// E1:MVT/高德使用两条独立后台通道。decode 负责压缩字节→载荷，tess 负责
-// Feature→网格及 drape/road-field 合成。此前二者共用严格 FIFO 池，全球
+// ---- 官方高德矢量源。regions/main 共享 request-type-1 缓存，
+// POI 独立消费 request-type-2；三者都只灌注 FeatureRenderLayer。 ----
+static const FeatureRenderLayer* gAmapRegionsLayer = nullptr;  // Engine 持有
+static const FeatureRenderLayer* gAmapMainLayer = nullptr;  // Engine 持有
+static const FeatureRenderLayer* gAmapPoiLayer = nullptr;  // Engine 持有
+// 官方高德数据使用独立 decode/tessellation 后台通道。此前二者
+// 共用严格 FIFO 池，全球
 // z3 首批 regions/main 镶嵌会把后来的 POI decode 挡在队尾；网络 8 秒已
 // 完成，画面却要 20-38 秒才收敛。拆池消除队头阻塞，线程总数仍按设备
 // 内存/核心有界，不减少瓦片或可见细节。
-static std::shared_ptr<ThreadPool> gMvtDecodePool;
+static std::shared_ptr<ThreadPool> gAmapType1DecodePool;
 static std::shared_ptr<ThreadPool> gAmapPoiDecodePool;
-static std::shared_ptr<ThreadPool> gMvtTessellationPool;
-static minimal_globe_demo::MvtWorkerBudget gMvtWorkerBudget;
-// 刀2:面 drape 与路网场共享的 MVT 瓦 fetch+decode 缓存(同一批 z14 祖先
-// 瓦零重复拉取)。shared_ptr:两消费者 + 迟到回调自持。
-static std::shared_ptr<MvtTileFetchCache> gMvtTileCache;
-// V26 一期换肤钩子:留生产者指针供 nativeDebugRestyle 换样式。
-//   drape:raw(unique_ptr move 进 overlay,归其持有;teardown 置空,与
-//   gDemoFeatureLayer 同一套裸指针纪律);场:shared(与 request lambda 共持)。
-static VectorDrapeImageryProvider* gDrapeProviderRaw = nullptr;
-static std::shared_ptr<RoadFieldSource> gRoadFieldSource;
-static bool gNightStyle = false;
-// HttpRequest 是取消句柄(析构即取消),须持有到完成;完成 id 攒起来
-// 由下一次发请求时(渲染线程)剪除,避免在 curl 回调线程里析构句柄。
-struct MvtFetchInflight {
-    std::mutex mutex;
-    uint64_t nextId = 0;
-    std::unordered_map<uint64_t, std::unique_ptr<HttpRequest>> requests;
-    std::vector<uint64_t> completed;
-};
-static MvtFetchInflight gMvtFetch;
+static std::shared_ptr<ThreadPool> gAmapTessellationPool;
+static minimal_globe_demo::AmapWorkerBudget gAmapWorkerBudget;
 
-static void ensureMvtWorkerPools() {
-    if (gMvtDecodePool && gAmapPoiDecodePool && gMvtTessellationPool) return;
+static void ensureAmapWorkerPools() {
+    if (gAmapType1DecodePool && gAmapPoiDecodePool &&
+        gAmapTessellationPool) return;
 
-    minimal_globe_demo::MvtWorkerBudget budget{
-        minimal_globe_demo::kMvtDecodeThreadsFallback,
+    minimal_globe_demo::AmapWorkerBudget budget{
+        minimal_globe_demo::kAmapType1DecodeThreadsFallback,
         1,
-        minimal_globe_demo::kMvtTessellationThreadsFallback};
+        minimal_globe_demo::kAmapTessellationThreadsFallback};
     DeviceInfo device;
     if (gPlatformBridge) {
         device = gPlatformBridge->deviceInfo();
-        budget = minimal_globe_demo::chooseMvtWorkerBudget(
+        budget = minimal_globe_demo::chooseAmapWorkerBudget(
             device.cpuCores, device.totalMemoryBytes);
     }
     budget.decodeThreads = std::clamp<size_t>(
-        startupSizeProperty("debug.ee.mvtdecode", budget.decodeThreads), 1, 4);
+        startupSizeProperty("debug.ee.amaptype1decode", budget.decodeThreads),
+        1, 4);
     budget.poiDecodeThreads = std::clamp<size_t>(
         startupSizeProperty("debug.ee.amapdecode", budget.poiDecodeThreads),
         1, 4);
     budget.tessellationThreads = std::clamp<size_t>(
-        startupSizeProperty("debug.ee.mvttess", budget.tessellationThreads),
+        startupSizeProperty("debug.ee.amaptess", budget.tessellationThreads),
         1, 8);
-    gMvtWorkerBudget = budget;
-    gMvtDecodePool = std::make_shared<ThreadPool>(budget.decodeThreads);
+    gAmapWorkerBudget = budget;
+    gAmapType1DecodePool = std::make_shared<ThreadPool>(budget.decodeThreads);
     gAmapPoiDecodePool = std::make_shared<ThreadPool>(budget.poiDecodeThreads);
-    gMvtTessellationPool =
+    gAmapTessellationPool =
         std::make_shared<ThreadPool>(budget.tessellationThreads);
-    LOGI("MvtWorkers split type1Decode=%zu poiDecode=%zu tess=%zu cores=%d "
+    LOGI("AmapWorkers split type1Decode=%zu poiDecode=%zu tess=%zu cores=%d "
          "memory=%lldMB model=%s",
          budget.decodeThreads, budget.poiDecodeThreads,
          budget.tessellationThreads, device.cpuCores,
          static_cast<long long>(device.totalMemoryBytes / (1024 * 1024)),
          device.model.empty() ? "unknown" : device.model.c_str());
 }
-
-// MVT 瓦片拉取(E1 几何通路与 E4 影像通路共用)。⚠️ HttpRequest 取消句柄
-// 必须持有至完成,且**不能在 curl 回调线程析构** —— 完成 id 攒批,下次发
-// 请求时在调用线程剪除。
-// 样式/源配置文档候选目录,按序尝试。⚠️ external 那条只有 app 自建目录才
-// 可读:adb shell mkdir 建出来 owner=shell,app 读 Permission denied(真机
-// 踩过,scoped storage 语义)——debug 变体用 internal + run-as cp 注入最稳:
-//   adb push style-*.json sources.json /data/local/tmp/ &&
-//   adb shell run-as com.earthengine.minimalglobe sh -c \
-//     'mkdir -p files && cp /data/local/tmp/*.json files/'
-static constexpr const char* kStyleDocDirs[] = {
-    "/data/data/com.earthengine.minimalglobe/files",
-    "/sdcard/Android/data/com.earthengine.minimalglobe/files",
-};
-
-// V26 尾项:数据源 URL 启动期外置。sources.json 只在 createEngine 装配时
-// 读一次(运行期热切源刻意不做,见 MinimalGlobeDemoConfig.h)。MVT URL 的
-// 消费点是下方 fetch 闭包(不经 SceneConfig),故落一个装配期一次写、之后
-// 只读的全局;terrain/imagery 经 makeDefaultDemoSceneConfig(&ov) 走工厂。
-static std::string gMvtBasemapUrl =
-    minimal_globe_demo::kMvtBasemapUrlTemplate;
-
-static minimal_globe_demo::DemoSourceOverrides loadDemoSourceOverrides() {
-    minimal_globe_demo::DemoSourceOverrides ov;
-    for (const char* dir : kStyleDocDirs) {
-        const std::string path = std::string(dir) + "/sources.json";
-        std::ifstream in(path, std::ios::binary);
-        if (!in) continue;  // 文件缺席不是错误(内置兜底)
-        std::string text((std::istreambuf_iterator<char>(in)),
-                         std::istreambuf_iterator<char>());
-        std::string err;
-        if (minimal_globe_demo::parseDemoSourceOverrides(text, ov, err)) {
-            LOGI("DemoSources applied from %s: mvt=%s imagery=%s terrain=%s",
-                 path.c_str(),
-                 ov.mvtUrlTemplate.empty() ? "(builtin)"
-                                           : ov.mvtUrlTemplate.c_str(),
-                 ov.imageryUrlTemplate.empty() ? "(builtin)"
-                                               : ov.imageryUrlTemplate.c_str(),
-                 ov.terrainUrlTemplate.empty()
-                     ? "(builtin)"
-                     : ov.terrainUrlTemplate.c_str());
-            return ov;
-        }
-        // fail-loud:坏文档整份拒收回落内置,LOGE 后不再试下一路径
-        // (半坏配置静默换目录比报错更难排查)。
-        LOGE("DemoSources rejected %s: %s(回落内置 URL)", path.c_str(),
-             err.c_str());
-        return minimal_globe_demo::DemoSourceOverrides{};
-    }
-    return ov;
-}
-
-static void mvtFetchTile(const TileKey& key,
-                         std::function<void(int, std::vector<uint8_t>)> cb) {
-    std::string url = gMvtBasemapUrl;
-    auto replace = [&url](const char* token, int value) {
-        size_t pos = url.find(token);
-        if (pos != std::string::npos) {
-            url.replace(pos, 3, std::to_string(value));
-        }
-    };
-    replace("{z}", key.z);
-    replace("{x}", key.x);
-    replace("{y}", key.y);
-    uint64_t id;
-    {
-        std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
-        for (uint64_t done : gMvtFetch.completed) {
-            gMvtFetch.requests.erase(done);
-        }
-        gMvtFetch.completed.clear();
-        id = gMvtFetch.nextId++;
-    }
-    auto handle = CurlMultiRequestScheduler::shared().get(
-        url,
-        [cb = std::move(cb), id](int statusCode, std::vector<uint8_t> body) {
-            cb(statusCode, std::move(body));
-            std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
-            gMvtFetch.completed.push_back(id);
-        },
-        HttpRequestOptions(HttpRequestPriority::Low));
-    std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
-    gMvtFetch.requests[id] = std::move(handle);
-}
-
-// ---- C2/E3:高德瓦片异步 fetch 链(引擎级通路用)。
-// 与 demo 切片的阻塞链同一数据路径(web/init → web_map/get_tile →
-// 签名 URL),但全程异步回调,匹配 MvtTileFetchCacheT::FetchFn 契约。
-// 版本探测结果跨瓦片共享(版本号是全局数据 stamp,逐瓦探测是纯浪费)。
-// ---------------------------------------------------------------------
-struct AmapFetchState {
-    std::mutex mutex;
-    std::string version;       // 已探测的版本 stamp(空 = 未探测)
-    bool versionResolved = false;
-    bool versionProbing = false;  // 探测在途(防并发首探)
-    /// 探测在途时排队的瓦片请求(版本就绪后统一放行)。
-    std::vector<std::function<void(bool)>> versionWaiters;
-    uint64_t nextId = 0;
-    std::unordered_map<uint64_t, std::unique_ptr<HttpRequest>> requests;
-    std::vector<uint64_t> completed;
-};
-static AmapFetchState gAmapFetch;
-
-/// 渲染线程专用:剪除已完成的 HttpRequest 句柄(析构即取消,故不能在
-/// curl 回调线程 erase)。每帧驱动 amap 源前调用。
-static void amapCleanupCompleted() {
-    std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
-    for (uint64_t done : gAmapFetch.completed) {
-        gAmapFetch.requests.erase(done);
-    }
-    gAmapFetch.completed.clear();
-}
-
-/// 完成一次 amap 瓦片 fetch:版本(缓存)→ manifest POST → 签名 URL GET。
-/// 回调 (statusCode, body) 在任意线程;**任何失败路径都必须回调**,否则
-/// MvtTileFetchCacheT 的 in-flight 永不解除、树 pending 永不消化 ——
-/// 失败回调 status != 200 或空 body,由 cache 记失败账本。
-static void amapFetchTile(const TileKey& key, int requestType,
-                          std::function<void(int, std::vector<uint8_t>)> cb) {
-    const std::string webKey = minimal_globe_demo::kAmapWebKey;
-    const std::string referer = minimal_globe_demo::kAmapReferer;
-
-    // 持有 in-flight HttpRequest 句柄到完成(析构即取消)。
-    // ⚠️ 完成 id 的剪除**只在渲染线程**做(见 amapCleanupCompleted),
-    // 绝不能在 curl 回调线程 erase —— 析构 HttpRequest 会 cancel 句柄,
-    // cancel 可能等待 curl 内部锁,而回调正持着该锁 → 自锁死循环。
-    // (与 gMvtFetch 同纪律;gMvtFetch 的剪除在渲染线程的发请求路径上。)
-    auto allocId = []() -> uint64_t {
-        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
-        return gAmapFetch.nextId++;
-    };
-    auto hold = [](uint64_t id, std::unique_ptr<HttpRequest> handle) {
-        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
-        gAmapFetch.requests[id] = std::move(handle);
-    };
-    auto release = [](uint64_t id) {
-        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
-        gAmapFetch.completed.push_back(id);
-    };
-
-    // 阶段 3:GET 签名瓦片 URL → 字节。
-    auto fetchSignedUrl = [cb, referer, allocId, hold, release](
-                              const std::string& url) {
-        const uint64_t id = allocId();
-        auto handle = CurlMultiRequestScheduler::shared().get(
-            url,
-            [cb, release, id](int statusCode, std::vector<uint8_t> body) {
-                cb(statusCode, std::move(body));
-                release(id);
-            },
-            HttpRequestOptions(HttpRequestPriority::Low,
-                               {{"Referer", referer}}));
-        hold(id, std::move(handle));
-    };
-
-    // 阶段 2:POST get_tile manifest → 解析签名 URL → 阶段 3。
-    auto fetchManifest = [key, requestType, referer, cb, fetchSignedUrl,
-                          allocId, hold, release](const std::string& version) {
-        AmapManifestConfig cfg;
-        cfg.key = minimal_globe_demo::kAmapWebKey;
-        cfg.referer = referer;
-        cfg.version = version;
-        const std::string url = buildGetTileUrl(cfg);
-        const std::string bodyStr = buildGetTileBody(
-            {{key.x, key.y, key.z, requestType}}, cfg, version);
-        const uint64_t id = allocId();
-        auto handle = CurlMultiRequestScheduler::shared().post(
-            url, std::vector<uint8_t>(bodyStr.begin(), bodyStr.end()),
-            "application/x-www-form-urlencoded",
-            [cb, fetchSignedUrl, key, requestType, release, id](
-                int statusCode, std::vector<uint8_t> body) {
-                if (statusCode != 200 || body.empty()) {
-                    cb(0, {});
-                    release(id);
-                    return;
-                }
-                std::vector<AmapTileUrl> urls;
-                std::string err;
-                if (!parseTileUrls(
-                        std::string(body.begin(), body.end()), urls, &err) ||
-                    urls.empty()) {
-                    cb(0, {});
-                    release(id);
-                    return;
-                }
-                AmapTileUrl selected;
-                const AmapTileRequest request{key.x, key.y, key.z,
-                                              requestType};
-                if (!selectAmapTileUrl(urls, request, selected, &err)) {
-                    LOGE("AmapDemo: manifest URL mismatch: %s", err.c_str());
-                    cb(0, {});
-                    release(id);
-                    return;
-                }
-                fetchSignedUrl(selected.url);
-                release(id);
-            },
-            HttpRequestOptions(HttpRequestPriority::Low,
-                               {{"Referer", referer}}));
-        hold(id, std::move(handle));
-    };
-
-    // 阶段 1:版本探测(跨瓦片共享;已解析直接跳阶段 2)。
-    // 并发首探由 versionProbing 标志拦下(首个请求发起 init,其余排队)。
-    bool probeNeeded = false;
-    bool resolved = false;
-    std::string resolvedVersion;
-    {
-        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
-        if (gAmapFetch.versionResolved && !gAmapFetch.version.empty()) {
-            resolved = true;
-            resolvedVersion = gAmapFetch.version;
-        } else {
-            gAmapFetch.versionResolved = false;
-            gAmapFetch.versionWaiters.push_back(
-                [cb, fetchManifest](bool ok) {
-                    if (!ok) {
-                        cb(0, {});
-                        return;
-                    }
-                    std::string version;
-                    {
-                        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
-                        version = gAmapFetch.version;
-                    }
-                    fetchManifest(version);
-                });
-            if (!gAmapFetch.versionProbing) {
-                gAmapFetch.versionProbing = true;
-                probeNeeded = true;
-            }
-        }
-    }
-    if (resolved && !resolvedVersion.empty()) {
-        fetchManifest(resolvedVersion);  // 锁外调用,避免自死锁
-        return;
-    }
-    if (!probeNeeded) return;  // 探测已在途,本 key 已排队等放行
-
-    const std::string initUrl = "https://jsapi.amap.com/web/init?key=" + webKey;
-    const uint64_t id = allocId();
-    auto handle = CurlMultiRequestScheduler::shared().get(
-        initUrl,
-        [release, id](int statusCode, std::vector<uint8_t> body) {
-            std::string version;
-            if (statusCode == 200) {
-                try {
-                    const auto doc =
-                        nlohmann::json::parse(body.begin(), body.end());
-                    const auto inner =
-                        nlohmann::json::parse(doc.value("tile", "{}"));
-                    version = inner.value("v", "");
-                } catch (const std::exception&) {
-                    version.clear();
-                }
-            }
-            std::vector<std::function<void(bool)>> waiters;
-            {
-                std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
-                gAmapFetch.version = version;
-                // 探测失败不是版本“解析为空”的终态。保持 unresolved，
-                // 后续请求可重新探测，避免一次瞬时网络错误毒死整个进程。
-                gAmapFetch.versionResolved = !version.empty();
-                gAmapFetch.versionProbing = false;
-                waiters.swap(gAmapFetch.versionWaiters);
-            }
-            const bool ok = !version.empty();
-            for (auto& w : waiters) w(ok);
-            release(id);
-        },
-        HttpRequestOptions(HttpRequestPriority::Low,
-                           {{"Referer", referer}}));
-    hold(id, std::move(handle));
-}
-
-// ---- C2 步骤5:高德矢量瓦片垂直切片 ----
-// 定义在文件尾部(gRenderThread 之后),见 amapLoadDemoTile。
-static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z,
-                             bool regionsOnly);
-
 
 static double androidUptimeSeconds();
 static void postInputEvent(const InputEvent& event);
@@ -649,54 +303,17 @@ static void cancelInputIfNeeded() {
 static void clearDemoEngineObjects() {
     // SDK facade 销毁时先停 Scene-owned MVT bundles；其 HttpRequest 句柄
     // 随 source-specific fetch state 的 RAII 析构取消。
-    gAmapRegionCache.reset();
-    gAmapRegionsSource.reset();
-    gAmapWater12Source.reset();
-    gAmapMainSource.reset();
-    gAmapPoiSource.reset();
-    {
-        std::lock_guard<std::mutex> lock(gMvtFetch.mutex);
-        gMvtFetch.requests.clear();
-        gMvtFetch.completed.clear();
-    }
-    {
-        std::lock_guard<std::mutex> lock(gAmapFetch.mutex);
-        gAmapFetch.requests.clear();
-        gAmapFetch.completed.clear();
-        gAmapFetch.versionWaiters.clear();
-        gAmapFetch.version.clear();
-        gAmapFetch.versionResolved = false;
-        gAmapFetch.versionProbing = false;
-    }
-    gMvtBasemapLayer = nullptr;   // Engine 持有,随 gEngine 一起销毁
-    gAmapMainLayer = nullptr;     // Engine 持有,随 gEngine 一起销毁
-    gAmapPoiLayer = nullptr;      // Engine 持有,随 gEngine 一起销毁
-    gDemoFeatureLayer = nullptr;  // Engine 持有,随 gEngine 一起销毁
-    gEditHandleLayer = nullptr;
-    gClusterLayer = nullptr;
-    gClusterShownLevel = -9999;  // 下次装载重新刷一遍聚合显示层
-    gEditHandleIds.clear();
-    gEditDrag = EditDragState{};
-    gEditUndoStack.clear();
-    if (gEngine) {
-        gEngine->setStyleTargets(nullptr, nullptr, nullptr);  // V26 三期
-    }
-    gDrapeProviderRaw = nullptr;  // overlay 随 facade 亡,裸指针先置空
-    gRoadFieldSource.reset();
-    gNightStyle = false;
+    gAmapOfficialRuntime = nullptr;
+    gAmapRegionsLayer = nullptr;  // Engine 持有,随 runtime 一起销毁
+    gAmapMainLayer = nullptr;     // Engine 持有,随 runtime 一起销毁
+    gAmapPoiLayer = nullptr;      // Engine 持有,随 runtime 一起销毁
     gSdkFacade.reset();
     gEngine.reset();
-    // The cache is explicitly shared by the demo's MVT drape, deprecated
-    // road-field compatibility path, and Scene-owned symbol source.  Do not
-    // carry it across an Engine rebuild: its z/x/y keys have no provider or
-    // URL namespace, so a changed sources.json URL could otherwise reuse old
-    // provider bytes in the new scene.
-    gMvtTileCache.reset();
     gRenderDevice.reset();
-    gMvtDecodePool.reset();
+    gAmapType1DecodePool.reset();
     gAmapPoiDecodePool.reset();
-    gMvtTessellationPool.reset();
-    gMvtWorkerBudget = {};
+    gAmapTessellationPool.reset();
+    gAmapWorkerBudget = {};
     gPlatformBridge.reset();
     gEngineReady = false;
 }
@@ -810,16 +427,10 @@ static bool createEngine() {
     gEngine = std::make_unique<Engine>(gRenderDevice.get());
 
     gEngine->onSurfaceCreated();
-    gEngine->onSurfaceChanged(gWidth, gHeight, 1.0f);
+    gEngine->onSurfaceChanged(gWidth, gHeight, gDisplayDensity.load());
 
     gEngineReady = gEngine->isReady();
     if (gEngineReady) {
-        const bool amapVectorEnabled =
-            minimal_globe_demo::kEnableAmapVectorDemo &&
-            startupBoolProperty("debug.ee.amapvector", true);
-        const bool mvtBasemapEnabled = startupBoolProperty(
-            "debug.ee.mvtbasemap",
-            minimal_globe_demo::kEnableMvtBasemap);
         LOGI("Engine initialized successfully, camera pos: %.1f,%.1f,%.1f",
              gEngine->camera().position().x(),
              gEngine->camera().position().y(),
@@ -832,1142 +443,115 @@ static bool createEngine() {
                 *gEngine,
                 *gRenderDevice,
                 *gPlatformBridge);
-        // V26 尾项:sources.json 启动期读一次,MVT URL 写进 fetch 全局,
-        // terrain/imagery 传工厂。必须先于 drape/场安装(fetch 闭包已建)。
-        const minimal_globe_demo::DemoSourceOverrides sourceOverrides =
-            loadDemoSourceOverrides();
-        if (!sourceOverrides.mvtUrlTemplate.empty()) {
-            gMvtBasemapUrl = sourceOverrides.mvtUrlTemplate;
-        }
-
-        // ---- 刀1 矢量**面** drape:MVT 面栅格化冒充影像进页存储合成。----
-        // 必须在 installScene **之前**注册:pendingCustomOverlays_ 在
-        // installScene 里消费,排在配置 overlay(卫星影像)之后 = 叠其上。
-        if (minimal_globe_demo::kEnableMvtDrapeBasemap) {
-            ensureMvtWorkerPools();
-            if (!gMvtTileCache) {
-                gMvtTileCache = std::make_shared<MvtTileFetchCache>(
-                    [](const TileKey& key,
-                       MvtTileFetchCache::FetchCallback cb) {
-                        mvtFetchTile(key, std::move(cb));
-                    },
-                    minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtDecodePool);
-            }
-            VectorDrapeImageryProvider::Options dopts;
-            dopts.id = "mvt-drape";
-            dopts.minZoom = minimal_globe_demo::kMvtBasemapMinZoom;
-            dopts.dataMaxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
-            // 与卫星影像同深:页 determination 按屏幕清晰度要多深,面就
-            // 现画多深(overzoom),这是"动态栅格化"的机关。
-            dopts.advertisedMaxZoom =
-                minimal_globe_demo::kMeasureImageryMaxZoom;
-            dopts.tileSize = 256;  // 页原生边长,再大页存储也会缩回 256
-            dopts.style = minimal_globe_demo::makeMvtDrapeStyle();
-            // 页网格按首源(高德卫星,GCJ-02)建 → 矢量矩形先平移回 WGS84
-            // 再选 OSM 瓦,与渲染侧 worldOffset 修正互补(逐像素同位)。
-            dopts.gcj02SourceGrid =
-                minimal_globe_demo::kUseGaodeSatelliteForDemo;
-            auto drapeProvider =
-                std::make_unique<VectorDrapeImageryProvider>(
-                    std::move(dopts), gMvtTileCache,
-                    gMvtTessellationPool);  // Assembly 内持 weak 防拆除竞态
-            RasterOverlay::Options oopts;
-            oopts.role = RasterOverlayRole::AnnotationOverlay;
-            oopts.priority = RasterOverlayPriority::Normal;
-            // 矢量面缺席不该阻塞地形瓦片判定 complete(server 不在时整场
-            // 景仍按纯影像走)。
-            oopts.blocksCompleteRenderable = false;
-            // ⚠️ Direct raster fallback 按 overlay 自己的 georeference 喂
-            // key:本 provider 产出的是"GCJ 空间矩形"语义的图(见
-            // gcj02SourceGrid),故声明 Gcj02 让兜底版也走同一套修正,
-            // 否则页 miss 瞬间面会闪 ~500m 错位。
-            oopts.georeference =
-                minimal_globe_demo::kUseGaodeSatelliteForDemo
-                    ? RasterOverlayGeoreference::Gcj02WebMercator
-                    : RasterOverlayGeoreference::Standard;
-            gDrapeProviderRaw = drapeProvider.get();  // V26 换肤钩子
-            gSdkFacade->addCustomImageryOverlay(
-                std::move(drapeProvider),
-                TileScheme::createXYZWebMercator(), oopts);
-            LOGI("VectorDrape MVT face basemap overlay installed: %s "
-                 "(data z%d-%d, advertised z%d, gcj=%d)",
-                 gMvtBasemapUrl.c_str(),
-                 minimal_globe_demo::kMvtBasemapMinZoom,
-                 minimal_globe_demo::kMvtBasemapMaxZoom,
-                 minimal_globe_demo::kMeasureImageryMaxZoom,
-                 minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);
-        }
-
-        // ---- 刀2 路网线 SDF 场:页存储"第二平面"生产者注入。----
-        // setRoadFieldSource 须在首帧渲染前调(页存储 lazy init 快照 Config)。
-        if (minimal_globe_demo::kEnableMvtRoadField &&
-            !minimal_globe_demo::kEnableEPlanRoadRibbon) {
-            ensureMvtWorkerPools();
-            if (!gMvtTileCache) {
-                gMvtTileCache = std::make_shared<MvtTileFetchCache>(
-                    [](const TileKey& key,
-                       MvtTileFetchCache::FetchCallback cb) {
-                        mvtFetchTile(key, std::move(cb));
-                    },
-                    minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw, gMvtDecodePool);
-            }
-            RoadFieldSource::Options fopts;
-            fopts.dataMaxZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
-            fopts.fieldSize = 256;  // = 页边长(共享间接查找的前提)
-            fopts.style = minimal_globe_demo::makeMvtRoadFieldStyle();
-            fopts.gcj02SourceGrid =
-                minimal_globe_demo::kUseGaodeSatelliteForDemo;
-            auto roadField = std::make_shared<RoadFieldSource>(
-                std::move(fopts), gMvtTileCache, gMvtTessellationPool);
-            gRoadFieldSource = roadField;  // V26 换肤钩子
-            gEngine->setRoadFieldSource(
-                [roadField](const TileKey& pageKey, CancellationToken token,
-                            std::function<void(std::vector<uint8_t>)> cb) {
-                    roadField->requestField(pageKey, token, std::move(cb));
-                },
-                minimal_globe_demo::kMvtRoadFieldColor,
-                minimal_globe_demo::kMvtRoadFieldWidthRampPx,
-                minimal_globe_demo::kMvtRoadFieldMaxZoom);
-            LOGI("VectorRoadField SDF source installed (data z%d, gcj=%d)",
-                 minimal_globe_demo::kMvtBasemapMaxZoom,
-                 minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);
-        }
-
-        // ---- 高德 type2 面 V1 drape:必须在 installScene 之前注册 overlay。
-        if (amapVectorEnabled) {
-            ensureMvtWorkerPools();
-            if (!gAmapRegionCache) {
-                gAmapRegionCache =
-                    std::make_shared<AmapDrapeImageryProvider::RegionCache>(
-                        [](const TileKey& k,
-                           AmapDrapeImageryProvider::RegionCache::
-                               FetchCallback cb) {
-                            amapFetchTile(k, 1, std::move(cb));
-                        },
-                        minimal_globe_demo::kMvtTileCacheDecoded,
-                        minimal_globe_demo::kMvtTileCacheRaw,
-                        gMvtDecodePool);
-            }
-            AmapDrapeImageryProvider::Options aopts;
-            aopts.id = "amap-drape";
-            aopts.minZoom = 0;
-            aopts.dataMinZoom = 10;
-            aopts.dataMaxZoom = 10;
-            aopts.advertisedMaxZoom =
-                minimal_globe_demo::kMeasureImageryMaxZoom;
-            aopts.tileSize = 256;
-            aopts.style = minimal_globe_demo::makeAmapDrapeStyle();
-            aopts.gcj02SourceGrid =
-                minimal_globe_demo::kUseGaodeSatelliteForDemo;
-            auto amapDrape = std::make_unique<AmapDrapeImageryProvider>(
-                std::move(aopts), gAmapRegionCache, gMvtTessellationPool);
-            RasterOverlay::Options aoopts;
-            aoopts.role = RasterOverlayRole::AnnotationOverlay;
-            aoopts.priority = RasterOverlayPriority::Normal;
-            aoopts.blocksCompleteRenderable = false;
-            aoopts.georeference =
-                minimal_globe_demo::kUseGaodeSatelliteForDemo
-                    ? RasterOverlayGeoreference::Gcj02WebMercator
-                    : RasterOverlayGeoreference::Standard;
-            gSdkFacade->addCustomImageryOverlay(
-                std::move(amapDrape), TileScheme::createXYZWebMercator(),
-                aoopts);
-            LOGI("AmapDrape type2 overlay installed (data z10, advertised z%d, "
-                 "gcj=%d)",
-                 minimal_globe_demo::kMeasureImageryMaxZoom,
-                 minimal_globe_demo::kUseGaodeSatelliteForDemo ? 1 : 0);
-        }
-
         EarthSceneConfig sceneConfig =
-            minimal_globe_demo::makeDefaultDemoSceneConfig(&sourceOverrides);
+            minimal_globe_demo::makeDefaultDemoSceneConfig();
         applyStartupCameraOverride(sceneConfig);
-        sceneConfig.aerialFog = startupBoolProperty(
-            "debug.ee.aerialfog", sceneConfig.aerialFog);
         sceneConfig.gpuPassTiming = startupBoolProperty(
             "debug.ee.gputiming", sceneConfig.gpuPassTiming);
-        LOGI("RuntimeAB amapVector=%d mvtBasemap=%d aerialFog=%d gpuTiming=%d",
-             amapVectorEnabled ? 1 : 0,
-             mvtBasemapEnabled ? 1 : 0,
+        LOGI("RuntimeAB amapVector=official-only aerialFog=%d gpuTiming=%d",
              sceneConfig.aerialFog ? 1 : 0,
              sceneConfig.gpuPassTiming ? 1 : 0);
-        // ---- P4 MVT 只读底图 ----
-        // Source/layer/cache/pool ownership is transferred through the same
-        // declarative scene install as terrain and overlays:
-        // EarthSceneConfig → EarthEngineSdkFacade → Scene.
-        if (mvtBasemapEnabled) {
-            // E1:底图走**瓦片桶**(worker 全链镶嵌),不再灌 store,故
-            // 细桶那个 workaround 已无意义 —— 它当初是为了让「整城要素塞进
-            // 空间分桶 store」时增量激活不退化成整桶全量重镶。桶尺寸留默认,
-            // 该层的 store 现在只承载 demo 自己的编辑要素。
-            FeatureRenderStyle bs;
-            // 贴地:stencil 分类 + 区域高度范围(零地形采样)。此前这里是
-            // Absolute 抬 500m,因为贴地体要逐顶点采地形高度、而 worker 拿不到
-            // 采样器(旧 store 路径能采,代价是单帧 235s)。改由 ctx 带一对
-            // 标量后该约束消失,见 FeatureRenderLayer::TessellationContext。
-            bs.altitudeMode = FeatureAltitudeMode::ClampToGround;
-            bs.heightOffset = 0.0;
-            // 按源图层分流的最小样式(tippecanoe 输出层名,数据侧对齐):
-            // water 蓝面、building 灰面、缺省面淡绿;线统一浅白,宽随 zoom。
-            bs.fillColorExpr = StyleExpression::match(
-                "mvt_layer",
-                {{"water",
-                  StyleExpression::literal({0.25f, 0.50f, 0.85f, 0.55f})},
-                 {"building",
-                  StyleExpression::literal({0.60f, 0.60f, 0.62f, 0.55f})}},
-                StyleExpression::literal({0.45f, 0.65f, 0.45f, 0.30f}));
-            bs.lineColor = {0.95f, 0.95f, 0.90f, 0.85f};
-            bs.lineWidthExpr = StyleExpression::interpolateLinear(
-                StyleExpression::zoom(),
-                {{8.0, StyleExpression::literal(1.0)},
-                 {15.0, StyleExpression::literal(5.0)}});
-            if (minimal_globe_demo::kEnableEPlanRoadRibbon) {
-                // E 方案 P1 路网样式:按 highway 类逐要素配色(镶嵌期
-                // 求值烘进顶点,零每帧成本);宽度 zoom 插值;dash 后续
-                // 可加(长度 SoFar 已携带)。细分密度服务 P2 贴地曲率。
-                bs.terrainClampRibbon = true;
-                bs.clampDensifyMeters = 50.0;
-                bs.lineColorExpr = StyleExpression::match(
-                    "highway",
-                    {{"motorway",
-                      StyleExpression::literal(
-                          {0.98f, 0.95f, 0.88f, 0.90f})},
-                     {"trunk",
-                      StyleExpression::literal(
-                          {0.97f, 0.92f, 0.80f, 0.88f})},
-                     {"primary",
-                      StyleExpression::literal(
-                          {0.96f, 0.90f, 0.78f, 0.86f})},
-                     {"secondary",
-                      StyleExpression::literal(
-                          {0.93f, 0.87f, 0.74f, 0.82f})},
-                     {"tertiary",
-                      StyleExpression::literal(
-                          {0.90f, 0.84f, 0.70f, 0.78f})},
-                     {"residential",
-                      StyleExpression::literal(
-                          {0.88f, 0.82f, 0.68f, 0.72f})}},
-                    StyleExpression::literal(
-                        {0.86f, 0.80f, 0.66f, 0.65f}));
-                bs.lineWidthExpr = StyleExpression::interpolateLinear(
-                    StyleExpression::zoom(),
-                    {{8.0, StyleExpression::literal(1.0)},
-                     {15.0, StyleExpression::literal(4.0)}});
-            }
-            // 符号刀A:POI 点。暖红在亮白路网/绿地上都有对比;底部锚定
-            // 规避「居中锚定被身前地形吃掉下半个」(P6c 明记的深度语义)。
-            bs.pointColor = {0.92f, 0.26f, 0.21f, 0.95f};
-            bs.pointAnchor = SymbolAnchor::Bottom;
-            // 符号刀E:kind 驱动的分类观感(P6b match 表达式,镶嵌期逐要素
-            // 求值烘进顶点,零每帧成本)。图形/颜色语义:地名=金星、
-            // 车站=蓝方、机场=蓝菱、景点=绿三角、医院=白十字位无 → 星形
-            // 家族按内置形状就近取;未列 kind 落默认暖红圆。
-            bs.pointImageExpr = StyleExpression::match(
-                "kind",
-                {{"place:city", StyleExpression::literalString("star")},
-                 {"place:town", StyleExpression::literalString("star")},
-                 {"place:district", StyleExpression::literalString("star")},
-                 {"place:suburb", StyleExpression::literalString("star")},
-                 {"railway:station", StyleExpression::literalString("square")},
-                 {"aeroway:aerodrome",
-                  StyleExpression::literalString("diamond")},
-                 {"tourism:attraction",
-                  StyleExpression::literalString("triangle")},
-                 {"tourism:museum",
-                  StyleExpression::literalString("triangle")},
-                 {"leisure:park", StyleExpression::literalString("triangle")},
-                 {"amenity:hospital", StyleExpression::literalString("pin")}},
-                StyleExpression::literalString("circle"));
-            bs.pointColorExpr = StyleExpression::match(
-                "kind",
-                {{"place:city",
-                  StyleExpression::literal({1.00f, 0.84f, 0.25f, 0.95f})},
-                 {"place:town",
-                  StyleExpression::literal({1.00f, 0.84f, 0.25f, 0.95f})},
-                 {"place:district",
-                  StyleExpression::literal({1.00f, 0.84f, 0.25f, 0.90f})},
-                 {"place:suburb",
-                  StyleExpression::literal({1.00f, 0.84f, 0.25f, 0.90f})},
-                 {"railway:station",
-                  StyleExpression::literal({0.25f, 0.52f, 0.96f, 0.95f})},
-                 {"aeroway:aerodrome",
-                  StyleExpression::literal({0.25f, 0.52f, 0.96f, 0.95f})},
-                 {"tourism:attraction",
-                  StyleExpression::literal({0.30f, 0.75f, 0.40f, 0.95f})},
-                 {"tourism:museum",
-                  StyleExpression::literal({0.30f, 0.75f, 0.40f, 0.95f})},
-                 {"leisure:park",
-                  StyleExpression::literal({0.30f, 0.75f, 0.40f, 0.95f})},
-                 {"amenity:hospital",
-                  StyleExpression::literal({0.95f, 0.95f, 0.95f, 0.95f})}},
-                StyleExpression::literal({0.92f, 0.26f, 0.21f, 0.95f}));
-            // 贴地体的高度范围由 SceneRenderPipeline 每帧从可见地形瓦片汇总,
-            // demo 侧不再设 —— 两处真相会在相机飞离本区时打架。
-            MvtSourceConfig mvtConfig;
-            mvtConfig.id = "mvt-basemap";
-            mvtConfig.urlTemplate = gMvtBasemapUrl;
-            mvtConfig.minimumZoom = minimal_globe_demo::kMvtBasemapMinZoom;
-            mvtConfig.maximumZoom = minimal_globe_demo::kMvtBasemapMaxZoom;
-            mvtConfig.style = bs;
-            MvtVectorSource::Options mvtOpts;
-            // E2:道路分级过滤从数据侧(tippecanoe -j)搬回样式侧。改分级
-            // 策略不再需要重切整套瓦片,同一份数据也能给不同样式复用 ——
-            // 数据只管密度,样式管取舍(对齐 maplibre)。
-            {
-                using C = StyleFilter::Compare;
-                // 分级表:粗档只留干线,细档逐步放开。瓦片 z 固定 → 每块
-                // 瓦片按自己的 z 求值一次,**相机缩放不触发任何重镶**。
-                SourceLayerRule roads;
-                roads.layer = "roads";
-                roads.filter = StyleFilter::any({
-                    StyleFilter::all({
-                        StyleFilter::zoomCompare(C::Less, 9),
-                        StyleFilter::in("highway", {"motorway", "trunk",
-                                                    "primary"})}),
-                    StyleFilter::all({
-                        StyleFilter::zoomCompare(C::GreaterEqual, 9),
-                        StyleFilter::zoomCompare(C::Less, 10),
-                        StyleFilter::in("highway", {"motorway", "trunk",
-                                                    "primary", "secondary"})}),
-                    StyleFilter::all({
-                        StyleFilter::zoomCompare(C::GreaterEqual, 10),
-                        StyleFilter::zoomCompare(C::Less, 12),
-                        StyleFilter::in("highway", {"motorway", "trunk",
-                                                    "primary", "secondary",
-                                                    "tertiary"})}),
-                    StyleFilter::zoomCompare(C::GreaterEqual, 12),
-                });
-                // 刀1:water/building **面层不再进 stencil 链**(整层排除,
-                // 连 Feature 都不产生)—— 面 fill 实测 ~75ms GPU 是发热
-                // 真凶,已改走 kEnableMvtDrapeBasemap 的栅格 drape(页存储
-                // 合成)。本链只承载线,待刀2(SDF 场)落地后整链退役。
-
-                // POI 符号刀A:点要素按 rank 分级放行(rank 语义见数据管线
-                // extract_chongqing_geojson.py 的 POI_RANKS:1=城市级地名,
-                // 6=一般设施)。同 roads:分级在样式侧,瓦片 z 固定 →
-                // 相机缩放不触发重镶。
-                SourceLayerRule poi;
-                poi.layer = "poi";
-                poi.filter = StyleFilter::any({
-                    StyleFilter::all({
-                        StyleFilter::zoomCompare(C::Less, 10),
-                        StyleFilter::compare("rank", C::LessEqual, 2.0)}),
-                    StyleFilter::all({
-                        StyleFilter::zoomCompare(C::GreaterEqual, 10),
-                        StyleFilter::zoomCompare(C::Less, 12),
-                        StyleFilter::compare("rank", C::LessEqual, 4.0)}),
-                    StyleFilter::zoomCompare(C::GreaterEqual, 12),
-                });
-                // 符号刀A:本链现役只承载 poi(线走 SDF 场、面走 drape)。
-                // ⚠️ 整层排除靠 includeLayers 白名单,**不是** layerRules——
-                // rules 里未列出的层是「全收」不是「跳过」(rule==nullptr 即
-                // 不过滤)。曾因此把 roads/water/building 全量灌进 stencil
-                // 几何链:新老两种路网同屏叠加 + 单帧 GPU ~54ms。
-                // A/B 对拍旧几何路径时:includeLayers 加回 "roads" 并把上方
-                // roads 分级规则塞回 layerRules(缺分级会全量画)。
-                (void)roads;
-                mvtOpts.includeLayers = {"poi"};
-                mvtOpts.layerRules = {poi};
-                if (minimal_globe_demo::kEnableEPlanRoadRibbon) {
-                    // E 方案 P1:路网接回瓦片桶几何通道(ribbon 模式)。
-                    // 与 D2 场互斥(同瓦双画):RoadFieldSource 安装已在
-                    // 上方跳过。
-                    mvtOpts.includeLayers = {"poi", "roads"};
-                    mvtOpts.layerRules = {poi, roads};
-                }
-            }
-            mvtConfig.includeLayers = mvtOpts.includeLayers;
-            mvtConfig.layerRules = mvtOpts.layerRules;
-            mvtConfig.maximumTileCommitsPerUpdate =
-                mvtOpts.maxTileCommitsPerUpdate;
-            mvtConfig.maximumTessellationsInFlight =
-                mvtOpts.maxTessellationsInFlight;
-            if (minimal_globe_demo::kEnableEPlanRoadRibbon) {
-                mvtOpts.tree.refinement =
-                    VectorTileTree::RefinementPolicy::GeometryReplace;
-            }
-            mvtConfig.refinement = mvtOpts.tree.refinement;
-            // 获取层单一化(刀A.5):与 drape/场共享同一 MvtTileFetchCache
-            // —— 同一块数据瓦三消费方网络恰一次、解码恰一次、内存恰一份。
-            mvtConfig.sharedCache = gMvtTileCache;
-            mvtConfig.decodedCacheTiles = minimal_globe_demo::kMvtTileCacheDecoded;
-            mvtConfig.rawCacheTiles = minimal_globe_demo::kMvtTileCacheRaw;
-            mvtConfig.decodeThreads = gMvtWorkerBudget.decodeThreads;
-            mvtConfig.tessellationThreads = gMvtWorkerBudget.tessellationThreads;
-            sceneConfig.mvtSources.push_back(std::move(mvtConfig));
-        }
-
-        gSdkFacade->installScene(std::move(sceneConfig));
-        if (mvtBasemapEnabled) {
-            gMvtBasemapLayer = gSdkFacade->mvtVectorLayer("mvt-basemap");
-            // V26 三期:样式文档分发目标注册(drape/场在前面已建;任一为
-            // 空 = 该路不分发)。teardown 与三个 g* 指针同点清。
-            gEngine->setStyleTargets(gDrapeProviderRaw, gRoadFieldSource,
-                                     gMvtBasemapLayer);
-            LOGI("VectorP4 MVT basemap installed: %s (z%d-%d)",
-                 gMvtBasemapUrl.c_str(),
-                 minimal_globe_demo::kMvtBasemapMinZoom,
-                 minimal_globe_demo::kMvtBasemapMaxZoom);
-        }
-
         // ---- 高德矢量:type2 面 VectorFill(z10)垫底,再上路网/建筑/POI。----
-        if (amapVectorEnabled) {
-            FeatureRenderStyle as;
-            // amap.com 复刻:平面渲染(无地形耦合)。Absolute + 抬升,
-            // 不贴地采样、不细分(用瓦片原始密度)、无地形代次重钳——
-            // 消除缩放时的重钳风暴与近景 stencil 片元成本。
-            as.altitudeMode = FeatureAltitudeMode::Absolute;
-            as.heightOffset = 2.5;  // 抬升防 z-fight
-            as.lineWidthPx = 3.0f;
-            // 道路逐 code 配色(@xinzhi/amap-style spec colors.roads 首档色):
-            // 高速深蓝 → 省道县道浅蓝 → 巷弄更浅,体现路网层级。
-            as.lineColorExpr = StyleExpression::match(
-                "amap_class",
-                {{"20001",
-                  StyleExpression::literal({0.431f, 0.592f, 0.733f, 0.95f})},
-                 {"20002",
-                  StyleExpression::literal({0.675f, 0.737f, 0.792f, 0.95f})},
-                 {"20003",
-                  StyleExpression::literal({0.725f, 0.804f, 0.851f, 0.95f})},
-                 {"20004",
-                  StyleExpression::literal({0.749f, 0.812f, 0.867f, 0.95f})},
-                 {"20007",
-                  StyleExpression::literal({0.808f, 0.859f, 0.902f, 0.95f})},
-                 {"20008",
-                  StyleExpression::literal({0.824f, 0.875f, 0.925f, 0.95f})},
-                 {"20009",
-                  StyleExpression::literal({0.816f, 0.875f, 0.910f, 0.95f})},
-                 {"20011",
-                  StyleExpression::literal({0.486f, 0.706f, 0.902f, 0.95f})},
-                 {"20012",
-                  StyleExpression::literal({0.859f, 0.890f, 0.945f, 0.95f})},
-                 {"20013",
-                  StyleExpression::literal({0.859f, 0.890f, 0.945f, 0.95f})},
-                 {"20018",
-                  StyleExpression::literal({0.859f, 0.882f, 0.918f, 0.95f})},
-                 {"20023",
-                  StyleExpression::literal({0.855f, 0.855f, 0.855f, 0.95f})},
-                 {"20030",
-                  StyleExpression::literal({0.796f, 0.812f, 0.827f, 0.95f})}},
-                StyleExpression::literal({0.800f, 0.840f, 0.880f, 0.90f}));
-            // 路宽随 zoom 变化(spec widthStops 简化):高速 20001 在
-            // z10→3px、z12→4、z14→6,小级别更细。
-            as.lineWidthExpr = StyleExpression::match(
-                "amap_class",
-                {{"20001",
-                  StyleExpression::interpolateLinear(
-                      StyleExpression::zoom(),
-                      {{10.0, StyleExpression::literal(3.0)},
-                       {12.0, StyleExpression::literal(4.0)},
-                       {14.0, StyleExpression::literal(6.0)},
-                       {17.0, StyleExpression::literal(8.0)}})},
-                 {"20004",
-                  StyleExpression::interpolateLinear(
-                      StyleExpression::zoom(),
-                      {{10.0, StyleExpression::literal(2.0)},
-                       {13.0, StyleExpression::literal(3.0)},
-                       {16.0, StyleExpression::literal(5.0)}})},
-                 {"20009",
-                  StyleExpression::interpolateLinear(
-                      StyleExpression::zoom(),
-                      {{15.0, StyleExpression::literal(1.0)},
-                       {17.0, StyleExpression::literal(3.0)}})}},
-                StyleExpression::interpolateLinear(
-                    StyleExpression::zoom(),
-                    {{10.0, StyleExpression::literal(2.0)},
-                     {14.0, StyleExpression::literal(3.0)},
-                     {17.0, StyleExpression::literal(4.0)}}));
-            // fill 按 classCode 分流,配色对齐 @xinzhi/amap-style palette:
-            //   30001 → kind(61 绿地 #ace798 / 63 水系 #80dfff / 15 海洋);
-            //   30002 → regionBlocks 逐 subKey 用地类型色(colors.regionBlocks,
-            //            缺省 subKey=1 → 兜底 $block #eeeeee);
-            //   90001 → 建筑 roof 基色；未在官方 surface 表里的面透明。
-            const auto kBlock = StyleExpression::literal(
-                {0.933f, 0.933f, 0.933f, 1.00f});  // #eeeeee
-            const auto kGreen = StyleExpression::literal(
-                {0.675f, 0.906f, 0.596f, 1.00f});  // #ace798,fill-opacity=1(golden)
-            const auto kWater = StyleExpression::literal(
-                {0.502f, 0.875f, 1.00f, 1.00f});   // #80dfff,fill-opacity=1(golden)
-            const auto kBuilding = StyleExpression::literal(
-                {0.847f, 0.890f, 0.925f, 1.00f});  // #d8e3ec,官方默认 roof
-            const auto kTransparent = StyleExpression::literal(
-                {0.0f, 0.0f, 0.0f, 0.0f});
-            auto color = [](const char* hex, float a = 1.0f) {
-                auto hv = [](char c) -> int {
-                    if (c >= '0' && c <= '9') return c - '0';
-                    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-                    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-                    return 0;
-                };
-                const int r = hv(hex[0]) * 16 + hv(hex[1]);
-                const int g = hv(hex[2]) * 16 + hv(hex[3]);
-                const int b = hv(hex[4]) * 16 + hv(hex[5]);
-                return StyleExpression::literal(
-                    {r / 255.0f, g / 255.0f, b / 255.0f, a});
-            };
-            const auto kRegionBlocks = StyleExpression::match(
-                "amap_subkey",
-                {{"3", color("d7edfc")},  {"4", color("e1eef7")},
-                 {"5", color("b8eea4")},  {"6", color("daeafb")},
-                 {"7", color("e9eaf0")},  {"8", color("e9e9f6")},
-                 {"9", color("ade999")},  {"10", color("f8cacd")},
-                 {"11", color("e0e7fb")}, {"12", color("e1eef7")},
-                 {"19", color("92ecbe")}, {"20", color("92ecbe")},
-                 {"21", color("92ecbe")}, {"22", color("f0f7fa")},
-                 {"23", color("e6daf4")}, {"24", color("f4dcc1")},
-                 {"25", color("d1dcf5")}, {"26", color("dae6ae")},
-                 {"27", color("e5e2af")}, {"28", color("c6e4dc")},
-                 {"29", color("f6d4d4")}, {"30", color("ebcded")},
-                 {"31", color("d7edfc")}, {"32", color("e1eef7")},
-                 {"33", color("b8eea4")}, {"34", color("daeafb")},
-                 {"35", color("e9eaf0")}, {"36", color("e9e9f6")},
-                 {"37", color("ade999")}, {"38", color("e0e7fb")},
-                 {"41", color("faf8f5")}, {"42", color("e5f1f8")},
-                 {"43", color("e5f1f8")}, {"44", color("5fe3dc")},
-                 {"45", color("ffbab9")}, {"46", color("82dff9")},
-                 {"47", color("cfc7dc")}, {"49", color("ffedb0")},
-                 {"50", color("80c2ff")}, {"53", color("e4ecf6")},
-                 {"54", color("ffd76c", 0.298f)}},
-                kBlock);
-            // 高德 surface/road 样式的固定压盖顺序。ordinal 在 worker
-            // 镶嵌时分组、在 Scene 命令层跨瓦片排序，不依赖 PBF feature
-            // 顺序、图层注册顺序或 unordered_map 遍历顺序。
-            as.paintOrder = 80;
-            as.paintOrderExpr = StyleExpression::match(
-                "amap_class",
-                {{"30002", StyleExpression::literal(30.0)},
-                 {"90001", StyleExpression::literal(60.0)},
-                 // 道路按 minor→major；当前单线样式只有 fill pass，
-                 // casing 独立 pass 后续可直接占用 70 段而无需改架构。
-                 {"20030", StyleExpression::literal(70.0)},
-                 {"20023", StyleExpression::literal(71.0)},
-                 {"20018", StyleExpression::literal(72.0)},
-                 {"20013", StyleExpression::literal(73.0)},
-                 {"20012", StyleExpression::literal(74.0)},
-                 {"20011", StyleExpression::literal(75.0)},
-                 {"20009", StyleExpression::literal(76.0)},
-                 {"20008", StyleExpression::literal(77.0)},
-                 {"20007", StyleExpression::literal(78.0)},
-                 {"20004", StyleExpression::literal(79.0)},
-                 {"20003", StyleExpression::literal(80.0)},
-                 {"20002", StyleExpression::literal(81.0)},
-                 {"20001", StyleExpression::literal(82.0)},
-                 {"90003", StyleExpression::literal(90.0)},
-                 // type4 content.#3 的 30003/kind64 不在官方 surface
-                 // 列表中；透明且垫底，不能以未知陆地色压住水面。
-                 {"30003", StyleExpression::literal(0.0)}},
-                // 未单列的边界等线类仍在 surface/building 之后。
-                StyleExpression::literal(70.0));
-            // Nebula classCode is not globally unique: 20009 can be a road
-            // or a type-3 building. Geometry type is the authoritative first
-            // discriminator; class remains the subtype/order key for lines.
-            as.paintOrderExpr = StyleExpression::match(
-                "amap_type", {{"3", StyleExpression::literal(60.0)}},
-                as.paintOrderExpr);
-            as.fillColorExpr = StyleExpression::match(
-                "amap_class",
-                {{"30001",
-                  // ⚠️ z14 主源 type2 水/绿地**不渲染**(透明):实测 z14 档案
-                  // 在该区域的河道是错位碎片(与 amap.com/z12 真河位差
-                  // ~300-900m),叠加 z12 水层会产生平行双带 = 「瓦片横条
-                  // 状错位」。水/绿地统一由常显 z12 水层(amap-water12)
-                  // 提供;本层只保留 30002 地块与路网/建筑/POI。
-                  kTransparent},
-                 {"30002", kRegionBlocks},
-                 {"90001", kBuilding},
-                 {"30003", kTransparent}},
-                kTransparent);
-            as.fillColorExpr = StyleExpression::match(
-                "amap_type", {{"3", kBuilding}}, as.fillColorExpr);
-            if (minimal_globe_demo::kHideAmapBuildingsForCompare) {
-                // [1:1 对照临时] 建筑透明 + 关挤出:深色挤出体是 fill 对照
-                // 的最大噪声源(纯黑建筑问题另行修)。90001 匹配不到时走
-                // 原 fillColorExpr。
-                as.buildingExtrusion = false;
-                as.fillColorExpr = StyleExpression::match(
-                    "amap_type",
-                    {{"3",
-                      StyleExpression::literal(
-                          {0.0f, 0.0f, 0.0f, 0.0f})}},
-                    as.fillColorExpr);
-            }
-            ensureMvtWorkerPools();
+        {
+            // 只为 20004/20003/20002/20001 四级主要道路画外壳。
+            // 轨道、铁路和低等级街巷使用单线，避免整座城市出现白色
+            // 双边并减少无意义的片元提交。
+            // Official classic normal supplies casing stops from each road
+            // class onset.  Data availability already gates the class, so do
+            // not add a later app-only casing threshold.
+            // Transit 20015 uses one shared ordinary-route geometry group;
+            // route identity selects the official Road field-3 color, while
+            // Semantic styleGroup expressions provide zoom widths. This
+            // keeps draw topology constant as high-zoom widths expand.
+            // fill 按 classic-normal 官方 field-7 表分流。30001/30002 的
+            // 颜色键都是 amap_subkey；amap_kind 是几何解码类别，不能继续
+            // 被误当作样式 subKey。
+            //   type 3 → 建筑 roof 基色；未在官方 surface 表里的面透明。
+            // Production FeatureMulti.drawOrder is the official renderer
+            // zIndex. Keep that source identity intact instead of maintaining
+            // a second class-level ordering table in the demo.
+            // Provider drawOrder controls label ordering only. Official road
+            // field-5 style is keyed by source class/subKey, including the
+            // official type-1 road-name payload.
+            // Road-name labels are owned exclusively by the official
+            // request-type-2 dedicated road_name payload below. The main
+            // geometry source must not create a second, non-colliding copy.
+            // Official 55001 records own building admission, color, zoom and
+            // height. No app-local hide/planar fallback is retained.
+            ensureAmapWorkerPools();
             // 粗源 z10 type2 → VectorFill(V30 地球网格)。无地形时 drape
             // 不出画,这条才是水/绿地的上屏路。先挂垫底。
-            FeatureRenderStyle rs;
-            rs.paintOrder = 10;
-            rs.paintOrderExpr = StyleExpression::match(
-                "amap_class",
-                {{"30001",
-                  StyleExpression::match(
-                      "amap_kind",
-                      {{"61", StyleExpression::literal(10.0)},
-                       {"63", StyleExpression::literal(20.0)},
-                       {"15", StyleExpression::literal(20.0)}},
-                      StyleExpression::literal(10.0))},
-                 {"30002", StyleExpression::literal(30.0)}},
-                StyleExpression::literal(10.0));
-            rs.altitudeMode = FeatureAltitudeMode::Absolute;
-            rs.heightOffset = 2.5;
             // 粗源必须有自己的 surface 配色。主源 as 会把错位的
             // 30001 设透明，不能复用，否则 z10 的连续水/绿底实际不出画。
-            rs.fillColorExpr = StyleExpression::match(
-                "amap_class",
-                {{"30001",
-                  StyleExpression::match(
-                      "amap_kind",
-                      {{"61", kGreen}, {"63", kWater}, {"15", kWater}},
-                      kTransparent)},
-                 {"30002", kRegionBlocks}},
-                kTransparent);
-            rs.lineColor = {0.0f, 0.0f, 0.0f, 0.0f};
-            rs.lineWidthPx = 0.0f;
-            rs.buildingExtrusion = false;
-            rs.stencilFillEnabled = false;
+            // Official RegionLayer type-2 payload is not polygon-only: its
+            // `lines` array carries low-zoom railway/guide/boundary records
+            // through the same handlerTile dispatch. Consume those identities
+            // with the exact official road contract; do not silently discard
+            // them or revive a generic stroke.
             // z10 大面若不细分，二维 CDT 三角映到 ECEF 后会成为穿过球内的长
             // 弦，缺口/地平线处表现为黑色跨球射线。使用公里级上限恢复球面
             // 贴合；不回到曾触发碎网格和 worker 爆量的 400m 密度。
-            rs.globeFillMaxEdgeMeters =
-                minimal_globe_demo::kAmapRegionsGlobeFillMaxEdgeMeters;
-            // z10 粗源只在远景显示:zoom ≤ 11.5(camHeight ≳ 13.8km)时
-            // 出粗面;近景(zoom > 11.5)让位给主源 z12-14 细面,避免
+            // z10 粗源只在 display zoom < 12 时显示。VectorTileTree 对
+            // canonical zoom 取 floor，主源到 12.0 才真正切入 z12 type2；
+            // 旧 11.5 交接会让 30002 地块在 [11.5,12) 整体空窗。
+            // 近景让位给主源 z12-14 细面，避免
             // 粗像素块盖在细面上 = 双源叠加「破破烂烂」。
-            rs.maxZoom = 11.5;
-            auto regionsLayer = std::make_unique<FeatureRenderLayer>(
-                "amap-regions", gRenderDevice.get(), Ellipsoid::WGS84());
-            regionsLayer->setStyle(rs);
-            gAmapRegionsLayer = regionsLayer.get();
-            gEngine->addFeatureRenderLayer(std::move(regionsLayer));
-            if (!gAmapRegionCache) {
-                gAmapRegionCache =
-                    std::make_shared<AmapDrapeImageryProvider::RegionCache>(
-                        [](const TileKey& k,
-                           AmapDrapeImageryProvider::RegionCache::
-                               FetchCallback cb) {
-                            amapFetchTile(k, 1, std::move(cb));
-                        },
-                        minimal_globe_demo::kMvtTileCacheDecoded,
-                        minimal_globe_demo::kMvtTileCacheRaw,
-                        gMvtDecodePool);
-            }
-            AmapRegionsVectorSource::Options rOpts;
-            rOpts.debugName = "amap-regions";
             // 高德并不是只有 z10 区域档。canonical view zoom 经
             // amapDataZoom 映射到服务端的 3/6/8/10/12/14 离散档位。
             // 粗区域层只消费到 z10：高空用 z3/6/8
             // 覆盖全球可见范围，不能把全国视野截成重庆中心最近 256 张
             // z10 瓦片。
-            rOpts.tree.minZoom = 3;
-            rOpts.tree.maxZoom = 10;
-            rOpts.tree.supportedZooms = {3, 6, 8, 10};
-            rOpts.tree.dataZoomForCanonicalZoom = [](int z) {
-                return amapDataZoom(z);
-            };
-            rOpts.tree.scheme = TileScheme::createAmapGeographic();
-            rOpts.tree.maxTilesPerView = 256;
-            rOpts.tree.refinement =
-                VectorTileTree::RefinementPolicy::GeometryReplace;
-            rOpts.maxTessellationsInFlight = 8;
-            AmapRegionsVectorSource::Sinks rSinks;
-            FeatureRenderLayer* rLayer = gAmapRegionsLayer;
-            rSinks.tessellate =
-                [rLayer](const TileKey& key,
-                         std::vector<Feature>&& features) {
-                    return FeatureRenderLayer::tessellateTileMesh(
-                        rLayer->workerTessellationContextForArea(
-                            amapTileRectangle(key)),
-                        features);
-                };
-            rSinks.commit = [rLayer](const TileKey& key,
-                                     FeatureTileMesh& mesh) {
-                return rLayer->commitTileMesh(key, mesh);
-            };
-            rSinks.drop = [rLayer](const TileKey& key) {
-                rLayer->dropTileMesh(key);
-            };
-            gAmapRegionsSource = std::make_unique<AmapRegionsVectorSource>(
-                rOpts, std::move(rSinks), gAmapRegionCache,
-                gMvtTessellationPool);
-            LOGI("AmapE3: regions VectorFill installed (z3/6/8/10 type2, globeFill 10km)");
-
-            // ---- 常显 z12 粗水层:复刻 amap.com 的「粗档水底 + 细档面」叠层。----
-            // 引擎 tile-bucket 做 LOD 替换(z14 子瓦加载后 z12 父瓦被替换),
-            // 而 z14 水体块在瓦缝有源数据空档(实测 280m)→ 只剩 z14 时河
-            // 流断。amap.com 同视野同时拉 z8/z10/z12/z14 全档,粗档水是
-            // 连续大掩膜(实测 z12 视野区 4.97% 连续河带),垫在细块下盖住
-            // 接缝。这里加一个树恒 z12、样式只出 30001(水/绿地)的常显层,
-            // 注册在 z14 主层之前 = 画在其下。
-            auto water12Layer = std::make_unique<FeatureRenderLayer>(
-                "amap-water12", gRenderDevice.get(), Ellipsoid::WGS84());
-            FeatureRenderStyle w12s;
-            w12s.paintOrder = 20;
-            w12s.paintOrderExpr = StyleExpression::match(
-                "amap_kind",
-                {{"61", StyleExpression::literal(20.0)},
-                 {"63", StyleExpression::literal(50.0)},
-                 {"15", StyleExpression::literal(50.0)}},
-                StyleExpression::literal(20.0));
-            w12s.altitudeMode = FeatureAltitudeMode::Absolute;
-            w12s.heightOffset = 2.5;
-            w12s.fillColorExpr = StyleExpression::match(
-                "amap_class",
-                {{"30001",
-                  StyleExpression::match(
-                      "amap_kind",
-                      {{"61", kGreen}, {"63", kWater}, {"15", kWater}},
-                      kTransparent)}},
-                kTransparent);
-            w12s.lineColor = {0.0f, 0.0f, 0.0f, 0.0f};
-            w12s.lineWidthPx = 0.0f;
-            w12s.buildingExtrusion = false;
-            w12s.stencilFillEnabled = false;
-            w12s.globeFillMaxEdgeMeters = 0.0;
-            // z12 是近景水系接缝底板，不是全球底图。远景由 regions
-            // 的 z3/6/8/10 档连续覆盖；否则固定 z12 + 256 瓦上限会再次
-            // 在相机中心形成一块孤立的“重庆水面岛”。
-            w12s.minZoom = 11.5;
-            water12Layer->setStyle(w12s);
-            gAmapWater12Layer = water12Layer.get();
-            gEngine->addFeatureRenderLayer(std::move(water12Layer));
-            AmapWaterVectorSource::Options w12Opts;
-            w12Opts.debugName = "amap-water12";
-            w12Opts.tree.minZoom = 12;
-            w12Opts.tree.maxZoom = 12;
-            w12Opts.tree.scheme = TileScheme::createAmapGeographic();
-            w12Opts.tree.maxTilesPerView = 256;
-            w12Opts.tree.refinement =
-                VectorTileTree::RefinementPolicy::GeometryReplace;
-            w12Opts.maxTessellationsInFlight = 8;
-            AmapWaterVectorSource::Sinks w12Sinks;
-            FeatureRenderLayer* w12Layer = gAmapWater12Layer;
-            w12Sinks.tessellate =
-                [w12Layer](const TileKey& key,
-                           std::vector<Feature>&& features) {
-                    return FeatureRenderLayer::tessellateTileMesh(
-                        w12Layer->workerTessellationContextForArea(
-                            amapTileRectangle(key)),
-                        features);
-                };
-            w12Sinks.commit = [w12Layer](const TileKey& key,
-                                         FeatureTileMesh& mesh) {
-                return w12Layer->commitTileMesh(key, mesh);
-            };
-            w12Sinks.drop = [w12Layer](const TileKey& key) {
-                w12Layer->dropTileMesh(key);
-            };
-            gAmapWater12Source = std::make_unique<AmapWaterVectorSource>(
-                w12Opts, std::move(w12Sinks), gAmapRegionCache,
-                gMvtTessellationPool);
-            LOGI("AmapE3: water12 base installed (z12 type2, water/green only)");
-
             // 主源:路网/建筑/轨道与 30002 地块 z12-14 网格。
-            // regions/main/water12 共享 gAmapRegionCache 的完整 type1
-            // 解码载荷，不再对同一 gzip/protobuf 做两次完整解码。
-            auto mainLayer = std::make_unique<FeatureRenderLayer>(
-                "amap-vector", gRenderDevice.get(), Ellipsoid::WGS84());
-            mainLayer->setStyle(as);
-            gAmapMainLayer = mainLayer.get();  // Engine 将持有所有权
-            gEngine->addFeatureRenderLayer(std::move(mainLayer));
-            AmapMainVectorSource::Options mOpts;
-            mOpts.debugName = "amap-main";
-            mOpts.tree.minZoom = 3;
-            mOpts.tree.maxZoom = 14;
-            mOpts.tree.scheme = TileScheme::createAmapGeographic();
+            // regions/main 共享 official source bundle 持有的完整
+            // type1 解码 cache，平台层不再持有第二套 source 状态。
             // 高德数据是离散档位，不是只有重庆验证过的 z12/z14。
             // amapDataZoom 负责 canonical → 服务端档位：全球视野 z3，
             // 逐级进入 z6/8/10/12/14。这样扩大视野时降数据 LOD，而
             // 不是提高 maxTilesPerView 硬拉全球细瓦。
-            mOpts.tree.supportedZooms = {3, 6, 8, 10, 12, 14};
-            mOpts.tree.dataZoomForCanonicalZoom = [](int z) {
-                return amapDataZoom(z);
-            };
             // 近景 z14 视口约 84 瓦(1.5km 高)，默认 64 会继续降到
             // z12；抬高闸让 z14 完整进入。远景不靠这个上限硬撑，前面的
             // 离散档位会先降到 z10/8/6/3。
-            mOpts.tree.maxTilesPerView = 256;
-            mOpts.tree.refinement =
-                VectorTileTree::RefinementPolicy::GeometryReplace;
-            mOpts.maxTessellationsInFlight = 8;
-            AmapMainVectorSource::Sinks mSinks;
-            FeatureRenderLayer* mLayer = gAmapMainLayer;
-            mSinks.tessellate =
-                [mLayer](const TileKey& key,
-                         std::vector<Feature>&& features) {
-                    return FeatureRenderLayer::tessellateTileMesh(
-                        mLayer->workerTessellationContextForArea(
-                            amapTileRectangle(key)),
-                        features);
-                };
-            mSinks.commit = [mLayer](const TileKey& key,
-                                     FeatureTileMesh& mesh) {
-                return mLayer->commitTileMesh(key, mesh);
-            };
-            mSinks.drop = [mLayer](const TileKey& key) {
-                mLayer->dropTileMesh(key);
-            };
-            gAmapMainSource = std::make_unique<AmapMainVectorSource>(
-                mOpts, std::move(mSinks), gAmapRegionCache,
-                gMvtTessellationPool);
-            LOGI("AmapE3: main source installed (z3/6/8/10/12/14, amap 4326 grid)");
-
-            // POI 源:type 0 通用 POI 点标签(z14)。点符号 + 名称文字。
-            FeatureRenderStyle ps;
-            ps.paintOrder = 100;
-            ps.altitudeMode = FeatureAltitudeMode::Absolute;
-            ps.heightOffset = 2.5;
-            ps.pointSizePx = 5.0f;
-            ps.pointColor = {0.95f, 0.55f, 0.25f, 0.95f};
-            ps.pointImage = "circle";
-            ps.labelProperty = "name";
-            ps.labelSizePx = 16.0f;
-            ps.labelOffsetPx = 10.0f;
-            ps.labelColor = {0.15f, 0.20f, 0.30f, 0.95f};
-            ps.labelHaloColor = {1.0f, 1.0f, 1.0f, 0.85f};
-            ps.labelHaloPx = 1.5f;
-            auto poiLayer = std::make_unique<FeatureRenderLayer>(
-                "amap-poi", gRenderDevice.get(), Ellipsoid::WGS84());
-            poiLayer->setStyle(ps);
-            gAmapPoiLayer = poiLayer.get();
-            gEngine->addFeatureRenderLayer(std::move(poiLayer));
-            auto poiCache =
-                std::make_shared<MvtTileFetchCacheT<
-                    AmapDecodedTile, AmapPoiDecodedTileDecodeTraits>>(
-                    [](const TileKey& k,
-                       MvtTileFetchCacheT<AmapDecodedTile,
-                                          AmapPoiDecodedTileDecodeTraits>::
-                           FetchCallback cb) {
-                        amapFetchTile(k, 2, std::move(cb));
-                    },
-                    minimal_globe_demo::kMvtTileCacheDecoded,
-                    minimal_globe_demo::kMvtTileCacheRaw,
-                    gAmapPoiDecodePool);
-            AmapPoiVectorSource::Options pOpts;
-            pOpts.debugName = "amap-poi";
-            pOpts.tree.minZoom = 3;
-            pOpts.tree.maxZoom = 14;
-            pOpts.tree.scheme = TileScheme::createAmapGeographic();
-            pOpts.tree.supportedZooms = {3, 6, 8, 10, 12, 14};
-            pOpts.tree.dataZoomForCanonicalZoom = [](int z) {
-                return amapDataZoom(z);
-            };
-            pOpts.tree.maxTilesPerView = 256;
-            pOpts.maxTessellationsInFlight = 8;
-            AmapPoiVectorSource::Sinks pSinks;
-            FeatureRenderLayer* pLayer = gAmapPoiLayer;
-            pSinks.tessellate =
-                [pLayer](const TileKey& key,
-                         std::vector<Feature>&& features) {
-                    return FeatureRenderLayer::tessellateTileMesh(
-                        pLayer->workerTessellationContextForArea(
-                            amapTileRectangle(key)),
-                        features);
-                };
-            pSinks.commit = [pLayer](const TileKey& key,
-                                     FeatureTileMesh& mesh) {
-                return pLayer->commitTileMesh(key, mesh);
-            };
-            pSinks.drop = [pLayer](const TileKey& key) {
-                pLayer->dropTileMesh(key);
-            };
-            gAmapPoiSource = std::make_unique<AmapPoiVectorSource>(
-                pOpts, std::move(pSinks), poiCache,
-                gMvtTessellationPool);
-            LOGI("AmapE3: POI source installed (z3/6/8/10/12/14, type-0 labels)");
+            // POI 源:type 0 通用 POI 点标签 + type 1 官方道路文字几何。
+            // Administrative labels use a distinct official neutral text
+            // family. One semantic split is bounded and extensible; unlike a
+            // subKey-per-paintOrder palette it adds at most one label/point
+            // range per tile.
+            // POI request type-1 carries official road-name
+            // polylines.  They exist only to provide an along-road anchor;
+            // road geometry itself is already rendered by amap-main.
+            // This source contains point POIs and official road-name lines.
+            // No line stroke contract is installed here: all line geometry
+            // therefore fails closed after an admitted official label.
+            // The POI stream also carries official road-name polylines. Install
+            // Install the centralized official field-5 contracts as the
+            // single source of truth while preserving point/range batching.
+            AmapClassicRuntime::Options runtimeOptions;
+            runtimeOptions.credentials.webKey =
+                minimal_globe_demo::kAmapWebKey;
+            runtimeOptions.sources.decodedCacheTiles =
+                minimal_globe_demo::kAmapTileCacheDecoded;
+            runtimeOptions.sources.rawCacheTiles =
+                minimal_globe_demo::kAmapTileCacheRaw;
+            gAmapOfficialRuntime = gEngine->installAmapClassicRuntime(
+                *gPlatformBridge,
+                gAmapType1DecodePool, gAmapPoiDecodePool,
+                gAmapTessellationPool, std::move(runtimeOptions));
+            if (!gAmapOfficialRuntime) {
+                throw std::runtime_error(
+                    "AMap official runtime already installed");
+            }
+            gAmapRegionsLayer =
+                gAmapOfficialRuntime->sources().regionsLayer();
+            gAmapMainLayer = gAmapOfficialRuntime->sources().mainLayer();
+            gAmapPoiLayer = gAmapOfficialRuntime->sources().poiLayer();
+            LOGI("AmapE3: atomic official runtime installed");
         }
+        // Scene installation consumes the already-sealed runtime contract.
+        // In pure-vector mode this is the sole switch that selects the
+        // Official vector identity stays sealed; Scene terrain independently
+        // owns elevation and receives the official unlit land presentation.
+        gSdkFacade->installScene(std::move(sceneConfig));
 
-        // P5b 标注字体(应用层读文件供字节,引擎不碰文件系统)。**不在任何
-        // 图层开关内**:MVT 底图 POI 标签(符号刀B)与 demo 编辑层都消费
-        // 同一 GlyphAtlas,字体注入是共享前置。候选序:Oplus-Serif=本机中文
-        // TrueType;NotoSansCJK.ttc 是 CFF 会被 stbtt 拒(留表验证健壮性);
-        // Roboto 兜底拉丁。
-        {
-            const char* fontCandidates[] = {
-                "/system/fonts/Oplus-Serif.ttf",
-                "/system/fonts/DroidSansFallback.ttf",
-                "/system/fonts/NotoSansCJK-Regular.ttc",
-                "/system/fonts/Roboto-Regular.ttf",
-            };
-            for (const char* path : fontCandidates) {
-                std::ifstream in(path, std::ios::binary);
-                if (!in) continue;
-                std::vector<uint8_t> bytes(
-                    (std::istreambuf_iterator<char>(in)),
-                    std::istreambuf_iterator<char>());
-                if (bytes.empty()) continue;
-                if (gEngine->setLabelFontData(std::move(bytes))) {
-                    LOGI("VectorP5b label font: %s", path);
-                    break;
-                }
-                LOGI("VectorP5b font rejected (CFF/parse): %s", path);
-            }
-        }
-
-        // 矢量数据系统 P1 真机验证:demo 相机(重庆)附近挂一面一线。
-        // heightOffset 抬离地表(该区地形 ~200-800m)防 depthTest 埋没;
-        // 贴地钳制属 P3。
-        if (minimal_globe_demo::kEnableVectorDemoLayers) {
-            constexpr double kDeg = M_PI / 180.0;
-            auto vectorLayer = std::make_unique<FeatureRenderLayer>(
-                "demo-vector-p1", gRenderDevice.get(), Ellipsoid::WGS84());
-            FeatureRenderStyle style;
-            style.fillColor = {0.20f, 0.55f, 0.95f, 0.35f};
-            style.lineColor = {1.00f, 0.72f, 0.05f, 0.95f};
-            style.lineWidthPx = 6.0f;
-            // P6d dash 真机验证:60m 一节、划段 60%(贴地世界米制,拉远
-            // 变密拉近变疏是透视语义;设 0 恢复实线)。
-            style.lineDashPeriodMeters = 60.0f;
-            style.lineDashOnFraction = 0.6f;
-            // 贴地:fill 走 stencil 像素贴合(P6a),线/outline 同走 stencil
-            // 墙带体(P6d 终态,免疫陡变地形断线与抬升视差)。下面两个参数
-            // 只服务后端不支持 stencil 时的方案 A 回落(细分 + 抬升过渡档,
-            // 断线根因与实测档位见 commit 588e5afde)。
-            style.altitudeMode = FeatureAltitudeMode::ClampToGround;
-            style.heightOffset = 2.5;
-            style.clampDensifyMeters = 8.0;
-            // P6b 数据驱动样式:fill 色按 zone 属性(stencil 按色分组)、
-            // 点色按 kind 三色、线宽随 zoom 插值(拉远变细凑近变粗)。
-            style.fillColorExpr = StyleExpression::match(
-                "zone",
-                {{"core",
-                  StyleExpression::literal({0.20f, 0.55f, 0.95f, 0.35f})}},
-                StyleExpression::literal({0.90f, 0.30f, 0.20f, 0.35f}));
-            style.pointColorExpr = StyleExpression::match(
-                "kind",
-                {{"tower",
-                  StyleExpression::literal({1.00f, 0.35f, 0.25f, 0.95f})},
-                 {"gate",
-                  StyleExpression::literal({1.00f, 0.85f, 0.20f, 0.95f})}},
-                // 兜底分支给中性白:这一支走 P6c 位图图标(beacon),顶点色
-                // 对位图是 tint 乘子,染色会盖掉图本身的三段色,验不了 uv。
-                StyleExpression::literal({1.00f, 1.00f, 1.00f, 1.00f}));
-            style.lineWidthExpr = StyleExpression::interpolateLinear(
-                StyleExpression::zoom(),
-                {{10.0, StyleExpression::literal(2.0)},
-                 {15.0, StyleExpression::literal(10.0)}});
-            // P6c 数据驱动选图:tower → 内置水滴 pin(底尖压在锚点上),
-            // gate → 内置五角星,缺省 → 位图图标 beacon(下面注入;图集
-            // 代次变化会自动触发重镶,注入晚于建桶也能补上)。
-            // 一屏同时覆盖「解析 SDF 形状」与「位图图集」两条通道。
-            style.pointImageExpr = StyleExpression::match(
-                "kind",
-                {{"tower", StyleExpression::literalString("pin")},
-                 {"gate", StyleExpression::literalString("star")}},
-                StyleExpression::literalString("beacon"));
-            style.pointSizePx = 26.0f;
-            // marker 语义:图形整个立在锚点上方(而非以锚点为中心)。斜视
-            // 下居中锚定会让下半个符号被前方地面按深度遮掉——billboard 用
-            // 的是锚点深度,身下的地更近。
-            style.pointAnchor = SymbolAnchor::Bottom;
-            // 底部锚定后符号整体上移,标注基线要让开符号高度,否则字压图。
-            style.labelOffsetPx = style.pointSizePx + 6.0f;
-            vectorLayer->setStyle(style);
-
-            // 尺寸压到 RESET 预设视角(106.508,29.617,1.5km,-45°)一屏内:
-            // 面 ~1.1km 见方带边界,线折两折穿过视野中心。
-            // 尺寸 ~550m,钉在 RESET 视角(1500m/-45°)中带:800m 面高下
-            // 角点全部可见可拾取。
-            Feature poly;
-            poly.type = GeometryType::Polygon;
-            poly.rings = {{
-                Cartographic(106.5055 * kDeg, 29.6200 * kDeg),
-                Cartographic(106.5105 * kDeg, 29.6200 * kDeg),
-                Cartographic(106.5105 * kDeg, 29.6250 * kDeg),
-                Cartographic(106.5055 * kDeg, 29.6250 * kDeg),
-                Cartographic(106.5055 * kDeg, 29.6200 * kDeg)}};
-            poly.properties["name"] = "示范区 A";
-            poly.properties["zone"] = "core";
-            vectorLayer->store().addFeature(std::move(poly));
-
-            // P6b 验证:第二个面 zone 缺省 → fill 表达式兜底红,与示范区 A
-            // 的 core 蓝形成 stencil 双色组。
-            Feature annex;
-            annex.type = GeometryType::Polygon;
-            annex.rings = {{
-                Cartographic(106.5115 * kDeg, 29.6200 * kDeg),
-                Cartographic(106.5145 * kDeg, 29.6200 * kDeg),
-                Cartographic(106.5145 * kDeg, 29.6230 * kDeg),
-                Cartographic(106.5115 * kDeg, 29.6230 * kDeg),
-                Cartographic(106.5115 * kDeg, 29.6200 * kDeg)}};
-            annex.properties["name"] = "附属区 B";
-            vectorLayer->store().addFeature(std::move(annex));
-
-            Feature route;
-            route.type = GeometryType::LineString;
-            route.rings = {{
-                Cartographic(106.5020 * kDeg, 29.6180 * kDeg),
-                Cartographic(106.5060 * kDeg, 29.6220 * kDeg),
-                Cartographic(106.5100 * kDeg, 29.6190 * kDeg),
-                Cartographic(106.5140 * kDeg, 29.6230 * kDeg)}};
-            route.properties["name"] = "巡线 Route-1";
-            vectorLayer->store().addFeature(std::move(route));
-
-            // P5c 避让验证簇:~60m 间距 5 个标注点,RESET 视角下标签屏幕
-            // 盒相互重叠 → 避让隐藏一部分(fade),凑近才逐个显出。
-            for (int i = 0; i < 5; ++i) {
-                Feature obs;
-                obs.type = GeometryType::Point;
-                obs.rings = {{Cartographic(
-                    (106.5040 + 0.0006 * (i % 3)) * kDeg,
-                    (29.6260 + 0.0005 * (i / 3)) * kDeg)}};
-                obs.properties["name"] =
-                    std::string("观测点-") + std::to_string(i + 1);
-                // P6b:kind 轮转 tower/gate/(缺省) → 点色红/黄/兜底绿。
-                if (i % 3 == 0) obs.properties["kind"] = "tower";
-                else if (i % 3 == 1) obs.properties["kind"] = "gate";
-                vectorLayer->store().addFeature(std::move(obs));
-            }
-
-            // P6c 图标:注入一张程序生成的位图图标(应用层供 RGBA 像素,
-            // 引擎不做图片解码)。竖向三段色(上橙/中白/下青)是故意的——
-            // 屏幕上若上下颠倒即说明图集 uv 的 v 方向接反了。
-            {
-                constexpr int kIconW = 24;
-                constexpr int kIconH = 32;
-                std::vector<uint8_t> icon(
-                    static_cast<size_t>(kIconW) * kIconH * 4, 0);
-                for (int y = 0; y < kIconH; ++y) {
-                    for (int x = 0; x < kIconW; ++x) {
-                        uint8_t* px =
-                            &icon[(static_cast<size_t>(y) * kIconW + x) * 4];
-                        const bool border = x < 2 || y < 2 ||
-                                            x >= kIconW - 2 || y >= kIconH - 2;
-                        if (border) {
-                            px[0] = px[1] = px[2] = 20;
-                            px[3] = 255;
-                        } else if (y < kIconH / 3) {
-                            px[0] = 250; px[1] = 140; px[2] = 30; px[3] = 255;
-                        } else if (y < kIconH * 2 / 3) {
-                            px[0] = px[1] = px[2] = 245;
-                            px[3] = 255;
-                        } else {
-                            px[0] = 20; px[1] = 190; px[2] = 200; px[3] = 255;
-                        }
-                    }
-                }
-                if (gEngine->addIconImage("beacon", kIconW, kIconH, icon)) {
-                    LOGI("VectorP6c icon injected: beacon %dx%d",
-                         kIconW, kIconH);
-                } else {
-                    LOGI("VectorP6c icon injection FAILED");
-                }
-            }
-            gDemoFeatureLayer = vectorLayer.get();
-            gEngine->addFeatureRenderLayer(std::move(vectorLayer));
-
-            // P5a 编辑手柄层(应用层):白色 SDF 圆点,贴地略高于要素防遮。
-            auto handleLayer = std::make_unique<FeatureRenderLayer>(
-                "edit-handles", gRenderDevice.get(), Ellipsoid::WGS84());
-            FeatureRenderStyle handleStyle;
-            handleStyle.pointColor = {1.0f, 1.0f, 1.0f, 0.95f};
-            handleStyle.pointSizePx = 20.0f;
-            handleStyle.altitudeMode = FeatureAltitudeMode::ClampToGround;
-            handleStyle.heightOffset = 14.0;
-            handleLayer->setStyle(handleStyle);
-            gEditHandleLayer = handleLayer.get();
-            gEngine->addFeatureRenderLayer(std::move(handleLayer));
-
-            // ---- P6c 聚合演示(应用层)----
-            // 源数据:重庆周边 ~25km 内 300 个点,分三团(团内密、团间疏),
-            // 拉远看是三个大簇、凑近逐级散开。源 store 不进引擎渲染。
-            {
-                gClusterSourceStore.clear();
-                const double clusterCenters[3][2] = {{106.50, 29.60},
-                                                     {106.62, 29.66},
-                                                     {106.44, 29.72}};
-                uint32_t seed = 12345u;
-                auto nextRand = [&seed]() {
-                    // 固定种子的 LCG:每次启动布点一致,便于 A/B 比对。
-                    seed = seed * 1664525u + 1013904223u;
-                    return static_cast<double>(seed >> 8) /
-                           static_cast<double>(1u << 24);
-                };
-                for (int i = 0; i < 300; ++i) {
-                    const auto& c = clusterCenters[i % 3];
-                    Feature p;
-                    p.type = GeometryType::Point;
-                    p.rings = {{Cartographic(
-                        (c[0] + (nextRand() - 0.5) * 0.06) * kDeg,
-                        (c[1] + (nextRand() - 0.5) * 0.04) * kDeg)}};
-                    gClusterSourceStore.addFeature(std::move(p));
-                }
-                FeatureClusterOptions clusterOpts;
-                clusterOpts.minZoom = 0;
-                clusterOpts.maxZoom = 16;
-                clusterOpts.radiusPx = 70.0;
-                gClusterIndex.build(gClusterSourceStore, clusterOpts);
-
-                // 显示层:簇与单点共用一层,靠 cluster 属性数据驱动区分
-                // (簇 = 青圆 + 计数标签;单点 = 白圆无标签。尺寸是 zoom
-                // 驱动的 uniform,不能逐要素分大小,故只用颜色区分)。
-                auto clusterLayer = std::make_unique<FeatureRenderLayer>(
-                    "demo-clusters", gRenderDevice.get(), Ellipsoid::WGS84());
-                FeatureRenderStyle cs;
-                cs.altitudeMode = FeatureAltitudeMode::ClampToGround;
-                cs.heightOffset = 8.0;
-                cs.labelProperty = "name";  // 簇写 count,单点留空不出标签
-                cs.labelSizePx = 22.0f;
-                cs.pointSizePx = 34.0f;
-                cs.pointAnchor = SymbolAnchor::Bottom;  // 同上:整圆立在锚点上
-                cs.labelOffsetPx = 0.5f * cs.pointSizePx;  // 计数压在圆心
-                cs.pointColorExpr = StyleExpression::match(
-                    "cluster",
-                    {{"1", StyleExpression::literal(
-                               {0.10f, 0.75f, 0.85f, 0.85f})}},
-                    StyleExpression::literal({1.0f, 1.0f, 1.0f, 0.9f}));
-                clusterLayer->setStyle(cs);
-                gClusterLayer = clusterLayer.get();
-                gEngine->addFeatureRenderLayer(std::move(clusterLayer));
-                LOGI("VectorP6c cluster demo: %zu source points, %zu levels",
-                     gClusterSourceStore.size(), gClusterIndex.levelCount());
-            }
-            LOGI("VectorP1 demo layer installed: 1 polygon + 1 line");
-        }
-
-        // ---- 海拔着色轨迹 demo(2026-08-23,独立开关默认开)----
-        // 数据 = 现有 FeatureStore(LineString 顶点带椭球高);
-        // 渐变 = 复用既有 VectorLine48 顶点布局:逐顶点椭球高 → 线性渐变
-        // RGBA8 烘进 a_color,lengthSoFar 原样携带(dash 语义不变),不新增
-        // shader/顶点属性。Absolute 模式走方案 A ribbon —— stencil 贴地线
-        // 是整线分组色,逐顶点色需体积 mesh 扩展(后置)。
-        // 路线故意起伏(420→1720→1200m):若颜色跟着海拔而非里程走,一眼
-        // 可见;在 RESET 预设视角(1.5km/-45°)中段穿过视野。
-        if (minimal_globe_demo::kEnableElevationTrajectoryDemo) {
-            constexpr double kDeg = M_PI / 180.0;
-            auto trajectoryLayer = std::make_unique<FeatureRenderLayer>(
-                "demo-elevation-trajectory", gRenderDevice.get(),
-                Ellipsoid::WGS84());
-            FeatureRenderStyle ts;
-            ts.altitudeMode = FeatureAltitudeMode::Absolute;
-            ts.lineWidthPx = 9.0f;
-            ts.lineColorGradientByHeight = true;
-            ts.lineColorGradientHeightMinMeters = 400.0f;
-            ts.lineColorGradientHeightMaxMeters = 1700.0f;
-            ts.lineColorGradientLow = {0.10f, 0.55f, 0.25f, 0.95f};
-            ts.lineColorGradientHigh = {0.90f, 0.15f, 0.15f, 0.95f};
-            trajectoryLayer->setStyle(ts);
-
-            Feature trail;
-            trail.type = GeometryType::LineString;
-            trail.properties["name"] = "海拔着色轨迹";
-            trail.rings = {{}};
-            const struct { double lon, lat, h; } kTrail[] = {
-                {106.5200, 29.5900, 420}, {106.5160, 29.5960, 580},
-                {106.5110, 29.6010, 760}, {106.5070, 29.6040, 620},
-                {106.5035, 29.6085, 1050}, {106.5000, 29.6130, 1420},
-                {106.4970, 29.6180, 1280}, {106.4930, 29.6220, 1580},
-                {106.4890, 29.6260, 1720}, {106.4850, 29.6300, 1450},
-                {106.4810, 29.6345, 1650}, {106.4770, 29.6390, 1200},
-            };
-            for (const auto& p : kTrail) {
-                trail.rings[0].emplace_back(
-                    Cartographic(p.lon * kDeg, p.lat * kDeg, p.h));
-            }
-            trajectoryLayer->store().addFeature(std::move(trail));
-            gEngine->addFeatureRenderLayer(std::move(trajectoryLayer));
-            LOGI("VectorElevationTrajectory demo: 12 pts 420->1720m "
-                 "absolute + per-vertex a_color gradient");
-        }
         // Phase 2c P5:GPU 位移已引擎默认开(Engine.h terrainGpuDisplacementEnabled_
         // = true,pool 在首次 scene update 前急切创建)。运行时 A/B 关闭仍走调试面板
         // 的 setTerrainGpuDisplacementEnabled(false)(GLESView.cpp toggle)。
@@ -1976,188 +560,6 @@ static bool createEngine() {
         clearDemoEngineObjects();
     }
     return gEngineReady;
-}
-
-// ---- 矢量 P2 demo 编辑流(以下函数仅渲染线程调用) ----
-
-static void clearEditHandles() {
-    if (!gEditHandleLayer) return;
-    for (FeatureId id : gEditHandleIds) {
-        gEditHandleLayer->store().removeFeature(id);
-    }
-    gEditHandleIds.clear();
-}
-
-// 抓取时:被编辑环的每个顶点一个手柄(polygon 闭合末点不重复)。
-static void populateEditHandles() {
-    if (!gEditHandleLayer || !gEditDrag.active) return;
-    clearEditHandles();
-    const auto& ring =
-        gEditDrag.rings[static_cast<size_t>(gEditDrag.ringIndex)];
-    const Feature* feature =
-        gDemoFeatureLayer->store().getFeature(gEditDrag.featureId);
-    const bool closedDup =
-        feature && feature->type == GeometryType::Polygon &&
-        ring.size() >= 2 &&
-        ring.front().longitude() == ring.back().longitude() &&
-        ring.front().latitude() == ring.back().latitude();
-    const size_t count = ring.size() - (closedDup ? 1 : 0);
-    gEditHandleIds.reserve(count);
-    for (size_t i = 0; i < count; ++i) {
-        Feature handle;
-        handle.type = GeometryType::Point;
-        handle.rings = {{ring[i]}};
-        gEditHandleIds.push_back(
-            gEditHandleLayer->store().addFeature(std::move(handle)));
-    }
-}
-
-// 拖拽中:只更新被拖顶点的手柄(闭合末点映射回首手柄)。
-static void updateDraggedHandle(const Cartographic& target) {
-    if (!gEditHandleLayer || gEditHandleIds.empty()) return;
-    const size_t idx =
-        static_cast<size_t>(gEditDrag.vertexIndex) % gEditHandleIds.size();
-    const Feature* handle =
-        gEditHandleLayer->store().getFeature(gEditHandleIds[idx]);
-    if (!handle) return;
-    Feature moved = *handle;
-    moved.rings = {{target}};
-    moved.bounds = Rectangle();
-    gEditHandleLayer->store().updateFeature(moved);
-}
-
-// 手势起点:pick 顶点 → 抓取(undo 快照 + beginEditPreview)。
-static void editTouchDown(float x, float y) {
-    if (!gEngine || !gDemoFeatureLayer || gEditDrag.active) return;
-    FrameState pickFrame;
-    pickFrame.camera = &gEngine->camera();
-    pickFrame.viewportWidthPixels = gWidth.load();
-    pickFrame.viewportHeightPixels = gHeight.load();
-    const FeaturePickResult hit =
-        gDemoFeatureLayer->pick(pickFrame, x, y, 48.0f);
-    if (hit.part != FeaturePickResult::Part::Vertex) {
-        LOGI("EditFlow: no vertex at (%.0f,%.0f) part=%d", x, y,
-             static_cast<int>(hit.part));
-        return;
-    }
-    const Feature* feature =
-        gDemoFeatureLayer->store().getFeature(hit.featureId);
-    if (!feature) return;
-    if (!gDemoFeatureLayer->beginEditPreview(hit.featureId)) return;
-    // P5c 编辑联动:选中(抓取)要素标签提权,避让时优先显示。
-    gDemoFeatureLayer->setLabelPriorityFeature(hit.featureId);
-    gEditUndoStack.push_back(*feature);
-    gEditDrag.active = true;
-    gEditDrag.featureId = hit.featureId;
-    gEditDrag.ringIndex = hit.ringIndex;
-    gEditDrag.vertexIndex = hit.vertexIndex;
-    gEditDrag.vertexHeight = hit.position.height();
-    gEditDrag.rings = feature->rings;
-    populateEditHandles();
-    LOGI("EditFlow: grab feature=%llu ring=%d vertex=%d distPx=%.1f handles=%zu",
-         static_cast<unsigned long long>(hit.featureId),
-         hit.ringIndex, hit.vertexIndex, hit.distancePx,
-         gEditHandleIds.size());
-}
-
-// 拖拽:指尖地面坐标 → snap 候选吸附 → 更新预览。
-static void editTouchMove(float x, float y) {
-    if (!gEngine || !gDemoFeatureLayer || !gEditDrag.active) return;
-    const PickResult ground = gEngine->pick(x, y);
-    if (!ground.isValid()) return;
-    Cartographic target(ground.cartographic.longitude(),
-                        ground.cartographic.latitude(),
-                        gEditDrag.vertexHeight);
-    // snap 容差 = 24px 换算地面米(相机距离 × 每像素弧度),排除自身。
-    const double dist =
-        (ground.worldPosition - gEngine->camera().position()).length();
-    const double tolMeters = std::max(
-        5.0, dist * gEngine->camera().verticalFovRadians() /
-                 std::max(1, gHeight.load()) * 24.0);
-    const auto snap = FeatureSnapQuery::nearest(
-        gDemoFeatureLayer->store(), Ellipsoid::WGS84(), target, tolMeters,
-        gEditDrag.featureId);
-    if (snap) {
-        target = Cartographic(snap->position.longitude(),
-                              snap->position.latitude(),
-                              gEditDrag.vertexHeight);
-        LOGI("EditFlow: snap to feature=%llu %s idx=%d dist=%.1fm",
-             static_cast<unsigned long long>(snap->featureId),
-             snap->part == SnapCandidate::Part::Vertex ? "vertex" : "edge",
-             snap->vertexIndex, snap->distanceMeters);
-    }
-    auto& ring = gEditDrag.rings[gEditDrag.ringIndex];
-    ring[static_cast<size_t>(gEditDrag.vertexIndex)] = target;
-    // polygon 闭合环:拖首/末点时同步另一端保持闭合。
-    const Feature* feature =
-        gDemoFeatureLayer->store().getFeature(gEditDrag.featureId);
-    if (feature && feature->type == GeometryType::Polygon &&
-        ring.size() >= 2) {
-        if (gEditDrag.vertexIndex == 0) {
-            ring.back() = target;
-        } else if (static_cast<size_t>(gEditDrag.vertexIndex) ==
-                   ring.size() - 1) {
-            ring.front() = target;
-        }
-    }
-    gDemoFeatureLayer->updateEditPreview(gEditDrag.rings);
-    updateDraggedHandle(target);
-}
-
-// 松手:commit 落库(undo 快照已在抓取时入栈)+ 结束预览。
-static void editTouchUp() {
-    if (!gDemoFeatureLayer || !gEditDrag.active) return;
-    const Feature* feature =
-        gDemoFeatureLayer->store().getFeature(gEditDrag.featureId);
-    if (feature) {
-        Feature edited = *feature;
-        edited.rings = gEditDrag.rings;
-        edited.bounds = Rectangle();  // store 从 rings 重算
-        gDemoFeatureLayer->store().updateFeature(edited);
-        LOGI("EditFlow: commit feature=%llu version=%llu undoDepth=%zu",
-             static_cast<unsigned long long>(gEditDrag.featureId),
-             static_cast<unsigned long long>(
-                 gDemoFeatureLayer->store()
-                     .getFeature(gEditDrag.featureId)->version),
-             gEditUndoStack.size());
-    }
-    gDemoFeatureLayer->endEditPreview();
-    gEditDrag = EditDragState{};
-    clearEditHandles();
-}
-
-static int gFrameCount = 0;
-/// P6c 聚合演示的每帧刷新(应用层职责:引擎只出索引,画什么由这里定)。
-/// 相机 zoom 档变化才重建显示层——聚合是层级预聚,同一档内结果不变,
-/// 平移不需要重建(300 点直接全量查,不做视口裁剪)。渲染线程调用。
-static void refreshClusterDisplay() {
-    if (!gClusterLayer || gClusterIndex.empty()) return;
-    const double camHeight =
-        Ellipsoid::WGS84()
-            .cartesianToCartographic(gEngine->camera().position())
-            .height();
-    // 与引擎 zoom 驱动样式同一换算(web 墨卡托惯例)。
-    const double zoom = std::min(
-        24.0, std::max(0.0, std::log2(4.0e7 / std::max(1.0, camHeight))));
-    const int level = static_cast<int>(std::lround(zoom));
-    if (level == gClusterShownLevel) return;
-    gClusterShownLevel = level;
-
-    const Rectangle world(-M_PI, -M_PI / 2.0, M_PI, M_PI / 2.0);
-    const auto clusters = gClusterIndex.query(world, zoom);
-    gClusterLayer->store().clear();
-    for (const auto& c : clusters) {
-        Feature f;
-        f.type = GeometryType::Point;
-        f.rings = {{Cartographic(c.longitude, c.latitude)}};
-        if (c.isCluster()) {
-            f.properties["cluster"] = "1";
-            f.properties["name"] = std::to_string(c.count);
-        }
-        gClusterLayer->store().addFeature(std::move(f));
-    }
-    LOGI("VectorP6c clusters: zoom=%.2f level=%d entries=%zu", zoom, level,
-         clusters.size());
 }
 
 // ── 输入 late-latch:fence 门控的 render-ahead cap(C-V8)────────────────
@@ -2242,57 +644,16 @@ static void renderFrame() {
 
     // 环境系统：时间步进，render 中 update() 计算当前帧天空色
     gEngine->advanceTime(dt);
-    if (minimal_globe_demo::kEnableVectorDemoLayers) {
-        refreshClusterDisplay();
-    }
-    // C2/E3:高德矢量几何源驱动(type2 VectorFill + 主源 + POI)。
-    if (gAmapRegionsSource || gAmapWater12Source || gAmapMainSource ||
-        gAmapPoiSource) {
-        amapCleanupCompleted();  // 渲染线程剪除已完成句柄(见该函数注释)
-        const Ellipsoid& wgs84 = Ellipsoid::WGS84();
-        const Cartographic camCarto =
-            wgs84.cartesianToCartographic(gEngine->camera().position());
-        const Vec3& radii = wgs84.radii();
-        const double minRadius =
-            std::min(radii.x(), std::min(radii.y(), radii.z()));
-        const Rectangle viewRect =
-            MvtVectorSource::horizonViewRectangle(camCarto, minRadius);
-        const double camHeight = std::max(1.0, camCarto.height());
-        const double amapViewZoom = std::min(
-            24.0,
-            std::max(0.0, std::log2(4.0e7 / camHeight)));
-        if (gAmapRegionsSource) {
-            // z10 粗源 LOD 近景让位(与 regions 层 maxZoom=11.5 同口径):
-            // zoom > 11.5 时不更新粗源树,不再拉取/镶嵌 z10 面,避免与
-            // 主源 z12-14 细面叠加成「破破烂烂」的双层边,也省带宽。
-            if (amapViewZoom <= 11.5) {
-                gAmapRegionsSource->update(viewRect, camHeight);
-            } else {
-                gAmapRegionsSource->suspend();
-            }
-        }
-        // z12 粗水层只服务近景：垫在 z14 细块下盖住瓦缝空档。
-        // 远景由 regions 的 z3/6/8/10 多档面源承接；固定 z12 若在
-        // 全球视野常显，会再次被 256 瓦工作集截成中心孤岛。
-        if (gAmapWater12Source && amapViewZoom > 11.5) {
-            gAmapWater12Source->update(viewRect, camHeight);
-        } else if (gAmapWater12Source) {
-            gAmapWater12Source->suspend();
-        }
-        if (gAmapMainSource) {
-            gAmapMainSource->update(viewRect, camHeight);
-        }
-        if (gAmapPoiSource) {
-            gAmapPoiSource->update(viewRect, camHeight);
-        }
-        // 共享 type1 验收口径：regions/main/water12 必须命中同一
+    // C2/E3:官方 runtime 由 Scene 在 Engine::render 内统一推进；Android
+    // 只保留诊断读取，不再计算视域或手工 pump 第二条生命周期路径。
+    if (gAmapOfficialRuntime) {
+        const auto& sourceBundle = gAmapOfficialRuntime->sources();
+        // 共享 type1 验收口径：regions/main 必须命中同一
         // typed cache。全球 z3 冷启 fetch 应约为 64，不再是两个
         // profile 各解码一遍。POI(type2) 由独立 pool 统计。
         static uint64_t amapRawLogCounter = 0;
         if (++amapRawLogCounter % 120 == 1) {
-            const auto type1 = gAmapRegionCache
-                                   ? gAmapRegionCache->stats()
-                                   : AmapType1TileCache::Stats{};
+            const auto type1 = sourceBundle.type1CacheStats();
             LOGI("AmapType1Cache fetch=%llu refetch=%llu hit=%llu rawHit=%llu "
                  "resident=%zu/%zuKB raw=%zu/%zuKB",
                  static_cast<unsigned long long>(type1.fetches),
@@ -2318,12 +679,11 @@ static void renderFrame() {
                      static_cast<unsigned long long>(s.completed), avgQueue,
                      s.maxQueueWaitMs, avgWork, s.maxWorkMs);
             };
-            logPool("type1Decode", gMvtDecodePool);
+            logPool("type1Decode", gAmapType1DecodePool);
             logPool("poiDecode", gAmapPoiDecodePool);
-            logPool("tess", gMvtTessellationPool);
-            auto logSource = [](const char* name, const auto* source) {
-                if (!source) return;
-                const auto& s = source->lastUpdateStats();
+            logPool("tess", gAmapTessellationPool);
+            auto logSource = [](const char* name,
+                                const AmapClassicSourceBundle::SourceStats& s) {
                 LOGI("AmapSource %s z=%d desired=%lld scanned=%zu render=%zu "
                      "request=%zu pending=%zu tess=%zu ready=%zu active=%zu "
                      "pairs=%zu tree=%.2f commit=%.2f",
@@ -2335,10 +695,9 @@ static void renderFrame() {
                      s.activeTileCount, s.activeAncestorPairs, s.treeMs,
                      s.commitMs);
             };
-            logSource("regions", gAmapRegionsSource.get());
-            logSource("water12", gAmapWater12Source.get());
-            logSource("main", gAmapMainSource.get());
-            logSource("poi", gAmapPoiSource.get());
+            logSource("regions", sourceBundle.regionsSourceStats());
+            logSource("main", sourceBundle.mainSourceStats());
+            logSource("poi", sourceBundle.poiSourceStats());
         }
     }
     // 阶段 4:假载体在**引擎 update 之前**推进,这样本帧 tether 读到的就是新
@@ -2376,9 +735,6 @@ static void renderFrame() {
         swapOk = eglSwapBuffers(gDisplay, gSurface);
         swapMs = std::chrono::duration<double, std::milli>(
             std::chrono::steady_clock::now() - swapStart).count();
-        if (swapOk == EGL_TRUE) {
-            ++gFrameCount;
-        }
     }
 
     const double frameTotalMs = std::chrono::duration<double, std::milli>(
@@ -2399,14 +755,6 @@ static void renderFrame() {
                  GlyphAtlas::kAtlasSize,
                  100.0 * ga->shelfUsedHeightPx() / GlyphAtlas::kAtlasSize,
                  ga->atlasFullDropCount());
-        }
-    }
-    // P4 曲线采样:候选数 vs 全量 placement 耗时(哨兵只报 >4ms 的点)
-    if (gMvtBasemapLayer && frameId % 120 == 0) {
-        const size_t cand = gMvtBasemapLayer->lastPlacementCandidates();
-        if (cand > 0) {
-            LOGI("PlaceCurve cand=%zu ms=%.3f", cand,
-                 gMvtBasemapLayer->lastPlacementMs());
         }
     }
     // 七态标注 dump 按需触发(免重编译诊断口):
@@ -2432,25 +780,15 @@ static void renderFrame() {
                 (allDigits || lastLabelDumpProp == "all")
                     ? std::string()
                     : lastLabelDumpProp;
-            for (FeatureRenderLayer* layer :
-                 {gMvtBasemapLayer, gAmapRegionsLayer, gAmapWater12Layer,
-                  gAmapMainLayer, gAmapPoiLayer, gDemoFeatureLayer}) {
+            const std::array<const FeatureRenderLayer*, 3> diagnosticLayers{
+                gAmapRegionsLayer, gAmapMainLayer, gAmapPoiLayer};
+            for (const FeatureRenderLayer* layer : diagnosticLayers) {
                 if (!layer) continue;
                 // 逐行打(logcat 单条 ~4KB 截断,整段一条会被吞尾)。
                 std::istringstream ss(layer->dumpLabelLifecycle(filter));
                 std::string line;
                 while (std::getline(ss, line)) LOGI("%s", line.c_str());
             }
-        }
-    }
-    if (gDemoFeatureLayer && frameId % 120 == 0) {
-        const auto& ls = gDemoFeatureLayer->labelPlacementStats();
-        if (ls.candidates > 0) {
-            LOGI("LabelPlace frame=%llu cand=%d placed=%d col=%d horiz=%d "
-                 "proj=%d",
-                 static_cast<unsigned long long>(frameId), ls.candidates,
-                 ls.placed, ls.collided, ls.culledHorizon,
-                 ls.culledProjection);
         }
     }
     char perflogProp[4] = {0};
@@ -2992,131 +1330,14 @@ static RenderThread gRenderThread;
 // 独立线程 + 阻塞请求(getBlocking 是影像/地形已验证路径;异步链在本机
 // 调度器上未触发,先绕开):版本探测(GET)→ get_tile(POST)→ 签名 URL(GET)
 // → 解码/转换(工作线程,纯 CPU)→ gRenderThread.post 灌 FeatureStore。
-static std::vector<uint8_t> amapPostBlocking(
-    const std::string& url, const std::string& body,
-    const std::string& contentType, HttpRequestOptions opts,
-    int timeoutMs = 20000) {
-    struct St {
-        std::vector<uint8_t> result;
-        std::mutex mutex;
-        std::condition_variable cv;
-        bool done = false;
-    };
-    auto st = std::make_shared<St>();
-    auto req = CurlMultiRequestScheduler::shared().post(
-        url, std::vector<uint8_t>(body.begin(), body.end()), contentType,
-        [st](int code, std::vector<uint8_t> b) {
-            {
-                std::lock_guard<std::mutex> lk(st->mutex);
-                if (code == 200) st->result = std::move(b);
-                st->done = true;
-            }
-            st->cv.notify_one();
-        },
-        opts);
-    std::unique_lock<std::mutex> lk(st->mutex);
-    if (!st->cv.wait_for(lk, std::chrono::milliseconds(timeoutMs),
-                         [&] { return st->done; })) {
-        if (req) req->cancel();
-        return {};
-    }
-    return std::move(st->result);
-}
-
-// regionsOnly=true:只保留 type2(面),用于粗源(z10,水/绿地,低顶点量,
-// overzoom 对齐 amapVectorLayers 的粗源);false:只保留 type1/3/4(主源 z14)。
-static void amapLoadDemoTile(FeatureRenderLayer* layer, int x, int y, int z,
-                             bool regionsOnly) {
-    LOGI("AmapDemo: enqueue %d_%d_%d", x, y, z);
-    std::thread([layer, x, y, z, regionsOnly]() {
-        const std::string key = minimal_globe_demo::kAmapWebKey;
-        const std::string referer = minimal_globe_demo::kAmapReferer;
-        const std::string initUrl =
-            "https://jsapi.amap.com/web/init?key=" + key;
-        HttpRequestOptions opts;
-        opts.headers = {{"Referer", referer}};
-        const auto initBody = CurlMultiRequestScheduler::shared().getBlocking(
-            initUrl, opts);
-        {
-            std::string version;
-            try {
-                const auto doc = nlohmann::json::parse(initBody.begin(),
-                                                       initBody.end());
-                const auto inner =
-                    nlohmann::json::parse(doc.value("tile", "{}"));
-                version = inner.value("v", "");
-            } catch (const std::exception&) {
-                LOGE("AmapDemo: version probe failed");
-                return;
-            }
-            if (version.empty()) {
-                LOGE("AmapDemo: empty version stamp");
-                return;
-            }
-            AmapManifestConfig cfg;
-            cfg.key = key;
-            cfg.referer = referer;
-            cfg.version = version;
-            const std::vector<AmapTileRequest> reqs = {{x, y, z, 1}};
-            const std::string url = buildGetTileUrl(cfg);
-            const std::string bodyStr = buildGetTileBody(reqs, cfg, version);
-            HttpRequestOptions postOpts;
-            postOpts.headers = {{"Referer", referer}};
-            const auto manifestBody =
-                amapPostBlocking(url, bodyStr,
-                                 "application/x-www-form-urlencoded",
-                                 postOpts);
-            std::vector<AmapTileUrl> urls;
-            std::string err;
-            if (!parseTileUrls(std::string(manifestBody.begin(),
-                                           manifestBody.end()),
-                               urls, &err)) {
-                LOGE("AmapDemo: get_tile refused: %s", err.c_str());
-                return;
-            }
-            if (urls.empty()) return;
-            AmapTileUrl selected;
-            if (!selectAmapTileUrl(urls, reqs[0], selected, &err)) {
-                LOGE("AmapDemo: manifest URL mismatch: %s", err.c_str());
-                return;
-            }
-            HttpRequestOptions tileOpts;
-            tileOpts.headers = {{"Referer", cfg.referer}};
-            const auto tileBody =
-                CurlMultiRequestScheduler::shared().getBlocking(
-                    selected.url, tileOpts);
-            std::vector<AmapDecodedLayerPart> parts;
-            if (!decodeAmapTile(tileBody.data(), tileBody.size(), parts)) {
-                LOGE("AmapDemo: tile decode failed");
-                return;
-            }
-            std::vector<Feature> feats;
-            for (const auto& p : parts) {
-                if (regionsOnly ? (p.type != 2) : (p.type == 2)) continue;
-                auto fs = amapDecodedPartToFeatures(p, true);
-                feats.insert(feats.end(), std::make_move_iterator(fs.begin()),
-                             std::make_move_iterator(fs.end()));
-            }
-            LOGI("AmapDemo: decoded %zu features from %zu layers",
-                 feats.size(), parts.size());
-            gRenderThread.post([layer, feats = std::move(feats)]() {
-                for (auto& f : feats) {
-                    layer->store().addFeature(std::move(f));
-                }
-            });
-        }
-    }).detach();
-}
-
 // UI 线程整形好的输入事件统一从这里投递到渲染线程。
 // 屏幕密度（Java surfaceChanged 时设置）。手势阈值以 dp 定义，InputManager
 // 用 event.devicePixelRatio 把 dp 换算成物理像素——不填则恒 1，latch 阈值
 // 在高密度屏上会偏敏感 density 倍。
-static float gDisplayDensity = 1.0f;
 
 static void postInputEvent(const InputEvent& event) {
     InputEvent stamped = event;
-    stamped.devicePixelRatio = gDisplayDensity;
+    stamped.devicePixelRatio = gDisplayDensity.load();
     gInputPending.store(true, std::memory_order_release);
     gRenderThread.post([stamped]() {
         if (gEngine) {
@@ -3177,7 +1398,7 @@ Java_com_earthengine_sdk_GLESView_nativeSurfaceChanged(
     gHeight = height;
     gRenderThread.post([width, height]() {
         if (gEngine) {
-            gEngine->onSurfaceChanged(width, height, 1.0f);
+            gEngine->onSurfaceChanged(width, height, gDisplayDensity.load());
         }
     });
 }
@@ -3242,11 +1463,6 @@ Java_com_earthengine_sdk_GLESView_nativeTouchDown(
     gDragStarted = false;
     gTouchMoved = false;
 
-    // 编辑模式的触摸不喂相机手势流（editTouchDown 由 nativeDrag 首个 move 发）。
-    if (gEditMode.load(std::memory_order_relaxed)) {
-        return;
-    }
-
     // 真按下即投递 PointerDown。此前只在 nativeDrag 的首个 move 里补发，
     // 于是"按下即抬手"的纯点击只到达一个 PointerUp，InputManager 处在 Idle
     // 直接早退 —— Android 上 Click / DoubleClick 从未触发过（单击选中、
@@ -3281,17 +1497,6 @@ Java_com_earthengine_sdk_GLESView_nativeDrag(
     jint /*width*/, jint /*height*/) {
     gTouchMoved = true;
 
-    // 编辑模式:触摸走顶点拖拽编辑流(渲染线程),不喂相机。
-    if (gEditMode.load(std::memory_order_relaxed)) {
-        const bool first = !gDragStarted;
-        gDragStarted = true;
-        gRenderThread.post([first, startX, startY, endX, endY]() {
-            if (first) editTouchDown(startX, startY);
-            editTouchMove(endX, endY);
-        });
-        return;
-    }
-
     double ts = androidUptimeSeconds();
 
     if (!gDragStarted) {
@@ -3318,11 +1523,6 @@ JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeTouchUp(
     JNIEnv* /* env */, jobject /* this */, jfloat x, jfloat y) {
     gTouching = false;
-
-    if (gEditMode.load(std::memory_order_relaxed)) {
-        gRenderThread.post([]() { editTouchUp(); });
-        return;
-    }
 
     double ts = androidUptimeSeconds();
 
@@ -3807,21 +2007,61 @@ Java_com_earthengine_sdk_GLESView_nativeGetHeadingRadians(
     return gHeadingRadians.load();
 }
 
+// 高德式比例尺：在屏幕中心横向采样 100px，以两条拾取射线和 WGS84 椭球的
+// 交点测量地表距离。这样透视、正交和轻微倾斜共用同一投影契约；UI 只需低频
+// 查询，不介入相机状态，也不增加瓦片或 GPU 工作。
+JNIEXPORT jdouble JNICALL
+Java_com_earthengine_sdk_GLESView_nativeGetMetersPerPixel(
+    JNIEnv* /* env */, jclass /* clazz */) {
+    auto metersPerPixel = std::make_shared<double>(0.0);
+    const bool ok = gRenderThread.runSync(
+        [metersPerPixel]() {
+            if (!gEngine) return;
+            const int width = gWidth.load();
+            const int height = gHeight.load();
+            if (width < 2 || height < 2) return;
+
+            constexpr double kSamplePixels = 100.0;
+            const double halfSample =
+                std::min(kSamplePixels * 0.5, width * 0.25);
+            if (halfSample <= 0.0) return;
+
+            const Camera& camera = gEngine->camera();
+            const double centerX = width * 0.5;
+            const double centerY = height * 0.5;
+            const Ray leftRay = camera.getPickRay(
+                centerX - halfSample, centerY, width, height);
+            const Ray rightRay = camera.getPickRay(
+                centerX + halfSample, centerY, width, height);
+            const Ellipsoid& ellipsoid = Ellipsoid::WGS84();
+            const std::optional<Vec3> left = ellipsoid.rayIntersection(
+                leftRay.origin(), leftRay.direction());
+            const std::optional<Vec3> right = ellipsoid.rayIntersection(
+                rightRay.origin(), rightRay.direction());
+            if (!left || !right) return;
+
+            const Cartographic leftGeo =
+                ellipsoid.cartesianToCartographic(*left);
+            const Cartographic rightGeo =
+                ellipsoid.cartesianToCartographic(*right);
+            const GeodesicInverseResult distance =
+                ellipsoid.inverse(leftGeo, rightGeo);
+            const double sampleWidth = halfSample * 2.0;
+            if (distance.converged && std::isfinite(distance.distanceMeters) &&
+                distance.distanceMeters > 0.0) {
+                *metersPerPixel = distance.distanceMeters / sampleWidth;
+            }
+        },
+        std::chrono::milliseconds(40));
+    return ok ? static_cast<jdouble>(*metersPerPixel) : 0.0;
+}
+
 // 复位正北朝上（在渲染线程执行，读写相机态）。
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeResetNorthUp(
     JNIEnv* /* env */, jobject /* this */) {
     gRenderThread.post([]() {
         if (gEngine) gEngine->resetNorthUp();
-    });
-}
-
-JNIEXPORT void JNICALL
-Java_com_earthengine_sdk_GLESView_nativeAddDemoVectorLayer(
-    JNIEnv* /* env */, jobject /* this */) {
-    gRenderThread.post([]() {
-        if (!gEngine || !gRenderDevice) return;
-        minimal_globe_demo::addDemoVectorLayer(*gEngine, *gRenderDevice);
     });
 }
 
@@ -3873,99 +2113,9 @@ Java_com_earthengine_sdk_GLESView_nativeDebugFlyTo(
 // 阶段 5 的真实用途:可复现的**正俯视**位姿。掠视下的正交是退化用例
 // (正交盒半高远大于相机高度 ⇒ 下半部整个在地下 ⇒ 天空色),俯视才是正交要干的活。
 //
-// V26 二期:样式文档驱动的换肤。优先读**外置样式文件**(adb push 即热换,
-// 不重编译 —— V26 判据本体);文件缺席回落一期的内置 C++ 样式(demo 不依赖
-// push 也能演示)。文档路:parse → compile(契约 fail-loud)→ planStyleApply
-// (成本类路由:只换线色不重烘场)→ 按 plan 分发三条通路。
-// 像素判据(归用户):水深蓝/楼暖棕/路网琥珀 ↔ 日版米白;瞬态=Re-bake 期间
-// 面短暂回落纯影像。
-// 样式文档候选目录 = kStyleDocDirs(已上移到 mvtFetchTile 前,与
-// sources.json 共用同一目录约定与注入方式)。
-
-JNIEXPORT void JNICALL
-Java_com_earthengine_sdk_GLESView_nativeDebugRestyle(
-    JNIEnv* /* env */, jobject /* this */) {
-    gRenderThread.post([]() {
-        if (!gEngine) return;
-        gNightStyle = !gNightStyle;
-        const bool night = gNightStyle;
-        // 三期文档路:Engine 一口气分发(parse→契约→成本类路由→三路)。
-        // 错误 = 整份拒收逐条 LOGE,继续试下一路径/回落内置 —— 坏文档
-        // 不得半应用。
-        for (const char* dir : kStyleDocDirs) {
-            const std::string docPath = std::string(dir) + "/style-" +
-                                        (night ? "night" : "day") + ".json";
-            std::ifstream in(docPath, std::ios::binary);
-            if (!in) continue;  // 文件缺席不是错误(内置兜底)
-            std::string text((std::istreambuf_iterator<char>(in)),
-                             std::istreambuf_iterator<char>());
-            const std::vector<StyleError> errors =
-                gEngine->applyStyleDocument(text);
-            if (errors.empty()) {
-                LOGI("V26Restyle applied from doc: %s", docPath.c_str());
-                return;
-            }
-            for (const StyleError& e : errors) {
-                LOGE("V26Restyle style doc %s: %s: %s", docPath.c_str(),
-                     e.where.c_str(), e.message.c_str());
-            }
-        }
-        // 一期内置兜底(真机已验路径,行为不变)。内置路绕过 Engine 的文档
-        // 指纹 memo —— 重注册目标清掉它,防下次文档应用按旧指纹误判 diff。
-        gEngine->setStyleTargets(gDrapeProviderRaw, gRoadFieldSource,
-                                 gMvtBasemapLayer);
-        if (gDrapeProviderRaw) {
-            gDrapeProviderRaw->setStyle(
-                night ? minimal_globe_demo::makeMvtDrapeStyleNight()
-                      : minimal_globe_demo::makeMvtDrapeStyle());
-            gEngine->invalidateComposedTerrainPages();
-        }
-        if (gRoadFieldSource) {
-            gEngine->setRoadFieldStyleUniforms(
-                night ? minimal_globe_demo::kMvtRoadFieldColorNight
-                      : minimal_globe_demo::kMvtRoadFieldColor,
-                minimal_globe_demo::kMvtRoadFieldWidthRampPx);
-            gRoadFieldSource->setStyle(
-                minimal_globe_demo::makeMvtRoadFieldStyle());
-            gEngine->invalidateRoadFieldPages(
-                minimal_globe_demo::kMvtRoadFieldMaxZoom);
-        }
-        LOGI("V26Restyle applied builtin: %s (drape=%d field=%d)",
-             night ? "night" : "day", gDrapeProviderRaw != nullptr,
-             gRoadFieldSource != nullptr);
-    });
-}
-
 // 走 setViewpoint 的「部分 viewpoint」语义,顺带在设备上验阶段 2 的**万向节约定**:
 // pitch 恰好 −π/2 是奇点(direction 沿天底,绕它转不改视线 ⇒ heading 只能由 up 定,
 // 约定 roll=0)。回读 currentViewpoint() 打出来,位姿往返在真机上也必须闭合。
-JNIEXPORT void JNICALL
-Java_com_earthengine_sdk_GLESView_nativeDebugNadirView(
-    JNIEnv* /* env */, jobject /* this */) {
-    gRenderThread.post([]() {
-        if (!gEngine) return;
-        CameraSystem& cam = gEngine->cameraSystem();
-        Viewpoint vp;
-        vp.targetGeo = Cartographic::fromDegrees(106.508, 29.617, 0.0);
-        vp.rangeMeters = 20000.0;
-        vp.headingRadians = 0.0;
-        vp.pitchRadians = -M_PI / 2.0;   // 正俯视 = 万向节奇点
-        vp.rollRadians = 0.0;
-        cam.setViewpoint(vp);
-
-        const Viewpoint got = cam.currentViewpoint();
-        LOGI("StageNadir set h=%.4f p=%.4f r=%.4f camH=%.1f hasTarget=%d",
-             got.headingRadians ? *got.headingRadians : -99.0,
-             got.pitchRadians ? *got.pitchRadians : -99.0,
-             got.rollRadians ? *got.rollRadians : -99.0,
-             got.eyeGeo ? got.eyeGeo->height() : -1.0,
-             got.targetGeo ? 1 : 0);
-    });
-}
-
-// 阶段 4:切系留。第一次按 = 只接 originProvider(跟车但保持北上),
-// 第二次 = 加上 orientationProvider(座舱,roll 跟随载体),第三次 = 回 Free。
-// 机制信号 = localHPR/range 逐帧不变 + 相机到载体距离恒等于 range。
 JNIEXPORT void JNICALL
 Java_com_earthengine_sdk_GLESView_nativeDebugTether(
     JNIEnv* /* env */, jobject /* this */) {
@@ -4165,55 +2315,6 @@ Java_com_earthengine_sdk_GLESView_nativeGetGpuTerrain(
         },
         std::chrono::milliseconds(100));
     return *on ? JNI_TRUE : JNI_FALSE;
-}
-
-// 编辑模式的真值是这个 atomic(UI 线程写、两线程读),无需绕渲染线程。
-JNIEXPORT jboolean JNICALL
-Java_com_earthengine_sdk_GLESView_nativeGetEditMode(
-    JNIEnv* /* env */, jobject /* this */) {
-    return gEditMode.load(std::memory_order_relaxed) ? JNI_TRUE : JNI_FALSE;
-}
-
-JNIEXPORT void JNICALL
-Java_com_earthengine_sdk_GLESView_nativeSetEditMode(
-    JNIEnv* /* env */, jobject /* this */, jboolean enabled) {
-    const bool on = (enabled == JNI_TRUE);
-    gEditMode.store(on, std::memory_order_relaxed);
-    gRenderThread.post([on]() {
-        // 关闭时若拖拽中:cancel(不落库,弹掉抓取时压入的 undo 快照)。
-        if (!on && gEditDrag.active && gDemoFeatureLayer) {
-            gDemoFeatureLayer->endEditPreview();
-            gEditDrag = EditDragState{};
-            clearEditHandles();
-            if (!gEditUndoStack.empty()) gEditUndoStack.pop_back();
-        }
-        // 退出编辑模式 = 取消选中,标签提权一并清除。
-        if (!on && gDemoFeatureLayer) {
-            gDemoFeatureLayer->setLabelPriorityFeature(kInvalidFeatureId);
-        }
-        LOGI("EditFlow: edit mode %s", on ? "ON" : "OFF");
-    });
-}
-
-JNIEXPORT void JNICALL
-Java_com_earthengine_sdk_GLESView_nativeUndoEdit(
-    JNIEnv* /* env */, jobject /* this */) {
-    gRenderThread.post([]() {
-        if (!gDemoFeatureLayer || gEditDrag.active) return;
-        if (gEditUndoStack.empty()) {
-            LOGI("EditFlow: undo stack empty");
-            return;
-        }
-        Feature snapshot = gEditUndoStack.back();
-        gEditUndoStack.pop_back();
-        snapshot.bounds = Rectangle();  // store 从 rings 重算
-        gDemoFeatureLayer->store().updateFeature(snapshot);
-        LOGI("EditFlow: undo feature=%llu → version=%llu undoDepth=%zu",
-             static_cast<unsigned long long>(snapshot.id),
-             static_cast<unsigned long long>(
-                 gDemoFeatureLayer->store().getFeature(snapshot.id)->version),
-             gEditUndoStack.size());
-    });
 }
 
 JNIEXPORT void JNICALL

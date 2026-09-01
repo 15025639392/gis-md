@@ -7,6 +7,24 @@
 
 namespace earth_engine {
 
+struct ConstrainedDelaunayDiagnostics {
+    double superTriangleMs = 0.0;
+    double pointInsertMs = 0.0;
+    double constraintInsertMs = 0.0;
+    double extractInsideMs = 0.0;
+    size_t pointTriangleTests = 0;
+    size_t pointBadTriangles = 0;
+    size_t constraintEdgeLookups = 0;
+    size_t constraintCrossTriangleTests = 0;
+    size_t constraintsAlreadyPresent = 0;
+    size_t constraintsInserted = 0;
+    size_t peakTriangles = 0;
+    size_t initialPointCapacity = 0;
+    size_t initialTriangleCapacity = 0;
+    size_t pointCapacityGrowths = 0;
+    size_t triangleCapacityGrowths = 0;
+};
+
 /// 受约束 Delaunay 三角化(CDT)。
 ///
 /// 输入 2D 点集 + 约束边(须出现在结果中的边,如多边形/孔洞边界),输出**落在约束
@@ -30,7 +48,8 @@ public:
     /// 点数 < 3 或退化返回空。
     static std::vector<uint32_t> triangulate(
         const std::vector<glm::dvec2>& points,
-        const std::vector<Edge>& constraintEdges);
+        const std::vector<Edge>& constraintEdges,
+        ConstrainedDelaunayDiagnostics* diagnostics = nullptr);
 };
 
 } // namespace earth_engine

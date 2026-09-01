@@ -16,7 +16,7 @@ struct LineVertex {
     Vec3 pos;            ///< 本顶点 ECEF
     Vec3 prev;           ///< 前驱 ECEF(端点哨兵 = pos)
     Vec3 next;           ///< 后继 ECEF(端点哨兵 = pos)
-    float side;          ///< +1 / -1 挤出方向
+    float side;          ///< ±1 ribbon side; 2..5 analytic round-join corners
     float lengthSoFar;   ///< 沿线累计 3D 弧长(m),供 dash
 };
 
@@ -32,7 +32,8 @@ struct TessellatedLine {
 /// side/lengthSoFar 布局,供 §6.2 的顶点着色器现算屏幕垂向 + miter join。
 ///
 /// 拓扑:n 顶点(去重后)→ 2n 顶点、6·段数 索引(open 段数 n-1,closed n)。
-/// 端点 prev/next 用 pos 自身作哨兵(shader 据此退化为单段方向 + cap)。
+/// 端点 prev/next 用 pos 自身作哨兵(shader 据此退化为单段方向)。可选
+/// endpoint cap primitive 使用 side=6..9 的解析圆盘 quad，不改变顶点 ABI。
 /// 几何/属性可单测;屏幕挤出的视觉正确性属 shader,留真机验证。
 class LineTessellator {
 public:
@@ -40,7 +41,9 @@ public:
     static TessellatedLine tessellate(const Feature& feature,
                                       const Ellipsoid& ellipsoid,
                                       double heightOffset = 0.0,
-                                      bool closed = false);
+                                      bool closed = false,
+                                      bool roundJoin = false,
+                                      bool endpointCapPrimitives = false);
 };
 
 } // namespace earth_engine

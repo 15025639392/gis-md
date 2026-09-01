@@ -610,22 +610,6 @@ struct TerrainPageStore::ReadyUploadInbox {
     std::atomic<uint64_t> composeCpuMicros{0};
 };
 
-/// 刀2 场平面投递箱(shared_ptr:场生产者回调可比页存储活得久)。
-/// 只投递**真场**;层复用时旧租户残留由间接纹理 A 三态门控挡住(场未 ready
-/// 的层 A=128,片元不采场),不再靠占位清场(占位在同 key 页 churn 重建时会
-/// 清掉刚上传的正确真场 → 运动期路网闪烁,已改用 fieldLayerKey_ 门控)。
-struct TerrainPageStore::RoadFieldInbox {
-    struct Item {
-        uint64_t key = 0;
-        uint64_t domainGeneration = 0;
-        int layer = 0;
-        uint64_t epoch = 0;        // V28:产此场 R8 的样式代(drain epoch 闸)
-        std::vector<uint8_t> r8;   // side²×1
-    };
-    std::mutex mutex;
-    std::vector<Item> items;
-};
-
 TerrainPageStore::PageDomainCompatibility
 TerrainPageStore::providerStackCompatibility(
     const std::vector<RasterOverlayTileProvider*>& providers) {
@@ -795,8 +779,7 @@ void TerrainPageStore::resamplePageSource(const DecodedImage& image, int depth,
     }
 }
 
-void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident,
-                                        bool fieldReady, int depth,
+void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident, int depth,
                                         uint8_t out[4]) {
     const unsigned int v = static_cast<unsigned int>(std::max(0, layer));
     out[0] = static_cast<uint8_t>(v & 0xFFu);          // R = layer & 0xFF
@@ -804,11 +787,7 @@ void TerrainPageStore::encodeLayerRGBA8(int layer, bool resident,
     // B = per-cell 渐变 LOD 深度 d(§16.3),clamp [0, kMaxDetDepthLevels]。片元
     // span=2^d 定位粗祖先页子区;d=0 逐字节=现状精页。
     out[2] = static_cast<uint8_t>(std::clamp(depth, 0, kMaxDetDepthLevels));
-    // A 三态门控(刀2 场 resident 独立):miss=0(保留 directComposite)、影像 resident
-    // 但场未 ready=128(片元采影像不采场)、影像+场都 ready=255。片元对影像做
-    // step(0.3) 离散(A≥128 → 采影像),场 gate 用 A>0.6(仅 255)。无场功能时
-    // fieldReady 恒 true → 退化 0/255 二态,逐位=改造前。
-    out[3] = resident ? (fieldReady ? 255 : 128) : 0;
+    out[3] = resident ? 255 : 0;
 }
 
 int TerrainPageStore::decodeLayerRGBA8(const uint8_t in[4]) {
@@ -1254,10 +1233,6 @@ void TerrainPageStore::updateVisiblePages(
             std::lock_guard<std::mutex> lock(readyInbox_->mutex);
             ready = !readyInbox_->items.empty();
         }
-        if (!ready && fieldInbox_) {
-            std::lock_guard<std::mutex> lock(fieldInbox_->mutex);
-            ready = !fieldInbox_->items.empty();
-        }
         return ready;
     };
 
@@ -1545,7 +1520,6 @@ void TerrainPageStore::updateVisiblePages(
             0);
         int residentCells = 0;
         std::vector<int> imageLayers;
-        std::vector<int> fieldLayers;
         auto appendUniqueLayer = [](std::vector<int>& layers, int layer) {
             if (layer >= 0 &&
                 std::find(layers.begin(), layers.end(), layer) == layers.end()) {
@@ -1610,11 +1584,11 @@ void TerrainPageStore::updateVisiblePages(
             if (imgLayer >= 0) {
                 pool_.touch(imgKey, frameId_);  // 显示中的页不该被淘汰
                 appendUniqueLayer(imageLayers, imgLayer);
-                encodeLayerRGBA8(imgLayer, true, true, imgD, texel);
+                encodeLayerRGBA8(imgLayer, true, imgD, texel);
                 ++residentCells;
             } else {
                 // 全冷 → directComposite(resident=false)。
-                encodeLayerRGBA8(0, false, true, kc.d, texel);
+                encodeLayerRGBA8(0, false, kc.d, texel);
             }
         }
 
@@ -1624,163 +1598,10 @@ void TerrainPageStore::updateVisiblePages(
         // 分支置 layer=-1(其 sweep 稍后清除)。
         TileIndir& ind = tileIndirs_[p.tileKeyPacked];
         ind.cellZoom = p.zoom;
-        {
-
-            // ==== 步3 场平面(z 封顶解耦):逐 cell 求 z-封顶场页并重建场间接
-            // 纹理(复用本瓦片的 ind.layer 层号)。场页 key 与影像页脱钩 →
-            // 拉近超封顶后场页 LRU 稳定,零重烘零上传、换代瞬态消失。
-            // spanF = 2^df ≤ 2^kMaxDetDepthLevels 整除相位模数 → FS 复用
-            // gGlobal+phase 的祖先 scale-bias 数学。====
-            if (fieldArrayTexture_ && fieldIndirArrayTexture_) {
-                // [V24 线闪根修·粒度统一] 场页恒比影像页粗 2 级(df≥2):
-                // 此前高空 df=0(场页=影像页粒度,可见场页 ≈125-185 张,
-                // 单层即超 64 池两倍 → 换代必踢穿,线波浪闪),低空封顶区
-                // 本就 df≥2。统一到 d=2 档后每级 ~12 页,池容 4 个 zoom 级,
-                // 换代被存货完全吸收;解算质量 = 低空稳态同档(D2 容量模拟:
-                // 该档漏画 0.055-0.35%,不可辨)。深放大锐度(V5)不受影响:
-                // p.zoom≥17 时封顶路径本就给出 df≥2。
-                const int fz = std::max(
-                    std::min(p.zoom - 2, config_.roadFieldMaxZoom),
-                    p.zoom - kMaxDetDepthLevels);
-                const int df = p.zoom - fz;
-                fieldIndirTexelsScratch_.assign(
-                    static_cast<size_t>(p.placement.cellsX) *
-                        static_cast<size_t>(p.placement.cellsY) * 4u,
-                    0);
-                for (const DetKeptCell& kc : cache.kept) {
-                    TileKey fKey;
-                    fKey.schemeId = p.imgSchemeId;
-                    fKey.z = fz;
-                    fKey.x = (p.placement.x0 + kc.dx) >> df;
-                    fKey.y = (p.placement.y0 + kc.dy) >> df;
-                    const uint64_t fPacked = packKey(fKey);
-                    auto fit = fieldPages_.find(fPacked);
-                    if (fit == fieldPages_.end()) {
-                        uint64_t evicted = 0;
-                        const auto flH =
-                            fieldPool_.acquire(fPacked, frameId_, &evicted);
-                        const int fl = flH.slot;
-                        if (evicted != 0) {
-                            eraseFieldEntry(evicted);
-                        }
-                        if (fl < 0) {
-                            continue;  // 场池满:该 cell 本帧无场(优雅降级)
-                        }
-                        fit = fieldPages_.try_emplace(fPacked).first;
-                        fit->second.layer = fl;
-                        if (fl < static_cast<int>(fieldLayerKey_.size()) &&
-                            fieldLayerKey_[fl] == fPacked) {
-                            // 同 key churn 重建:层内真场直接复用,不重烘不闪。
-                            fit->second.uploaded = true;
-                        } else {
-                            kickFieldFetch(fKey, fPacked, fl, fit->second);
-                        }
-                    } else {
-                        fieldPool_.touch(fPacked, frameId_);
-                    }
-                    // [V24 线闪根修] 场页祖先回退(镜像影像 cell 的"沿祖先链
-                    // 取最细就绪页")。步3 把场解耦出影像页时,刀2 时代的锚页
-                    // 连续性保护没跟过来:精确档 pending → A=0 → 该 cell 线
-                    // 整块灭,烘完再回 —— 封顶(z≥15)以下每过一级 zoom 场页
-                    // key 全换,高空缩放/平移 = 整屏线波浪式闪。回退让粗一档
-                    // 的已上传场顶住(FS 的 df 祖先寻址本就支持,线短暂变粗
-                    // 不消失),精确档上传完成下一次 determination 自然切回。
-                    // 只读已有条目不建页:回退是兜底,不该扰动场池 LRU 结构。
-                    int useLayer = -1;
-                    int useDf = df;
-                    if (fit->second.uploaded) {
-                        useLayer = fit->second.layer;
-                    } else {
-                        for (int fd = 1; df + fd <= kMaxDetDepthLevels &&
-                                         fz - fd >= 0; ++fd) {
-                            TileKey aKey;
-                            aKey.schemeId = p.imgSchemeId;
-                            aKey.z = fz - fd;
-                            aKey.x = fKey.x >> fd;
-                            aKey.y = fKey.y >> fd;
-                            const uint64_t aPacked = packKey(aKey);
-                            const auto ait = fieldPages_.find(aPacked);
-                            if (ait != fieldPages_.end() &&
-                                ait->second.uploaded) {
-                                fieldPool_.touch(aPacked, frameId_);
-                                useLayer = ait->second.layer;
-                                useDf = df + fd;
-                                ++winFieldFallbackCells_;
-                                break;
-                            }
-                        }
-                    }
-                    if (useLayer < 0) {
-                        ++winFieldHoleCells_;
-                        continue;  // 全冷(无任何存货)A=0:片元不采场
-                    }
-                    appendUniqueLayer(fieldLayers, useLayer);
-                    uint8_t* ftexel =
-                        fieldIndirTexelsScratch_.data() +
-                        (static_cast<size_t>(kc.dy) * p.placement.cellsX +
-                         kc.dx) * 4u;
-                    ftexel[0] = static_cast<uint8_t>(useLayer & 0xFF);
-                    ftexel[1] = static_cast<uint8_t>((useLayer >> 8) & 0xFF);
-                    ftexel[2] = static_cast<uint8_t>(useDf);
-                    ftexel[3] = 255;
-                }
-                // [V24 线闪根修·下半] 场锚页预暖(镜像影像锚页,同一课的
-                // 步3 补作业):拉远时新档比存货粗,df≥0 寻址不到细存货,
-                // 祖先回退救不了 —— 必须趁细档还在渲染时把 fz-1 的场页
-                // 烘好,换代帧直接命中。整瓦四角的父场页去重后 kick
-                // (瓦内 cell 的父页 ≤4 个)。池近满时跳过:预暖是投机,
-                // 不许挤掉正在显示的场页(imagery 锚页无此虑,其池 512)。
-                if (fz - 1 >= 0 &&
-                    static_cast<int>(fieldPages_.size()) + 4 <=
-                        config_.maxFieldPages) {
-                    uint64_t seen[4] = {0, 0, 0, 0};
-                    int seenN = 0;
-                    for (const DetKeptCell& kc : cache.kept) {
-                        TileKey aKey;
-                        aKey.schemeId = p.imgSchemeId;
-                        aKey.z = fz - 1;
-                        aKey.x = (p.placement.x0 + kc.dx) >> (df + 1);
-                        aKey.y = (p.placement.y0 + kc.dy) >> (df + 1);
-                        const uint64_t aPacked = packKey(aKey);
-                        bool dup = false;
-                        for (int i = 0; i < seenN; ++i) {
-                            if (seen[i] == aPacked) { dup = true; break; }
-                        }
-                        if (dup) continue;
-                        if (seenN < 4) seen[seenN++] = aPacked;
-                        auto ait = fieldPages_.find(aPacked);
-                        if (ait != fieldPages_.end()) {
-                            fieldPool_.touch(aPacked, frameId_);
-                            continue;
-                        }
-                        uint64_t evicted = 0;
-                        const auto alH =
-                            fieldPool_.acquire(aPacked, frameId_, &evicted);
-                        const int al = alH.slot;
-                        if (evicted != 0) {
-                            eraseFieldEntry(evicted);
-                        }
-                        if (al < 0) continue;
-                        ait = fieldPages_.try_emplace(aPacked).first;
-                        ait->second.layer = al;
-                        if (al < static_cast<int>(fieldLayerKey_.size()) &&
-                            fieldLayerKey_[al] == aPacked) {
-                            ait->second.uploaded = true;
-                        } else {
-                            kickFieldFetch(aKey, aPacked, al, ait->second);
-                        }
-                    }
-                }
-            }
-        }
-        const bool hasFieldIndirection =
-            fieldArrayTexture_ && fieldIndirArrayTexture_;
         const bool indirWriteRequired =
             ind.placement.cellsX != p.placement.cellsX ||
             ind.placement.cellsY != p.placement.cellsY ||
-            ind.imageTexels != indirTexelsScratch_ ||
-            (hasFieldIndirection &&
-             ind.fieldTexels != fieldIndirTexelsScratch_);
+            ind.imageTexels != indirTexelsScratch_;
         const int publishedIndirLayer =
             indirPool_.layerBaseFor(p.tileKeyPacked);
         int targetIndirLayer = publishedIndirLayer;
@@ -1852,19 +1673,6 @@ void TerrainPageStore::updateVisiblePages(
                 p.placement.cellsY, indirTexelsScratch_.data(),
                 static_cast<size_t>(p.placement.cellsX) * 4u,
                 targetIndirLayer);
-            // The image indirection upload may already be queued in an
-            // asynchronous GLES/PBO backend even when the companion field
-            // upload below fails. Pin the physical slice immediately after
-            // the first successful write so a failure cannot release and
-            // recycle it while that DMA is still reading the staging data.
-            if (uploadedIndirection && hasFieldIndirection) {
-                uploadedIndirection = device_->updateTextureRegion(
-                    fieldIndirArrayTexture_.get(), 0, 0,
-                    p.placement.cellsX, p.placement.cellsY,
-                    fieldIndirTexelsScratch_.data(),
-                    static_cast<size_t>(p.placement.cellsX) * 4u,
-                    targetIndirLayer);
-            }
             lastIndirUploadMs_ += perf::nowMs() - indirUpStartMs;
             if (!uploadedIndirection) {
                 if (stagingIndir) {
@@ -1890,9 +1698,6 @@ void TerrainPageStore::updateVisiblePages(
                 continue;
             }
             ind.imageTexels = indirTexelsScratch_;
-            ind.fieldTexels = hasFieldIndirection
-                ? fieldIndirTexelsScratch_
-                : std::vector<uint8_t>{};
         } else if (publishedIndirLayer >= 0) {
             indirPool_.touch(p.tileKeyPacked, frameId_);
         }
@@ -1906,7 +1711,6 @@ void TerrainPageStore::updateVisiblePages(
         }
         ind.gridN = p.gridN;
         ind.imageLayers = std::move(imageLayers);
-        ind.fieldLayers = std::move(fieldLayers);
         ind.placement = p.placement;
         ind.texCoordSet = p.texCoordSet;
         // [瓦界对齐] instanced 管线的几何 UV→源格仿射(每帧重算:zoom/placement
@@ -2124,41 +1928,6 @@ bool TerrainPageStore::initialize(RenderDevice* device, const Config& config) {
     indirPool_.configure(kIndirArrayLayers, /*blockLayers=*/1);
     inbox_ = std::make_shared<PendingInbox>();
     readyInbox_ = std::make_shared<ReadyUploadInbox>();
-    // 刀2/步3 场"第二平面":R8 独立 array(maxFieldPages 层,z 封顶后的
-    // 可见场页数远小于影像页)+ 场间接纹理(与影像 indir 同尺寸同层数,
-    // 复用 tile 的 ind.layer)。任一创建失败只禁用场平面,影像页不受影响。
-    if (config_.roadFieldRequest) {
-        config_.maxFieldPages = std::max(1, config_.maxFieldPages);
-        // D2 线段纹素:RGBA8(编码见 LineFieldRasterizer.h),FS texelFetch
-        // 整数寻址(无插值),滤波参数仅防御。
-        TextureDesc fieldDesc = desc;
-        fieldDesc.format = TextureDesc::Format::RGBA8;
-        fieldDesc.minFilter = TextureDesc::Filter::Nearest;
-        fieldDesc.magFilter = TextureDesc::Filter::Nearest;
-        fieldDesc.arrayLayers = config_.maxFieldPages;
-        fieldArrayTexture_ = device_->createTexture(fieldDesc);
-        TextureDesc fieldIndirDesc = indirDesc;
-        fieldIndirArrayTexture_ = device_->createTexture(fieldIndirDesc);
-        if (fieldArrayTexture_ && fieldIndirArrayTexture_) {
-            fieldInbox_ = std::make_shared<RoadFieldInbox>();
-            // 每场层真场租户 key,初值哨兵(≠任何合法 packKey)→ 首访必烘。
-            fieldLayerKey_.assign(static_cast<size_t>(config_.maxFieldPages),
-                                  kInvalidFieldKey);
-            fieldPool_.configure(config_.maxFieldPages, /*blockLayers=*/1);
-            platformLog(LogLevel::Info, "PageStore",
-                        "roadField plane ready (RGBA8 D2 %dx%d x%d layers, "
-                        "zoom cap %d)",
-                        config_.pageSizeTexels, config_.pageSizeTexels,
-                        config_.maxFieldPages, config_.roadFieldMaxZoom);
-        } else {
-            platformLog(LogLevel::Warning, "PageStore",
-                        "roadField plane creation FAILED; field plane "
-                        "disabled");
-            fieldArrayTexture_.reset();
-            fieldIndirArrayTexture_.reset();
-            config_.roadFieldRequest = nullptr;
-        }
-    }
     return true;
 }
 
@@ -2177,11 +1946,6 @@ void TerrainPageStore::resetPageDomainState() {
         }
     }
     pages_.clear();
-    for (auto& [key, entry] : fieldPages_) {
-        (void)key;
-        entry.token.cancel();
-    }
-    fieldPages_.clear();
     pendingComposeTasks_.clear();
 
     // packKey deliberately omits schemeId inside one canonical domain. A
@@ -2192,11 +1956,6 @@ void TerrainPageStore::resetPageDomainState() {
     const uint64_t completedSerial = device_ ? device_->completedSerial() : 0;
     pool_.retireAll(completedSerial);
     indirPool_.retireAll(completedSerial);
-    if (fieldArrayTexture_) {
-        fieldPool_.retireAll(completedSerial);
-        std::fill(fieldLayerKey_.begin(), fieldLayerKey_.end(),
-                  kInvalidFieldKey);
-    }
     tileIndirs_.clear();
     detTileCache_.clear();
     visiblePagesScratch_.clear();
@@ -2219,7 +1978,7 @@ void TerrainPageStore::rejectPageDomain(
     PageDomainCompatibility compatibility, const char* detail) {
     const PageDomainCompatibility previous = pageDomainCompatibility_;
     if (pageDomainActive_ || !sources_.empty() || !pages_.empty() ||
-        !tileIndirs_.empty() || !fieldPages_.empty()) {
+        !tileIndirs_.empty()) {
         resetPageDomainState();
     }
     pageDomainCompatibility_ = compatibility;
@@ -2255,15 +2014,6 @@ void TerrainPageStore::clearAllComposedPages() {
     ++determinationDirtyRevision_;
 }
 
-void TerrainPageStore::setRoadFieldStyleUniforms(
-    const std::array<float, 4>& color, const std::array<float, 4>& widthRamp) {
-    if (rejectMutationDuringSubmission("setRoadFieldStyleUniforms")) {
-        return;
-    }
-    config_.roadFieldColor = color;
-    config_.roadFieldWidthRamp = widthRamp;
-}
-
 void TerrainPageStore::invalidateComposedPages() {
     if (rejectMutationDuringSubmission("invalidateComposedPages")) {
         return;
@@ -2292,40 +2042,6 @@ void TerrainPageStore::invalidateComposedPages() {
     ++determinationDirtyRevision_;  // 换肤重烘在途 → 下帧必须重编码/重 kick
 }
 
-void TerrainPageStore::invalidateFieldPages(int newFieldMaxZoom) {
-    if (rejectMutationDuringSubmission("invalidateFieldPages")) {
-        return;
-    }
-    // V28 场路原子换手:**不清账本、不清 fieldLayerKey_** → 旧场线继续上屏顶住,
-    // 新场 R8 到达覆写同层完成换手(消灭旧 clear 路的"线整块灭→烘完再回"空洞,
-    // 真机换肤时 fhole 尖刺那半)。场是单源,无影像那种按源单调闸;epoch 仅挡
-    // 换肤前那代 straggler。与影像合成页路(invalidateComposedPages)同课。
-    const bool capChanged =
-        newFieldMaxZoom >= 0 && newFieldMaxZoom != config_.roadFieldMaxZoom;
-    if (newFieldMaxZoom >= 0) {
-        config_.roadFieldMaxZoom = newFieldMaxZoom;
-    }
-    ++determinationDirtyRevision_;  // 换肤/封顶变更 → 场间接纹理下帧必须重编码
-    if (capChanged) {
-        // 封顶变了(新样式分级档变化)→ 场页 key 整体重映射(fz 依赖
-        // roadFieldMaxZoom)。旧 key 页不再是 determination 会显示的 key,原地
-        // 重烘无意义;保留旧页顶住(不清),determination 按新封顶建新 key 页
-        // (fieldLayerKey_ 不匹配 → 走重烘拿新样式),旧页随 LRU 淘汰退场。
-        // 不清 → 换封顶也无空洞。日/夜仅换色时 capChanged=false,走下方原地换手。
-        return;
-    }
-    for (auto& [key, entry] : fieldPages_) {
-        ++entry.targetEpoch;         // 挡旧代 straggler(drain epoch 闸)
-        entry.pendingRebake = true;  // 顶帧到换手完成(hasWorkInFlight)
-        entry.token.cancel();        // 旧代生产停(迟到经 epoch 闸丢弃)
-        entry.fetchIssued = false;
-        // unpackKey 还原 z/x/y(schemeId 缺省无碍:RoadFieldSource 只用 z/x/y,
-        // 见 requestField 的 tileToUnitRect)。resetDisplay=false 保旧线上屏。
-        const TileKey fieldKey = unpackKey(key);
-        kickFieldFetch(fieldKey, key, entry.layer, entry, /*resetDisplay=*/false);
-    }
-}
-
 void TerrainPageStore::erasePageEntry(uint64_t pageKey) {
     const auto it = pages_.find(pageKey);
     if (it == pages_.end()) {
@@ -2349,13 +2065,11 @@ void TerrainPageStore::synchronizeGpuCompletion() {
     const uint64_t completed = device_->completedSerial();
     pool_.setCompletedSerial(completed);
     indirPool_.setCompletedSerial(completed);
-    fieldPool_.setCompletedSerial(completed);
 }
 
 void TerrainPageStore::onFrameSubmitted(uint64_t submittedSerial) {
     pool_.publishPendingUses(submittedSerial);
     indirPool_.publishPendingUses(submittedSerial);
-    fieldPool_.publishPendingUses(submittedSerial);
 }
 
 TerrainPageStore::RasterStackBinding
@@ -2393,8 +2107,6 @@ TerrainPageStore::resolveTerrainBinding(const TilesetTile& tile) const {
     RasterStackSampleDescriptor& sample = binding.sample;
     sample.imageArray = arrayTexture_.get();
     sample.imageIndirectionArray = indirArrayTexture_.get();
-    sample.fieldArray = fieldArrayTexture_.get();
-    sample.fieldIndirectionArray = fieldIndirArrayTexture_.get();
     sample.indirectionLayer = ind.layer;
     sample.texCoordSet = ind.texCoordSet;
     sample.cellZoom = ind.cellZoom;
@@ -2429,14 +2141,7 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
     for (const int layer : ind.imageLayers) {
         pool_.markSlotPendingUse(layer);
     }
-    for (const int layer : ind.fieldLayers) {
-        fieldPool_.markSlotPendingUse(layer);
-    }
-    const size_t maxSlot =
-        fieldArrayTexture_
-            ? static_cast<size_t>(kGltfRoadFieldIndirTextureSlot)
-                               : static_cast<size_t>(
-                                     kGltfPageStoreIndirTextureSlot);
+    const size_t maxSlot = static_cast<size_t>(kGltfPageStoreIndirTextureSlot);
     if (cmd.textures.size() <= maxSlot) {
         cmd.textures.resize(maxSlot + 1u, nullptr);
     }
@@ -2486,28 +2191,6 @@ void TerrainPageStore::applyToTerrainCommand(RenderCommand& cmd,
         binding.sample.geomAffine[4], binding.sample.geomAffine[5], 0.0f,
         0.0f};
 
-    // 刀2 场"第二平面":与影像页同一次间接查找(同 layer/sampleUv/祖先
-    // scale-bias),FS 只多一次采样 + smoothstep。占位清场保证层复用时旧
-    // 租户路网不外泄(见 kickPageFetches),这里无需 per-cell 门控 ——
-    // indir 的 resident(A 通道)已同时门控两个平面。
-    if (fieldArrayTexture_ && fieldIndirArrayTexture_) {
-        cmd.textures[kGltfRoadFieldTextureSlot] = fieldArrayTexture_.get();
-        cmd.textures[kGltfRoadFieldIndirTextureSlot] =
-            fieldIndirArrayTexture_.get();
-        cmd.gltfUniforms.roadFieldParams[0] = 1.0f;
-        // y=cellZoom(FS 分级宽度的局部 zoom 基准;合批实例流另经
-        // pageCellDesc 逐实例携带,批级 uniform 承首实例会造宽度台阶)。
-        cmd.gltfUniforms.roadFieldParams[1] =
-            static_cast<float>(ind.cellZoom);
-        // z=场纹理边长(texel)、w=编码带宽(= kLineFieldBandTexels):FS
-        // 用 g 屏幕导数×z 求 texel/px 比,把 (1−field)·w 换算成屏幕像素。
-        cmd.gltfUniforms.roadFieldParams[2] =
-            static_cast<float>(config_.pageSizeTexels);
-        // w = D2 偏移编码范围(texel,= kLineFieldOffsetRangeTexels)。
-        cmd.gltfUniforms.roadFieldParams[3] = 4.0f;
-        cmd.gltfUniforms.roadFieldColor = config_.roadFieldColor;
-        cmd.gltfUniforms.roadFieldWidth = config_.roadFieldWidthRamp;
-    }
 }
 
 void TerrainPageStore::tick(SceneFrameResourceArbiter* resourceArbiter) {
@@ -2527,12 +2210,6 @@ void TerrainPageStore::tick(SceneFrameResourceArbiter* resourceArbiter) {
                 entry.fetchIssued.end()) {
             kickPageFetches(
                 entry.fetchKey, page.first, entry.layer, entry);
-        }
-    }
-    for (auto& [fieldPacked, entry] : fieldPages_) {
-        if (!entry.fetchIssued && (!entry.uploaded || entry.pendingRebake)) {
-            kickFieldFetch(unpackKey(fieldPacked), fieldPacked, entry.layer,
-                           entry, !entry.uploaded);
         }
     }
     const double tickStartMs = perf::nowMs();
@@ -2558,23 +2235,17 @@ void TerrainPageStore::tick(SceneFrameResourceArbiter* resourceArbiter) {
     if (frameId_ % 60u == 0u) {
         platformLog(LogLevel::Info, "PageStore",
                     "tick60 compose=%.1fms composeCpu=%.1fms upload=%.1fms "
-                    "maxTick=%.1fms items=%d disp=%d pend=%d fields=%d "
-                    "fhole=%d ffall=%d "
+                    "maxTick=%.1fms items=%d disp=%d pend=%d "
                     "pages=%d/%d(re)",
                     winComposeMs_, winComposeCpuMs_, winUploadMs_,
                     winMaxTickMs_, winInboxItems_, composeDispatchedThisFrame_,
                     static_cast<int>(pendingComposeTasks_.size()),
-                    winFieldUploads_,
-                    winFieldHoleCells_, winFieldFallbackCells_,
                     winPagesCreated_, winPagesRecreated_);
         winComposeMs_ = 0.0;
         winComposeCpuMs_ = 0.0;
         winUploadMs_ = 0.0;
         winMaxTickMs_ = 0.0;
         winInboxItems_ = 0;
-        winFieldUploads_ = 0;
-        winFieldHoleCells_ = 0;
-        winFieldFallbackCells_ = 0;
         winPagesCreated_ = 0;
         winPagesRecreated_ = 0;
     }
@@ -2746,62 +2417,6 @@ int TerrainPageStore::debugPageLayerForTest(uint64_t pageKey) const {
 int TerrainPageStore::debugIndirectionLayerForTest(uint64_t tileKey) const {
     const auto it = tileIndirs_.find(tileKey);
     return it != tileIndirs_.end() ? it->second.layer : -1;
-}
-
-int TerrainPageStore::debugFieldLayerForTest(uint64_t fieldKey) const {
-    const auto it = fieldPages_.find(fieldKey);
-    return it != fieldPages_.end() ? it->second.layer : -1;
-}
-
-// ==== 步3 场平面:独立于影像页的场页生产/淘汰 ====
-void TerrainPageStore::kickFieldFetch(const TileKey& fieldKey,
-                                      uint64_t fieldPacked, int layer,
-                                      FieldPageEntry& entry, bool resetDisplay) {
-    if (!config_.roadFieldRequest || !fieldInbox_) {
-        return;
-    }
-    if (entry.fetchIssued) {
-        return;
-    }
-    if (resourceArbiter_ &&
-        !resourceArbiter_->tryAcquire(
-            SceneFrameResourceProducer::PageStore,
-            SceneFrameResourceStage::NetworkRequest,
-            FrameResourcePriority::Normal)) {
-        return;
-    }
-    entry.fetchIssued = true;
-    entry.lastProgressFrame = frameId_;
-    entry.token = CancellationToken{};
-    // V28:换肤原地重烘 resetDisplay=false → 不清 uploaded,旧场 R8 继续上屏顶住,
-    // 新场到达覆写同层完成换手。新建/churn 建页 resetDisplay=true → 无内容可显,置 false。
-    if (resetDisplay) {
-        entry.uploaded = false;
-    }
-    const uint64_t epoch = entry.targetEpoch;  // 快照本代号进回调
-    const uint64_t domainGeneration = pageDomainGeneration_;
-    std::shared_ptr<RoadFieldInbox> fieldInbox = fieldInbox_;
-    config_.roadFieldRequest(
-        fieldKey, entry.token,
-        [fieldInbox, fieldPacked, domainGeneration, layer,
-         epoch](std::vector<uint8_t> r8) {
-            // 回调只捕 inbox shared_ptr —— 页存储先亡不悬垂,迟到结果
-            // 经账本校验丢弃。
-            std::lock_guard<std::mutex> lock(fieldInbox->mutex);
-            fieldInbox->items.push_back(
-                RoadFieldInbox::Item{fieldPacked, domainGeneration, layer, epoch,
-                                     std::move(r8)});
-        });
-}
-
-void TerrainPageStore::eraseFieldEntry(uint64_t fieldPacked) {
-    const auto it = fieldPages_.find(fieldPacked);
-    if (it == fieldPages_.end()) {
-        return;
-    }
-    it->second.token.cancel();  // 迟到 r8 经账本校验丢弃
-    fieldPages_.erase(it);
-    ++determinationDirtyRevision_;  // 场页淘汰 → 引用该层的 cell 下帧重编码
 }
 
 void TerrainPageStore::drainInbox() {
@@ -3026,127 +2641,12 @@ void TerrainPageStore::drainReadyUploads() {
     int uploaded = 0;
     double frameUploadMs = 0.0;
 
-    // ==== 刀2 场平面:与影像共享 maxUploadsPerFrame 预算(场 64KB/页,记
-    // 1 个上传)。上传真场后设 fieldLayerKey_[layer]=key + entry.uploaded →
-    // determination 下帧把该场页编进场间接纹理(A=255)放行采样。====
-    if (fieldInbox_ && fieldArrayTexture_) {
-        std::vector<RoadFieldInbox::Item> fieldReady;
-        {
-            std::lock_guard<std::mutex> lock(fieldInbox_->mutex);
-            fieldReady.swap(fieldInbox_->items);
-        }
-        size_t fieldRequeueFrom = fieldReady.size();
-        for (size_t idx = 0; idx < fieldReady.size(); ++idx) {
-            if (uploaded >= config_.maxUploadsPerFrame) {
-                fieldRequeueFrom = idx;
-                break;
-            }
-            auto& item = fieldReady[idx];
-            const auto it = fieldPages_.find(item.key);
-            if (item.domainGeneration != pageDomainGeneration_ ||
-                it == fieldPages_.end() || it->second.layer != item.layer) {
-                continue;  // 淘汰/换租后的迟到场:丢弃
-            }
-            if (item.r8.size() != static_cast<size_t>(side) *
-                                       static_cast<size_t>(side) * 4u) {
-                continue;  // 尺寸不符:丢弃(防生产者配置漂移写坏层)
-            }
-            // V28 epoch 闸:换肤前那代的迟到场 R8 丢弃 —— 否则旧样式覆盖已换手的
-            // 新线且无后续再纠正(场单源、单次上传即整页,无按源单调可兜)。
-            if (item.epoch < it->second.targetEpoch) {
-                continue;
-            }
-            if (resourceArbiter_ &&
-                !resourceArbiter_->tryAcquire(
-                    SceneFrameResourceProducer::PageStore,
-                    SceneFrameResourceStage::GpuUpload,
-                    FrameResourcePriority::Normal)) {
-                fieldRequeueFrom = idx;
-                break;
-            }
-            int uploadLayer = item.layer;
-            uint64_t stagingKey = 0;
-            bool staging = false;
-            uint64_t evicted = 0;
-            if (it->second.uploaded &&
-                !fieldPool_.canWriteInPlace(item.key)) {
-                stagingKey = layerStagingKey(item.key);
-                const auto replacement = fieldPool_.acquireStaging(
-                    stagingKey, item.key, frameId_, &evicted);
-                uploadLayer = replacement.slot;
-                staging = replacement.valid();
-                if (evicted != 0) {
-                    eraseFieldEntry(evicted);
-                }
-                if (!staging) {
-                    fieldRequeueFrom = idx;
-                    break;
-                }
-            }
-            const double uploadStartMs = perf::nowMs();
-            const bool uploadedField = device_->updateTextureRegion(
-                fieldArrayTexture_.get(), 0, 0, side, side, item.r8.data(),
-                static_cast<size_t>(side) * 4u, uploadLayer);
-            const double upMs = perf::nowMs() - uploadStartMs;
-            winUploadMs_ += upMs;
-            frameUploadMs += upMs;
-            if (!uploadedField) {
-                if (staging) {
-                    fieldPool_.release(stagingKey);
-                }
-                fieldRequeueFrom = idx;
-                break;
-            }
-            // The upload itself may be asynchronous (GLES PBO). Protect the
-            // destination slice even when no draw command references it yet.
-            fieldPool_.markSlotPendingUse(uploadLayer);
-            int retiredLayer = -1;
-            if (staging &&
-                !fieldPool_.replaceKey(
-                    stagingKey, item.key, &retiredLayer)) {
-                fieldPool_.release(stagingKey);
-                fieldRequeueFrom = idx;
-                break;
-            }
-            if (staging) {
-                it->second.layer = uploadLayer;
-                if (retiredLayer >= 0 &&
-                    retiredLayer < static_cast<int>(fieldLayerKey_.size())) {
-                    fieldLayerKey_[retiredLayer] = kInvalidFieldKey;
-                }
-            }
-            // 记住该场层现装的是这个 key 的真场 → 同 key 淘汰重建可跳烘不闪。
-            if (uploadLayer >= 0 &&
-                uploadLayer < static_cast<int>(fieldLayerKey_.size())) {
-                fieldLayerKey_[uploadLayer] = item.key;
-            }
-            it->second.uploaded = true;
-            it->second.pendingRebake = false;  // V28:原地重烘换手完成
-            ++winFieldUploads_;
-            it->second.lastProgressFrame = frameId_;
-            ++uploaded;
-        }
-        if (fieldRequeueFrom < fieldReady.size()) {
-            std::lock_guard<std::mutex> lock(fieldInbox_->mutex);
-            fieldInbox_->items.insert(
-                fieldInbox_->items.begin(),
-                std::make_move_iterator(fieldReady.begin() + fieldRequeueFrom),
-                std::make_move_iterator(fieldReady.end()));
-        }
-    }
-    const int uploadedAfterFields = uploaded;
-
     std::vector<ReadyUploadInbox::Item> ready;
     {
         std::lock_guard<std::mutex> lock(readyInbox_->mutex);
         ready.swap(readyInbox_->items);
     }
-    if (ready.empty()) {
-        if (uploaded > 0) {
-            ++determinationDirtyRevision_;  // 仅场上传 → 下帧重编码点亮
-        }
-        return;
-    }
+    if (ready.empty()) return;
     size_t requeueFrom = 0;
     for (size_t idx = 0; idx < ready.size(); ++idx) {
         if (uploaded >= config_.maxUploadsPerFrame) {
@@ -3227,7 +2727,7 @@ void TerrainPageStore::drainReadyUploads() {
         ++uploadedLayerTotal_;
         ++uploaded;
     }
-    if (uploaded > uploadedAfterFields) {
+    if (uploaded > 0) {
         ++determinationDirtyRevision_;  // 影像上传推进 → 下帧重编码点亮
     }
     // 未处理完的项(超预算)放回下帧继续。

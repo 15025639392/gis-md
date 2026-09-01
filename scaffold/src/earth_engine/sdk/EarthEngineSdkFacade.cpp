@@ -3,6 +3,7 @@
 #include "../Engine.h"
 #include "../content/CompositeTerrainProvider.h"
 #include "../content/EllipsoidTerrainContentProvider.h"
+#include "../content/AmapClassicTerrainInternal.h"
 #include "../content/GltfContentProvider.h"
 #include "../content/HeightmapTerrainContentProvider.h"
 #include "../core/geodesy/Cartographic.h"
@@ -310,6 +311,9 @@ EarthEngineSdkFacade::EarthEngineSdkFacade(Engine& engine,
       platformBridge_(platformBridge) {}
 
 EarthEngineSdkFacade::~EarthEngineSdkFacade() {
+    // Tileset borrows the activated overlays owned by this facade. Release
+    // all tile trees before C++ member destruction reaches those owners.
+    engine_.clearAmapClassicTerrainTileset();
     for (const std::string& id : installedMvtSourceIds_) {
         engine_.removeMvtVectorSource(id);
     }
@@ -387,7 +391,6 @@ bool EarthEngineSdkFacade::installMvtSource(const MvtSourceConfig& config) {
 
         auto layer = std::make_unique<FeatureRenderLayer>(
             config.id, &renderDevice_, Ellipsoid::WGS84());
-        layer->setStyle(config.style);
         FeatureRenderLayer* layerPtr = layer.get();
         MvtVectorSource::Sinks sinks;
         sinks.prepareTessellate = [layerPtr](const TileKey& key) {
@@ -458,6 +461,19 @@ bool EarthEngineSdkFacade::removeMvtSource(const std::string& id) {
 }
 
 void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
+    AmapClassicRuntime* officialRuntime = engine_.amapClassicRuntimeForSdk();
+    const bool officialAmapRuntime = officialRuntime != nullptr;
+    if (officialAmapRuntime &&
+        (!config.mvtSources.empty() || !config.rasterOverlays.empty() ||
+         !pendingCustomOverlays_.empty() ||
+         config.gltf.enabled || config.debugOffscreenPassthrough ||
+         config.fxaa || config.aerialFog || config.virtualTexturePoc ||
+         config.tileCompositeBakePoc || config.vtIndirectionSamplePoc ||
+         config.terrainPageStore)) {
+        platformLog(LogLevel::Error, "SdkFacade",
+                    "reject non-official vector/raster/glTF/post-process/experimental scene beside AMap official runtime");
+        return;
+    }
     config_ = std::move(config);
     resetCamera();
 
@@ -466,8 +482,11 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     }
     installedMvtSourceIds_.clear();
 
-    rasterOverlays_.clear();
+    // The old Tileset borrows these ActivatedRasterOverlay pointers. Destroy
+    // the borrower before replacing the owning vectors.
+    engine_.clearAmapClassicTerrainTileset();
     activatedRasterOverlays_.clear();
+    rasterOverlays_.clear();
 
     installMvtSources(config_.mvtSources);
 
@@ -794,13 +813,32 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
         makeSceneTilesetOptions(config_.tileset);
     SceneTerrainRuntimeSources terrainSources =
         createTerrainRuntimeSources(config_.terrain, platformBridge_);
+    if (officialAmapRuntime) {
+        // Spatial placement belongs to the scene terrain, not to provider
+        // paint identity. Decorate the one configured terrain provider with
+        // the official unlit land color; do not install a second flat canvas
+        // or fork the sealed vector style path.
+        terrainSources.contentProvider =
+            decorateAmapClassicTerrainContentProvider(
+                std::move(terrainSources.contentProvider));
+    }
     auto tileset = std::make_unique<Tileset>(
         std::move(terrainSources.tileScheme),
         std::move(rasterOverlays),
         &renderDevice_,
         tilesetOptions,
         std::move(terrainSources.contentProvider));
-    engine_.setTileset(std::move(tileset));
+    if (officialAmapRuntime) {
+        if (!engine_.installAmapClassicTerrainTileset(std::move(tileset))) {
+            officialRuntime->setOfficialSurfaceFillBaked(false);
+            platformLog(LogLevel::Error, "SdkFacade",
+                        "failed to install AMap official terrain Tileset");
+            return;
+        }
+        officialRuntime->setOfficialSurfaceFillBaked(true);
+    } else {
+        engine_.setTileset(std::move(tileset));
+    }
     logInfo(platformBridge_, "Unified Tileset created");
 
     if (config_.gltf.enabled) {
@@ -835,21 +873,25 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
     }
 
     engine_.setTime(config_.fixedSimulationJulianDate);
-    engine_.setSunsetTerrainTint(config_.sunsetTerrainWarmth,
-                                 config_.sunsetTerrainShadowWarmth);
-    // 效果 setter 在后端不支持时拒绝并返回 false;这里把"配置了但没生效"
-    // 汇总成一条显式告警,避免 iOS 上开关静默无效被误判为视觉不明显。
-    const bool passthroughOk =
-        engine_.setOffscreenPassthroughEnabled(config_.debugOffscreenPassthrough);
-    const bool fxaaOk = engine_.setFxaaEnabled(config_.fxaa);
-    const bool fogOk = engine_.setAerialFogEnabled(config_.aerialFog);
-    if (!passthroughOk || !fxaaOk || !fogOk) {
-        platformLog(LogLevel::Warning, "SdkFacade",
-                    "offscreen post-process effects requested by scene config "
-                    "were rejected by the render backend (see Engine errors)");
+    bool fxaaOk = false;
+    bool fogOk = false;
+    if (!officialAmapRuntime) {
+        engine_.setSunsetTerrainTint(config_.sunsetTerrainWarmth,
+                                     config_.sunsetTerrainShadowWarmth);
+        // 效果 setter 在后端不支持时拒绝并返回 false;这里把"配置了但没生效"
+        // 汇总成一条显式告警,避免 iOS 上开关静默无效被误判为视觉不明显。
+        const bool passthroughOk = engine_.setOffscreenPassthroughEnabled(
+            config_.debugOffscreenPassthrough);
+        fxaaOk = engine_.setFxaaEnabled(config_.fxaa);
+        fogOk = engine_.setAerialFogEnabled(config_.aerialFog);
+        if (!passthroughOk || !fxaaOk || !fogOk) {
+            platformLog(LogLevel::Warning, "SdkFacade",
+                        "offscreen post-process effects requested by scene config "
+                        "were rejected by the render backend (see Engine errors)");
+        }
+        engine_.setAerialFogParams(config_.aerialFogDensity,
+                                   config_.aerialFogStartDistance);
     }
-    engine_.setAerialFogParams(config_.aerialFogDensity,
-                               config_.aerialFogStartDistance);
     engine_.setVirtualTexturePocEnabled(config_.virtualTexturePoc);
     engine_.setTileCompositeBakePocEnabled(config_.tileCompositeBakePoc);
     engine_.setVtIndirectionSamplePocEnabled(config_.vtIndirectionSamplePoc);
@@ -925,11 +967,6 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
             contracts::Gate::ImageryDrivenUpsample,
             !config_.tileset.decoupleImageryFromGeometry);
     }
-}
-
-FeatureRenderLayer* EarthEngineSdkFacade::mvtVectorLayer(
-    const std::string& id) const {
-    return engine_.mvtVectorLayer(id);
 }
 
 void EarthEngineSdkFacade::resetCamera() {
@@ -1020,6 +1057,11 @@ void EarthEngineSdkFacade::addCustomImageryOverlay(
     std::unique_ptr<ImageryProvider> provider,
     std::unique_ptr<TileScheme> scheme,
     RasterOverlay::Options options) {
+    if (engine_.hasAmapClassicRuntime()) {
+        platformLog(LogLevel::Error, "SdkFacade",
+                    "reject custom imagery overlay beside AMap official runtime");
+        return;
+    }
     pendingCustomOverlays_.push_back(
         PendingCustomOverlay{std::move(provider), std::move(scheme),
                              std::move(options)});

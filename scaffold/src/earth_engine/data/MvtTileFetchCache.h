@@ -21,9 +21,8 @@ namespace earth_engine {
 
 /// 矢量数据瓦 fetch+decode 的共享缓存(LRU + 在途合并)。
 ///
-/// 从刀1 `VectorDrapeImageryProvider::State` 提炼:刀2 起同一批 z14 祖先瓦
-/// 有**两个消费者**(面 drape 栅格化 + 线 SDF 场烘焙),不共享就是同瓦双份
-/// fetch+decode。overzoom 下多个页并发要同一张祖先瓦是常态,在途合并必需。
+/// Generic MVT and sealed provider sources share the same decoded/raw cache
+/// mechanics; concurrent requests for one tile are coalesced.
 ///
 /// **E3 泛化(E 方案通路):载荷类型模板化。** MVT 与高德 Nebula 共用同一
 /// 套获取层(LRU/在途合并/失败重试/L1 解码 + L2 字节),差异只在「字节流

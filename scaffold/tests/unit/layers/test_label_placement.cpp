@@ -2,6 +2,7 @@
 
 #include "earth_engine/layers/LabelPlacement.h"
 #include "earth_engine/scene/Camera.h"
+#include "earth_engine/style/AmapClassicLabelStyleInternal.h"
 
 #include <cmath>
 
@@ -65,6 +66,130 @@ TEST_F(LabelPlacementTest, SingleVisibleLabelPlacedAndConverges) {
     EXPECT_FALSE(placement.update(in, cands));
 }
 
+TEST(LabelPlacementContractTest, ReadableDirectionFlipsLeftwardTangent) {
+    const auto d = LabelPlacement::readableScreenDirection(-3.0, 4.0);
+    EXPECT_NEAR(0.6, d[0], 1e-9);
+    EXPECT_NEAR(-0.8, d[1], 1e-9);
+    const auto horizontal = LabelPlacement::readableScreenDirection(0.0, 0.0);
+    EXPECT_DOUBLE_EQ(1.0, horizontal[0]);
+    EXPECT_DOUBLE_EQ(0.0, horizontal[1]);
+}
+
+TEST(LabelPlacementContractTest, RotatedCollisionBoundsFollowLineDirection) {
+    const auto horizontal = LabelPlacement::rotatedScreenBounds(
+        -40.0f, -5.0f, 40.0f, 5.0f, 1.0, 0.0);
+    const auto vertical = LabelPlacement::rotatedScreenBounds(
+        -40.0f, -5.0f, 40.0f, 5.0f, 0.0, 1.0);
+    EXPECT_NEAR(80.0, horizontal[2] - horizontal[0], 1e-9);
+    EXPECT_NEAR(10.0, horizontal[3] - horizontal[1], 1e-9);
+    EXPECT_NEAR(10.0, vertical[2] - vertical[0], 1e-9);
+    EXPECT_NEAR(80.0, vertical[3] - vertical[1], 1e-9);
+}
+
+TEST_F(LabelPlacementTest, CandidateSpecificPaddingControlsCollision) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    const Vec3 anchor = spherePoint(0.0);
+    LabelCandidate left = makeCandidate(1, anchor);
+    LabelCandidate right = makeCandidate(2, anchor);
+    left.boxMinXPx = -20.0f;
+    left.boxMaxXPx = -1.0f;
+    right.boxMinXPx = 1.0f;
+    right.boxMaxXPx = 20.0f;
+    left.paddingXPx = right.paddingXPx = 0.0f;
+    left.paddingYPx = right.paddingYPx = 0.0f;
+    placement.update(in, {left, right});
+    EXPECT_EQ(2, placement.stats().placed);
+
+    LabelPlacement padded;
+    left.paddingXPx = right.paddingXPx = 2.0f;
+    left.paddingYPx = right.paddingYPx = 2.0f;
+    padded.update(in, {left, right});
+    EXPECT_EQ(1, padded.stats().placed);
+    EXPECT_EQ(1, padded.stats().collided);
+}
+
+TEST_F(LabelPlacementTest, CandidatePaddingIsAxisSpecific) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    const Vec3 anchor = spherePoint(0.0);
+    LabelCandidate left = makeCandidate(31, anchor);
+    LabelCandidate right = makeCandidate(32, anchor);
+    left.boxMinXPx = -20.0f;
+    left.boxMaxXPx = -1.0f;
+    right.boxMinXPx = 1.0f;
+    right.boxMaxXPx = 20.0f;
+    left.paddingXPx = right.paddingXPx = 2.0f;
+    left.paddingYPx = right.paddingYPx = 0.0f;
+    placement.update(in, {left, right});
+    EXPECT_EQ(1, placement.stats().collided);
+
+    LabelPlacement verticalOnly;
+    left.paddingXPx = right.paddingXPx = 0.0f;
+    left.paddingYPx = right.paddingYPx = 2.0f;
+    verticalOnly.update(in, {left, right});
+    EXPECT_EQ(0, verticalOnly.stats().collided);
+}
+
+TEST_F(LabelPlacementTest, SecondaryIconBoxCollidesWithoutBlockingGap) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    const Vec3 p = spherePoint(0.0);
+    LabelCandidate withIcon = makeCandidate(1, p);
+    withIcon.boxMinXPx = 20.0f;
+    withIcon.boxMaxXPx = 40.0f;
+    withIcon.boxMinYPx = -5.0f;
+    withIcon.boxMaxYPx = 5.0f;
+    withIcon.paddingXPx = withIcon.paddingYPx = 0.0f;
+    withIcon.hasSecondaryBox = true;
+    withIcon.secondaryBoxMinXPx = -40.0f;
+    withIcon.secondaryBoxMaxXPx = -20.0f;
+    withIcon.secondaryBoxMinYPx = -5.0f;
+    withIcon.secondaryBoxMaxYPx = 5.0f;
+
+    LabelCandidate hitsIcon = makeCandidate(2, p);
+    hitsIcon.boxMinXPx = -35.0f;
+    hitsIcon.boxMaxXPx = -25.0f;
+    hitsIcon.boxMinYPx = -4.0f;
+    hitsIcon.boxMaxYPx = 4.0f;
+    hitsIcon.paddingXPx = hitsIcon.paddingYPx = 0.0f;
+    placement.update(in, {withIcon, hitsIcon});
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(1));
+    EXPECT_FLOAT_EQ(0.0f, placement.opacity(2));
+
+    LabelPlacement gapPlacement;
+    LabelCandidate inGap = hitsIcon;
+    inGap.featureId = 3;
+    inGap.boxMinXPx = -5.0f;
+    inGap.boxMaxXPx = 5.0f;
+    gapPlacement.update(in, {withIcon, inGap});
+    EXPECT_FLOAT_EQ(1.0f, gapPlacement.opacity(1));
+    EXPECT_FLOAT_EQ(1.0f, gapPlacement.opacity(3));
+}
+
+TEST_F(LabelPlacementTest,
+       AlongPathCollisionPartsReplaceCenteredBoundingRectangle) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    const Vec3 p = spherePoint(0.0);
+    LabelCandidate curved = makeCandidate(1, p, 80.0f, 40.0f);
+    curved.paddingXPx = curved.paddingYPx = 0.0f;
+    curved.collisionParts = {
+        LabelCollisionPart{p, p, -80.0f, -8.0f, -50.0f, 8.0f},
+        LabelCollisionPart{p, p, 50.0f, -8.0f, 80.0f, 8.0f}};
+
+    LabelCandidate inRealGap = makeCandidate(2, p, 10.0f, 6.0f);
+    inRealGap.paddingXPx = inRealGap.paddingYPx = 0.0f;
+    placement.update(in, {curved, inRealGap});
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(1));
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(2));
+
+    LabelPlacement hitPlacement;
+    LabelCandidate hitsGlyph = makeCandidate(3, p, 10.0f, 6.0f);
+    hitsGlyph.boxMinXPx = -70.0f;
+    hitsGlyph.boxMaxXPx = -55.0f;
+    hitsGlyph.paddingXPx = hitsGlyph.paddingYPx = 0.0f;
+    hitPlacement.update(in, {curved, hitsGlyph});
+    EXPECT_FLOAT_EQ(1.0f, hitPlacement.opacity(1));
+    EXPECT_FLOAT_EQ(0.0f, hitPlacement.opacity(3));
+}
+
 // V27:hasPendingFades 是"帧循环还得续帧"的判据 —— 它一旦漏报,冷启动瓦片
 // 加载完就停帧、标注 fade 冻在半程 = POI 首现要缩放催化的根因。钉死:半程时
 // 报 true,收敛后报 false;空态 false。
@@ -115,6 +240,66 @@ TEST_F(LabelPlacementTest, OverlapLowerIdWinsOnDistanceTie) {
     EXPECT_FLOAT_EQ(0.0f, placement.opacity(2));
 }
 
+TEST_F(LabelPlacementTest,
+       OfficialEqualRankUsesExplicitStampInsteadOfVectorDistanceOrId) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    LabelCandidate earlier = makeCandidate(
+        1, spherePoint(20.0), 400.0f, 300.0f, 4);
+    LabelCandidate later = makeCandidate(
+        999, spherePoint(0.0), 400.0f, 300.0f, 4);
+    // Deliberately put the larger official stamp first in the candidate
+    // vector. Vector position, camera distance, and feature id all disagree
+    // with the provider contract; only the explicit stamp may decide.
+    earlier.officialInsertionOrder = 42;
+    later.officialInsertionOrder = 41;
+
+    placement.update(in, {earlier, later});
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(1));
+    EXPECT_FLOAT_EQ(0.0f, placement.opacity(999));
+}
+
+TEST_F(LabelPlacementTest,
+       OfficialLaterPathFragmentWinsWithinOneSourceStamp) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    LabelCandidate first = makeCandidate(1001, spherePoint(0.0));
+    LabelCandidate second = makeCandidate(1002, spherePoint(0.0));
+    first.officialInsertionOrder = second.officialInsertionOrder = 42;
+    first.officialFragmentOrder = 0;
+    second.officialFragmentOrder = 1;
+
+    placement.update(in, {first, second});
+    EXPECT_FLOAT_EQ(0.0f, placement.opacity(1001));
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(1002));
+}
+
+TEST_F(LabelPlacementTest,
+       OfficialCanCoveredYieldsOnlyToHigherPriorityAndBlocksNobody) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    const Vec3 p = spherePoint(0.0);
+    LabelCandidate higherCanCovered = makeCandidate(1, p);
+    higherCanCovered.rank = 1;
+    higherCanCovered.officialCanCovered =
+        amapClassicPoiCanCovered(10002, 32, 4.0);
+    ASSERT_TRUE(higherCanCovered.officialCanCovered);
+    LabelCandidate lowerOrdinary = makeCandidate(2, p);
+    lowerOrdinary.rank = 2;
+    placement.update(in, {higherCanCovered, lowerOrdinary});
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(1));
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(2));
+
+    LabelPlacement higherOrdinaryWins;
+    LabelCandidate higherOrdinary = makeCandidate(3, p);
+    higherOrdinary.rank = 1;
+    LabelCandidate lowerCanCovered = makeCandidate(4, p);
+    lowerCanCovered.rank = 2;
+    lowerCanCovered.officialCanCovered =
+        amapClassicPoiCanCovered(10002, 34, 6.0);
+    ASSERT_TRUE(lowerCanCovered.officialCanCovered);
+    higherOrdinaryWins.update(in, {higherOrdinary, lowerCanCovered});
+    EXPECT_FLOAT_EQ(1.0f, higherOrdinaryWins.opacity(3));
+    EXPECT_FLOAT_EQ(0.0f, higherOrdinaryWins.opacity(4));
+}
+
 TEST_F(LabelPlacementTest, HigherImportanceRankWinsCollisionBeforeDistance) {
     const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
     // Amap rank is normalized at the adapter boundary so that a smaller
@@ -129,6 +314,35 @@ TEST_F(LabelPlacementTest, HigherImportanceRankWinsCollisionBeforeDistance) {
     EXPECT_EQ(1, placement.stats().collided);
     EXPECT_FLOAT_EQ(1.0f, placement.opacity(99));
     EXPECT_FLOAT_EQ(0.0f, placement.opacity(1));
+}
+
+TEST_F(LabelPlacementTest, SameLineRepeatGroupHonorsMinimumScreenDistance) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    LabelCandidate a = makeCandidate(101, spherePoint(-1.0), 4.0f, 4.0f);
+    LabelCandidate b = makeCandidate(102, spherePoint(1.0), 4.0f, 4.0f);
+    a.repeatGroup = 77;
+    b.repeatGroup = 77;
+    a.repeatDistancePx = 200.0f;
+    b.repeatDistancePx = 200.0f;
+
+    placement.update(in, {a, b});
+    EXPECT_EQ(1, placement.stats().placed);
+    EXPECT_EQ(1, placement.stats().repeated);
+    EXPECT_EQ(0, placement.stats().collided);
+}
+
+TEST_F(LabelPlacementTest, DifferentRepeatGroupsRemainIndependent) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    LabelCandidate a = makeCandidate(201, spherePoint(-2.0), 2.0f, 2.0f);
+    LabelCandidate b = makeCandidate(202, spherePoint(2.0), 2.0f, 2.0f);
+    a.repeatGroup = 11;
+    b.repeatGroup = 12;
+    a.repeatDistancePx = 500.0f;
+    b.repeatDistancePx = 500.0f;
+
+    placement.update(in, {a, b});
+    EXPECT_EQ(2, placement.stats().placed);
+    EXPECT_EQ(0, placement.stats().repeated);
 }
 
 TEST_F(LabelPlacementTest, CloserLabelWinsCollision) {
@@ -166,6 +380,19 @@ TEST_F(LabelPlacementTest, BehindCameraCulled) {
     placement.update(in, cands);
     EXPECT_EQ(1, placement.stats().culledProjection);
     EXPECT_FLOAT_EQ(0.0f, placement.opacity(1));
+}
+
+TEST_F(LabelPlacementTest, PartiallyOffscreenLabelRemainsPlaced) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    // The point is visible, but the label crosses the left edge. Continuous
+    // map panning keeps the label alive until its complete box leaves.
+    auto candidate = makeCandidate(1, spherePoint(0.0), 400.0f, 15.0f);
+    candidate.boxMinXPx = -500.0f;
+    candidate.boxMaxXPx = 300.0f;
+
+    placement.update(in, {candidate});
+    EXPECT_EQ(1, placement.stats().placed);
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(1));
 }
 
 TEST_F(LabelPlacementTest, BackSideOfGlobeHorizonCulled) {

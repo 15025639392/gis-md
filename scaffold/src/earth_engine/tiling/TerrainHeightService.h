@@ -44,13 +44,16 @@ class TilesetTileRegistry;
 ///
 /// 采样语义与旧 LoadedTerrainHeightSampler 逐点等价(对拍守卫见
 /// test_terrain_height_service.cpp):最深档优先、同深取更高、无覆盖
-/// nullopt;RenderGridConsistent 用瓦片常驻 draw 命令上的真实渲染档位。
+/// nullopt;RenderGridConsistent 只对齐单个 registry 瓦片的渲染网格档位。
+/// 它不是本帧可见面查询：不表达 TileRenderEntry 选择、祖先裁剪回退、
+/// relief fade 或 geomorph。矢量贴地必须使用 RenderedTerrainSurfaceSampler。
 class TerrainHeightService {
 public:
     enum class Interp {
         /// 全分辨率双线性(数据侧真值;fill 代理抬升等既有语义)。
         FullResBilinear,
-        /// 渲染网格一致分段线性(与上屏地形面同一张面;矢量贴地/相机碰撞)。
+        /// 单瓦片渲染网格一致分段线性；相机/通用 registry 查询使用。
+        /// 本帧可见面消费者不得使用此枚举冒充 TilePlan 合同。
         RenderGridConsistent,
     };
 

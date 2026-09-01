@@ -2,6 +2,7 @@
 #include "../interaction/SelectionManager.h"
 #include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
+#include "../debug/PlatformLog.h"
 
 #include <algorithm>
 
@@ -45,10 +46,21 @@ std::unique_ptr<VectorLayer> SceneLayerCoordinator::removeVectorLayer(
     return removed;
 }
 
-void SceneLayerCoordinator::addFeatureRenderLayer(
+bool SceneLayerCoordinator::addFeatureRenderLayer(
     std::unique_ptr<FeatureRenderLayer> layer) {
-    if (!layer) return;
+    if (!layer || layer->id().empty()) return false;
+    if (layer->style().usesOfficialProviderContract() &&
+        !layer->hasSealedOfficialProfile()) {
+        platformLog(LogLevel::Error, "SceneLayerCoordinator",
+                    "reject unsealed official layer '%s'",
+                    layer->id().c_str());
+        return false;
+    }
+    for (const auto& existing : featureRenderLayers_) {
+        if (existing && existing->id() == layer->id()) return false;
+    }
     featureRenderLayers_.push_back(std::move(layer));
+    return true;
 }
 
 std::unique_ptr<FeatureRenderLayer>

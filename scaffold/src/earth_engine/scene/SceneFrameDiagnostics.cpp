@@ -16,6 +16,13 @@ void SceneFrameDiagnostics::resetPerFrame(Diagnostics& diagnostics) {
     diagnostics.mvtVectorUpdateMs = 0.0;
     diagnostics.renderCommandBuildMs = 0.0;
     diagnostics.renderSubmitMs = 0.0;
+    diagnostics.terrainSurfaceSamplerBuildMs = 0.0;
+    diagnostics.terrainSurfaceSamplerCandidates = 0;
+    diagnostics.terrainSurfaceSamplerCommandIndexEntries = 0;
+    diagnostics.terrainSurfaceSamplerCommandLookups = 0;
+    diagnostics.terrainSurfaceSamplerLutCopyBytes = 0;
+    diagnostics.terrainSurfaceSamplerAreaBuilds = 0;
+    diagnostics.terrainSurfaceSamplerAreaCandidateCopies = 0;
 }
 
 void SceneFrameDiagnostics::updateFrameRate(

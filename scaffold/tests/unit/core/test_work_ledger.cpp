@@ -212,4 +212,19 @@ TEST_F(WorkLedgerTest, WakeCallbackFiresOnLandingReleaseOnly) {
     EXPECT_EQ(wakes, 2) << "清除后不得再触发 —— 否则回调进已亡宿主";
 }
 
+TEST_F(WorkLedgerTest, PendingLandingSnapshotIsNonConsuming) {
+    WorkLedger& ledger = WorkLedger::shared();
+    EXPECT_FALSE(ledger.hasUnconsumedLanding());
+    ledger.acquire(Kind::Landing, "glyphRasterBatch").release();
+    EXPECT_TRUE(ledger.hasUnconsumedLanding());
+    // A later concurrent source may replace the diagnostic label without
+    // consuming the coalesced wake pulse.
+    ledger.acquire(Kind::Landing, "tileDecode").release();
+    EXPECT_TRUE(ledger.hasUnconsumedLanding());
+    const char* label = nullptr;
+    EXPECT_TRUE(ledger.consumeLanded(&label));
+    EXPECT_STREQ("tileDecode", label);
+    EXPECT_FALSE(ledger.hasUnconsumedLanding());
+}
+
 } // namespace

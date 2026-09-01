@@ -88,6 +88,9 @@ bool mvpCommandLess(const RenderCommand& a, const RenderCommand& b) {
     if (a.vectorPaintOrder != b.vectorPaintOrder) {
         return a.vectorPaintOrder < b.vectorPaintOrder;
     }
+    if (a.vectorPaintSubOrder != b.vectorPaintSubOrder) {
+        return a.vectorPaintSubOrder < b.vectorPaintSubOrder;
+    }
 
     const bool translucentA = isTranslucentGltfPrimitiveCommand(a);
     const bool translucentB = isTranslucentGltfPrimitiveCommand(b);
@@ -125,9 +128,8 @@ int mvpRenderOrder(RenderCommandKind kind) {
         case RenderCommandKind::VectorLine:
         case RenderCommandKind::VectorExtrusion:
         case RenderCommandKind::VectorPoint:
-            return 30;
         case RenderCommandKind::VectorLabel:
-            return 31;  // 文字压其它矢量之上
+            return 30;  // all vector kinds share the provider draw-order domain
         case RenderCommandKind::Unknown:
         default:
             return 100;
@@ -151,6 +153,7 @@ validateMvpRenderCommands(const RenderCommandList& commands,
     std::optional<RenderCommandValidationError> error;
     int lastOrder = -1;
     int lastVectorPaintOrder = std::numeric_limits<int>::min();
+    int lastVectorPaintSubOrder = std::numeric_limits<int>::min();
     bool sawTranslucentGltf = false;
     double lastTranslucentGltfDepth = std::numeric_limits<double>::infinity();
 
@@ -172,18 +175,28 @@ validateMvpRenderCommands(const RenderCommandList& commands,
             fail(i, cmd, "RenderCommand order violates MVP pass order", error);
             return error;
         }
-        if (order == lastOrder &&
-            cmd.vectorPaintOrder < lastVectorPaintOrder) {
-            fail(i, cmd,
-                 "RenderCommand vector paint order is not monotonic",
-                 error);
-            return error;
+        if (order == lastOrder) {
+            if (cmd.vectorPaintOrder < lastVectorPaintOrder) {
+                fail(i, cmd,
+                     "RenderCommand vector paint order is not monotonic",
+                     error);
+                return error;
+            }
+            if (cmd.vectorPaintOrder == lastVectorPaintOrder &&
+                cmd.vectorPaintSubOrder < lastVectorPaintSubOrder) {
+                fail(i, cmd,
+                     "RenderCommand vector paint sub-order is not monotonic",
+                     error);
+                return error;
+            }
         }
         if (order != lastOrder) {
             lastVectorPaintOrder = std::numeric_limits<int>::min();
+            lastVectorPaintSubOrder = std::numeric_limits<int>::min();
         }
         lastOrder = order;
         lastVectorPaintOrder = cmd.vectorPaintOrder;
+        lastVectorPaintSubOrder = cmd.vectorPaintSubOrder;
 
         switch (cmd.kind) {
             case RenderCommandKind::GltfPrimitive:
@@ -344,6 +357,7 @@ void sortMvpRenderCommands(RenderCommandList& commands) {
         size_t index = 0;
         int renderOrder = 0;
         int paintOrder = 0;
+        int paintSubOrder = 0;
         bool translucentGltf = false;
         bool hasDepth = false;
         double depth = 0.0;
@@ -354,6 +368,7 @@ void sortMvpRenderCommands(RenderCommandList& commands) {
         const RenderCommand& cmd = commands[i];
         order.push_back(SortKey{i, mvpRenderOrder(cmd.kind),
                                 cmd.vectorPaintOrder,
+                                cmd.vectorPaintSubOrder,
                                 isTranslucentGltfPrimitiveCommand(cmd),
                                 cmd.hasTranslucentSortDepth,
                                 cmd.translucentSortDepth});
@@ -365,6 +380,9 @@ void sortMvpRenderCommands(RenderCommandList& commands) {
                   }
                   if (a.paintOrder != b.paintOrder) {
                       return a.paintOrder < b.paintOrder;
+                  }
+                  if (a.paintSubOrder != b.paintSubOrder) {
+                      return a.paintSubOrder < b.paintSubOrder;
                   }
                   if (a.translucentGltf != b.translucentGltf) {
                       return !a.translucentGltf && b.translucentGltf;

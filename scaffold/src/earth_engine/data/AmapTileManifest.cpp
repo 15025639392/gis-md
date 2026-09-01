@@ -1,4 +1,5 @@
 #include "AmapTileManifest.h"
+#include "AmapTileManifestInternal.h"
 
 #include <nlohmann/json.hpp>
 
@@ -141,60 +142,6 @@ bool selectAmapTileUrl(const std::vector<AmapTileUrl>& urls,
     }
     out = *it;
     return true;
-}
-
-bool resolveTileVersion(const AmapManifestConfig& cfg,
-                        const AmapHttpFetch& fetch, std::string& version,
-                        std::string* error) {
-    if (!cfg.version.empty()) {
-        version = cfg.version;
-        return true;
-    }
-    const std::string url = cfg.initBase + "?key=" + urlEncode(cfg.key);
-    int status = 0;
-    std::string body;
-    if (!fetch(url, "GET", "", {}, status, body)) {
-        if (error) *error = "amap: version probe transport failed";
-        return false;
-    }
-    nlohmann::json doc;
-    try {
-        doc = nlohmann::json::parse(body);
-        const std::string tile = doc.value("tile", "");
-        const nlohmann::json inner = nlohmann::json::parse(tile);
-        version = inner.value("v", "");
-    } catch (const std::exception& e) {
-        if (error) *error = std::string("amap: version probe parse failed: ") + e.what();
-        return false;
-    }
-    if (version.size() != 11 || version[2] != '_' || version[5] != '_' ||
-        version[8] != '_') {
-        if (error) *error = "amap: malformed version stamp: " + version;
-        return false;
-    }
-    return true;
-}
-
-bool fetchAmapTileUrls(const std::vector<AmapTileRequest>& requests,
-                       const AmapManifestConfig& cfg,
-                       const AmapHttpFetch& fetch,
-                       std::vector<AmapTileUrl>& out, std::string* error) {
-    out.clear();
-    if (requests.empty()) return true;
-    std::string version;
-    if (!resolveTileVersion(cfg, fetch, version, error)) return false;
-    const std::string url = buildGetTileUrl(cfg);
-    const std::string body = buildGetTileBody(requests, cfg, version);
-    std::vector<std::pair<std::string, std::string>> headers = {
-        {"Content-Type", "application/x-www-form-urlencoded"}};
-    if (!cfg.referer.empty()) headers.emplace_back("Referer", cfg.referer);
-    int status = 0;
-    std::string resp;
-    if (!fetch(url, "POST", body, headers, status, resp)) {
-        if (error) *error = "amap: get_tile transport failed";
-        return false;
-    }
-    return parseTileUrls(resp, out, error);
 }
 
 }  // namespace earth_engine

@@ -6,6 +6,7 @@ import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.View;
@@ -22,13 +23,11 @@ public class MainActivity extends Activity {
     private GLESView mGLView;
     private View mDebugPanel;
     private Button mDebugButton;
-    private Button mBtnAddVectorLayer;
     private Button mBtnResetCamera;
     // ⚠️ 开关不在 Java 侧存状态:真值在引擎/native,这里只留按钮引用用于回读刷文案。
     // 曾经的 mGpuTerrainOn/mEditModeOn 是"同一事实两处各存一份",surface 重建或
     // Activity 旋转重建后按钮文案会与引擎实际档位静默分叉。
     private Button mBtnGpuTerrain;
-    private Button mBtnEdit;
     private Button mBtnTether;
     private Button mBtnOrtho;
 
@@ -39,6 +38,7 @@ public class MainActivity extends Activity {
 
         FrameLayout root = new FrameLayout(this);
 
+
         // GL surface
         mGLView = new GLESView(this);
         root.addView(mGLView, new FrameLayout.LayoutParams(
@@ -48,19 +48,50 @@ public class MainActivity extends Activity {
         // 指北针（左上角；点按复位正北）
         CompassView compass = new CompassView(this);
         FrameLayout.LayoutParams compassParams = new FrameLayout.LayoutParams(
-                dp(56), dp(56), Gravity.TOP | Gravity.START);
-        compassParams.setMargins(dp(12), dp(24), 0, 0);
+                dp(38), dp(38), Gravity.BOTTOM | Gravity.END);
+        // 高德网页布局：罗盘位于右下方缩放控件上方，设置按钮仍在右上角。
+        compassParams.setMargins(0, 0, dp(14), dp(112));
         root.addView(compass, compassParams);
+
+        // 比例尺（左下角）：数值来自相机拾取射线，随缩放低频更新。
+        ScaleBarView scaleBar = new ScaleBarView(this);
+        FrameLayout.LayoutParams scaleParams = new FrameLayout.LayoutParams(
+                dp(152), dp(52), Gravity.BOTTOM | Gravity.START);
+        scaleParams.setMargins(dp(14), 0, 0, dp(18));
+        root.addView(scaleBar, scaleParams);
+
+        // 高德式右下角缩放控件；按钮直接复用 demo 的相机缩放入口。
+        LinearLayout zoomControls = new LinearLayout(this);
+        zoomControls.setOrientation(LinearLayout.VERTICAL);
+        zoomControls.setBackground(makeZoomControlBackground());
+        zoomControls.setElevation(dp(3));
+        Button zoomIn = makeZoomButton("+");
+        Button zoomOut = makeZoomButton("−");
+        zoomIn.setOnClickListener(v ->
+                GLESView.requestZoom(1.38f, mGLView.getWidth(), mGLView.getHeight()));
+        zoomOut.setOnClickListener(v ->
+                GLESView.requestZoom(0.72f, mGLView.getWidth(), mGLView.getHeight()));
+        zoomControls.addView(zoomIn);
+        zoomControls.addView(zoomOut);
+        FrameLayout.LayoutParams zoomParams = new FrameLayout.LayoutParams(
+                dp(38), dp(76), Gravity.BOTTOM | Gravity.END);
+        zoomParams.setMargins(0, 0, dp(14), dp(24));
+        root.addView(zoomControls, zoomParams);
 
         // Debug button (floating)
         mDebugButton = new Button(this);
         mDebugButton.setText("⚙");
-        mDebugButton.setTextSize(18);
-        mDebugButton.setTextColor(Color.WHITE);
-        mDebugButton.setBackgroundColor(0x88000000);
+        mDebugButton.setTextSize(17);
+        mDebugButton.setTextColor(0xFF555555);
+        mDebugButton.setGravity(Gravity.CENTER);
+        mDebugButton.setPadding(0, 0, 0, 0);
+        mDebugButton.setMinWidth(0);
+        mDebugButton.setMinHeight(0);
+        mDebugButton.setBackground(makeFloatingControlBackground());
+        mDebugButton.setElevation(dp(3));
         FrameLayout.LayoutParams btnParams = new FrameLayout.LayoutParams(
-                dp(48), dp(48), Gravity.TOP | Gravity.END);
-        btnParams.setMargins(0, dp(24), dp(12), 0);
+                dp(36), dp(36), Gravity.TOP | Gravity.END);
+        btnParams.setMargins(0, dp(18), dp(12), 0);
         mDebugButton.setOnClickListener(v -> toggleDebugPanel());
         root.addView(mDebugButton, btnParams);
 
@@ -92,12 +123,6 @@ public class MainActivity extends Activity {
         actions.setOrientation(LinearLayout.HORIZONTAL);
         actions.setGravity(Gravity.START);
 
-        mBtnAddVectorLayer = new Button(this);
-        mBtnAddVectorLayer.setText("+ Vector");
-        mBtnAddVectorLayer.setTextSize(10);
-        mBtnAddVectorLayer.setOnClickListener(v -> addDemoVectorLayer());
-        actions.addView(mBtnAddVectorLayer);
-
         mBtnResetCamera = new Button(this);
         mBtnResetCamera.setText("Reset");
         mBtnResetCamera.setTextSize(10);
@@ -123,27 +148,6 @@ public class MainActivity extends Activity {
 
         panel.addView(actions);
 
-        // 矢量 P2 编辑流(demo 应用层):EDIT 切换 + UNDO,独立第二行
-        LinearLayout editActions = new LinearLayout(this);
-        editActions.setOrientation(LinearLayout.HORIZONTAL);
-        editActions.setGravity(Gravity.START);
-
-        mBtnEdit = new Button(this);
-        mBtnEdit.setTextSize(10);
-        mBtnEdit.setOnClickListener(v -> {
-            mGLView.nativeSetEditMode(!mGLView.nativeGetEditMode());
-            syncToggleLabels();
-        });
-        editActions.addView(mBtnEdit);
-
-        Button btnUndo = new Button(this);
-        btnUndo.setText("Undo");
-        btnUndo.setTextSize(10);
-        btnUndo.setOnClickListener(v -> mGLView.nativeUndoEdit());
-        editActions.addView(btnUndo);
-
-        panel.addView(editActions);
-
         // 相机阶段 3/4/5 的验收钩子(此前只在数字键 0/7/8/9 上,要 adb 才按得到)。
         LinearLayout cameraActions = new LinearLayout(this);
         cameraActions.setOrientation(LinearLayout.HORIZONTAL);
@@ -162,13 +166,6 @@ public class MainActivity extends Activity {
         btnFly.setTextSize(10);
         btnFly.setOnClickListener(v -> mGLView.nativeDebugFlyTo());
         cameraActions.addView(btnFly);
-
-        // V26 一期:日/夜换肤往返(drape 重栅格化 + 场线色 uniform + 场页重烘)。
-        Button btnSkin = new Button(this);
-        btnSkin.setText("Skin");
-        btnSkin.setTextSize(10);
-        btnSkin.setOnClickListener(v -> mGLView.nativeDebugRestyle());
-        cameraActions.addView(btnSkin);
 
         // 阶段 4:系留三态循环 Free → 跟车 → 座舱 → Free。
         mBtnTether = new Button(this);
@@ -219,6 +216,37 @@ public class MainActivity extends Activity {
         return Math.round(value * getResources().getDisplayMetrics().density);
     }
 
+    /** 高德式轻量浮层：白底、浅边框、阴影交给系统 elevation，避免额外绘制开销。 */
+    private GradientDrawable makeFloatingControlBackground() {
+        GradientDrawable background = new GradientDrawable();
+        background.setShape(GradientDrawable.OVAL);
+        background.setColor(0xF7FFFFFF);
+        background.setStroke(dp(1), 0x1F000000);
+        return background;
+    }
+
+    private GradientDrawable makeZoomControlBackground() {
+        GradientDrawable background = new GradientDrawable();
+        background.setShape(GradientDrawable.RECTANGLE);
+        background.setColor(0xF7FFFFFF);
+        background.setCornerRadius(dp(4));
+        background.setStroke(dp(1), 0x1F000000);
+        return background;
+    }
+
+    private Button makeZoomButton(String caption) {
+        Button button = new Button(this);
+        button.setText(caption);
+        button.setTextSize(20);
+        button.setTextColor(0xFF4C4C4C);
+        button.setGravity(Gravity.CENTER);
+        button.setPadding(0, 0, 0, 0);
+        button.setMinWidth(0);
+        button.setMinHeight(0);
+        button.setBackgroundColor(Color.TRANSPARENT);
+        return button;
+    }
+
     /**
      * 指北针：红针指向正北。相机 heading=0（朝正北）时红针朝上。点按复位正北朝上。
      * 每帧读一次 heading（极廉价），仅当角度变化时才重绘（省电）。
@@ -235,10 +263,11 @@ public class MainActivity extends Activity {
             super(context);
             setClickable(true);
             setOnClickListener(v -> GLESView.nativeResetNorthUp());
-            ring.setColor(0xAA000000);
+            setElevation(getResources().getDisplayMetrics().density * 3f);
+            ring.setColor(0xF7FFFFFF);
             ring.setStyle(Paint.Style.FILL);
-            north.setColor(0xFFFF3B30);   // 北=红
-            south.setColor(0xFFEEEEEE);   // 南=白
+            north.setColor(0xFFE84A3C);   // 北=红
+            south.setColor(0xFF717171);   // 南=深灰，在白色浮层上保持辨识度
             label.setColor(0xFFFFFFFF);
             label.setTextAlign(Paint.Align.CENTER);
 
@@ -261,8 +290,15 @@ public class MainActivity extends Activity {
         protected void onDraw(Canvas canvas) {
             final float cx = getWidth() * 0.5f;
             final float cy = getHeight() * 0.5f;
-            final float r = Math.min(cx, cy) - 3f;
+            final float r = Math.min(cx, cy) - 2f;
             canvas.drawCircle(cx, cy, r, ring);
+
+            ring.setColor(0x1F000000);
+            ring.setStyle(Paint.Style.STROKE);
+            ring.setStrokeWidth(getResources().getDisplayMetrics().density);
+            canvas.drawCircle(cx, cy, r - ring.getStrokeWidth() * 0.5f, ring);
+            ring.setColor(0xF7FFFFFF);
+            ring.setStyle(Paint.Style.FILL);
 
             canvas.save();
             // heading=0 → 红针朝上；heading 增大(向东)→ 北在屏幕上向左偏，故反向旋转。
@@ -285,6 +321,101 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** 无卡片、细线条的地图比例尺；400ms 查询一次，避免逐帧跨线程同步。 */
+    private static final class ScaleBarView extends View {
+        private static final long UPDATE_INTERVAL_MS = 400L;
+        private final Paint line = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint text = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final float density;
+        private double displayedMeters;
+        private float displayedWidthPx;
+        private String displayedLabel = "";
+
+        private final Runnable updater = new Runnable() {
+            @Override public void run() {
+                if (!isAttachedToWindow()) return;
+                updateScale(GLESView.nativeGetMetersPerPixel());
+                postDelayed(this, UPDATE_INTERVAL_MS);
+            }
+        };
+
+        ScaleBarView(Context context) {
+            super(context);
+            density = getResources().getDisplayMetrics().density;
+            line.setColor(0xCC3E4146);
+            line.setStyle(Paint.Style.STROKE);
+            line.setStrokeWidth(1f);
+            line.setStrokeCap(Paint.Cap.SQUARE);
+            text.setColor(0xE63E4146);
+            text.setTextSize(10f * density);
+            text.setTextAlign(Paint.Align.CENTER);
+            text.setShadowLayer(1.5f * density, 0f, 0.5f * density, 0xCCFFFFFF);
+        }
+
+        @Override protected void onAttachedToWindow() {
+            super.onAttachedToWindow();
+            removeCallbacks(updater);
+            post(updater);
+        }
+
+        @Override protected void onDetachedFromWindow() {
+            removeCallbacks(updater);
+            super.onDetachedFromWindow();
+        }
+
+        private void updateScale(double metersPerPixel) {
+            if (!(metersPerPixel > 0.0) || !Double.isFinite(metersPerPixel)) {
+                if (displayedWidthPx != 0f) {
+                    displayedWidthPx = 0f;
+                    invalidate();
+                }
+                return;
+            }
+
+            final double targetPx = 88.0 * density;
+            final double rawMeters = metersPerPixel * targetPx;
+            final double power = Math.pow(10.0, Math.floor(Math.log10(rawMeters)));
+            final double normalized = rawMeters / power;
+            final double nice = normalized >= 5.0 ? 5.0
+                    : normalized >= 2.0 ? 2.0 : 1.0;
+            final double meters = nice * power;
+            final float widthPx = (float) (meters / metersPerPixel);
+            final String label = formatDistance(meters);
+            if (Math.abs(meters - displayedMeters) > 0.01 ||
+                    Math.abs(widthPx - displayedWidthPx) > 0.5f ||
+                    !label.equals(displayedLabel)) {
+                displayedMeters = meters;
+                displayedWidthPx = widthPx;
+                displayedLabel = label;
+                invalidate();
+            }
+        }
+
+        private static String formatDistance(double meters) {
+            if (meters >= 1000.0) {
+                final double km = meters / 1000.0;
+                return (km >= 10.0 || Math.rint(km) == km
+                        ? String.format(java.util.Locale.ROOT, "%.0f", km)
+                        : String.format(java.util.Locale.ROOT, "%.1f", km)) + " 公里";
+            }
+            return String.format(java.util.Locale.ROOT, "%.0f 米", meters);
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            if (displayedWidthPx <= 0f || displayedLabel.isEmpty()) return;
+            final float left = 6f * density;
+            final float maxWidth = getWidth() - left - 6f * density;
+            final float width = Math.min(displayedWidthPx, maxWidth);
+            final float y = 32f * density;
+            final float tick = 5f * density;
+            canvas.drawLine(left, y, left + width, y, line);
+            canvas.drawLine(left, y - tick, left, y + 1f, line);
+            canvas.drawLine(left + width, y - tick, left + width, y + 1f, line);
+            canvas.drawText(displayedLabel, left + width * 0.5f,
+                    y - 7f * density, text);
+        }
+    }
+
     private void toggleDebugPanel() {
         if (mDebugPanel.getVisibility() == View.VISIBLE) {
             mDebugPanel.setVisibility(View.GONE);
@@ -299,7 +430,6 @@ public class MainActivity extends Activity {
     private void syncToggleLabels() {
         mBtnGpuTerrain.setText(
                 mGLView.nativeGetGpuTerrain() ? "GPU Terr: ON" : "GPU Terr: OFF");
-        mBtnEdit.setText(mGLView.nativeGetEditMode() ? "Edit: ON" : "Edit: OFF");
         final int tether = mGLView.nativeGetTetherState();
         mBtnTether.setText(tether == 2 ? "Tether: 座舱"
                          : tether == 1 ? "Tether: 跟车"
@@ -308,7 +438,6 @@ public class MainActivity extends Activity {
     }
 
     // --- Actions (call through to GLESView native) ---
-    private void addDemoVectorLayer() { mGLView.nativeAddDemoVectorLayer(); }
     private void resetCamera() { mGLView.nativeResetCamera(); }
 
     @Override

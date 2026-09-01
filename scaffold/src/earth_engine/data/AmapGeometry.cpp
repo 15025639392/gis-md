@@ -1,7 +1,9 @@
 #include "AmapGeometry.h"
+#include "AmapVectorSourceInternal.h"
 
 #include "../core/geodesy/Gcj02CoordinateTransform.h"
 #include "../core/geodesy/Ellipsoid.h"
+#include "../core/geodesy/WebMercatorProjection.h"
 #include "PolygonTessellator.h"
 
 #include <algorithm>
@@ -13,6 +15,17 @@
 #include <unordered_set>
 
 namespace earth_engine {
+
+#if defined(EARTH_ENGINE_TESTING)
+bool AmapDecodedTileDecodeTraits::decode(
+    const uint8_t* data, size_t size, AmapDecodedTile& out,
+    std::string* error) {
+    AmapClassicSourceBundle::Impl::DecodedTile tile;
+    const bool ok = AmapClassicSourceBundle::Impl::decodeType1(
+        data, size, tile, error);
+    out.parts = std::move(tile.parts);
+    return ok;
+}
 
 size_t AmapDecodedTileDecodeTraits::approxBytes(
     const AmapDecodedTile& tile) {
@@ -31,6 +44,7 @@ size_t AmapDecodedTileDecodeTraits::approxBytes(
     }
     return bytes;
 }
+#endif
 
 namespace {
 
@@ -202,14 +216,28 @@ bool amapRegionUsesLineGrid(int regionKind) {
     return regionKind == 60 || regionKind == 64 || regionKind == 80;
 }
 
-double amapCoordScale(int layerType, int layerZ, int regionKind) {
+bool amapBuildingResolutionIsValid(int layerZ, int buildingResolution) {
+    if (layerZ < 0 || layerZ > 30 || buildingResolution < 2) return false;
+    const int coordShift = 33 - buildingResolution - layerZ;
+    return coordShift >= 0 && coordShift <= 31;
+}
+
+double amapCoordScale(int layerType, int layerZ, int regionKind,
+                      int buildingResolution) {
     // POI label anchors use a dedicated 2048×1024 grid at every data zoom
     // except z3.  They are not line geometry: reusing the z14 line scale (2)
     // compresses every label into half a tile and can place it in unrelated
     // water.  Keep this contract at the shared conversion boundary so both
     // the live POI source and direct geometry tests use the same rule.
     if (layerType == 0) return layerZ <= 3 ? 8.0 : 4.0;
-    if (layerType == 3) return 8192.0 / 131072.0;  // 建筑 1/16
+    if (layerType == 3) {
+        if (!amapBuildingResolutionIsValid(layerZ, buildingResolution)) {
+            return 0.0;
+        }
+        // resolution 12 -> 2048×1024; resolution 18 -> 131072×65536.
+        // Canonical space is 8192×4096, hence 2^(14-resolution).
+        return std::ldexp(1.0, 14 - buildingResolution);
+    }
     if (layerType == 2) {
         // 普通区域恒 2048×1024(任意 zoom);大区域 kind 60/80 走 line-grid。
         if (amapRegionUsesLineGrid(regionKind)) {
@@ -225,13 +253,11 @@ double amapCoordScale(int layerType, int layerZ, int regionKind) {
 }
 
 Cartographic amapTileLocalToLngLat(int tileX, int tileY, int z,
-                                   double localX, double localY,
-                                   bool flipY) {
+                                   double localX, double localY) {
     const double n = std::exp2(z);
     const double lonDeg = (tileX + localX / 8192.0) / n * 360.0 - 180.0;
     const double latDeg =
-        flipY ? 90.0 - (tileY + localY / 4096.0) / n * 180.0
-              : (tileY + localY / 4096.0) / n * 180.0 - 90.0;
+        90.0 - (tileY + localY / 4096.0) / n * 180.0;
     return Cartographic(lonDeg * kDegToRad, latDeg * kDegToRad, 0.0);
 }
 
@@ -243,6 +269,64 @@ Cartographic amapTileLocalToLngLat(int tileX, int tileY, int z,
 double amapRawLocalYToTopDown(double rawY, double scale) {
     constexpr double kAmapExtentY = 4096.0;
     return kAmapExtentY - rawY * scale;
+}
+
+std::optional<Cartographic> amapOfficialRoadShieldAnchor(
+    int tileX, int tileY, int tileZ, double scale,
+    const std::vector<std::pair<double, double>>& ring) {
+    if (ring.size() < 2) return std::nullopt;
+    if ((ring.size() & 1u) != 0u) {
+        const auto& point = ring[ring.size() / 2];
+        return amapTileLocalToLngLat(
+            tileX, tileY, tileZ, point.first * scale,
+            amapRawLocalYToTopDown(point.second, scale));
+    }
+
+    // Official handlerTileRoadLines first projects every real point into
+    // EPSG:3857, optionally subtracts its fixed 128x128 LCS-cell center, and
+    // only then lets NebulaLabelFormat.oV select the two central flat-array
+    // scalars.  With 2k points that position is [Y(k-1), Xk].  Rebuild the
+    // same fixed world anchor here, then immediately return to Cartographic
+    // so terrain, ECEF, collision and GPU placement remain one shared path.
+    const size_t right = ring.size() / 2;
+    const size_t left = right - 1;
+    const Cartographic leftCartographic = amapTileLocalToLngLat(
+        tileX, tileY, tileZ, ring[left].first * scale,
+        amapRawLocalYToTopDown(ring[left].second, scale));
+    const Cartographic rightCartographic = amapTileLocalToLngLat(
+        tileX, tileY, tileZ, ring[right].first * scale,
+        amapRawLocalYToTopDown(ring[right].second, scale));
+    const WebMercatorProjection projection(Ellipsoid::WGS84());
+    const Vec3 leftProjected = projection.project(leftCartographic);
+    const Vec3 rightProjected = projection.project(rightCartographic);
+
+    double anchorX = leftProjected.y();
+    double anchorY = rightProjected.x();
+    if (tileZ >= 13) {
+        constexpr double kWorldHalf = 20037508.342789244;
+        constexpr double kLcsCellsPerAxis = 128.0;
+        constexpr double kLcsCellSize =
+            (2.0 * kWorldHalf) / kLcsCellsPerAxis;
+        // NebulaTileCoord.ga publishes [west,north,east,south], and
+        // handlerTile selects [Ro[0],Ro[1]].  The LCS frame therefore belongs
+        // to the projected north-west tile corner, not the south-west corner.
+        const Cartographic tileNorthWest = amapTileLocalToLngLat(
+            tileX, tileY, tileZ, 0.0, 0.0);
+        const Vec3 tileNorthWestProjected =
+            projection.project(tileNorthWest);
+        const double centerX =
+            (std::floor(tileNorthWestProjected.x() / kLcsCellSize) + 0.5) *
+            kLcsCellSize;
+        const double centerY =
+            (std::floor(tileNorthWestProjected.y() / kLcsCellSize) + 0.5) *
+            kLcsCellSize;
+        anchorX = centerX + leftProjected.y() - centerY;
+        anchorY = centerY + rightProjected.x() - centerX;
+    }
+    if (!std::isfinite(anchorX) || !std::isfinite(anchorY)) {
+        return std::nullopt;
+    }
+    return projection.unproject(glm::dvec2(anchorX, anchorY));
 }
 
 std::vector<std::vector<std::pair<double, double>>> amapNormalizeEvenOddWinding(
@@ -411,26 +495,59 @@ std::vector<std::pair<double, double>> amapClipPolygonRing(
     return r.size() >= 3 ? r : std::vector<std::pair<double, double>>{};
 }
 
-std::vector<Feature> amapDecodedPartToFeatures(
-    const AmapDecodedLayerPart& part, bool toWgs84) {
+std::vector<Feature> AmapClassicSourceBundle::Impl::convertPart(
+    const AmapDecodedLayerPart& part, bool toWgs84,
+    bool (*lineIdentityFilter)(int, int),
+    bool (*polygonIdentityFilter)(int, int),
+    bool (*pointIdentityFilter)(int, int)) {
     std::vector<Feature> out;
     for (const auto& f : part.features) {
+        auto publishOfficialWindow = [&](Feature& feature) {
+            if (f.hasMinZoom) {
+                feature.properties["amap_minzoom"] =
+                    std::to_string(f.minZoom);
+            }
+            if (f.hasMaxZoom) {
+                feature.properties["amap_maxzoom"] =
+                    std::to_string(f.maxZoom);
+            }
+        };
+        // PoiLayer(type 0) is point-only by contract. Keep the explicit
+        // semantic bit for mixed type-4 containers, but fail closed when a
+        // hand-built/test feature omits it.
+        const bool isPoint = f.pointGeometry || part.type == 0;
         const bool isRegion = part.type == 2 || f.polygonGeometry;
-        const bool isLine = !f.polygonGeometry &&
+        const bool isLine = !isPoint && !f.polygonGeometry &&
                             (part.type == 1 || part.type == 4);
+        if (isPoint && pointIdentityFilter &&
+            !pointIdentityFilter(f.classCode, f.subKey)) {
+            continue;
+        }
+        if (!isLine && !f.lineGeometry && !isPoint &&
+            polygonIdentityFilter &&
+            !polygonIdentityFilter(f.classCode, f.subKey)) {
+            continue;
+        }
         // 区域按 kind 决定 scale(60/64/80 走 line-grid);
         // 其余类型 scale 与 kind 无关。
         // type2 content.#2 boundary lines use the line-grid scale even though
         // they remain in a type2 layer container.
         const int geometryLayerType =
             f.lineGeometry ? 1 : (f.polygonGeometry ? 2 : part.type);
+        if (geometryLayerType == 3 &&
+            !amapBuildingResolutionIsValid(part.z,
+                                           f.buildingResolution)) {
+            continue;
+        }
         const double scale =
             f.coordScale > 0.0
                 ? f.coordScale
-                : amapCoordScale(geometryLayerType, part.z, f.kind);
-        // type 0:POI 点标签。anchor = 单点 plain unsigned(2048×1024 空间,
-        // scale 4),转 Point Feature。
-        if (part.type == 0) {
+                : amapCoordScale(geometryLayerType, part.z, f.kind,
+                                 f.buildingResolution);
+        // PoiLayer and TransitLayer points use the same official point
+        // geometry contract. Their per-group resolution determines scale;
+        // the enclosing type-4 layer must not force the line-grid scale.
+        if (isPoint) {
             for (const auto& ring : f.rings) {
                 if (ring.empty()) continue;
                 Feature feat;
@@ -442,25 +559,56 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 if (toWgs84) c = Gcj02CoordinateTransform::toWgs84(c);
                 feat.rings = {{{c}}};
                 feat.properties["amap_class"] = std::to_string(f.classCode);
-                feat.properties["amap_type"] = std::to_string(part.type);
                 feat.properties["amap_subkey"] = std::to_string(f.subKey);
+                feat.properties["amap_type"] = std::to_string(part.type);
+                feat.properties["amap_zoom"] = std::to_string(part.z);
+                if (f.hasDrawOrder) {
+                    feat.properties["amap_draworder"] =
+                        std::to_string(f.drawOrder);
+                }
+                publishOfficialWindow(feat);
                 feat.properties["amap_rank"] = std::to_string(f.rank);
-                feat.properties["amap_minzoom"] = std::to_string(f.minZoom);
-                feat.properties["amap_maxzoom"] = std::to_string(f.maxZoom);
-                // FeatureRenderLayer sorts ascending (smaller = earlier),
-                // while Amap rank uses larger = more important.  Negate at
-                // the adapter boundary so the per-tile symbol budget keeps
-                // Amap's important labels first.
-                feat.properties["rank"] = std::to_string(-f.rank);
+                feat.properties["amap_uid"] = std::to_string(f.uid);
                 if (!f.name.empty()) {
                     feat.properties["name"] = f.name;
                 }
+                feat.labelSplitIndicesUtf16 = f.nameSplitIndicesUtf16;
                 out.push_back(std::move(feat));
             }
             continue;
         }
         if (isLine || f.lineGeometry) {
+            if (lineIdentityFilter &&
+                !lineIdentityFilter(f.classCode, f.subKey)) {
+                continue;
+            }
             for (const auto& ring : f.rings) {
+                if (f.roadNameGeometry && !f.shield.empty()) {
+                    if (f.shieldType <= 0 || ring.size() < 2) continue;
+                    const auto officialAnchor = amapOfficialRoadShieldAnchor(
+                        part.x, part.y, part.z, scale, ring);
+                    if (!officialAnchor) continue;
+                    Cartographic c = *officialAnchor;
+                    if (toWgs84) c = Gcj02CoordinateTransform::toWgs84(c);
+                    Feature shield;
+                    shield.type = GeometryType::Point;
+                    shield.rings = {{{c}}};
+                    shield.properties["amap_class"] = "40001";
+                    shield.properties["amap_subkey"] =
+                        std::to_string(f.shieldType);
+                    shield.properties["amap_type"] =
+                        std::to_string(part.type);
+                    shield.properties["amap_zoom"] = std::to_string(part.z);
+                    if (f.hasDrawOrder) {
+                        shield.properties["amap_draworder"] =
+                            std::to_string(f.drawOrder);
+                    }
+                    publishOfficialWindow(shield);
+                    shield.properties["amap_rank"] = std::to_string(f.rank);
+                    shield.properties["name"] = f.shield;
+                    out.push_back(std::move(shield));
+                    continue;
+                }
                 Feature feat;
                 feat.type = GeometryType::LineString;
                 std::vector<Cartographic> pts;
@@ -475,8 +623,22 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 feat.rings.push_back(std::move(pts));
                 feat.properties["amap_class"] = std::to_string(f.classCode);
                 feat.properties["amap_type"] = std::to_string(part.type);
+                feat.properties["amap_zoom"] = std::to_string(part.z);
+                if (f.hasDrawOrder) {
+                    feat.properties["amap_draworder"] =
+                        std::to_string(f.drawOrder);
+                }
+                publishOfficialWindow(feat);
                 if (f.kind > 0) {
                     feat.properties["amap_kind"] = std::to_string(f.kind);
+                }
+                // Preserve the official source line subKey for every line.
+                feat.properties["amap_subkey"] = std::to_string(f.subKey);
+                if (f.roadNameGeometry) {
+                    feat.properties["amap_rank"] = std::to_string(f.rank);
+                    if (!f.name.empty()) {
+                        feat.properties["name"] = f.name;
+                    }
                 }
                 out.push_back(std::move(feat));
             }
@@ -505,14 +667,24 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 }
                 feat.rings.push_back(std::move(pts));
                 feat.properties["amap_class"] = std::to_string(f.classCode);
+                feat.properties["amap_subkey"] = std::to_string(f.subKey);
                 feat.properties["amap_type"] = std::to_string(part.type);
+                feat.properties["amap_zoom"] = std::to_string(part.z);
+                feat.properties["amap_building_resolution"] =
+                    std::to_string(f.buildingResolution);
+                publishOfficialWindow(feat);
+                if (f.hasDrawOrder) {
+                    feat.properties["amap_draworder"] =
+                        std::to_string(f.drawOrder);
+                }
                 if (f.kind > 0) {
                     feat.properties["amap_kind"] = std::to_string(f.kind);
                 }
-                if (f.height > 0.0) {
-                    feat.properties["amap_height"] =
-                        std::to_string(f.height);
-                }
+                // Preserve the official field value and its protobuf default
+                // even when it is non-positive. The building tessellator then
+                // fails that feature closed; dropping the property here would
+                // incorrectly revive the generic planar polygon path.
+                feat.properties["amap_height"] = std::to_string(f.height);
                 out.push_back(std::move(feat));
             }
             continue;
@@ -568,12 +740,23 @@ std::vector<Feature> amapDecodedPartToFeatures(
         // ran a full CDT here, emitted triangle pieces, then made the render
         // tessellator run CDT over those pieces again; dense z3 region tiles
         // spent seconds in each pass despite needing no clip at all.
+        // Detailed multi-ring masks must keep one global even-odd solve.
+        // Production z12 vegetation can carry more than one hundred touching
+        // or nested rings; splitting that one source mask into outer+hole
+        // Features makes each Feature tessellate independently and can fill
+        // across neighbouring fragments.  Keeping every normalized ring in a
+        // single Feature preserves the source modulo-two contract while still
+        // doing only the render tessellator's one CDT pass.
+        const bool needsWholeMaskSolve =
+            isRegion && f.kind > 0 && part.z > 3 && groups.size() > 1;
         if (isRegion && !outsideClipWindow) {
             // Kind surfaces already normalize into outer-followed-by-holes
             // groups. Preserve those groups directly; the tessellator's
             // modulo-two constraint handling resolves their shared seams
             // without the extra triangulate/union pass used by legacy kind=0
             // compound masks.
+            const size_t featureGroupLimit =
+                needsWholeMaskSolve ? groups.size() : size_t{0};
             for (size_t gi = 0; gi < groups.size();) {
                 if (ringSignedArea(groups[gi]) <= 0.0) {
                     ++gi;
@@ -582,7 +765,10 @@ std::vector<Feature> amapDecodedPartToFeatures(
                 Feature feat;
                 feat.type = GeometryType::Polygon;
                 for (size_t ri = gi; ri < groups.size(); ++ri) {
-                    if (ri > gi && ringSignedArea(groups[ri]) > 0.0) break;
+                    if (!needsWholeMaskSolve && ri > gi &&
+                        ringSignedArea(groups[ri]) > 0.0) {
+                        break;
+                    }
                     const auto& clipped = groups[ri];
                     if (clipped.size() < 3) continue;
                     std::vector<Cartographic> pts;
@@ -600,13 +786,20 @@ std::vector<Feature> amapDecodedPartToFeatures(
                     feat.properties["amap_class"] =
                         std::to_string(f.classCode);
                     feat.properties["amap_type"] = std::to_string(part.type);
+                    feat.properties["amap_zoom"] = std::to_string(part.z);
                     feat.properties["amap_kind"] = std::to_string(f.kind);
                     feat.properties["amap_subkey"] =
                         std::to_string(f.subKey);
-                    feat.properties["amap_fillkey"] =
-                        std::to_string(f.classCode) + ":" +
-                        std::to_string(f.kind);
+                    if (f.hasDrawOrder) {
+                        feat.properties["amap_draworder"] =
+                            std::to_string(f.drawOrder);
+                    }
+                    publishOfficialWindow(feat);
                     out.push_back(std::move(feat));
+                }
+                if (featureGroupLimit != 0) {
+                    gi = featureGroupLimit;
+                    continue;
                 }
                 while (gi < groups.size()) {
                     ++gi;
@@ -638,13 +831,16 @@ std::vector<Feature> amapDecodedPartToFeatures(
             auto setProperties = [&](Feature& feat) {
                 feat.properties["amap_class"] = std::to_string(f.classCode);
                 feat.properties["amap_type"] = std::to_string(part.type);
+                feat.properties["amap_zoom"] = std::to_string(part.z);
                 if (f.kind > 0) {
                     feat.properties["amap_kind"] = std::to_string(f.kind);
                 }
                 feat.properties["amap_subkey"] = std::to_string(f.subKey);
-                feat.properties["amap_fillkey"] =
-                    std::to_string(f.classCode) + ":" +
-                    (f.kind > 0 ? std::to_string(f.kind) : "0");
+                if (f.hasDrawOrder) {
+                    feat.properties["amap_draworder"] =
+                        std::to_string(f.drawOrder);
+                }
+                publishOfficialWindow(feat);
             };
             // Keep triangles belonging to the same connected component in one
             // Feature. Shared triangle edges cancel modulo two inside the
@@ -732,8 +928,8 @@ std::vector<Feature> amapDecodedPartToFeatures(
             std::vector<Cartographic> pts;
             // 裁剪窗口 = ±256 buffer([-256,8448]×[-256,4352]),与参考
             // 实现一致。Sutherland–Hodgman 按隐式 last→first 边裁剪；
-            // 裁剪结果直接交给 PolygonTessellator/VectorTileRasterizer，
-            // 两者都按 modulo 隐式闭合。这里不能再沿窗口边界补一条
+            // 裁剪结果直接交给 PolygonTessellator，后者按 modulo 隐式
+            // 闭合。这里不能再沿窗口边界补一条
             // “候选路径”，否则会把同一个 clipped polygon 改成互补区域。
             std::vector<std::pair<double, double>> src;
             if (isRegion) {
@@ -767,22 +963,18 @@ std::vector<Feature> amapDecodedPartToFeatures(
             pending.clear();
             feat.properties["amap_class"] = std::to_string(f.classCode);
             feat.properties["amap_type"] = std::to_string(part.type);
+            feat.properties["amap_zoom"] = std::to_string(part.z);
             if (f.kind > 0) {
                 feat.properties["amap_kind"] = std::to_string(f.kind);
             }
-            // regionBlocks(30002)按 subKey 逐用地类型上色(@xinzhi/amap-style
-            // colors.regionBlocks);subKey 缺省 1 → 兜底 $block。30001 仍按
-            // kind(61 绿地 / 63 水系 / 15 海洋)。
+            // regionBlocks(30002)与 30001 都只使用官方 subKey 调色板；
+            // kind 只用于几何分类，缺失 identity 不再合成本地 block。
             feat.properties["amap_subkey"] = std::to_string(f.subKey);
-            // fill 配色分流键:classCode 区分数据层(30001 水/绿地、
-            // 30002 地块),kind 是层内细分。合成单键供 StyleExpression
-            // match(它只支持单属性匹配)。
-            feat.properties["amap_fillkey"] =
-                std::to_string(f.classCode) + ":" +
-                (f.kind > 0 ? std::to_string(f.kind) : "0");
-            if (part.type == 3 && f.height > 0.0) {
-                feat.properties["amap_height"] = std::to_string(f.height);
+            if (f.hasDrawOrder) {
+                feat.properties["amap_draworder"] =
+                    std::to_string(f.drawOrder);
             }
+            publishOfficialWindow(feat);
             out.push_back(std::move(feat));
         };
         for (const auto& ring : groups) {
@@ -842,50 +1034,11 @@ std::vector<Feature> amapDecodedPartToFeatures(
     }
     return out;
 }
-
-bool amapBytesToFeatures(const uint8_t* data, size_t size,
-                         bool regionsOnly, std::vector<Feature>& out,
-                         std::string* error) {
-    std::vector<AmapDecodedLayerPart> parts;
-    if (!decodeAmapTile(data, size, parts, error)) {
-        return false;
-    }
-    for (const auto& p : parts) {
-        if (p.type == 2) {
-            if (!regionsOnly) {
-                // z3/6/8/10 远景的完整区域面由 regions source 提供。
-                // main 同档只承载线/建筑/轨道；若再保留 30002，两个
-                // source 会把同一地块重复画两次。z12+ regions 已让位，
-                // main 才接管 30002 等非水系地块。
-                if (p.z < 12) continue;
-                // 主源只保留 30002 等城市地块面；30001 水/绿地由
-                // z12 water source 唯一提供。即使样式把 30001 设透明，
-                // 在解码阶段过滤仍可避免 z14 错位水体进入 tessellation/
-                // GPU bucket，杜绝与 z12 水层的重复工作和潜在双带。
-                AmapDecodedLayerPart kept = p;
-                kept.features.clear();
-                for (const auto& f : p.features) {
-                    if (f.classCode != 30001) kept.features.push_back(f);
-                }
-                auto fs = amapDecodedPartToFeatures(kept, false);
-                out.insert(out.end(), std::make_move_iterator(fs.begin()),
-                           std::make_move_iterator(fs.end()));
-                continue;
-            }
-            // 粗源(z10/z12)保留全部 type2；样式按 class/kind 选择水、
-            // 绿地和地块颜色。
-            auto fs = amapDecodedPartToFeatures(p, false);
-            out.insert(out.end(), std::make_move_iterator(fs.begin()),
-                       std::make_move_iterator(fs.end()));
-            continue;
-        }
-        // type1 线 / type3 建筑 / type4 轨道:主源才要。
-        if (regionsOnly) continue;
-        auto fs = amapDecodedPartToFeatures(p, false);
-        out.insert(out.end(), std::make_move_iterator(fs.begin()),
-                   std::make_move_iterator(fs.end()));
-    }
-    return true;
+#if defined(EARTH_ENGINE_TESTING)
+std::vector<Feature> amapDecodedPartToFeatures(
+    const AmapDecodedLayerPart& part, bool toWgs84) {
+    return AmapClassicSourceBundle::Impl::convertPart(part, toWgs84);
 }
+#endif
 
 }  // namespace earth_engine

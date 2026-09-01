@@ -79,26 +79,6 @@
         config.terrain.ellipsoidFallbackMaxZoom = 12;
         config.tileset = {4.0, 2.0};
 
-        // Gaode satellite base imagery (same as Android demo)
-        earth_engine::RasterOverlaySourceConfig satellite;
-        satellite.imageryKind = earth_engine::ImagerySourceKind::Xyz;
-        satellite.urlTemplate =
-            "http://webst0{s}.is.autonavi.com/appmaptile?style=6&x={x}&y={y}&z={z}";
-        satellite.attribution = "Gaode/Amap satellite";
-        satellite.minimumZoom = 0;
-        satellite.maximumZoom = 18;
-        satellite.overlayMinimumZoom = 0;
-        satellite.overlayMaximumZoom = 0;
-        satellite.maximumSimultaneousTileLoads = 20;
-        satellite.maximumScreenSpaceError = 2.0;
-        satellite.opacity = 1.0f;
-        satellite.role = earth_engine::RasterOverlayRole::BaseImagery;
-        satellite.priority = earth_engine::RasterOverlayPriority::High;
-        satellite.fallbackPolicy =
-            earth_engine::RasterOverlayFallbackPolicy::AncestorOrPlaceholder;
-        satellite.blocksCompleteRenderable = true;
-        config.rasterOverlays.push_back(satellite);
-
         _sdkFacade->installScene(config);
         _engineReady = _engine->isReady();
         NSLog(@"[MinimalGlobe] Scene installed. Engine ready=%d drawSize=%.0fx%.0f",

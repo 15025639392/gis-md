@@ -14,7 +14,9 @@
 #include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
 #include "../renderer/Renderer.h"
+#include "../renderer/AmapTerrainFillMaskStore.h"
 #include "../renderer/TerrainPageStore.h"
+#include "../tiling/RenderedTerrainSurfaceSampler.h"
 #include "../tiling/TerrainDisplacementTemplatePool.h"  // B:flushHeightBakes
 #include "../tiling/TileBoundsMetrics.h"
 #include "../tiling/Tileset.h"
@@ -27,6 +29,8 @@
 #include <cstdio>
 #include <stdexcept>
 #include <string>
+#include <unordered_set>
+#include <unordered_set>
 
 namespace earth_engine {
 namespace {
@@ -305,9 +309,9 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
 
     releaseRenderReferences(context, presentable);
 
-    char buildDetail[448];
+    char buildDetail[576];
     std::snprintf(buildDetail, sizeof(buildDetail),
-        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f clampH=%.0f/%.0f(t%d/a%d/l%d/hi%d/ir%d) batch=%.2f(b%d/c%d) mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
+        "sky=%.2f atmo=%.2f layers=%.2f vector=%.2f clampH=%.0f/%.0f(t%d/a%d/l%d/hi%d/ir%d) surfSampler=%.2f(c%d/i%d/q%d/lut%d/a%d/copy%d) batch=%.2f(b%d/c%d) mvp=%.2f sort=%.2f surfDiag=%.2f validate=%.2f diag=%.2f commands=%zu",
         skyMs,
         atmosphereMs,
         layerCommandsMs,
@@ -321,6 +325,13 @@ SceneRenderPipeline::Result SceneRenderPipeline::render(Context context) {
         lastClampLooseTiles_,
         lastHeightIndexTiles_,
         lastHeightIrregularTiles_,
+        context.diagnostics.terrainSurfaceSamplerBuildMs,
+        context.diagnostics.terrainSurfaceSamplerCandidates,
+        context.diagnostics.terrainSurfaceSamplerCommandIndexEntries,
+        context.diagnostics.terrainSurfaceSamplerCommandLookups,
+        context.diagnostics.terrainSurfaceSamplerLutCopyBytes,
+        context.diagnostics.terrainSurfaceSamplerAreaBuilds,
+        context.diagnostics.terrainSurfaceSamplerAreaCandidateCopies,
         batchMs,
         context.diagnostics.terrainBatches,
         context.diagnostics.batchedTerrainCommands,
@@ -452,7 +463,10 @@ void SceneRenderPipeline::buildLayerCommands(
     // Tileset 命令来自各 tile 的常驻命令缓存(见 GltfDrawCommandBuilder),
     // 直接追加进帧列表:每命令每帧一次拷贝,无中转缓存。
     const double layerStartMs = perf::nowMs();
+    std::vector<TileRenderEntry> submittedPrimaryTerrainEntries;
+    const TileScheme* submittedPrimaryTerrainScheme = nullptr;
     if (context.terrainTileset) {
+        submittedPrimaryTerrainScheme = &context.terrainTileset->tileScheme();
         if (context.pendingTerrainTileset) {
             const ScenePrimaryTilesetRenderComposition composition =
                 ScenePrimaryTilesetRenderComposer::compose(
@@ -473,31 +487,50 @@ void SceneRenderPipeline::buildLayerCommands(
                 lastPrimaryCurrentEntryCount_ = currentEntryCount;
                 lastPrimaryPendingEntryCount_ = pendingEntryCount;
             }
+            prepareTerrainFillMasks(context, composition.currentEntries);
             context.terrainTileset->buildRenderCommands(
                 context.renderer,
                 context.commands,
                 context.frameState.frameId,
                 &composition.currentEntries);
             if (composition.hasPendingCoverage()) {
+                prepareTerrainFillMasks(context, composition.pendingEntries);
                 context.pendingTerrainTileset->buildRenderCommands(
                     context.renderer,
                     context.commands,
                     context.frameState.frameId,
                     &composition.pendingEntries);
             }
+            submittedPrimaryTerrainEntries = composition.currentEntries;
+            submittedPrimaryTerrainEntries.insert(
+                submittedPrimaryTerrainEntries.end(),
+                composition.pendingEntries.begin(),
+                composition.pendingEntries.end());
         } else {
             lastPrimaryCurrentEntryCount_ = -1;
             lastPrimaryPendingEntryCount_ = -1;
+            prepareTerrainFillMasks(
+                context,
+                context.terrainTileset->tilePlan().renderEntries);
             context.terrainTileset->buildRenderCommands(
                 context.renderer,
                 context.commands,
                 context.frameState.frameId);
+            submittedPrimaryTerrainEntries =
+                context.terrainTileset->tilePlan().renderEntries;
         }
     } else if (context.pendingTerrainTileset) {
+        submittedPrimaryTerrainScheme =
+            &context.pendingTerrainTileset->tileScheme();
+        prepareTerrainFillMasks(
+            context,
+            context.pendingTerrainTileset->tilePlan().renderEntries);
         context.pendingTerrainTileset->buildRenderCommands(
             context.renderer,
             context.commands,
             context.frameState.frameId);
+        submittedPrimaryTerrainEntries =
+            context.pendingTerrainTileset->tilePlan().renderEntries;
     }
     for (auto& tileset : context.additionalTilesets) {
         if (tileset) {
@@ -508,6 +541,26 @@ void SceneRenderPipeline::buildLayerCommands(
         }
     }
     layerCommandsMs = perf::nowMs() - layerStartMs;
+
+    // Edge LUT acceptance during command build only means the bytes were
+    // queued. Official vectors must not sample those bytes until the batched
+    // upload has actually committed. Flush before Feature reclamping; if any
+    // backend upload fails, clear every LUT-valid bit for this candidate frame
+    // so both GPU terrain and CPU vectors take the same self-texture snap
+    // fallback. The later frame-level flush remains a harmless no-op.
+    if (auto* pool = context.renderer.terrainDisplacementPool()) {
+        if (!pool->flushEdgeLutUploads()) {
+            for (RenderCommand& command : context.commands) {
+                if (command.terrainVisibleEdgeSnapPacked >= 4096.0f) {
+                    command.terrainVisibleEdgeSnapPacked -= 4096.0f;
+                    command.terrainVisibleEdgeLutTable = nullptr;
+                }
+                if (command.gltfUniforms.terrainLayers[2] >= 4096.0f) {
+                    command.gltfUniforms.terrainLayers[2] -= 4096.0f;
+                }
+            }
+        }
+    }
 
     const double vectorStartMs = perf::nowMs();
     for (auto& vLayer : context.vectorLayers) {
@@ -635,32 +688,36 @@ void SceneRenderPipeline::buildLayerCommands(
     lastClampRangeApplied_ = clampMaxHeight >= clampMinHeight;
     lastClampMinHeight_ = lastClampRangeApplied_ ? clampMinHeight : 0.0;
     lastClampMaxHeight_ = lastClampRangeApplied_ ? clampMaxHeight : 0.0;
+    std::shared_ptr<const RenderedTerrainSurfaceSampler>
+        renderedTerrainSurface;
+    if (submittedPrimaryTerrainScheme &&
+        !submittedPrimaryTerrainEntries.empty()) {
+        const double samplerStartMs = perf::nowMs();
+        renderedTerrainSurface =
+            std::make_shared<const RenderedTerrainSurfaceSampler>(
+                submittedPrimaryTerrainEntries,
+                *submittedPrimaryTerrainScheme,
+                &context.commands);
+        context.diagnostics.terrainSurfaceSamplerBuildMs =
+            perf::nowMs() - samplerStartMs;
+        context.diagnostics.terrainSurfaceSamplerCandidates =
+            static_cast<int>(renderedTerrainSurface->candidateCount());
+    }
     for (auto& fLayer : context.featureRenderLayers) {
         FeatureTerrainSampling sampling;
-        if (terrainForClamp) {
-            // 统一采样服务:cell 索引让逐点查询 O(档数),区域预筛不再必要
-            // (area 参数保留在闭包签名里,矢量层接口不动)。矢量贴地 →
-            // 渲染网格一致采样,与上屏地形面同一分段线性面。
+        if (renderedTerrainSurface) {
+            // Official vector clamp consumes the resolved surface for this
+            // frame. Do not route it through TerrainHeightService: that
+            // service intentionally answers the deepest retained registry
+            // DEM and cannot represent ancestor fallback, relief fade, or
+            // geomorph. Keeping both would reintroduce two altitude contracts.
             sampling.makeAreaSampler =
-                [terrainForClamp](const Rectangle& area)
+                [surface = renderedTerrainSurface](const Rectangle& area)
                 -> std::function<std::optional<float>(double, double)> {
-                (void)area;
-                const TerrainHeightService* heights =
-                    &terrainForClamp->heightService();
-                return [heights](double lng,
-                                 double lat) -> std::optional<float> {
-                    const auto sample = heights->sample(
-                        lng, lat,
-                        TerrainHeightService::Interp::RenderGridConsistent);
-                    if (!sample) {
-                        return std::nullopt;
-                    }
-                    return sample->height;
-                };
+                return surface->makeAreaSampler(area);
             };
-            // 强代次替代 contentBytesUsed 弱代理(字节数恰好不变会漏失效)。
-            sampling.revision = []() {
-                return TerrainHeightService::heightmapGeneration();
+            sampling.revision = [surface = renderedTerrainSurface]() {
+                return surface->revision();
             };
         }
         fLayer->setTerrainSampling(std::move(sampling));
@@ -676,7 +733,65 @@ void SceneRenderPipeline::buildLayerCommands(
                 context.frameState, context.renderer, context.commands);
         }
     }
+    if (renderedTerrainSurface) {
+        const auto& stats = renderedTerrainSurface->stats();
+        context.diagnostics.terrainSurfaceSamplerCommandIndexEntries =
+            static_cast<int>(stats.commandIndexEntries);
+        context.diagnostics.terrainSurfaceSamplerCommandLookups =
+            static_cast<int>(stats.commandLookups);
+        context.diagnostics.terrainSurfaceSamplerLutCopyBytes =
+            static_cast<int>(stats.lutCopyBytes);
+        context.diagnostics.terrainSurfaceSamplerAreaBuilds =
+            static_cast<int>(stats.areaSamplerBuilds);
+        context.diagnostics.terrainSurfaceSamplerAreaCandidateCopies =
+            static_cast<int>(stats.areaCandidateCopies);
+    }
     vectorCommandsMs = perf::nowMs() - vectorStartMs;
+}
+
+void SceneRenderPipeline::prepareTerrainFillMasks(
+    Context& context,
+    const std::vector<TileRenderEntry>& entries) const {
+    AmapTerrainFillMaskStore* store = context.terrainFillMaskStore;
+    if (!store) return;
+
+    // One selected tile can occur in both the selected and fading passes.
+    // Request/upload once per render frame, but never deduplicate selected and
+    // render owners: an ancestor may supply height geometry while the exact
+    // descendant footprint still owns this page.
+    std::unordered_set<TilesetTile*> prepared;
+    prepared.reserve(entries.size());
+    for (const TileRenderEntry& entry : entries) {
+        TilesetTile* selectedTile = entry.selectedTile;
+        if (!selectedTile || !prepared.insert(selectedTile).second) continue;
+
+        AmapTerrainFillMaskStore::Result result =
+            store->request(selectedTile->key);
+        TileRenderContentState& content =
+            selectedTile->content.renderContent;
+        if (!result.pixels) {
+            // Never display a previous style generation while the exact new
+            // page is pending. There is deliberately no ancestor or
+            // placeholder fallback; the terrain simply has no ordinary fill
+            // until its local page is ready.
+            if (content.terrainFillMaskRevision() != result.revision) {
+                content.clearTerrainFillMaskTexture();
+            }
+            continue;
+        }
+        if (content.terrainFillMaskTexture() &&
+            content.terrainFillMaskRevision() == result.revision) {
+            continue;
+        }
+        std::unique_ptr<Texture> texture =
+            context.renderer.uploadTerrainFillMask(*result.pixels);
+        if (texture) {
+            content.setTerrainFillMaskTexture(
+                std::move(texture), result.revision);
+        } else if (content.terrainFillMaskRevision() != result.revision) {
+            content.clearTerrainFillMaskTexture();
+        }
+    }
 }
 
 void SceneRenderPipeline::assembleTerrainBatches(
