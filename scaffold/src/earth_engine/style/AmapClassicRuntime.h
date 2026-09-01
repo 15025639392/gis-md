@@ -2,6 +2,7 @@
 
 #include "AmapClassicAssets.h"
 #include "../data/AmapVectorSource.h"
+#include "../renderer/AmapTerrainFillMaskStore.h"
 
 #include <memory>
 #include <utility>
@@ -36,6 +37,11 @@ public:
 
     const AmapClassicAssets& assets() const { return assets_; }
     const AmapClassicSourceBundle& sources() const { return sources_; }
+
+    /// Diagnostics probe for the terrain-fill mask request path.  Reading it
+    /// does not change rendering; it resets the store's rolling counters.
+    /// Returns empty counters when no mask store is installed.
+    AmapTerrainFillMaskStore::Probe maskProbe() const;
 #if defined(EARTH_ENGINE_TESTING)
     void requireAtlasForContractTest(int atlas) {
         assets_.requireAtlasForContractTest(atlas);

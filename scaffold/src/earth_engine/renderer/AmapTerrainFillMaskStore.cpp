@@ -22,6 +22,13 @@ struct AmapTerrainFillMaskStore::State {
     size_t maximumResidentPages = 96;
     std::unordered_map<TileKey, Entry> entries;
     std::atomic<bool> alive{true};
+    // Probe counters (incremented under the same mutex as `entries`).
+    uint64_t probePresentHits = 0;
+    uint64_t probeAsyncPending = 0;
+    uint64_t probeStartedFetches = 0;
+    uint64_t probeFailed = 0;
+    std::string probeLastScheme;
+    int probeLastZ = -1;
 };
 
 namespace {
@@ -175,14 +182,18 @@ AmapTerrainFillMaskStore::Result AmapTerrainFillMaskStore::request(
     bool start = false;
     {
         std::lock_guard<std::mutex> lock(state->mutex);
+        state->probeLastScheme = key.schemeId;
+        state->probeLastZ = key.z;
         Entry& entry = state->entries[key];
         entry.lastAccess = ++state->accessClock;
         pruneResidentPages(*state, &key);
         if (entry.revision == revision && entry.pixels) {
+            ++state->probePresentHits;
             return Result{entry.pixels, entry.revision, false, false};
         }
         if (entry.pending) {
             if (entry.revision == revision) {
+                ++state->probeAsyncPending;
                 return Result{nullptr, revision, true, false};
             }
             // A discrete style change must not wait behind work that can only
@@ -193,6 +204,7 @@ AmapTerrainFillMaskStore::Result AmapTerrainFillMaskStore::request(
         }
         if (entry.failed && entry.revision == revision) {
             entry.failed = false;
+            ++state->probeFailed;
             return Result{nullptr, revision, false, true};
         }
         entry.pending = true;
@@ -201,6 +213,7 @@ AmapTerrainFillMaskStore::Result AmapTerrainFillMaskStore::request(
         entry.token = CancellationToken{};
         token = entry.token;
         start = true;
+        ++state->probeStartedFetches;
     }
     if (start) {
         // The decoded Type-1 cache may complete on a transport/decode worker.
@@ -279,13 +292,35 @@ AmapTerrainFillMaskStore::Result AmapTerrainFillMaskStore::request(
     }
     it->second.lastAccess = ++state->accessClock;
     if (it->second.pixels) {
+        ++state->probePresentHits;
         return Result{it->second.pixels, revision, false, false};
     }
     if (it->second.failed) {
         it->second.failed = false;
+        ++state->probeFailed;
         return Result{nullptr, revision, false, true};
     }
+    if (it->second.pending) {
+        ++state->probeAsyncPending;
+    }
     return Result{nullptr, revision, it->second.pending, false};
+}
+
+AmapTerrainFillMaskStore::Probe AmapTerrainFillMaskStore::takeProbe() {
+    Probe out;
+    std::lock_guard<std::mutex> lock(state_->mutex);
+    out.presentHits = state_->probePresentHits;
+    out.asyncPending = state_->probeAsyncPending;
+    out.startedFetches = state_->probeStartedFetches;
+    out.failed = state_->probeFailed;
+    out.lastScheme = state_->probeLastScheme;
+    out.lastZ = state_->probeLastZ;
+    out.residentPages = state_->entries.size();
+    state_->probePresentHits = 0;
+    state_->probeAsyncPending = 0;
+    state_->probeStartedFetches = 0;
+    state_->probeFailed = 0;
+    return out;
 }
 
 } // namespace earth_engine

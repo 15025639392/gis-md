@@ -36,6 +36,21 @@ public:
         bool failed = false;
     };
 
+    /// Diagnostics snapshot for the terrain-fill mask request probe.  Counts
+    /// are since the last takeProbe (or construction).  Intended for demo
+    /// logcat only; no behavior is changed by reading it.
+    struct Probe {
+        uint64_t presentHits = 0;   ///< page already cached (same-frame upload)
+        uint64_t asyncPending = 0;  ///< coalesced onto an in-flight fetch
+        uint64_t startedFetches = 0;///< started a new shared type-1 fetch
+        uint64_t failed = 0;        ///< returned failure (no page)
+        size_t residentPages = 0;   ///< cached pages resident right now
+        /// Last requested key's scheme / zoom, for source-mapping diagnostics.
+        std::string lastScheme;
+        int lastZ = -1;
+    };
+    Probe takeProbe();
+
     AmapTerrainFillMaskStore(
         FeatureFetch fetch,
         std::shared_ptr<AmapSurfaceMaskStyleState> styleState,

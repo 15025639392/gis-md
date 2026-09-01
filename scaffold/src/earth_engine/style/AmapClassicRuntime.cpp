@@ -71,6 +71,14 @@ void AmapClassicRuntime::setSurfaceMaskStyleState(
     }
 }
 
+AmapTerrainFillMaskStore::Probe AmapClassicRuntime::maskProbe() const {
+    if (!terrainFillMaskStore_) return AmapTerrainFillMaskStore::Probe{};
+    // takeProbe() only resets diagnostic counters; the const_cast is
+    // diagnostic-only and never alters render state.
+    return const_cast<AmapTerrainFillMaskStore*>(terrainFillMaskStore_.get())
+        ->takeProbe();
+}
+
 void AmapClassicRuntime::update(const Rectangle& viewRectangle,
                                 double cameraHeightMeters,
                                 SceneFrameResourceArbiter& resourceArbiter) {
