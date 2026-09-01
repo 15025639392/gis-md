@@ -455,7 +455,7 @@ public:
     void setTerrainFillMaskTexture(
         std::unique_ptr<Texture> texture, uint64_t revision) {
         if (terrainFillMaskTexture_ || texture) {
-            markRetainedResourcesChanged();
+            markRetainedBytesChanged();  // 掩码不进缓存命令,只更新字节记账
         }
         terrainFillMaskTexture_ = std::move(texture);
         terrainFillMaskRevision_ = terrainFillMaskTexture_ ? revision : 0;
@@ -464,7 +464,7 @@ public:
         if (!terrainFillMaskTexture_ && terrainFillMaskRevision_ == 0) return;
         terrainFillMaskTexture_.reset();
         terrainFillMaskRevision_ = 0;
-        markRetainedResourcesChanged();
+        markRetainedBytesChanged();  // 掩码不进缓存命令,只更新字节记账
     }
     const Vec3& renderLocalOrigin() const { return surface_.localOrigin; }
     const std::vector<GltfPrimitiveRenderResources>&
@@ -1057,6 +1057,14 @@ private:
         // 保守失效(如仅 fill 资源变化)代价只是一次命令重建,换来指针安全。
         ++drawCommandReadSetRevision_;
     }
+
+    // Terrain-fill-mask 纹理是**每帧**从 terrainFillMaskOwner 经
+    // applyPerFrameCommandState 绑定的(GltfDrawCommandBuilder 的 per-frame
+    // 状态),从不进缓存命令的读取集/裸指针。掩码上传/释放只改变字节占用,
+    // 不使缓存命令 stale —— 若走 markRetainedResourcesChanged 会让每次掩码
+    // 上传都强制该瓦命令重建(换代帧大量瓦同时上传 = 卡顿尖峰)。故只 bump
+    // 字节记账 revision,不动命令读取集代次。
+    void markRetainedBytesChanged() { ++retainedResourcesRevision_; }
 
     bool isGltfOwnedContentState() const {
         return gltfModel != nullptr ||
