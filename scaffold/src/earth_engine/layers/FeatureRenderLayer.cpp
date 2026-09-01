@@ -1359,6 +1359,22 @@ void FeatureRenderLayer::tessellateFeatureInto(
                     lineClampSourceOut->reserve(
                         lineClampSourceOut->size() +
                         line.vertices.size() * 9);
+                    // worker 侧预计算去重曲面缓存 (k, normal),避免渲染线程
+                    // 重钳时重算三角函数。覆盖 p/prev/next 三组坐标。
+                    std::unordered_map<std::pair<double, double>,
+                                       std::pair<Vec3, Vec3>, PairHash>
+                        surfaceCache;
+                    surfaceCache.reserve(line.vertices.size() * 3);
+                    auto cachePoint = [&](const Cartographic& c) {
+                        const std::pair<double, double> key{c.longitude(),
+                                                            c.latitude()};
+                        if (surfaceCache.find(key) != surfaceCache.end()) return;
+                        const Vec3 normal = ctx.ellipsoid.geodeticSurfaceNormal(c);
+                        const Vec3 k = ctx.ellipsoid.cartographicToCartesian(
+                            Cartographic(c.longitude(), c.latitude(), 0.0));
+                        surfaceCache.emplace(key, std::pair<Vec3, Vec3>{k,
+                                                                         normal});
+                    };
                     for (size_t i = 0; i < line.vertices.size(); ++i) {
                         const LineVertex& vertex = line.vertices[i];
                         const Cartographic p = ctx.ellipsoid.cartesianToCartographic(vertex.pos);
@@ -1376,6 +1392,16 @@ void FeatureRenderLayer::tessellateFeatureInto(
                         lineClampSourceOut->push_back(vertex.lengthSoFar);
                         lineClampSourceOut->push_back(
                             colors ? (*colors)[i] : lineColorPacked);
+                        cachePoint(p);
+                        cachePoint(previous);
+                        cachePoint(next);
+                    }
+                    lineRange.lineSurfaceCache.reserve(
+                        lineRange.lineSurfaceCache.size() +
+                        surfaceCache.size());
+                    for (auto& [key, kn] : surfaceCache) {
+                        lineRange.lineSurfaceCache.emplace_back(
+                            std::move(key), std::move(kn));
                     }
                 }
             }
@@ -3023,10 +3049,13 @@ void FeatureRenderLayer::flattenLinePaintRanges(
     const std::map<std::pair<int, int>, PaintGeometryCpu>& ranges,
     size_t floatsPerVertex, std::vector<float>& verts,
     std::vector<uint32_t>& indices, std::vector<PaintRange>* outRanges,
-    std::vector<float>* clampSource) {
+    std::vector<float>* clampSource,
+    std::vector<std::pair<std::pair<double, double>,
+                         std::pair<Vec3, Vec3>>>* lineSurfaceCache) {
     verts.clear();
     indices.clear();
     if (clampSource) clampSource->clear();
+    if (lineSurfaceCache) lineSurfaceCache->clear();
     if (outRanges) outRanges->clear();
     for (const auto& [key, group] : ranges) {
         if (group.indices.empty()) continue;
@@ -3039,6 +3068,11 @@ void FeatureRenderLayer::flattenLinePaintRanges(
         if (clampSource) {
             clampSource->insert(clampSource->end(), group.clampSource.begin(),
                                 group.clampSource.end());
+        }
+        if (lineSurfaceCache) {
+            lineSurfaceCache->insert(
+                lineSurfaceCache->end(), group.lineSurfaceCache.begin(),
+                group.lineSurfaceCache.end());
         }
         if (outRanges) {
             PaintRange range{paintOrder, indexOffset,
@@ -3438,7 +3472,8 @@ FeatureRenderLayer::TileMeshCpu FeatureRenderLayer::tessellateTileMesh(
                            &mesh.fillRanges, &mesh.fillClampSource);
     flattenLinePaintRanges(lineGroups, kLineVertexFloats, mesh.lineVerts,
                            mesh.lineIndices, &mesh.lineRanges,
-                           &mesh.lineClampSource);
+                           &mesh.lineClampSource,
+                           &mesh.lineClampSurfaceCache);
     flattenExtrusionRanges(extrudeGroups, mesh.extrudeVerts,
                            mesh.extrudeIndices, &mesh.extrudeRanges,
                            &mesh.extrudeClampSource);
@@ -3808,6 +3843,11 @@ TileMeshCommitResult FeatureRenderLayer::commitTileMesh(
     }
     const auto tStore = PClock::now();
     gpu.lineClampSource = std::move(mesh.lineClampSource);
+    gpu.lineClampSurfaceCache.clear();
+    gpu.lineClampSurfaceCache.reserve(mesh.lineClampSurfaceCache.size());
+    for (auto& [key, kn] : mesh.lineClampSurfaceCache) {
+        gpu.lineClampSurfaceCache.emplace(std::move(key), std::move(kn));
+    }
     gpu.fillClampSource = std::move(mesh.fillClampSource);
     gpu.extrudeClampSource = std::move(mesh.extrudeClampSource);
     gpu.tileLabelSources = std::move(labelSources);
@@ -4619,20 +4659,25 @@ void FeatureRenderLayer::reclampTileBucketLines(BucketGpu& gpu) {
     // 的 (lon,lat) 在 commit 写死,reclamp 只改 height → 跨换代复用缓存,避免
     // 每次重算全部顶点的三角函数(大路网瓦 3.8 万顶点 → 168ms)。
     if (gpu.lineClampSurfaceCache.empty()) {
-        gpu.lineClampSurfaceCache.reserve(nverts);
+        gpu.lineClampSurfaceCache.reserve(nverts * 3);
         for (size_t i = 0; i < nverts; ++i) {
             const size_t base = i * kClampFloats;
-            const std::pair<double, double> key{
-                gpu.lineClampSource[base], gpu.lineClampSource[base + 1]};
-            if (gpu.lineClampSurfaceCache.find(key) !=
-                gpu.lineClampSurfaceCache.end()) {
-                continue;
+            // 覆盖 p/prev/next 三组坐标,使 position() 命中缓存(prev/next 常
+            // 指向相邻顶点,桶内被覆盖;桶界坐标 miss 由 find 回退兜底)。
+            for (size_t offset : {size_t{0}, size_t{2}, size_t{4}}) {
+                const std::pair<double, double> key{
+                    gpu.lineClampSource[base + offset],
+                    gpu.lineClampSource[base + offset + 1]};
+                if (gpu.lineClampSurfaceCache.find(key) !=
+                    gpu.lineClampSurfaceCache.end()) {
+                    continue;
+                }
+                const Cartographic c(key.first, key.second, 0.0);
+                const Vec3 normal = ellipsoid_.geodeticSurfaceNormal(c);
+                const Vec3 k = ellipsoid_.cartographicToCartesian(c);
+                gpu.lineClampSurfaceCache.emplace(
+                    key, std::pair<Vec3, Vec3>{k, normal});
             }
-            const Cartographic c(key.first, key.second, 0.0);
-            const Vec3 normal = ellipsoid_.geodeticSurfaceNormal(c);
-            const Vec3 k = ellipsoid_.cartographicToCartesian(c);
-            gpu.lineClampSurfaceCache.emplace(key, std::pair<Vec3, Vec3>{
-                                                      k, normal});
         }
     }
     // 本帧采样去重:同一 (lon,lat) 会被采样多次(自己的 pos + 相邻顶点的
@@ -4657,9 +4702,16 @@ void FeatureRenderLayer::reclampTileBucketLines(BucketGpu& gpu) {
                 height = sample(lon, lat).value_or(0.0);
                 heightCache.emplace(hkey, height);
             }
-            const auto& [k, normal] =
-                gpu.lineClampSurfaceCache.at(hkey);
-            return (k + normal * height) - gpu.origin;
+            // 缓存命中 → k + normal*height(一次乘加);miss(prev/next 指向
+            // 桶外或冷填充未覆盖的坐标) → 现算完整 ECEF 变换(边界,罕见)。
+            auto cit = gpu.lineClampSurfaceCache.find(hkey);
+            if (cit != gpu.lineClampSurfaceCache.end()) {
+                const auto& [k, normal] = cit->second;
+                return (k + normal * height) - gpu.origin;
+            }
+            return ellipsoid_.cartographicToCartesian(
+                       Cartographic(lon, lat, height)) -
+                   gpu.origin;
         };
         const Vec3 p = position(0);
         const Vec3 pr = position(2);

@@ -47,6 +47,11 @@ struct PaintGeometryCpu {
     /// 几何同源钳高数据。fill 每顶点为 lon/lat/color 3f；line 使用
     /// FeatureRenderLayer 定义的完整 9f line-vertex 布局。
     std::vector<float> clampSource;
+    /// Line-only:去重 (lon,lat) → (曲面点 k, 椭球法线 normal),供重钳复用,
+    /// 避免渲染线程重算三角函数。fill 保持空。
+    std::vector<std::pair<std::pair<double, double>,
+                         std::pair<Vec3, Vec3>>>
+        lineSurfaceCache;
 };
 struct PaintRange {
     int paintOrder = 0;
@@ -207,6 +212,13 @@ struct FeatureTileMesh {
     /// 线 ribbon 的完整钳高源。worker 无地形采样时只产椭球面高度；
     /// 渲染线程 commit/revision 时按经纬度同源采样。
     std::vector<float> lineClampSource;
+    /// worker 预计算的 lineClampSource 去重曲面缓存:唯一 (lon,lat) →
+    /// (曲面点 k, 椭球法线 normal),使 cartographicToCartesian = k + normal*height
+    /// 只需一次乘加。worker(tessellation)算,commit 存桶,reclamp 复用,避免
+    /// 渲染线程每次换代/新瓦进入重算全部顶点的三角函数。
+    std::vector<std::pair<std::pair<double, double>,
+                         std::pair<Vec3, Vec3>>>
+        lineClampSurfaceCache;
     /// 贴地(ClampToGround + 后端支持 stencil 分类)时,fill/line 改产
     /// 挤出体走双 pass 像素级贴合;此时上面的 fill/lineVerts 为空(两条路
     /// **互斥**,同时产出会让同一份内容画两遍)。

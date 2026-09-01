@@ -1380,7 +1380,10 @@ private:
         const std::map<std::pair<int, int>, PaintGeometryCpu>& ranges,
         size_t floatsPerVertex, std::vector<float>& verts,
         std::vector<uint32_t>& indices, std::vector<PaintRange>* outRanges,
-        std::vector<float>* clampSource = nullptr);
+        std::vector<float>* clampSource = nullptr,
+        std::vector<std::pair<std::pair<double, double>,
+                             std::pair<Vec3, Vec3>>>* lineSurfaceCache =
+            nullptr);
     static void flattenStylePaintRanges(
         const std::map<std::pair<int, int>, PaintGeometryCpu>& ranges,
         size_t floatsPerVertex, std::vector<float>& verts,
