@@ -229,7 +229,9 @@ void HeightmapTerrainContentProvider::requestTileContent(
                 buildContent(completedKey, *result.heightmap, options);
             // Phase 2c Stage B:保留原始高度图给 GL 线程建 per-tile 高度纹理。
             if (contentResult.status == TileLoadStatus::Renderable) {
-                contentResult.retainedHeightmap = std::move(result.heightmap);
+                contentResult.retainedHeightmap =
+                    std::shared_ptr<const DecodedHeightmap>(
+                        std::move(result.heightmap));
             }
             callback(completedKey, std::move(contentResult));
         },

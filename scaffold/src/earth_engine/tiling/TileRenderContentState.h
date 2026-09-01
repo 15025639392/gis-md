@@ -30,7 +30,13 @@ enum class SurfaceDrawableSource {
 };
 
 struct TileSurfaceContentState {
-    std::unique_ptr<DecodedHeightmap> heightmap;
+    // Shared so worker tasks (terrain re-sampling, e.g. clamped ribbon reclamp)
+    // and the rendered-terrain surface sampler can safely hold a reference
+    // across the thread/frame boundary. The owner TilesetTile still releases
+    // its reference on eviction; a worker holding a reference keeps the data
+    // alive only until the worker task finishes (matches the existing
+    // shared_ptr<const TerrainEdgeLutTable> convention in the surface sampler).
+    std::shared_ptr<const DecodedHeightmap> heightmap;
     std::unique_ptr<Buffer> gpuVertexBuffer;
     std::unique_ptr<Buffer> gpuIndexBuffer;
     Vec3 localOrigin = Vec3::zero();
@@ -297,8 +303,8 @@ public:
         return !rasterOverlayDetails().empty();
     }
     bool isTerrainRenderContent() const { return terrainRenderContent_; }
-    const DecodedHeightmap* retainedHeightmap() const {
-        return surface_.heightmap.get();
+    const std::shared_ptr<const DecodedHeightmap>& retainedHeightmap() const {
+        return surface_.heightmap;
     }
     bool hasRetainedHeightmap() const { return surface_.heightmap != nullptr; }
     bool hasTerrainHeightRange() const {
@@ -314,7 +320,8 @@ public:
                hasOwnTerrain &&
                surface_.surfaceSource != SurfaceDrawableSource::HeightmapTerrain;
     }
-    void setRetainedHeightmap(std::unique_ptr<DecodedHeightmap> decoded) {
+    void setRetainedHeightmap(
+        std::shared_ptr<const DecodedHeightmap> decoded) {
         // Phase 2c:heightmap 地形虽当 glTF 交付(prepareGltfContent 设 gltfModel
         // → isGltfOwnedContentState() 为 true),但 GPU 位移需保留其原始高度图建
         // per-tile 高度纹理。故只要**显式传入非空高度图**(仅 heightmap 地形的

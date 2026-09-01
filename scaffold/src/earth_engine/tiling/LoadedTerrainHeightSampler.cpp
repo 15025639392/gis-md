@@ -59,7 +59,7 @@ std::optional<float> sampleFromSortedCandidates(
         if (!renderContent.isTerrainRenderContent()) {
             continue;
         }
-        const DecodedHeightmap* heightmap = renderContent.retainedHeightmap();
+        const DecodedHeightmap* heightmap = renderContent.retainedHeightmap().get();
         if (!heightmap || !heightmap->valid()) {
             continue;
         }
@@ -99,7 +99,7 @@ bool hasUsableHeightmap(const TilesetTile& tile) {
     if (!renderContent.isTerrainRenderContent()) {
         return false;
     }
-    const DecodedHeightmap* heightmap = renderContent.retainedHeightmap();
+    const DecodedHeightmap* heightmap = renderContent.retainedHeightmap().get();
     return heightmap && heightmap->valid();
 }
 

@@ -22,8 +22,13 @@ namespace terrain_edge {
 /// 一个渲染条目在本帧实际用于位移的高度来源。remap 条目画的是祖先的数据
 /// (morph 钉 1,模板恒 coarse 档),常规条目画自己的。
 struct HeightSource {
-    const DecodedHeightmap* heightmap = nullptr;
-    const Rectangle* bounds = nullptr;
+    // Shared/self-owning so a worker task (clamped-ribbon reclamp) can hold the
+    // height data safely across the thread boundary: the owner TilesetTile may
+    // be evicted/LRU-recycled while the worker is sampling. `bounds` is copied
+    // by value (small type). This mirrors the shared_ptr<const TerrainEdgeLutTable>
+    // convention used by the surface sampler for the same reason.
+    std::shared_ptr<const DecodedHeightmap> heightmap;
+    Rectangle bounds;
     int gridSize = 0;
     float morph = 1.0f;
     /// 起伏淡入系数。高度纹理是按 {minH·fade, range·fade} 上传的,shader
@@ -44,7 +49,10 @@ struct HeightSource {
     /// displacement texture path intentionally uses its own linear tile UV
     /// and leaves this false.
     bool webMercatorHeightV = false;
-    bool valid() const { return heightmap && bounds && gridSize > 0; }
+    bool valid() const {
+        return heightmap && bounds.width() > 0.0 && bounds.height() > 0.0 &&
+               gridSize > 0;
+    }
 };
 
 inline HeightSource sourceOf(const TileRenderEntry& e) {
@@ -53,7 +61,7 @@ inline HeightSource sourceOf(const TileRenderEntry& e) {
         e.usesAncestorFallback ? e.renderTile : e.selectedTile;
     if (!tile) return s;
     s.heightmap = tile->content.renderContent.retainedHeightmap();
-    s.bounds = &tile->bounds;
+    s.bounds = tile->bounds;
     // fade 恒按**占屏瓦片**(selectedKey)的 z 取:remap 时位移幅度跟后代走
     // (见 GltfDrawCommandBuilder 的 `terrainReliefFade(desc.key.z)`)。
     s.fade = terrainReliefFade(e.selectedKey.z);
@@ -80,16 +88,16 @@ inline float renderedHeight(const HeightSource& s, double lonRad,
     if (s.quantizedTexture) {
         return DecodedHeightmapSampler::
             sampleHeightRenderGridQuantizedDecodedMorphed(
-                *s.heightmap, *s.bounds, lonRad, latRad, s.gridSize,
+                *s.heightmap, s.bounds, lonRad, latRad, s.gridSize,
                 s.morph, s.quantizationMinHeight,
                 s.quantizationHeightRange, s.textureMinHeight,
                 s.textureHeightRange);
     }
     const float height = s.webMercatorHeightV
         ? DecodedHeightmapSampler::sampleHeightRenderGridMorphedWebMercatorV(
-              *s.heightmap, *s.bounds, lonRad, latRad, s.gridSize, s.morph)
+              *s.heightmap, s.bounds, lonRad, latRad, s.gridSize, s.morph)
         : DecodedHeightmapSampler::sampleHeightRenderGridMorphed(
-              *s.heightmap, *s.bounds, lonRad, latRad, s.gridSize, s.morph);
+              *s.heightmap, s.bounds, lonRad, latRad, s.gridSize, s.morph);
     return height * s.fade;
 }
 

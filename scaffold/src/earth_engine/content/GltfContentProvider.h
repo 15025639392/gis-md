@@ -56,7 +56,7 @@ struct TileContentLoadResult {
         TileTerrainRenderSource::Generic;
     // 北极星 Phase 2c Stage B:保留 worker 解码的原始高度图,供 GL 线程建 per-tile
     // 高度纹理(shader 位移)+ 后续高度查询(P3)。仅真实地形 heightmap 路径填充。
-    std::unique_ptr<DecodedHeightmap> retainedHeightmap;
+    std::shared_ptr<const DecodedHeightmap> retainedHeightmap;
 
     static TileContentLoadResult render(std::unique_ptr<GltfModel> model) {
         TileContentLoadResult result;

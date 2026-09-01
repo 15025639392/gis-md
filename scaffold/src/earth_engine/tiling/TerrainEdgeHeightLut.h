@@ -53,7 +53,7 @@ struct TerrainEdgeHeightLut {
         if (!rec.tile || ownGridSize <= 0) return d;
         d.gridSize = ownGridSize;
         const DecodedHeightmap* ownHm =
-            rec.tile->content.renderContent.retainedHeightmap();
+            rec.tile->content.renderContent.retainedHeightmap().get();
         if (!ownHm || !ownHm->valid()) return d;
         const float ownFade = terrainReliefFade(rec.tile->key.z);
         for (int edge = 0; edge < kEdges; ++edge) {

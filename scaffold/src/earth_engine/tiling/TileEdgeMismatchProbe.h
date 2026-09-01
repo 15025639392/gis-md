@@ -154,7 +154,7 @@ struct TileEdgeMismatchProbe {
         for (const TileEdgeSnapRecord& rec : plan.edgeSnapRecords) {
             if (!rec.tile) continue;
             const DecodedHeightmap* ownHm =
-                rec.tile->content.renderContent.retainedHeightmap();
+                rec.tile->content.renderContent.retainedHeightmap().get();
             // 档位读每帧唯一决策 —— 尺子必须量实际在画的那一档,无迟滞重推
             // 会让迟滞带内的读数不可信(量的和画的不是同一个函数)。
             const int ownGrid = decidedOrPredictGridSize(
@@ -179,9 +179,9 @@ struct TileEdgeMismatchProbe {
                                 : out.fadeUniform;
                 // 邻居(粗侧)的裙墙:它自己的瓦片宽度决定,通常远长于细侧。
                 const double nbrSkirt =
-                    ns.bounds ? calcQuadtreeSkirtHeight(Ellipsoid::WGS84(),
-                                                        *ns.bounds)
-                              : 0.0;
+                    ns.valid() ? calcQuadtreeSkirtHeight(Ellipsoid::WGS84(),
+                                                         ns.bounds)
+                               : 0.0;
                 ++st.edges;
                 // 吸附节点:自栅格上每 2^lg 一个 → 共 gridN/2^lg + 1 个。
                 const int step = 1 << lg;

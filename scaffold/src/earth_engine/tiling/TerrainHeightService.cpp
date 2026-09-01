@@ -46,7 +46,7 @@ bool usableTerrainTile(const TilesetTile& tile,
     if (!renderContent.isTerrainRenderContent()) {
         return false;
     }
-    const DecodedHeightmap* heightmap = renderContent.retainedHeightmap();
+    const DecodedHeightmap* heightmap = renderContent.retainedHeightmap().get();
     return heightmap && heightmap->valid();
 }
 

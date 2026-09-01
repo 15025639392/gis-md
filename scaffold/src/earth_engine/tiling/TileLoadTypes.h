@@ -68,7 +68,8 @@ struct TileLoadedContent {
     Mat4 contentTransform = Mat4::identity();
     TileLoadResultMetadata metadata;
     // Phase 2c Stage B:worker 解码的原始高度图,GL 线程建高度纹理后消费。
-    std::unique_ptr<DecodedHeightmap> retainedHeightmap;
+    // Shared so the surface sampler / worker re-clamp can hold it safely.
+    std::shared_ptr<const DecodedHeightmap> retainedHeightmap;
 
     bool satisfiesContentTerrainPayloadContract() const {
         if (!terrainRenderContent || gltfModel == nullptr) {

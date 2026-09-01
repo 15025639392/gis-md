@@ -200,7 +200,7 @@ void Tileset::accumulateCpuResidentBytes(CpuResidentByteBreakdown& out,
         }
         ++out.tileCount;
         const TileRenderContentState& rc = tile->content.renderContent;
-        if (const DecodedHeightmap* hm = rc.retainedHeightmap()) {
+        if (const DecodedHeightmap* hm = rc.retainedHeightmap().get()) {
             ++out.heightmapTiles;
             out.heightmapBytes +=
                 TileRenderContentState::estimateHeightmapBytes(*hm);
@@ -220,7 +220,7 @@ void Tileset::accumulateCpuResidentBytes(CpuResidentByteBreakdown& out,
             // 幽灵判据 = prepare 侧 skipBakedTerrainGeometry 的镜像
             // (GltfRenderResourcePreparer.cpp):这些瓦片 draw 时必换共享
             // 位移模板,其 CPU 网格从不被绘制。
-            const DecodedHeightmap* hm = rc.retainedHeightmap();
+            const DecodedHeightmap* hm = rc.retainedHeightmap().get();
             if (sharedTemplateActive && rc.isTerrainRenderContent() &&
                 hm != nullptr && hm->valid() &&
                 terrainReliefFade(tile->key.z) > 0.001f) {

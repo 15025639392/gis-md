@@ -115,7 +115,7 @@ float edgeSnappedHeight(
         return terrain_edge::renderedHeight(
             source, longitudeRadians, latitudeRadians);
     }
-    const Rectangle& geometryBounds = *source.bounds;
+    const Rectangle& geometryBounds = source.bounds;
     const double u =
         (longitudeRadians - geometryBounds.west()) / geometryBounds.width();
     const double v =
@@ -158,7 +158,7 @@ float edgeSnappedHeight(
         if (source.quantizedTexture) {
             return DecodedHeightmapSampler::
                 sampleHeightRenderGridQuantizedDecoded(
-                       *source.heightmap, *source.bounds, lon, lat,
+                       *source.heightmap, source.bounds, lon, lat,
                        source.gridSize,
                        source.quantizationMinHeight,
                        source.quantizationHeightRange,
@@ -166,7 +166,7 @@ float edgeSnappedHeight(
                        source.textureHeightRange);
         }
         return DecodedHeightmapSampler::sampleHeightRenderGrid(
-                   *source.heightmap, *source.bounds, lon, lat,
+                   *source.heightmap, source.bounds, lon, lat,
                    source.gridSize) *
                source.fade;
     };
@@ -201,8 +201,8 @@ std::pair<double, double> samplePosition(
     const double sourceU = clipUv[0] + u * clipUv[2];
     const double sourceV = clipUv[1] + v * clipUv[3];
     return {
-        source.bounds->west() + sourceU * source.bounds->width(),
-        source.bounds->north() - sourceV * source.bounds->height()};
+        source.bounds.west() + sourceU * source.bounds.width(),
+        source.bounds.north() - sourceV * source.bounds.height()};
 }
 
 } // namespace

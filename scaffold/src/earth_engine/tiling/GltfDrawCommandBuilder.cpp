@@ -384,7 +384,7 @@ void rebuildCachedDrawCommands(Renderer& renderer, TilesetTile& tile,
                 tile.content.renderContent.retainedHeightmap() != nullptr)) {
             {
                 const DecodedHeightmap* hm =
-                    tile.content.renderContent.retainedHeightmap();
+                    tile.content.renderContent.retainedHeightmap().get();
                 // 自适应几何密度:档位读每帧唯一决策(refresher 带迟滞盖章,
                 // 接缝 resolver/LUT/探针读的同一份,见 decidedOrPredictGridSize
                 // 注释)。近景被 cap 的瓦片升 dense 拿回 8 倍高程细节,远瓦片
@@ -694,7 +694,7 @@ void applyPerFrameCommandState(
             TerrainDisplacementTemplatePool* pool =
                 renderer.terrainDisplacementPool();
             const DecodedHeightmap* hm =
-                tile.content.renderContent.retainedHeightmap();
+                tile.content.renderContent.retainedHeightmap().get();
             if (pool && hm) {
                 // 高度纹理**恒取 coarse 档**,不沿用常驻命令的档。原因是批
                 // 一致性:TerrainInstanceBatcher 按模板 VBO 指针分组、绑首

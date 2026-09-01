@@ -435,7 +435,7 @@ std::optional<GpuReadyData> GltfRenderResourcePreparer::prepareCpuWork(
     // coarse z≤6(fade=0)判据为 false,保持 legacy VBO 路径。primitive 级
     // 排除(水面掩码格式/实例化)在 prepareCpuWorkFromModel 内完成。
     const DecodedHeightmap* heightmap =
-        tile.content.renderContent.retainedHeightmap();
+        tile.content.renderContent.retainedHeightmap().get();
     const bool skipBakedTerrainGeometry =
         TerrainTemplateEligibility::forLoadedTile(
             sharedTemplateGeometryActive,
