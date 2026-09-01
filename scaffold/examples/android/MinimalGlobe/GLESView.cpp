@@ -127,9 +127,9 @@ static void applyStartupCameraOverride(earth_engine::EarthSceneConfig& config) {
 }
 // 设备侧 amap-vector.json(getFilesDir)。缺文件/解析失败 → 回落 sealed 默认
 // 并记日志；fail-loud:未知键整份拒收,不静默吞。
-static minimal_globe_demo::AmapVectorConfig loadAmapVectorConfig(
+static earth_engine::minimal_globe_demo::AmapVectorConfig loadAmapVectorConfig(
     earth_engine::PlatformBridge& bridge) {
-    minimal_globe_demo::AmapVectorConfig config;
+    earth_engine::minimal_globe_demo::AmapVectorConfig config;
     const std::string dir = bridge.documentsDirectory();
     if (dir.empty()) {
         LOGI("AmapVectorConfig: no files dir, using sealed defaults");
@@ -144,7 +144,8 @@ static minimal_globe_demo::AmapVectorConfig loadAmapVectorConfig(
     }
     std::string text((std::istreambuf_iterator<char>(file)),
                      std::istreambuf_iterator<char>());
-    const std::string err = parseAmapVectorConfig(text, config);
+    const std::string err =
+        earth_engine::minimal_globe_demo::parseAmapVectorConfig(text, config);
     if (!err.empty()) {
         LOGE("AmapVectorConfig: rejecting %s: %s (using defaults)",
              path.c_str(), err.c_str());

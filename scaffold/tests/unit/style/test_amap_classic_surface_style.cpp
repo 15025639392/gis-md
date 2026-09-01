@@ -200,3 +200,44 @@ TEST(AmapClassicSurfaceStyleTest,
     EXPECT_TRUE(amapClassicBuildingExpressionsMatchOfficialRecordsForTest(
         style));
 }
+
+// amap-vector.json style.surface overrides must also reach the terrain-baked
+// surface fill mask, which colors from amapClassicSurfaceColorForDisplayZoom
+// (a separate static-table path from fillColorExprByStyleGroup).
+TEST(AmapClassicSurfaceStyleTest, RuntimeSurfaceOverrideFeedsBakedMaskPath) {
+    // Sealed: 30001/2 water is #B2CEFE at display zoom 9.
+    EXPECT_EQ((std::array<float, 4>{0xb2 / 255.0f, 0xce / 255.0f,
+                                    0xfe / 255.0f, 1.0f}),
+              *amapClassicSurfaceColorForDisplayZoom(30001, 2, 9.0));
+
+    std::vector<std::pair<std::pair<int, int>, std::array<float, 4>>> ov;
+    ov.emplace_back(std::pair<int, int>{30001, 2},
+                    std::array<float, 4>{1.0f, 0.0f, 0.0f, 1.0f});
+    setAmapClassicSurfaceColorOverrides(ov);
+
+    EXPECT_EQ((std::array<float, 4>{1.0f, 0.0f, 0.0f, 1.0f}),
+              *amapClassicSurfaceColorForDisplayZoom(30001, 2, 9.0));
+    // Land-base color (terrain base, NOT baked into the mask) also honors the
+    // same override registry, since it reads the same 30001/1 identity.
+    {
+        std::vector<std::pair<std::pair<int, int>, std::array<float, 4>>> ov;
+        ov.emplace_back(std::pair<int, int>{30001, 1},
+                        std::array<float, 4>{0.1f, 0.9f, 0.1f, 1.0f});
+        setAmapClassicSurfaceColorOverrides(ov);
+        const auto land = amapClassicLandBaseColor();
+        EXPECT_NEAR(0.1f, land[0], 1e-5);
+        EXPECT_NEAR(0.9f, land[1], 1e-5);
+    }
+    setAmapClassicSurfaceColorOverrides({});
+    EXPECT_NEAR(0xf7 / 255.0f, amapClassicLandBaseColor()[0], 1e-5);
+    // Unrelated identity still uses the sealed official record.
+    EXPECT_EQ((std::array<float, 4>{0xb4 / 255.0f, 0xeb / 255.0f,
+                                    0xaf / 255.0f, 1.0f}),
+              *amapClassicSurfaceColorForDisplayZoom(30001, 3, 9.0));
+
+    setAmapClassicSurfaceColorOverrides({});
+    EXPECT_EQ((std::array<float, 4>{0xb2 / 255.0f, 0xce / 255.0f,
+                                    0xfe / 255.0f, 1.0f}),
+              *amapClassicSurfaceColorForDisplayZoom(30001, 2, 9.0));
+}
+

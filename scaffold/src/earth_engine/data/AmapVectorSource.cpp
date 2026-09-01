@@ -208,6 +208,18 @@ AmapClassicSourceBundle::AmapClassicSourceBundle(
                                        options.styleOverrides);
         applyAmapClassicStyleOverrides(poiLayer_->style_,
                                        options.styleOverrides);
+        {
+            // Surface overrides also feed the terrain-baked fill mask path
+            // (which does not consult fillColorExprByStyleGroup): register them
+            // so amapClassicSurfaceColorForDisplayZoom returns the override.
+            std::vector<std::pair<std::pair<int, int>, std::array<float, 4>>>
+                surfaceOverrides;
+            for (const auto& s : options.styleOverrides.surface) {
+                surfaceOverrides.emplace_back(
+                    std::pair<int, int>{s.classCode, s.subKey}, s.color);
+            }
+            setAmapClassicSurfaceColorOverrides(surfaceOverrides);
+        }
 
         const auto configureTree =
             [&](auto& sourceOptions, int maxZoom,

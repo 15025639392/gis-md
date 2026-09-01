@@ -25,6 +25,14 @@ std::array<float, 4> amapClassicLandBaseColor();
 std::optional<std::array<float, 4>> amapClassicSurfaceColorForDisplayZoom(
     int classCode, int subKey, double displayZoom);
 
+/// Register runtime surface-color overrides (amap-vector.json style.surface)
+/// so the terrain-baked surface fill mask honors them.  Overrides replace the
+/// sealed official record for matching (classCode, subKey); an empty map
+/// clears all overrides back to the sealed table.  Thread-safe.
+void setAmapClassicSurfaceColorOverrides(
+    const std::vector<std::pair<std::pair<int, int>,
+                                std::array<float, 4>>>& overrides);
+
 #if defined(EARTH_ENGINE_TESTING)
 struct AmapClassicSurfaceRecordForTest {
     int classCode = 0;

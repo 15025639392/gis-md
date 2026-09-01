@@ -3279,7 +3279,7 @@ selected/render footprint、位移模板密度、morph/fade、clip 模式和 edg
 
 ### style/AmapClassicSurfaceStyle.cpp
 
-官方面 identity → paint 合同。`isAmapClassicSurfaceIdentity` (.cpp:127-145) 是 admission predicate；`amapClassicLandBaseColor` (.cpp:146-155) 给出官方底色；style contract 从生成的 surface 表安装完整样式，未知 identity 不产生本地 fallback。
+官方面 identity → paint 合同。`isAmapClassicSurfaceIdentity` (.cpp:139-157) 是 admission predicate；`amapClassicLandBaseColor` (.cpp:158-176) 给出官方底色(也读运行时 surface 覆盖注册表)；`setAmapClassicSurfaceColorOverrides`/`amapClassicSurfaceColorForDisplayZoom` (.cpp:177-...)，后者先查覆盖再查官方表，供地形烘焙掩码路径；style contract 从生成的 surface 表安装完整样式，未知 identity 不产生本地 fallback。
 
 ### style/AmapClassicRoadStyle.cpp
 

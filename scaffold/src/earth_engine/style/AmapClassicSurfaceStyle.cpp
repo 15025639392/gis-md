@@ -5,7 +5,9 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -19,6 +21,16 @@ struct SurfaceRecord {
     int maxZoom;
     uint32_t argb;
 };
+
+// Runtime surface-color overrides (amap-vector.json style.surface) consulted
+// by amapClassicSurfaceColorForDisplayZoom BEFORE the sealed official table, so
+// the terrain-baked surface fill mask honors them.  Keyed by (class<<32|subKey).
+std::mutex gSurfaceOverrideMutex;
+std::unordered_map<uint64_t, std::array<float, 4>> gSurfaceOverrides;
+uint64_t surfaceOverrideKey(int classCode, int subKey) {
+    return (uint64_t(static_cast<uint32_t>(classCode)) << 32) |
+           static_cast<uint32_t>(subKey);
+}
 struct BuildingRecord {
     int subKey;
     int minZoom;
@@ -144,6 +156,15 @@ bool isAmapClassicSurfaceIdentity(int classCode, int subKey) {
 }
 
 std::array<float, 4> amapClassicLandBaseColor() {
+    {
+        // Runtime override (amap-vector.json style.surface) wins over the
+        // sealed land-base record; the terrain base color is NOT baked into
+        // the surface mask, so it must be overridden here separately.
+        std::lock_guard<std::mutex> lock(gSurfaceOverrideMutex);
+        const auto it =
+            gSurfaceOverrides.find(surfaceOverrideKey(30001, 1));
+        if (it != gSurfaceOverrides.end()) return it->second;
+    }
     for (const auto& record : kOfficialSurfaceRecords) {
         if (record.classCode == 30001 && record.subKey == 1 &&
             record.minZoom <= 2 && record.maxZoom >= 2) {
@@ -153,11 +174,29 @@ std::array<float, 4> amapClassicLandBaseColor() {
     return {0, 0, 0, 0};
 }
 
+void setAmapClassicSurfaceColorOverrides(
+    const std::vector<std::pair<std::pair<int, int>,
+                                std::array<float, 4>>>& overrides) {
+    std::lock_guard<std::mutex> lock(gSurfaceOverrideMutex);
+    gSurfaceOverrides.clear();
+    for (const auto& [identity, color] : overrides) {
+        gSurfaceOverrides[surfaceOverrideKey(identity.first, identity.second)] =
+            color;
+    }
+}
+
 std::optional<std::array<float, 4>>
 amapClassicSurfaceColorForDisplayZoom(int classCode, int subKey,
                                       double displayZoom) {
     if (!std::isfinite(displayZoom) || classCode == 55001) {
         return std::nullopt;
+    }
+    {
+        // Runtime override takes precedence over the sealed official record.
+        std::lock_guard<std::mutex> lock(gSurfaceOverrideMutex);
+        const auto it =
+            gSurfaceOverrides.find(surfaceOverrideKey(classCode, subKey));
+        if (it != gSurfaceOverrides.end()) return it->second;
     }
     const int providerZoom = static_cast<int>(
         amapClassicDiscreteZoomValue(displayZoom)) + 1;
