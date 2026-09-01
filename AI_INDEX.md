@@ -3101,16 +3101,16 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `uploadBucketGpu` | .cpp:2646-2795 | 单几何类仍上传一对 VBO/IBO；paint ranges 保存 index offset/count，point/label 也按 ordinal 保存 ranges，stencil group 保存 ordinal |
 | `rebuildBucket` | .cpp:2796-2945 | 单桶重建 |
 | `stencilClassificationSupported` / `resolvePaintOrder` / `flattenPaintRanges` | .cpp:2950-2961 / :2696-2707 / :2708-2736 | 能力快照；属性表达式解析 ordinal；按 ordinal flatten 到共享 buffer ranges |
-| `appendTileSymbol` / `commitTileMesh` / `buildTileSymbolGpu` | .cpp:3857-4082 / :3394-3584 / :3585-3763 | MVT worker 保留完整符号源，渲染线程按当前 zoom 派生/cap 并重钳 |
-| `bakeTileBucketLabels` / `dropTileMesh` | .cpp:4637-4948 / :4445-4458 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
-| `buildRenderCommands` | .cpp:5027-5474 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
-| `visibleBucketKeys` | .cpp:5475-5544 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:5545-5672 | 标签避让 + fade + 地平线剔除(P5c) |
-| `dumpLabelLifecycle` | .cpp:5779-5898 | 七态只读聚合 dump |
-| `appendTerrainOcclusion` | .cpp:5919-5939 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:5940-6702 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:6727-6754 / :6140-6146 / :6147-6174 | 编辑预览三接口 |
-| `pick` | .cpp:6798-7093 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
+| `appendTileSymbol` / `commitTileMesh` / `resolveTileSymbols` / `materializeTileSymbols` | .cpp:3447-3655 / :3656-3857 / :3858-3922 / :3923-4071 | MVT worker 保留完整符号源,渲染线程按当前 zoom 派生/cap。resolve 解析样式/图集/选中并缓存;height-only 重钳只重跑 materialize(采当刻地形高),不重 resolve |
+| `bakeTileBucketLabels` / `dropTileMesh` | .cpp:4668-4979 / :4980-4995 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
+| `buildRenderCommands` | .cpp:5061-5508 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
+| `visibleBucketKeys` | .cpp:5509-5578 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:5579-5706 | 标签避让 + fade + 地平线剔除(P5c) |
+| `dumpLabelLifecycle` | .cpp:5813-5932 | 七态只读聚合 dump |
+| `appendTerrainOcclusion` | .cpp:5953-5973 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:5974-6736 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:6737-6753 / :6754-6760 / :6761-6788 | 编辑预览三接口 |
+| `pick` | .cpp:6832-7127 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
