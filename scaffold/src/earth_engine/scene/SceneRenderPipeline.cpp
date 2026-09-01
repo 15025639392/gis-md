@@ -716,6 +716,10 @@ void SceneRenderPipeline::buildLayerCommands(
                 -> std::function<std::optional<float>(double, double)> {
                 return surface->makeAreaSampler(area);
             };
+            sampling.makeAreaRevision =
+                [surface = renderedTerrainSurface](const Rectangle& area) {
+                    return surface->areaRevision(area);
+                };
             sampling.revision = [surface = renderedTerrainSurface]() {
                 return surface->revision();
             };

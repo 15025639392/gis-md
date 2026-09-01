@@ -5058,10 +5058,39 @@ FeatureRenderLayer::terrainReclampSnapshotForTest() const {
 }
 #endif
 
+std::optional<Rectangle> FeatureRenderLayer::reclampAreaOf(
+    const BucketGpu& bucket) {
+    double west = std::numeric_limits<double>::max();
+    double east = std::numeric_limits<double>::lowest();
+    double south = std::numeric_limits<double>::max();
+    double north = std::numeric_limits<double>::lowest();
+    auto absorb = [&](double lon, double lat) {
+        west = std::min(west, lon);
+        east = std::max(east, lon);
+        south = std::min(south, lat);
+        north = std::max(north, lat);
+    };
+    constexpr size_t kLineFloats = 9;  // pos/prev/next lon-lat + side/length/color
+    for (size_t i = 0; i + 2 <= bucket.lineClampSource.size();
+         i += kLineFloats) {
+        absorb(bucket.lineClampSource[i],
+               bucket.lineClampSource[i + 1]);
+    }
+    constexpr size_t kFillFloats = 3;  // lon, lat, color
+    for (size_t i = 0; i + 2 <= bucket.fillClampSource.size();
+         i += kFillFloats) {
+        absorb(bucket.fillClampSource[i],
+               bucket.fillClampSource[i + 1]);
+    }
+    if (west > east || south > north) return std::nullopt;
+    // Pad a small margin so boundary vertices on adjacent tiles are included.
+    constexpr double kPad = 1e-5;
+    return Rectangle(west - kPad, south - kPad, east + kPad, north + kPad);
+}
+
 void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                                              Renderer& renderer,
-                                             RenderCommandList& commands) {
-    const double buildStartMs = perf::nowMs();
+                                             RenderCommandList& commands) {    const double buildStartMs = perf::nowMs();
     const size_t commandsBefore = commands.size();
     double atlasDrainMs = 0.0;
     double labelScanMs = 0.0;
@@ -5316,14 +5345,37 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         while (!pendingReclamp_.empty() && done < kReclampBucketsPerFrame) {
             auto it = tileBuckets_.find(pendingReclamp_.back());
             pendingReclamp_.pop_back();
-            if (it != tileBuckets_.end()) {
-                reclampTileBucketSymbols(it->second);
-                reclampTileBucketFills(it->second);
-                reclampTileBucketExtrusions(it->second);
-                // E 方案 P2:线桶同款重钳(只换顶点缓冲)。
-                reclampTileBucketLines(it->second);
-                ++done;
+            if (it == tileBuckets_.end()) continue;
+            BucketGpu& bucket = it->second;
+            // 按需重钳:该桶覆盖地形面的 areaRevision 未变 → 跳过(消除对
+            // 未变桶的全量重采样)。地形换代可能只影响视图的一部分,全局
+            // revision 变了不代表这个桶采样的那几块地形也变了。
+            if (terrainSampling_.makeAreaRevision) {
+                const std::optional<Rectangle> area =
+                    reclampAreaOf(bucket);
+                if (area) {
+                    const std::uint64_t areaRev =
+                        terrainSampling_.makeAreaRevision(*area);
+                    if (bucket.hasLastReclampAreaRevision_ &&
+                        bucket.lastReclampAreaRevision_ == areaRev) {
+                        continue;  // 该桶地形没变,无需重钳
+                    }
+                    reclampTileBucketSymbols(bucket);
+                    reclampTileBucketFills(bucket);
+                    reclampTileBucketExtrusions(bucket);
+                    reclampTileBucketLines(bucket);
+                    bucket.lastReclampAreaRevision_ = areaRev;
+                    bucket.hasLastReclampAreaRevision_ = true;
+                    ++done;
+                    continue;
+                }
             }
+            reclampTileBucketSymbols(bucket);
+            reclampTileBucketFills(bucket);
+            reclampTileBucketExtrusions(bucket);
+            // E 方案 P2:线桶同款重钳(只换顶点缓冲)。
+            reclampTileBucketLines(bucket);
+            ++done;
         }
         reclampBuckets = static_cast<size_t>(done);
         reclampMs = perf::nowMs() - startMs;

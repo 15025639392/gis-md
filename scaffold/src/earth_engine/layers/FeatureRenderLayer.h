@@ -458,6 +458,9 @@ struct FeatureTerrainSampling {
     /// 必须包含 TileRenderEntry 来源、网格档、morph、fade 与高度数据代次，
     /// 不能只用 registry heightmap generation。
     std::function<uint64_t()> revision;
+    /// 某区域(矢量桶 bbox)覆盖地形面的签名:变化才需要重钳该桶,没变则
+    /// 跳过(按需重钳,消除对未变桶的全量重采样)。空 = 不支持区域级判断。
+    std::function<uint64_t(const Rectangle&)> makeAreaRevision;
 };
 
 /// FeatureStore → GPU 的渲染桥接层(矢量数据系统 P1,设计 §6/§9)。
@@ -869,6 +872,11 @@ private:
         /// side/length/colorPacked,与 lineVertexBuffer 同序)。地形代次变化
         /// 时重采样并重传顶点缓冲(索引不变)，完整保留官方 join/cap。
         std::vector<float> lineClampSource;
+        /// 按需重钳:该桶 bbox 覆盖地形面的 areaRevision(见
+        /// FeatureTerrainSampling::makeAreaRevision)。重钳后记录;下一帧
+        /// 若 areaRevision 未变则跳过(消除对未变桶的全量重采样)。
+        std::uint64_t lastReclampAreaRevision_ = 0;
+        bool hasLastReclampAreaRevision_ = false;
         /// P6 stencil 分类贴地(方案 B):面 fill 的水密挤出体(pos-only
         /// 12B,相对桶原点)。P6b 按解析 fill 色分组——每组一对
         /// Volume/Color 命令(组内并集计数,不同色互不污染)。非空 →
@@ -1259,6 +1267,10 @@ public:
     void reclampTileBucketFills(BucketGpu& gpu);
     void clampTileExtrusionHeights(TileMeshCpu& mesh);
     void reclampTileBucketExtrusions(BucketGpu& gpu);
+    /// 按需重钳:计算某桶 clamp 几何的 lon/lat bbox,用于对该区域求地形
+    /// areaRevision 判断是否需要重钳。无 clamp 几何返回 nullopt(回退全量)。
+    static std::optional<Rectangle> reclampAreaOf(
+        const BucketGpu& bucket);
     /// 共享钳高数学:由 clampSource(每顶点 lon/lat/colorPacked)重建完整
     /// ribbon 顶点流(pos/prev/next/lengthSoFar 重算,side/color 原样)。
     /// 返回 false = 源不足/退化,调用方保留旧缓冲。

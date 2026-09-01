@@ -397,6 +397,31 @@ RenderedTerrainSurfaceSampler::makeAreaSampler(const Rectangle& area) const {
     };
 }
 
+std::uint64_t RenderedTerrainSurfaceSampler::areaRevision(
+    const Rectangle& area) const {
+    std::uint64_t hash = 1469598103934665603ull;
+    for (const Candidate& candidate : candidates_) {
+        if (!candidate.coverage.intersects(area)) continue;
+        // Mirrors the per-candidate fields folded into the global `revision_`,
+        // so a bucket's area revision changes exactly when the terrain it
+        // samples changes (data generation, grid, morph, fade, edge snap,
+        // clip window).
+        hashWord(hash, candidate.source.heightmap != nullptr ? 1u : 0u);
+        hashWord(hash, static_cast<std::uint32_t>(candidate.source.gridSize));
+        hashWord(hash, floatBits(candidate.source.morph));
+        hashWord(hash, floatBits(candidate.source.fade));
+        hashWord(hash, floatBits(candidate.edgeSnapPacked));
+        hashWord(hash, floatBits(candidate.clipMode));
+        for (float component : candidate.clipUv) {
+            hashWord(hash, floatBits(component));
+        }
+        hashWord(hash, static_cast<std::uint32_t>(candidate.selectedZoom));
+        hashWord(hash, candidate.selectedThisFrame ? 1u : 0u);
+        hashWord(hash, floatBits(candidate.opacity));
+    }
+    return hash;
+}
+
 std::optional<float> RenderedTerrainSurfaceSampler::sample(
     double longitudeRadians,
     double latitudeRadians) const {

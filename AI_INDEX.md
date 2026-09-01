@@ -2535,13 +2535,13 @@ Render flow in `render()` (.cpp:214-364):
 | 2 | `buildSkyCommands` | .cpp:390-429 | SkyBox command; nightFactor from sun elevation (`exp(elev*8)` below -0.05) max spaceFactor (smoothstep of `(height-120000)/780000`) |
 | 3 | `buildAtmosphereCommands` | .cpp:430-458 | AtmosphereBackgroundPass command from camera basis + sun dir + gradient params |
 | 4 | `buildLayerCommands` | .cpp:459-751 | Inserts streamed tile cmds, then visible vector layers. **No fallback-globe command** — `makeGlobeCommand`/`GlobeSurface` removed; nothing is drawn if no tile commands exist。末尾还从**本帧可见地形瓦片包围体**汇总贴地高度范围喂给矢量层(O(可见瓦片数),零采样;头行 `clampH=min/max` 可读) |
-| 5 | `applyMvpUniforms` | .cpp:848-856 | `SceneRenderCommandUniformUpdater::apply` |
-| 6 | `sortAndValidate` | .cpp:857-902 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
-| 5.5 | `assembleTerrainBatches` | .cpp:797-847 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
-| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:903-932 / :818-866 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
+| 5 | `applyMvpUniforms` | .cpp:852-860 | `SceneRenderCommandUniformUpdater::apply` |
+| 6 | `sortAndValidate` | .cpp:861-906 | Sort if `mvpRenderOrder` inversion or translucent gltf; `updateSurfaceCommandGeneration`; `validateMvpRenderCommands` throws `std::runtime_error` on failure |
+| 5.5 | `assembleTerrainBatches` | .cpp:801-851 | 地形实例化合批装配(资格闸 + 分组),`terrainBatcher_` |
+| 6.5 | `prepareTerrainOcclusion` / `runTerrainDepthPrepass` | .cpp:907-936 / :822-870 | 地形遮挡参数下发 + 半分辨率地形深度 prepass(符号遮挡 T2) |
 | 7 | `aggregateDiagnostics` | .cpp:49-56 | `SceneFrameDiagnosticsAggregator::aggregateRenderFrame` + terrain render-entry counters + `terrainSurfaceCommandsSubmitted` (`countTerrainSurfaceCommands`) |
-| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:1016-1100 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
-| — | beforeSubmit → submit | .cpp:291-306 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:1101-1139) |
+| 8 | `shouldHoldPresentationAfterCommandBuild` | .cpp:1020-1104 | 命令建完后是否压帧不呈现(hold 闸,见 presentation-hold 死锁那轮) |
+| — | beforeSubmit → submit | .cpp:291-306 | `render()` 内:`beforeSubmit()`(presentation trace)→ `runTerrainDepthPrepass` → `renderer.submit(commands)`;随后 `releaseRenderReferences` 遍历全部 tileset(.cpp:1105-1143) |
 
 Terrain surface = `GltfPrimitive` cmds carrying `terrainRenderContent` (`isTerrainSurfaceCommand`, .cpp:38-48). QM terrain now draws via the 32-byte `TerrainGpuVertex` path (`makeTerrainPrimitiveCommand`, stride 32, `terrainShader`; 2026-07-01); ellipsoid-fallback terrain still uses the 120-byte `GltfGpuVertex` glTF path. `Renderer::terrainShader()` is defined (`kTerrainVertex/FragmentGLSL` + MSL).
 
@@ -3103,14 +3103,14 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `stencilClassificationSupported` / `resolvePaintOrder` / `flattenPaintRanges` | .cpp:2950-2961 / :2696-2707 / :2708-2736 | 能力快照；属性表达式解析 ordinal；按 ordinal flatten 到共享 buffer ranges |
 | `appendTileSymbol` / `commitTileMesh` / `resolveTileSymbols` / `materializeTileSymbols` | .cpp:3447-3655 / :3656-3857 / :3858-3922 / :3923-4071 | MVT worker 保留完整符号源,渲染线程按当前 zoom 派生/cap。resolve 解析样式/图集/选中并缓存;height-only 重钳只重跑 materialize(采当刻地形高),不重 resolve |
 | `bakeTileBucketLabels` / `dropTileMesh` | .cpp:4668-4979 / :4980-4995 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
-| `buildRenderCommands` | .cpp:5061-5508 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
-| `visibleBucketKeys` | .cpp:5509-5578 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:5579-5706 | 标签避让 + fade + 地平线剔除(P5c) |
-| `dumpLabelLifecycle` | .cpp:5813-5932 | 七态只读聚合 dump |
-| `appendTerrainOcclusion` | .cpp:5953-5973 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:5974-6736 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:6737-6753 / :6754-6760 / :6761-6788 | 编辑预览三接口 |
-| `pick` | .cpp:6832-7127 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
+| `buildRenderCommands` | .cpp:5091-5560 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
+| `visibleBucketKeys` | .cpp:5561-5630 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:5631-5758 | 标签避让 + fade + 地平线剔除(P5c) |
+| `dumpLabelLifecycle` | .cpp:5865-5984 | 七态只读聚合 dump |
+| `appendTerrainOcclusion` | .cpp:6005-6025 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:6026-6788 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:6789-6805 / :6806-6812 / :6813-6840 | 编辑预览三接口 |
+| `pick` | .cpp:6884-7179 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。

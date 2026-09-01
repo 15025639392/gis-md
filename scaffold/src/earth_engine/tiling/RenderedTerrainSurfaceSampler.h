@@ -52,6 +52,13 @@ public:
     /// heightmap storage remains owned by the terrain tileset for the frame.
     AreaSampleFn makeAreaSampler(const Rectangle& area) const;
 
+    /// Hash of the terrain surface state of the candidates overlapping
+    /// `area`. Unlike `revision()` (which hashes every candidate in the whole
+    /// view), this reflects only the terrain tiles a given vector bucket
+    /// actually samples. A bucket whose coverage's terrain did not change can
+    /// skip reclamping even when an unrelated part of the view changed.
+    std::uint64_t areaRevision(const Rectangle& area) const;
+
     std::optional<float> sample(double longitudeRadians,
                                 double latitudeRadians) const;
 
