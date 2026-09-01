@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ImageryProvider.h"
+#include "VectorSurfaceFillRasterizer.h"
 #include "../core/math/Rectangle.h"
 #include "../data/Feature.h"
 #include "../data/AmapSurfaceMaskRasterizer.h"
@@ -37,6 +38,13 @@ private:
     // while already painted with the new zoom.
     std::atomic<uint64_t> packedState_{0};
 };
+
+/// Sealed AMap style resolver for the generic surface-fill rasterizer: parses
+/// the AMap schema keys (amap_class / amap_subkey / amap_draworder, skips
+/// extrusions via amap_height) and resolves each polygon's official color via
+/// the sealed style table.  Used by the generic VectorSurfaceFillImageryProvider
+/// and shared by host tests proving the generic rasterizer is Amap-equivalent.
+SurfaceFillResolver amapSurfaceFillResolver();
 
 /// Build an RGBA8 official AMap surface page from already decoded features.
 /// This helper performs no network request and owns no tile hierarchy.

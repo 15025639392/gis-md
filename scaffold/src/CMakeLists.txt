@@ -554,6 +554,8 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/providers/DebugImageryProvider.cpp
     earth_engine/providers/AmapSurfaceMaskImageryProvider.h
     earth_engine/providers/AmapSurfaceMaskImageryProvider.cpp
+    earth_engine/providers/VectorSurfaceFillRasterizer.cpp
+    earth_engine/providers/VectorSurfaceFillImageryProvider.cpp
     earth_engine/providers/BingMapsImageryProvider.h
     earth_engine/providers/BingMapsImageryProvider.cpp
     earth_engine/providers/GoogleMapTilesImageryProvider.h

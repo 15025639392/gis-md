@@ -166,6 +166,33 @@ std::unique_ptr<DecodedImage> makeAmapSurfaceMaskImage(
         featureSet, tileBounds, displayZoom, projection);
 }
 
+SurfaceFillResolver amapSurfaceFillResolver() {
+    return [](const Feature& feature, double displayZoom)
+        -> std::optional<SurfaceFillRecord> {
+        if (feature.type != GeometryType::Polygon ||
+            feature.properties.count("amap_height") != 0) {
+            return std::nullopt;
+        }
+        const auto classCode =
+            parseIntegerProperty(feature.properties, "amap_class");
+        const auto subKey =
+            parseIntegerProperty(feature.properties, "amap_subkey");
+        if (!classCode || !subKey) return std::nullopt;
+        const auto color = amapClassicSurfaceColorForDisplayZoom(
+            *classCode, *subKey, displayZoom);
+        if (!color || (*color)[3] <= 0.0f) return std::nullopt;
+        SurfaceFillRecord record;
+        record.color = *color;
+        record.drawOrder =
+            parseIntegerProperty(feature.properties, "amap_draworder")
+                .value_or(0);
+        record.identity =
+            (static_cast<uint64_t>(*classCode) << 32) |
+            static_cast<uint64_t>(*subKey);
+        return record;
+    };
+}
+
 AmapSurfaceMaskStyleState::AmapSurfaceMaskStyleState(double displayZoom) {
     const double discrete = amapClassicDiscreteZoomValue(displayZoom);
     const uint64_t zoom = std::isfinite(discrete)
