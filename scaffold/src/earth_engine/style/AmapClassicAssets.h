@@ -29,6 +29,9 @@ class AmapClassicAssets {
 public:
     struct Credentials {
         std::string webKey;
+        /// Empty falls back to the sealed official icon/SDF hosts.
+        std::string iconBase;
+        std::string sdfBase;
     };
 
     ~AmapClassicAssets();

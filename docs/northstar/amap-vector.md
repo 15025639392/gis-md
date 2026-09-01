@@ -66,6 +66,7 @@
 | **A-P5** | 全高德 source 合计的主线程 finalize 有统一上限 | 性能 | ⚠️ | 当前只有单 source 项数预算；目标为记录总 `commitMs` p50/p95/max 和项数，在 60fps 下把 p95 控制在约 4.2ms 内、max 不超过半帧（阈值需真机基线确认）。 |
 | **A-P6** | 缓存容量有界；raw L2 保留窗口内回摇不重复网络 | 性能 | ✅ | typed decoded L1=48、raw L2=256；`EvictedTileRefetchesFromRawTierNotNetwork`、跨消费者 raw 复用测试。raw L2 也淘汰后会重新联网。 |
 | **A-O1** | 异常可定位到请求、解码、镶嵌、提交或层级阶段 | 运维 | ⚠️ | `AmapType1Cache`、`MvtPool`、`AmapSource`、`VectorTessSlow` 提供聚合/慢任务信号；fetch/decode/commit 失败尚缺按 key/stage 的统一结构化日志。 |
+| **A-O2** | 配置化(amap-vector.json)：URL/zoom 档位/选择参数/样式覆盖可从设备侧 JSON 加载；fail-loud 未知键整份拒收、缺文件回落 sealed 默认；Referer 仍 sealed | 机制 | ✅ | `sources`/`zooms`/`style` 三段经 `test_amap_vector_config` 解析契约、`test_amap_classic_style_override` 覆盖生效、`test_amap_official_api_surface` 守卫 referer 不被外置；见下文「配置化」节。真机热加载待 PHK110 验。 |
 
 ## 链路总图：一块瓦片如何到达像素
 
@@ -289,6 +290,23 @@ AmapSource regions/main/poi:
 - 全链 commit 必须增加统一聚合统计；目标是 60fps 场景总 `commitMs` p95 约不超过 4.2ms、单帧不超过半帧，R* 不能以“不可拆”为理由无限突破。阈值在 PHK110 真机基线完成前标为目标，不得写成已达成。
 - 任何性能 A/B 都必须同时记录可见瓦片数、数据 zoom、feature/三角形数量和失败数；只看 FPS 可能把“少画内容”误判为优化。
 
+
+## 配置化(amap-vector.json)
+
+设备侧 `getFilesDir/amap-vector.json` 在进程启动建场时加载；缺文件/解析失败一律回落
+sealed 默认并记 `AmapVectorConfig` 日志，**fail-loud：已知段内出现未知键整份拒收**
+(不会静默吞掉拼写错误)。三段可独立缺省：
+
+| 段 | 键 | 穿进 | 语义 |
+|---|---|---|---|
+| `sources.amap` | `apiBase` / `initBase` / `iconBase` / `sdfBase` | `AmapClassicRuntime::Options.endpoints` → transport `AmapManifestConfig`(api/init)与 assets credentials(icon/sdf) | 空串回落官方 host。**Referer 不在此列**——官方传输合同 sealed，`test_amap_official_api_surface` 守卫 transport 不携带 `credentials.referer` |
+| `sources.terrain` | `urlTemplate`/`minZoom`/`maxZoom`/`tileSize`/`borderInset` | `EarthSceneConfig.terrain` | 覆盖 NASA 全球地形源(掩码面路径前提)；`urlTemplate` 必填，其余可缺省 |
+| `zooms` | `minZoom`/`regionsMaxZoom`/`mainMaxZoom`/`regionsActiveBelowZoom`/`regionsSupportedZooms`/`mainSupportedZooms`/`poiSupportedZooms`/`dataZoom` | `AmapClassicSourceBundle::Options.zoomSelection` → `VectorTileTree.Options` | 空 supportedZooms 回落官方档位 `{3,6,8,10}`/`{3,6,8,10,12,14}`；`dataZoom` 是 `[canonical,data]` 重映射，空回落 `amapDataZoom()`；`regionsActiveBelowZoom` 控制 regions 近景 suspend 阈值(sealed 12.0) |
+| `style.surface`/`style.line` | 每项 `{classCode,subKey,color}`(surface) / `+widthPx`(line) | `AmapClassicSourceBundle::Options.styleOverrides` → `applyAmapClassicStyleOverrides` | **sealed 官方契约之上的运行时常量覆盖层**：只替换指定 identity(classCode×1000+subKey)的填充色/线色/线宽，不重排压盖顺序、不引入第二张 class 排序表。`test_amap_classic_style_override` 锁生效与 no-op |
+
+示例见 [`examples/android/MinimalGlobe/amap-vector.example.json`](../../scaffold/examples/android/MinimalGlobe/amap-vector.example.json)。
+解析器在 `MinimalGlobe/AmapVectorConfig.{h,cpp}`；host 测试 `test_amap_vector_config` 直接包含该翻译单元覆盖 fail-loud 契约。
+本判据 = A-O2。真机热改(改设备 json→重启)尚未在 PHK110 复验，属观感/端到端待补项。
 ## 故障判别：先定位分叉阶段，不先改参数
 
 | 现象 | 首要假设 | 支持证据 | 最小证伪/定位动作 |

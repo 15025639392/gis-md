@@ -77,6 +77,7 @@ struct AmapClassicRuntime::Transport::Impl {
         AmapClassicSourceBundle::FetchCallback callback) {
         AmapManifestConfig config;
         config.key = credentials.webKey;
+        if (!credentials.apiBase.empty()) config.apiBase = credentials.apiBase;
         config.version = std::move(resolvedVersion);
         const std::string url = buildGetTileUrl(config);
         const std::string body = buildGetTileBody(
@@ -162,6 +163,7 @@ struct AmapClassicRuntime::Transport::Impl {
 
         AmapManifestConfig config;
         config.key = credentials.webKey;
+        if (!credentials.initBase.empty()) config.initBase = credentials.initBase;
         const std::string url = config.initBase + "?key=" + credentials.webKey;
         const uint64_t id = allocateId();
         const auto gate = callbackGate;

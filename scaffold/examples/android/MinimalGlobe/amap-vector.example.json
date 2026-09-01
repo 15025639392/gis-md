@@ -1,0 +1,35 @@
+{
+  "sources": {
+    "amap": {
+      "apiBase": "https://jsapi.amap.com/web_map/get_tile",
+      "initBase": "https://jsapi.amap.com/web/init",
+      "iconBase": "https://o4.amap.com/icon",
+      "sdfBase": "https://sdf.amap.com/getsdfdata"
+    },
+    "terrain": {
+      "urlTemplate": "https://mapoverlay.xinzhi.space/3dterrain/nasa/tiles/{z}/{x}/{y}.png",
+      "minZoom": 6,
+      "maxZoom": 12,
+      "tileSize": 514,
+      "borderInset": 0.5
+    }
+  },
+  "zooms": {
+    "minZoom": 3,
+    "regionsMaxZoom": 10,
+    "mainMaxZoom": 14,
+    "regionsActiveBelowZoom": 12.0,
+    "regionsSupportedZooms": [3, 6, 8, 10],
+    "mainSupportedZooms": [3, 6, 8, 10, 12, 14],
+    "poiSupportedZooms": [3, 6, 8, 10, 12, 14],
+    "dataZoom": [[3, 3], [6, 6], [8, 8], [10, 10], [12, 12], [14, 14]]
+  },
+  "style": {
+    "surface": [
+      {"classCode": 30001, "subKey": 2, "color": "#B2CEFE"}
+    ],
+    "line": [
+      {"classCode": 20001, "subKey": 1, "color": "#FF8800", "widthPx": 2.5}
+    ]
+  }
+}

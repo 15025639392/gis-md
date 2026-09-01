@@ -138,9 +138,11 @@ bool AmapClassicAssets::requestOneAtlas(
         inFlightAtlases_.insert(atlas);
         id = nextId_++;
         generation = generation_;
-        url = "https://o4.amap.com/icon/" + iconVersion_ + "/" +
-              iconPath_ + "/" + iconType_ + "/icons_" +
-              std::to_string(atlas) + "?key=" + credentials_.webKey;
+        const std::string iconBase = credentials_.iconBase.empty()
+            ? "https://o4.amap.com/icon" : credentials_.iconBase;
+        url = iconBase + "/" + iconVersion_ + "/" + iconPath_ + "/" +
+              iconType_ + "/icons_" + std::to_string(atlas) +
+              "?key=" + credentials_.webKey;
     }
     const auto callbackGate = callbackGate_;
     auto landing = std::make_shared<WorkLedger::Ticket>(
@@ -200,7 +202,9 @@ bool AmapClassicAssets::requestOneGlyphBatch(
         id = nextId_++;
         generation = generation_;
     }
-    std::string url = "https://sdf.amap.com/getsdfdata?chars=";
+    const std::string sdfBase = credentials_.sdfBase.empty()
+        ? "https://sdf.amap.com/getsdfdata" : credentials_.sdfBase;
+    std::string url = sdfBase + "?chars=";
     for (size_t i = 0; i < batch.size(); ++i) {
         if (i) url.push_back('|');
         url += std::to_string(batch[i]);

@@ -158,6 +158,7 @@ AmapClassicSourceBundle::AmapClassicSourceBundle(
     std::shared_ptr<ThreadPool> poiDecodePool,
     std::shared_ptr<ThreadPool> tessellationPool, Options options)
     : engine_(engine), impl_(std::make_unique<Impl>()) {
+    regionsActiveBelowZoom_ = options.zoomSelection.regionsActiveBelowZoom;
     impl_->type1Cache = std::make_shared<Impl::Type1Cache>(
         std::move(type1Fetch), options.decodedCacheTiles,
         options.rawCacheTiles, std::move(type1DecodePool));
@@ -198,16 +199,40 @@ AmapClassicSourceBundle::AmapClassicSourceBundle(
         if (!regionsLayer_ || !mainLayer_ || !poiLayer_) {
             throw std::runtime_error("AMap official layer ids already exist");
         }
+        // Runtime style overrides (amap-vector.json style) sit on top of the
+        // sealed official profile. AmapClassicSourceBundle is a friend, so it
+        // may mutate each layer's sealed style with constant-value overrides.
+        applyAmapClassicStyleOverrides(regionsLayer_->style_,
+                                       options.styleOverrides);
+        applyAmapClassicStyleOverrides(mainLayer_->style_,
+                                       options.styleOverrides);
+        applyAmapClassicStyleOverrides(poiLayer_->style_,
+                                       options.styleOverrides);
 
-        const auto configureTree = [&](auto& sourceOptions, int maxZoom) {
-            sourceOptions.tree.minZoom = 3;
+        const auto configureTree =
+            [&](auto& sourceOptions, int maxZoom,
+                const std::vector<int>& supportedOverrides) {
+            const auto& zs = options.zoomSelection;
+            sourceOptions.tree.minZoom = zs.minZoom;
             sourceOptions.tree.maxZoom = maxZoom;
             sourceOptions.tree.supportedZooms =
-                maxZoom == 10 ? std::vector<int>{3, 6, 8, 10}
-                              : std::vector<int>{3, 6, 8, 10, 12, 14};
-            sourceOptions.tree.dataZoomForCanonicalZoom = [](int z) {
-                return amapDataZoom(z);
-            };
+                supportedOverrides.empty()
+                    ? (maxZoom == 10
+                           ? std::vector<int>{3, 6, 8, 10}
+                           : std::vector<int>{3, 6, 8, 10, 12, 14})
+                    : supportedOverrides;
+            if (zs.hasDataZoomRemap()) {
+                sourceOptions.tree.dataZoomForCanonicalZoom =
+                    [remap = zs.dataZoomRemap](int z) {
+                        for (const auto& [canonical, data] : remap) {
+                            if (z <= canonical) return data;
+                        }
+                        return remap.back().second;
+                    };
+            } else {
+                sourceOptions.tree.dataZoomForCanonicalZoom =
+                    [](int z) { return amapDataZoom(z); };
+            }
             sourceOptions.tree.scheme = TileScheme::createAmapGeographic();
             sourceOptions.tree.maxTilesPerView = options.maximumTilesPerView;
             sourceOptions.tree.refinement =
@@ -237,7 +262,8 @@ AmapClassicSourceBundle::AmapClassicSourceBundle(
 
         Impl::RegionsSource::Options regionsOptions;
         regionsOptions.debugName = "amap-regions";
-        configureTree(regionsOptions, 10);
+        configureTree(regionsOptions, options.zoomSelection.regionsMaxZoom,
+                      options.zoomSelection.regionsSupportedZooms);
         Impl::RegionsSource::Sinks regionsSinks;
         configureSinks(regionsSinks, regionsLayer_);
         impl_->regionsSource = std::make_unique<Impl::RegionsSource>(
@@ -251,7 +277,8 @@ AmapClassicSourceBundle::AmapClassicSourceBundle(
 
         Impl::MainSource::Options mainOptions;
         mainOptions.debugName = "amap-main";
-        configureTree(mainOptions, 14);
+        configureTree(mainOptions, options.zoomSelection.mainMaxZoom,
+                      options.zoomSelection.mainSupportedZooms);
         Impl::MainSource::Sinks mainSinks;
         configureSinks(mainSinks, mainLayer_);
         impl_->mainSource = std::make_unique<Impl::MainSource>(
@@ -260,7 +287,8 @@ AmapClassicSourceBundle::AmapClassicSourceBundle(
 
         Impl::PoiSource::Options poiOptions;
         poiOptions.debugName = "amap-poi";
-        configureTree(poiOptions, 14);
+        configureTree(poiOptions, options.zoomSelection.mainMaxZoom,
+                      options.zoomSelection.poiSupportedZooms);
         Impl::PoiSource::Sinks poiSinks;
         configureSinks(poiSinks, poiLayer_);
         impl_->poiSource = std::make_unique<Impl::PoiSource>(
@@ -293,7 +321,8 @@ void AmapClassicSourceBundle::update(const Rectangle& viewRectangle,
     const double viewZoom = std::min(
         24.0, std::max(0.0,
                        std::log2(4.0e7 / std::max(1.0, cameraHeightMeters))));
-    const bool regionsActive = viewZoom < 12.0;
+    const bool regionsActive =
+        viewZoom < regionsActiveBelowZoom_;
     if (!regionsActive) {
         impl_->regionsSource->suspend();
     }

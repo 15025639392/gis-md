@@ -10,6 +10,7 @@ add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/../../src ${CMAKE_CURRENT_BINARY_DI
 
 add_library(earth_engine_android_jni SHARED
     MinimalGlobe/GLESView.cpp
+    MinimalGlobe/AmapVectorConfig.cpp
     MinimalGlobe/MinimalGlobeDemoConfig.cpp
     MinimalGlobe/MinimalGlobeDiagnostics.cpp
 )

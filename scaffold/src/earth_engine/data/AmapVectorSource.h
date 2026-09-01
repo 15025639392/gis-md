@@ -2,6 +2,7 @@
 
 #include "AmapVectorTile.h"
 #include "Feature.h"
+#include "../style/AmapClassicStyleOverride.h"
 #include "../core/math/Rectangle.h"
 #include "../tiling/TileKey.h"
 #include "../threading/CancellationToken.h"
@@ -89,12 +90,39 @@ public:
         size_t activeAncestorPairs = 0;
     };
 
+    /// Per-source discrete data-zoom / selection overrides.  Empty
+    /// supportedZooms falls back to the sealed official tiers.  These are the
+    /// knobs externalized by the demo amap-vector.json zooms section.
+    struct ZoomSelection {
+        /// minZoom passed to each source tree.
+        int minZoom = 3;
+        /// regions source tree maxZoom.
+        int regionsMaxZoom = 10;
+        /// main / poi source tree maxZoom.
+        int mainMaxZoom = 14;
+        /// Regions suspend below this display zoom (the sealed 12.0 gate).
+        double regionsActiveBelowZoom = 12.0;
+        /// Optional per-source supportedZooms; empty = sealed official tiers.
+        std::vector<int> regionsSupportedZooms;
+        std::vector<int> mainSupportedZooms;
+        std::vector<int> poiSupportedZooms;
+        /// Optional canonical->data zoom remap [(canonical, data)...]. Empty =
+        /// the sealed amapDataZoom() mapping.
+        std::vector<std::pair<int, int>> dataZoomRemap;
+        bool hasDataZoomRemap() const { return !dataZoomRemap.empty(); }
+    };
+
     struct Options {
         size_t decodedCacheTiles = 48;
         size_t rawCacheTiles = 256;
         size_t maximumTilesPerView = 256;
         size_t maximumTessellationsInFlight = 8;
         bool collectDiagnostics = true;
+        /// Discrete zoom / selection configuration (amap-vector.json zooms).
+        ZoomSelection zoomSelection;
+        /// Runtime style overrides on top of the sealed official contract
+        /// (amap-vector.json style).
+        AmapClassicStyleOverrides styleOverrides;
 #if defined(EARTH_ENGINE_TESTING)
         size_t failAfterSourceConstruction = 0;
 #endif
@@ -157,6 +185,9 @@ private:
     FeatureRenderLayer* mainLayer_ = nullptr;
     FeatureRenderLayer* poiLayer_ = nullptr;
     size_t updateCursor_ = 0;
+    /// Display-zoom gate below which the regions source is suspended
+    /// (configurable; sealed default 12.0).
+    double regionsActiveBelowZoom_ = 12.0;
 };
 
 } // namespace earth_engine

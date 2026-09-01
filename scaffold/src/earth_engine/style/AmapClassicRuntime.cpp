@@ -8,6 +8,20 @@
 #include <cmath>
 
 namespace earth_engine {
+namespace {
+
+// Merge externalized icon/SDF endpoint overrides (amap-vector.json
+// sources.amap) into the asset credentials used by the icon/glyph downloaders.
+AmapClassicAssets::Credentials mergeAssetCredentials(
+    const AmapClassicAssets::Credentials& base,
+    const AmapClassicRuntime::Endpoints& endpoints) {
+    AmapClassicAssets::Credentials merged = base;
+    if (!endpoints.iconBase.empty()) merged.iconBase = endpoints.iconBase;
+    if (!endpoints.sdfBase.empty()) merged.sdfBase = endpoints.sdfBase;
+    return merged;
+}
+
+}  // namespace
 
 AmapClassicRuntime::AmapClassicRuntime(
     Engine& engine, RenderDevice& renderDevice,
@@ -16,10 +30,13 @@ AmapClassicRuntime::AmapClassicRuntime(
     std::shared_ptr<ThreadPool> poiDecodePool,
     std::shared_ptr<ThreadPool> tessellationPool,
     Options options)
-    : assets_(engine, platformBridge, options.credentials),
+    : assets_(engine, platformBridge,
+              mergeAssetCredentials(options.credentials, options.endpoints)),
       transport_(std::make_unique<Transport>(
           platformBridge,
-          Transport::Credentials{options.credentials.webKey},
+          Transport::Credentials{options.credentials.webKey,
+                                 options.endpoints.apiBase,
+                                 options.endpoints.initBase},
           [this](std::string version, std::string path, std::string type) {
               assets_.installManifest(std::move(version), std::move(path),
                                       std::move(type));

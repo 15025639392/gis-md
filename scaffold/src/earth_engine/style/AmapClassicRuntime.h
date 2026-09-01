@@ -27,9 +27,23 @@ class AmapTerrainFillMaskStore;
 /// lifecycle has been cancelled.
 class AmapClassicRuntime {
 public:
+    /// Externalized official data-source endpoints (amap-vector.json
+    /// sources.amap). Empty strings fall back to the sealed official hosts.
+    struct Endpoints {
+        std::string apiBase;    // web_map/get_tile
+        std::string initBase;   // web/init
+        std::string iconBase;   // icon atlas host
+        std::string sdfBase;    // glyph SDF host
+        bool hasAny() const {
+            return !apiBase.empty() || !initBase.empty() ||
+                   !iconBase.empty() || !sdfBase.empty();
+        }
+    };
+
     struct Options {
         AmapClassicAssets::Credentials credentials;
         AmapClassicSourceBundle::Options sources;
+        Endpoints endpoints;
     };
 
     AmapClassicRuntime(const AmapClassicRuntime&) = delete;
@@ -64,6 +78,8 @@ private:
     public:
         struct Credentials {
             std::string webKey;
+            std::string apiBase;
+            std::string initBase;
         };
 
         using ManifestCallback =

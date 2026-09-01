@@ -17,6 +17,7 @@
 #include <cmath>
 #include <deque>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <functional>
 #include <future>
@@ -56,6 +57,7 @@
 
 #include "MinimalGlobeDiagnostics.h"
 #include "MinimalGlobeDemoConfig.h"
+#include "AmapVectorConfig.h"
 
 #define LOG_TAG "MinimalGlobe"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, LOG_TAG, __VA_ARGS__)
@@ -123,6 +125,39 @@ static void applyStartupCameraOverride(earth_engine::EarthSceneConfig& config) {
          config.initialCamera.obliqueAzimuthDegrees,
          config.initialCamera.freezeCamera ? 1 : 0);
 }
+// 设备侧 amap-vector.json(getFilesDir)。缺文件/解析失败 → 回落 sealed 默认
+// 并记日志；fail-loud:未知键整份拒收,不静默吞。
+static minimal_globe_demo::AmapVectorConfig loadAmapVectorConfig(
+    earth_engine::PlatformBridge& bridge) {
+    minimal_globe_demo::AmapVectorConfig config;
+    const std::string dir = bridge.documentsDirectory();
+    if (dir.empty()) {
+        LOGI("AmapVectorConfig: no files dir, using sealed defaults");
+        return config;
+    }
+    const std::string path = dir + "/amap-vector.json";
+    std::ifstream file(path);
+    if (!file.is_open()) {
+        LOGI("AmapVectorConfig: %s not found, using sealed defaults",
+             path.c_str());
+        return config;
+    }
+    std::string text((std::istreambuf_iterator<char>(file)),
+                     std::istreambuf_iterator<char>());
+    const std::string err = parseAmapVectorConfig(text, config);
+    if (!err.empty()) {
+        LOGE("AmapVectorConfig: rejecting %s: %s (using defaults)",
+             path.c_str(), err.c_str());
+        return {};
+    }
+    LOGI("AmapVectorConfig: loaded %s endpoints=%d terrain=%d zooms=%d "
+         "style=%d",
+         path.c_str(), config.hasAmapEndpoints ? 1 : 0,
+         config.hasTerrain ? 1 : 0, config.hasZooms ? 1 : 0,
+         config.hasStyle ? 1 : 0);
+    return config;
+}
+
 
 // ============================================================
 // 阶段 3/4/5 真机验证钩子(数字键 7/8/9)
@@ -446,6 +481,18 @@ static bool createEngine() {
         EarthSceneConfig sceneConfig =
             minimal_globe_demo::makeDefaultDemoSceneConfig();
         applyStartupCameraOverride(sceneConfig);
+        const minimal_globe_demo::AmapVectorConfig amapCfg =
+            loadAmapVectorConfig(*gPlatformBridge);
+        if (amapCfg.hasTerrain) {
+            // 设备侧地形源覆盖(amap-vector.json sources.terrain)。
+            sceneConfig.terrain.kind = TerrainSourceKind::Heightmap;
+            sceneConfig.terrain.urlTemplate = amapCfg.terrainUrlTemplate;
+            sceneConfig.terrain.minimumZoom = amapCfg.terrainMinZoom;
+            sceneConfig.terrain.maximumZoom = amapCfg.terrainMaxZoom;
+            sceneConfig.terrain.heightmapMaxNativeZoom = amapCfg.terrainMaxZoom;
+            sceneConfig.terrain.tileSize = amapCfg.terrainTileSize;
+            sceneConfig.terrain.heightmapBorderInset = amapCfg.terrainBorderInset;
+        }
         sceneConfig.gpuPassTiming = startupBoolProperty(
             "debug.ee.gputiming", sceneConfig.gpuPassTiming);
         LOGI("RuntimeAB amapVector=official-only aerialFog=%d gpuTiming=%d",
@@ -532,6 +579,33 @@ static bool createEngine() {
                 minimal_globe_demo::kAmapTileCacheDecoded;
             runtimeOptions.sources.rawCacheTiles =
                 minimal_globe_demo::kAmapTileCacheRaw;
+            // amap-vector.json sources.amap / zooms / style 穿进 sealed runtime。
+            if (!amapCfg.apiBase.empty())
+                runtimeOptions.endpoints.apiBase = amapCfg.apiBase;
+            if (!amapCfg.initBase.empty())
+                runtimeOptions.endpoints.initBase = amapCfg.initBase;
+            if (!amapCfg.iconBase.empty())
+                runtimeOptions.endpoints.iconBase = amapCfg.iconBase;
+            if (!amapCfg.sdfBase.empty())
+                runtimeOptions.endpoints.sdfBase = amapCfg.sdfBase;
+            runtimeOptions.sources.zoomSelection.minZoom =
+                amapCfg.zoomMinZoom;
+            runtimeOptions.sources.zoomSelection.regionsMaxZoom =
+                amapCfg.zoomRegionsMaxZoom;
+            runtimeOptions.sources.zoomSelection.mainMaxZoom =
+                amapCfg.zoomMainMaxZoom;
+            runtimeOptions.sources.zoomSelection.regionsActiveBelowZoom =
+                amapCfg.zoomRegionsActiveBelowZoom;
+            runtimeOptions.sources.zoomSelection.regionsSupportedZooms =
+                amapCfg.zoomRegionsSupported;
+            runtimeOptions.sources.zoomSelection.mainSupportedZooms =
+                amapCfg.zoomMainSupported;
+            runtimeOptions.sources.zoomSelection.poiSupportedZooms =
+                amapCfg.zoomPoiSupported;
+            runtimeOptions.sources.zoomSelection.dataZoomRemap =
+                amapCfg.zoomDataZoomRemap;
+            runtimeOptions.sources.styleOverrides =
+                amapCfg.styleOverrides;
             gAmapOfficialRuntime = gEngine->installAmapClassicRuntime(
                 *gPlatformBridge,
                 gAmapType1DecodePool, gAmapPoiDecodePool,

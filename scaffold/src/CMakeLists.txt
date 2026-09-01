@@ -736,6 +736,8 @@ endif()
 target_sources(earth_engine_core PRIVATE
     earth_engine/style/AmapClassicAssets.h
     earth_engine/style/AmapClassicAssets.cpp
+    earth_engine/style/AmapClassicStyleOverride.h
+    earth_engine/style/AmapClassicStyleOverride.cpp
     earth_engine/style/AmapClassicRuntime.h
     earth_engine/style/AmapClassicRuntime.cpp
     earth_engine/style/AmapClassicTransport.cpp

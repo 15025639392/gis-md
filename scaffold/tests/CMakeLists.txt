@@ -1063,6 +1063,14 @@ target_link_libraries(test_amap_classic_road_style PRIVATE earth_engine_core GTe
 target_compile_definitions(test_amap_classic_road_style PRIVATE EARTH_ENGINE_TESTING=1)
 add_test(NAME test_amap_classic_road_style COMMAND test_amap_classic_road_style)
 
+# 高德矢量配置化:sealed 官方样式之上的运行时常量覆盖层。
+add_executable(test_amap_classic_style_override
+    unit/style/test_amap_classic_style_override.cpp
+)
+target_link_libraries(test_amap_classic_style_override PRIVATE earth_engine_core GTest::gtest_main)
+target_compile_definitions(test_amap_classic_style_override PRIVATE EARTH_ENGINE_TESTING=1)
+add_test(NAME test_amap_classic_style_override COMMAND test_amap_classic_style_override)
+
 add_executable(test_amap_classic_label_style
     unit/style/test_amap_classic_label_style.cpp
 )
@@ -1112,6 +1120,13 @@ target_compile_definitions(test_amap_geometry PRIVATE
     AMAP_TEST_FIXTURE_ROOT="${CMAKE_CURRENT_SOURCE_DIR}/fixtures/amap")
 target_link_libraries(test_amap_geometry PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_amap_geometry COMMAND test_amap_geometry)
+
+# 高德矢量配置化:amap-vector.json fail-loud 解析契约(包含 demo 翻译单元)。
+add_executable(test_amap_vector_config
+    unit/data/test_amap_vector_config.cpp
+)
+target_link_libraries(test_amap_vector_config PRIVATE earth_engine_core GTest::gtest_main)
+add_test(NAME test_amap_vector_config COMMAND test_amap_vector_config)
 
 add_executable(test_vector_tile_tree
     unit/data/test_vector_tile_tree.cpp

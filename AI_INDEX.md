@@ -3267,11 +3267,15 @@ selected/render footprint、位移模板密度、morph/fade、clip 模式和 edg
 
 ### style/AmapClassicRuntime.h / .cpp
 
-官方 classic-normal runtime 的唯一装配根。构造阶段安装 sealed style、assets 与 transport；`update` (.cpp:82-96) 只推进官方 manifest、字体和 icon atlas 生命周期。调用方不能注入替代样式或 transport。
+官方 classic-normal runtime 的唯一装配根。构造阶段安装 sealed style、assets 与 transport；`update` (.cpp:99-114) 只推进官方 manifest、字体和 icon atlas 生命周期。调用方不能注入替代样式或 transport。
+
+### style/AmapClassicStyleOverride.cpp
+
+运行期常量覆盖层，叠加在 sealed 官方 style 之上（amap-vector.json `style` 段）。`AmapClassicStyleOverrides` 只有 surface/line 两组常量（classCode×1000+subKey 定位），`applyAmapClassicStyleOverrides` (.cpp:9-23) 以 `StyleExpression::literal` 替换对应 `fillColorExprByStyleGroup` / `lineColorExprByStyleGroup` / `lineWidthExprByStyleGroup` 条目；只改指定 identity 颜色/宽度，不重排官方压盖顺序、不引入第二张排序表。空 overrides 为 no-op。
 
 ### style/AmapClassicTransport.cpp
 
-官方网络合同实现。`AmapClassicRuntime::Transport` 构造/析构管理请求生命周期；`fetchType1` (.cpp:247-251) 与 `fetchPoi` (.cpp:252-267) 只走官方请求身份；`update` (.cpp:246-259) 推进 manifest 后分发 sealed URL。Referer 与 payload schema 不从 public config 获取。
+官方网络合同实现。`AmapClassicRuntime::Transport` 构造/析构管理请求生命周期；`fetchType1` (.cpp:244-247) 与 `fetchPoi` (.cpp:249-252) 只走官方请求身份；`update` (.cpp:254-268) 推进 manifest 后分发 sealed URL。apiBase/initBase 可经 runtime Options.endpoints 外置(amap-vector.json sources.amap)，但 **Referer 与 payload schema 不从 public config 获取**(sealed 契约，test_amap_official_api_surface 守卫)。
 
 ### style/AmapClassicSurfaceStyle.cpp
 
