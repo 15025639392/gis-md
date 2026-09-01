@@ -14,6 +14,8 @@
 #include "LabelPlacement.h"
 
 #include <array>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <map>
 #include <limits>
@@ -444,6 +446,25 @@ public:
     /// VectorFill 地球网格边长上限(米)。>0 时 PolygonTessellator 细分
     /// 约束边并撒内部 Steiner,避免斜视大三角被近平面裁成射线。0 = 关。
     double globeFillMaxEdgeMeters = 0.0;  // [A/B] 射线诊断:关 V30 细分
+};
+
+/// Hash for an exact (lon,lat) double pair used as a reclamp dedup/cache key.
+/// Equality is exact (same float lon/lat promoted to double is bit-identical),
+/// so hashing the raw doubles is safe.
+struct PairHash {
+    std::size_t operator()(const std::pair<double, double>& p) const {
+        std::uint64_t a = 0;
+        std::memcpy(&a, &p.first, sizeof(double));
+        std::uint64_t b = 0;
+        std::memcpy(&b, &p.second, sizeof(double));
+        auto mix = [](std::uint64_t x) {
+            x += 0x9e3779b97f4a7c15ull;
+            x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ull;
+            x = (x ^ (x >> 27)) * 0x94d049bb133111ebull;
+            return x ^ (x >> 31);
+        };
+        return static_cast<std::size_t>(mix(a) ^ (mix(b) >> 1));
+    }
 };
 
 /// 地形高程采样注入(P3)。与 Tileset 解耦:Scene 接线真实地形,host 测试
@@ -877,6 +898,13 @@ private:
         /// 若 areaRevision 未变则跳过(消除对未变桶的全量重采样)。
         std::uint64_t lastReclampAreaRevision_ = 0;
         bool hasLastReclampAreaRevision_ = false;
+        /// 重钳加速缓存:唯一 (lon,lat) → (曲面点 k, 椭球法线 normal),使
+        /// cartographicToCartesian = k + normal*height 只需一次乘加。clampSource
+        /// 的 (lon,lat) 在 commit 写死,reclamp 只改 height,故跨换代复用缓存,
+        /// 避免每次重算 3.8万次三角函数。桶重建/clampSource 变化时清空。
+        std::unordered_map<std::pair<double, double>,
+                           std::pair<Vec3, Vec3>, PairHash>
+            lineClampSurfaceCache;
         /// P6 stencil 分类贴地(方案 B):面 fill 的水密挤出体(pos-only
         /// 12B,相对桶原点)。P6b 按解析 fill 色分组——每组一对
         /// Volume/Color 命令(组内并集计数,不同色互不污染)。非空 →

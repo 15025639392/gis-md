@@ -32,6 +32,7 @@
 #include <cstring>
 #include <limits>
 #include <tuple>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -4431,18 +4432,30 @@ bool FeatureRenderLayer::reclampLineVertsFromSource(
     const size_t nverts = clampSource.size() / kClampFloats;
     outVerts.clear();
     outVerts.reserve(nverts * 12);
+    // 去重:同一 (lon,lat) 会被采样多次 —— 每个顶点自己的 pos + 作为相邻
+    // 顶点 prev/next 的引用。对密集路网(prev/next 即相邻 p),唯一位置约等
+    // 于顶点数而非 3×顶点数。按坐标缓存采样结果,把逐顶点 3×采样降为 ~1×。
+    // 相同坐标来自同一 float(lon/lat 转 double),逐位相等,double 精确哈希安全。
+    std::unordered_map<std::pair<double, double>, Vec3, PairHash> heightCache;
+    heightCache.reserve(nverts);
+    const auto samplePos = [&](double lon, double lat) -> Vec3 {
+        const std::pair<double, double> key{lon, lat};
+        auto it = heightCache.find(key);
+        if (it != heightCache.end()) return it->second;
+        const double height = sample(lon, lat).value_or(0.0);
+        Vec3 v = ellipsoid_.cartographicToCartesian(
+                     Cartographic(lon, lat, height)) -
+                 origin;
+        heightCache.emplace(key, v);
+        return v;
+    };
     for (size_t i = 0; i < nverts; ++i) {
         const size_t base = i * kClampFloats;
-        const auto position = [&](size_t offset) {
-            const double lon = clampSource[base + offset];
-            const double lat = clampSource[base + offset + 1];
-            const double height = sample(lon, lat).value_or(0.0);
-            return ellipsoid_.cartographicToCartesian(
-                       Cartographic(lon, lat, height)) - origin;
-        };
-        const Vec3 p = position(0);
-        const Vec3 pr = position(2);
-        const Vec3 nxr = position(4);
+        const Vec3 p = samplePos(clampSource[base], clampSource[base + 1]);
+        const Vec3 pr =
+            samplePos(clampSource[base + 2], clampSource[base + 3]);
+        const Vec3 nxr =
+            samplePos(clampSource[base + 4], clampSource[base + 5]);
         outVerts.push_back(static_cast<float>(p.x()));
         outVerts.push_back(static_cast<float>(p.y()));
         outVerts.push_back(static_cast<float>(p.z()));
@@ -4591,9 +4604,9 @@ void FeatureRenderLayer::reclampTileBucketLines(BucketGpu& gpu) {
         gpu.lineIndexCount <= 0) {
         return;
     }
-    std::vector<std::vector<Cartographic>> rings(1);
     constexpr size_t kClampFloats = 9;
     const size_t nverts = gpu.lineClampSource.size() / kClampFloats;
+    std::vector<std::vector<Cartographic>> rings(1);
     rings[0].reserve(nverts);
     for (size_t i = 0; i < nverts; ++i) {
         rings[0].emplace_back(gpu.lineClampSource[kClampFloats * i],
@@ -4601,10 +4614,68 @@ void FeatureRenderLayer::reclampTileBucketLines(BucketGpu& gpu) {
     }
     const AreaSampleFn sample = makeClampSampler(rings);
     if (!sample) return;
+    // 首次(缓存空)为每个唯一 (lon,lat) 预计算曲面点 k 与椭球法线 normal,
+    // 使 cartographicToCartesian = k + normal*height 只需一次乘加。clampSource
+    // 的 (lon,lat) 在 commit 写死,reclamp 只改 height → 跨换代复用缓存,避免
+    // 每次重算全部顶点的三角函数(大路网瓦 3.8 万顶点 → 168ms)。
+    if (gpu.lineClampSurfaceCache.empty()) {
+        gpu.lineClampSurfaceCache.reserve(nverts);
+        for (size_t i = 0; i < nverts; ++i) {
+            const size_t base = i * kClampFloats;
+            const std::pair<double, double> key{
+                gpu.lineClampSource[base], gpu.lineClampSource[base + 1]};
+            if (gpu.lineClampSurfaceCache.find(key) !=
+                gpu.lineClampSurfaceCache.end()) {
+                continue;
+            }
+            const Cartographic c(key.first, key.second, 0.0);
+            const Vec3 normal = ellipsoid_.geodeticSurfaceNormal(c);
+            const Vec3 k = ellipsoid_.cartographicToCartesian(c);
+            gpu.lineClampSurfaceCache.emplace(key, std::pair<Vec3, Vec3>{
+                                                      k, normal});
+        }
+    }
+    // 本帧采样去重:同一 (lon,lat) 会被采样多次(自己的 pos + 相邻顶点的
+    // prev/next)。地形换代只改 height,故 height 不能跨帧缓存,但本帧内
+    // 每个唯一位置只采样一次,避免 3×重复。
+    std::unordered_map<std::pair<double, double>, double, PairHash>
+        heightCache;
+    heightCache.reserve(nverts);
     std::vector<float> lineVerts;
-    if (!reclampLineVertsFromSource(gpu.lineClampSource, lineVerts,
-                                    gpu.origin, sample)) {
-        return;
+    lineVerts.reserve(nverts * 12);
+    for (size_t i = 0; i < nverts; ++i) {
+        const size_t base = i * kClampFloats;
+        const auto position = [&](size_t offset) -> Vec3 {
+            const double lon = gpu.lineClampSource[base + offset];
+            const double lat = gpu.lineClampSource[base + offset + 1];
+            const std::pair<double, double> hkey{lon, lat};
+            auto hit = heightCache.find(hkey);
+            double height = 0.0;
+            if (hit != heightCache.end()) {
+                height = hit->second;
+            } else {
+                height = sample(lon, lat).value_or(0.0);
+                heightCache.emplace(hkey, height);
+            }
+            const auto& [k, normal] =
+                gpu.lineClampSurfaceCache.at(hkey);
+            return (k + normal * height) - gpu.origin;
+        };
+        const Vec3 p = position(0);
+        const Vec3 pr = position(2);
+        const Vec3 nxr = position(4);
+        lineVerts.push_back(static_cast<float>(p.x()));
+        lineVerts.push_back(static_cast<float>(p.y()));
+        lineVerts.push_back(static_cast<float>(p.z()));
+        lineVerts.push_back(static_cast<float>(pr.x()));
+        lineVerts.push_back(static_cast<float>(pr.y()));
+        lineVerts.push_back(static_cast<float>(pr.z()));
+        lineVerts.push_back(static_cast<float>(nxr.x()));
+        lineVerts.push_back(static_cast<float>(nxr.y()));
+        lineVerts.push_back(static_cast<float>(nxr.z()));
+        lineVerts.push_back(gpu.lineClampSource[base + 6]);
+        lineVerts.push_back(gpu.lineClampSource[base + 7]);
+        lineVerts.push_back(gpu.lineClampSource[base + 8]);
     }
     // 只换顶点缓冲:重钳只改高度,索引拓扑不变。
     auto vb = makeBuffer(renderDevice_, lineVerts.data(),
