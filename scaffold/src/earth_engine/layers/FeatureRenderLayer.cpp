@@ -4639,25 +4639,39 @@ void FeatureRenderLayer::appendExtrusionVolume(
     }
 }
 
-void FeatureRenderLayer::reclampTileBucketLines(BucketGpu& gpu) {
+bool FeatureRenderLayer::reclampTileBucketLines(
+    BucketGpu& gpu, size_t maxVertsThisFrame) {
     if (gpu.lineClampSource.empty() || !renderDevice_ ||
         gpu.lineIndexCount <= 0) {
-        return;
+        return true;
     }
     constexpr size_t kClampFloats = 9;
     const size_t nverts = gpu.lineClampSource.size() / kClampFloats;
+    // 顶点预算:从当前进度起推进至多 maxVertsThisFrame 个顶点,避免单桶
+    // 逐顶点采样(实测 100ms+/3.8万顶点)把整帧冻结。
+    const size_t startVert =
+        std::min(gpu.lineReclampProgressVert_, nverts);
+    if (startVert >= nverts) {
+        // 上次已整桶完成但未上传(或上传已清空) → 这里完成。
+        return true;
+    }
+    const size_t endVert = std::min(nverts, startVert + maxVertsThisFrame);
+
     std::vector<std::vector<Cartographic>> rings(1);
-    rings[0].reserve(nverts);
-    for (size_t i = 0; i < nverts; ++i) {
+    rings[0].reserve(endVert - startVert);
+    for (size_t i = startVert; i < endVert; ++i) {
         rings[0].emplace_back(gpu.lineClampSource[kClampFloats * i],
                               gpu.lineClampSource[kClampFloats * i + 1], 0.0);
     }
     const AreaSampleFn sample = makeClampSampler(rings);
-    if (!sample) return;
+    if (!sample) {
+        return true;
+    }
     // 首次(缓存空)为每个唯一 (lon,lat) 预计算曲面点 k 与椭球法线 normal,
     // 使 cartographicToCartesian = k + normal*height 只需一次乘加。clampSource
     // 的 (lon,lat) 在 commit 写死,reclamp 只改 height → 跨换代复用缓存,避免
-    // 每次重算全部顶点的三角函数(大路网瓦 3.8 万顶点 → 168ms)。
+    // 每次重算全部顶点的三角函数(大路网瓦 3.8 万顶点 → 168ms)。分片首次
+    // 构建时仍按全桶唯一坐标填(后续片段复用);后续片段缓存已非空则跳过。
     if (gpu.lineClampSurfaceCache.empty()) {
         gpu.lineClampSurfaceCache.reserve(nverts * 3);
         for (size_t i = 0; i < nverts; ++i) {
@@ -4680,15 +4694,16 @@ void FeatureRenderLayer::reclampTileBucketLines(BucketGpu& gpu) {
             }
         }
     }
-    // 本帧采样去重:同一 (lon,lat) 会被采样多次(自己的 pos + 相邻顶点的
-    // prev/next)。地形换代只改 height,故 height 不能跨帧缓存,但本帧内
-    // 每个唯一位置只采样一次,避免 3×重复。
+    if (gpu.lineReclampVerts_.empty()) {
+        gpu.lineReclampVerts_.reserve(nverts * 12);
+    }
+    // 本片段采样去重:同一 (lon,lat) 会被采样多次(自己的 pos + 相邻顶点的
+    // prev/next)。片段边界 prev/next 会与上一片段重复采样,但采样幂等,
+    // 正确性无损(仅边界重复的轻微性能损耗)。
     std::unordered_map<std::pair<double, double>, double, PairHash>
         heightCache;
-    heightCache.reserve(nverts);
-    std::vector<float> lineVerts;
-    lineVerts.reserve(nverts * 12);
-    for (size_t i = 0; i < nverts; ++i) {
+    heightCache.reserve(endVert - startVert);
+    for (size_t i = startVert; i < endVert; ++i) {
         const size_t base = i * kClampFloats;
         const auto position = [&](size_t offset) -> Vec3 {
             const double lon = gpu.lineClampSource[base + offset];
@@ -4716,25 +4731,34 @@ void FeatureRenderLayer::reclampTileBucketLines(BucketGpu& gpu) {
         const Vec3 p = position(0);
         const Vec3 pr = position(2);
         const Vec3 nxr = position(4);
-        lineVerts.push_back(static_cast<float>(p.x()));
-        lineVerts.push_back(static_cast<float>(p.y()));
-        lineVerts.push_back(static_cast<float>(p.z()));
-        lineVerts.push_back(static_cast<float>(pr.x()));
-        lineVerts.push_back(static_cast<float>(pr.y()));
-        lineVerts.push_back(static_cast<float>(pr.z()));
-        lineVerts.push_back(static_cast<float>(nxr.x()));
-        lineVerts.push_back(static_cast<float>(nxr.y()));
-        lineVerts.push_back(static_cast<float>(nxr.z()));
-        lineVerts.push_back(gpu.lineClampSource[base + 6]);
-        lineVerts.push_back(gpu.lineClampSource[base + 7]);
-        lineVerts.push_back(gpu.lineClampSource[base + 8]);
+        gpu.lineReclampVerts_.push_back(static_cast<float>(p.x()));
+        gpu.lineReclampVerts_.push_back(static_cast<float>(p.y()));
+        gpu.lineReclampVerts_.push_back(static_cast<float>(p.z()));
+        gpu.lineReclampVerts_.push_back(static_cast<float>(pr.x()));
+        gpu.lineReclampVerts_.push_back(static_cast<float>(pr.y()));
+        gpu.lineReclampVerts_.push_back(static_cast<float>(pr.z()));
+        gpu.lineReclampVerts_.push_back(static_cast<float>(nxr.x()));
+        gpu.lineReclampVerts_.push_back(static_cast<float>(nxr.y()));
+        gpu.lineReclampVerts_.push_back(static_cast<float>(nxr.z()));
+        gpu.lineReclampVerts_.push_back(gpu.lineClampSource[base + 6]);
+        gpu.lineReclampVerts_.push_back(gpu.lineClampSource[base + 7]);
+        gpu.lineReclampVerts_.push_back(gpu.lineClampSource[base + 8]);
     }
-    // 只换顶点缓冲:重钳只改高度,索引拓扑不变。
-    auto vb = makeBuffer(renderDevice_, lineVerts.data(),
-                         lineVerts.size() * sizeof(float),
-                         BufferDesc::Type::Vertex);
-    if (!vb) return;
-    gpu.lineVertexBuffer = std::move(vb);
+    gpu.lineReclampProgressVert_ = endVert;
+
+    // 整桶完成:统一上传顶点缓冲(索引不变),清空分片状态。
+    if (endVert >= nverts) {
+        const double uploadStartMs = perf::nowMs();
+        auto vb = makeBuffer(renderDevice_, gpu.lineReclampVerts_.data(),
+                             gpu.lineReclampVerts_.size() * sizeof(float),
+                             BufferDesc::Type::Vertex);
+        const double uploadMs = perf::nowMs() - uploadStartMs;
+        gpu.lineReclampVerts_.clear();
+        gpu.lineReclampProgressVert_ = 0;
+        if (!vb) return true;
+        gpu.lineVertexBuffer = std::move(vb);
+    }
+    return endVert >= nverts;
 }
 
 uint64_t FeatureRenderLayer::crossTileIdFor(
@@ -5433,7 +5457,14 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                 }
             }
         }
+        // 主烘焙扫描:每帧至多 kLabelBakeBucketsPerFrame 个未烘桶(瓦片换代
+        // 一帧 90+ 桶全量烘实测 25-39ms 掉帧;预算化摊多帧,烘焙幂等不丢标签,
+        // 未烘桶由 hasPendingLabelWork 持续供帧)。
+        size_t bakedThisFrame = 0;
         for (auto& entry : tileBuckets_) {
+            if (bakedThisFrame >= kLabelBakeBucketsPerFrame) {
+                break;
+            }
             if (entry.second.symbolViewZoomBucket == currentLabelZoomBucket &&
                 !entry.second.labelBakeSettled &&
                 entry.second.labelIndexCount == 0 &&
@@ -5450,10 +5481,14 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
                 if (!wasSettled && entry.second.labelBakeSettled) {
                     ++labelBucketsCompleted;
                 }
+                // 字形预算满 / 可重试失败:无论是否达桶预算都停(字形缺了
+                // 烘焙也无法推进,继续只会空扫)。
                 if (result == TileLabelBakeResult::AtlasSaturated ||
                     result == TileLabelBakeResult::RetryableFailure) {
                     break;
                 }
+                // 达桶预算即停;下一帧由谓词供帧继续扫其余未烘桶。
+                ++bakedThisFrame;
             }
         }
         // Android 将本层这一轮新字形封成一张有界 Landing 批次；整批后台
@@ -5461,47 +5496,88 @@ void FeatureRenderLayer::buildRenderCommands(const FrameState& frameState,
         glyphAtlas_->finishGlyphRasterDispatch();
         labelScanMs = perf::nowMs() - startMs;
     }
-    // P6:重钳排队消化(每帧至多 kReclampBucketsPerFrame 个桶)
+    // P6:重钳排队消化(每帧至多 kReclampBucketsPerFrame 个桶;线桶另按
+    // kReclampVertsPerFrame 顶点预算分片,避免单桶逐顶点采样整帧冻结)。
+    // ⚠️ 2026-09 真机:单桶线重钳逐顶点采样实测 ~100ms/3.8万顶点,4 桶
+    // 预算仍整帧 1.6s 冻结。改按「当帧采样顶点数」预算:大桶分多帧推进。
     if (!pendingReclamp_.empty()) {
         const double startMs = perf::nowMs();
         int done = 0;
-        while (!pendingReclamp_.empty() && done < kReclampBucketsPerFrame) {
+        size_t vertsDoneThisFrame = 0;
+        size_t maxLineVerts = 0;
+        while (!pendingReclamp_.empty() && done < kReclampBucketsPerFrame &&
+               vertsDoneThisFrame < kReclampVertsPerFrame) {
             auto it = tileBuckets_.find(pendingReclamp_.back());
             pendingReclamp_.pop_back();
             if (it == tileBuckets_.end()) continue;
             BucketGpu& bucket = it->second;
+            maxLineVerts = std::max(
+                maxLineVerts, bucket.lineClampSource.size() /
+                                  static_cast<size_t>(9));
             // 按需重钳:该桶覆盖地形面的 areaRevision 未变 → 跳过(消除对
             // 未变桶的全量重采样)。地形换代可能只影响视图的一部分,全局
-            // revision 变了不代表这个桶采样的那几块地形也变了。
+            // revision 变了不代表这个桶采样的那几块地形也变了。注意:line
+            // 分片未完成的桶,areaRev 更新延到整桶完成后(见下),避免
+            // 分片中被判定"已最新"而漏掉剩余片段。
+            bool areaUnchanged = false;
+            std::optional<Rectangle> area;
+            std::uint64_t areaRev = 0;
             if (terrainSampling_.makeAreaRevision) {
-                const std::optional<Rectangle> area =
-                    reclampAreaOf(bucket);
+                area = reclampAreaOf(bucket);
                 if (area) {
-                    const std::uint64_t areaRev =
-                        terrainSampling_.makeAreaRevision(*area);
-                    if (bucket.hasLastReclampAreaRevision_ &&
-                        bucket.lastReclampAreaRevision_ == areaRev) {
-                        continue;  // 该桶地形没变,无需重钳
-                    }
-                    reclampTileBucketSymbols(bucket);
-                    reclampTileBucketFills(bucket);
-                    reclampTileBucketExtrusions(bucket);
-                    reclampTileBucketLines(bucket);
-                    bucket.lastReclampAreaRevision_ = areaRev;
-                    bucket.hasLastReclampAreaRevision_ = true;
-                    ++done;
-                    continue;
+                    areaRev = terrainSampling_.makeAreaRevision(*area);
+                    areaUnchanged =
+                        bucket.hasLastReclampAreaRevision_ &&
+                        bucket.lastReclampAreaRevision_ == areaRev;
                 }
             }
-            reclampTileBucketSymbols(bucket);
-            reclampTileBucketFills(bucket);
-            reclampTileBucketExtrusions(bucket);
-            // E 方案 P2:线桶同款重钳(只换顶点缓冲)。
-            reclampTileBucketLines(bucket);
+            // 该桶 line 分片是否已在途(上次未完成):是则跳过 symbols/fills/
+            // extrusions(已做过),只继续 lines。
+            const bool lineSliceInProgress =
+                bucket.lineReclampProgressVert_ > 0 &&
+                !bucket.lineReclampVerts_.empty();
+            if (!lineSliceInProgress) {
+                if (areaUnchanged) {
+                    continue;  // 该桶地形没变,无需重钳
+                }
+                reclampTileBucketSymbols(bucket);
+                reclampTileBucketFills(bucket);
+                reclampTileBucketExtrusions(bucket);
+            }
+            // 线桶分片推进:本帧至多 kReclampVertsPerFrame - 已用 个顶点。
+            const size_t lineBudget =
+                kReclampVertsPerFrame - vertsDoneThisFrame;
+            const bool lineDone = reclampTileBucketLines(bucket, lineBudget);
+            const size_t advanced =
+                bucket.lineReclampProgressVert_;
+            vertsDoneThisFrame += advanced;
+            if (!lineDone) {
+                // 整桶未完成:保持分片状态,把桶放回队列尾部下帧继续。
+                // areaRev 更新延后到整桶完成,避免分片中被判"已最新"漏钳。
+                // 本帧顶点预算已消耗大半,停止本轮避免超支。
+                pendingReclamp_.push_back(it->first);
+                break;
+            }
+            // 整桶完成:此时才更新 areaRev(分片期间 revision 可能又变,
+            // 下帧若 areaRev 变会用新 revision 重钳,正确)。
+            if (area) {
+                bucket.lastReclampAreaRevision_ = areaRev;
+                bucket.hasLastReclampAreaRevision_ = true;
+            }
             ++done;
         }
         reclampBuckets = static_cast<size_t>(done);
         reclampMs = perf::nowMs() - startMs;
+        if (done > 0) {
+            char detail[160];
+            std::snprintf(detail, sizeof(detail),
+                "done=%d verts=%zu maxLineVerts=%zu pending=%zu",
+                done, vertsDoneThisFrame, maxLineVerts,
+                pendingReclamp_.size());
+            perf::logTiming(frameState.frameId,
+                            "FeatureLayer.reclampBreakdown",
+                            reclampMs, detail);
+        }
     }
 
     // 贴地重钳(P3 方案 A 过渡态):地形代次变化 → 事件驱动连续追赶排水。

@@ -898,6 +898,13 @@ private:
         /// 若 areaRevision 未变则跳过(消除对未变桶的全量重采样)。
         std::uint64_t lastReclampAreaRevision_ = 0;
         bool hasLastReclampAreaRevision_ = false;
+        /// 顶点预算分片(2026-09):单桶重钳逐顶点采样实测 100ms+(大路网瓦
+        /// 3.8 万顶点),4 桶预算整帧 1.6s 冻结。改为按「当帧采样顶点数」预算
+        /// 摊平:record 本桶已完成的 line 顶点偏移,片段推进到整桶后统一上传
+        /// 顶点缓冲(索引不变)。为 0 = 该桶无进行中分片。
+        size_t lineReclampProgressVert_ = 0;
+        /// 进行中分片累计的顶点缓冲(片段推进时追加;整桶完成后上传并清空)。
+        std::vector<float> lineReclampVerts_;
         /// 重钳加速缓存:唯一 (lon,lat) → (曲面点 k, 椭球法线 normal),使
         /// cartographicToCartesian = k + normal*height 只需一次乘加。clampSource
         /// 的 (lon,lat) 在 commit 写死,reclamp 只改 height,故跨换代复用缓存,
@@ -1257,6 +1264,17 @@ public:
     /// 的点 buffer + 重烘标签,实测单帧 27ms。代次变化由 2 秒合并窗节流,
     /// 摊几帧完成完全不可见。
     static constexpr int kReclampBucketsPerFrame = 4;
+    /// ⚠️ 2026-09 顶点预算:单桶线重钳逐顶点采样实测 ~100ms/3.8万顶点,
+    /// 按桶数(4)预算仍整帧冻结。改为按「当帧采样顶点数」预算:单桶超过
+    /// 此额分多帧推进(reclampTileBucketLines 分片),单帧摊到可消化量。
+    /// 选 2000 顶点 ≈ 单帧 ~20ms(实测 ~10µs/顶点),留余量给其它阶段。
+    static constexpr size_t kReclampVertsPerFrame = 2000;
+    /// ⚠️ 2026-09 标注烘焙桶预算:瓦片换代时一帧对全部未烘桶(90+)全量
+    /// bakeTileBucketLabels,真机 labelScan 实测 25-39ms/帧掉帧。烘焙幂等
+    /// (每帧重试,labelBakeSettled 短路),预算化只把换代瞬态摊多帧,不丢
+    /// 标签;未烘桶由 hasPendingLabelWork 谓词持续供帧(不会饿死停帧)。
+    /// 选每帧 16 桶:单桶实测 ~0.3ms → ~5ms/帧,留余量给其它阶段。
+    static constexpr size_t kLabelBakeBucketsPerFrame = 16;
     std::vector<TileKey> pendingReclamp_;
 
     /// **渲染线程**:符号实例表 → 点 quad + 标签烘焙源(采地面高 + 图集
@@ -1290,7 +1308,13 @@ public:
     void clampTileLineHeights(TileMeshCpu& mesh);
     /// E 方案 P2:地形代次变化重钳线桶(镜像 reclampTileBucketSymbols;
     /// 只重建顶点缓冲,索引不变)。
-    void reclampTileBucketLines(BucketGpu& gpu);
+    ///
+    /// ⚠️ 2026-09 顶点预算:单桶逐顶点采样实测 100ms+(大路网瓦),整桶重钳
+    /// 会整帧冻结。本函数每帧只推进 `maxVertsThisFrame` 个顶点(通过
+    /// BucketGpu::lineReclampProgressVert_ 记录进度),返回是否整桶完成;
+    /// 未完成时调用方应在下一帧继续(把桶留在 pendingReclamp_ 或由
+    /// revision 驱动重入),完成时才上传顶点缓冲。
+    bool reclampTileBucketLines(BucketGpu& gpu, size_t maxVertsThisFrame);
     void clampTileFillHeights(TileMeshCpu& mesh);
     void reclampTileBucketFills(BucketGpu& gpu);
     void clampTileExtrusionHeights(TileMeshCpu& mesh);

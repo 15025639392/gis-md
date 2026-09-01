@@ -3102,15 +3102,15 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `rebuildBucket` | .cpp:2823-2972 | 单桶重建 |
 | `stencilClassificationSupported` / `resolvePaintOrder` / `flattenPaintRanges` | .cpp:2973-2976 / :2977-2988 / :2989-3017 | 能力快照；属性表达式解析 ordinal；按 ordinal flatten 到共享 buffer ranges |
 | `appendTileSymbol` / `commitTileMesh` / `resolveTileSymbols` / `materializeTileSymbols` | .cpp:3483-3566 / :3692-3898 / :3899-3963 / :3964-4112 | MVT worker 保留完整符号源,渲染线程按当前 zoom 派生/cap。resolve 解析样式/图集/选中并缓存;height-only 重钳只重跑 materialize(采当刻地形高),不重 resolve |
-| `bakeTileBucketLabels` / `dropTileMesh` | .cpp:4791-5102 / :5103-5118 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
-| `buildRenderCommands` | .cpp:5214-5683 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
-| `visibleBucketKeys` | .cpp:5684-5753 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:5754-5881 | 标签避让 + fade + 地平线剔除(P5c) |
-| `dumpLabelLifecycle` | .cpp:5988-6107 | 七态只读聚合 dump |
-| `appendTerrainOcclusion` | .cpp:6128-6148 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:6149-6911 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:6912-6928 / :6929-6935 / :6936-6963 | 编辑预览三接口 |
-| `pick` | .cpp:7007-7302 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
+| `bakeTileBucketLabels` / `dropTileMesh` | .cpp:4815-5126 / :5127-5142 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
+| `buildRenderCommands` | .cpp:5238-5748 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
+| `visibleBucketKeys` | .cpp:5760-5829 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:5830-5957 | 标签避让 + fade + 地平线剔除(P5c) |
+| `dumpLabelLifecycle` | .cpp:6064-6183 | 七态只读聚合 dump |
+| `appendTerrainOcclusion` | .cpp:6204-6224 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:6225-6987 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:6988-7004 / :7005-7011 / :7012-7039 | 编辑预览三接口 |
+| `pick` | .cpp:7083-7378 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。

@@ -8262,3 +8262,156 @@ TEST_F(FeatureRenderLayerTest, DisabledStencilFillFallsBackToSinglePassFill) {
     EXPECT_TRUE(sawFill);
     EXPECT_FALSE(sawStencil);  // 2-pass stencil 被单 pass fill 取代
 }
+
+// ============================================================
+// 顶点预算分片:单桶线重钳逐顶点采样很贵(2026-09 真机 ~100ms/3.8万顶点),
+// 改为按 kReclampVertsPerFrame 分多帧推进。本测验证分片不变量:
+//   1) 分片未完成时 lineVertexBuffer 保持旧值(无半成品上屏);
+//   2) 多次 build 推进后 pendingBuckets 归 0,lineVertexBuffer 被替换为
+//      新高度版本(与整桶路径同一套采样逻辑 → 输出逐位一致)。
+// ============================================================
+TEST_F(FeatureRenderLayerTest, VertexBudgetSlicesLargeLineBucketAcrossFrames) {
+    FeatureRenderLayer layer("slice", &device_, Ellipsoid::WGS84());
+    FeatureRenderStyle style;
+    style.altitudeMode = FeatureAltitudeMode::ClampToGround;
+    style.terrainClampRibbon = true;  // E 方案 P1:线走 ribbon 单 pass
+    style.clampDensifyMeters = 8.0;   // 密致 → 单桶 > kReclampVertsPerFrame
+    layer.setStyleForContractTest(style);
+
+    // 大折线(0.5°≈55km / 8m → 数千顶点),超过 2000 顶点预算。
+    Feature line = makeLine(6.0, 29.0, 0.5);
+    FeatureRenderLayer::TessellationContext ctx{
+        style, Ellipsoid::WGS84(), nullptr, nullptr, /*stencil=*/true};
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(ctx, {line});
+    ASSERT_FALSE(mesh.lineClampSource.empty());
+    const size_t lineVerts = mesh.lineClampSource.size() / 9;
+    ASSERT_GT(lineVerts, FeatureRenderLayer::kReclampVertsPerFrame)
+        << "fixture must exceed the per-frame vertex budget to exercise "
+           "slicing (lineVerts=" << lineVerts << ")";
+
+    const TileKey key{"slice-test", 3, 4, 1};
+    layer.commitTileMesh(key, std::move(mesh));
+
+    // 旧高度 100,触发 revision 变化后应重钳到 700。
+    auto height = std::make_shared<float>(100.0f);
+    layer.setTerrainSampling(makeGenerationSampling(height));
+
+    // 递增 heightmap generation → revision 变化 → 重钳入队。
+    TileRenderContentState generationSource;
+    auto changedHeightmap = std::make_unique<DecodedHeightmap>();
+    changedHeightmap->tileSize = 1;
+    changedHeightmap->assignHeights(std::vector<float>{700.0f});
+    generationSource.setRetainedHeightmap(std::move(changedHeightmap));
+    const uint64_t changedGeneration =
+        TerrainHeightService::heightmapGeneration();
+
+    // 第一次 build:观察到 generation,入队(分片只推进一段)。
+    auto buildFrame = [&](double dt) {
+        frame_.frameId++;
+        frame_.deltaSeconds = dt;
+        RenderCommandList cmds;
+        layer.buildRenderCommands(frame_, *renderer_, cmds);
+        return layer.terrainReclampSnapshotForTest();
+    };
+    auto snap0 = buildFrame(1.0 / 60.0);
+    // 已入队且未完成分片时,line buffer 仍为旧版本(100)。立即拷贝字节,
+    // 因为后续 build 会替换 buffer 使指针悬垂。
+    const Buffer* oldLineBuffer = snap0.lineVertexBuffer;
+    ASSERT_NE(nullptr, oldLineBuffer);
+    const auto* oldVb = dynamic_cast<const DummyBuffer*>(oldLineBuffer);
+    ASSERT_NE(nullptr, oldVb);
+    const std::vector<uint8_t> oldBytes = oldVb->bytes();
+
+    // 多次 build 推进分片直到 pending 清空。
+    int guard = 0;
+    auto snap = snap0;
+    while (snap.pendingBuckets > 0 && guard++ < 5000) {
+        snap = buildFrame(1.0 / 60.0);
+    }
+    ASSERT_LT(guard, 5000) << "sliced reclamp must terminate";
+    ASSERT_GT(guard, 0)
+        << "fixture must actually slice across frames (single-frame "
+           "completion means the vertex budget was not exercised)";
+    ASSERT_EQ(0u, snap.pendingBuckets);
+    // 完成后 buffer 应替换为新版本(指针变化)。
+    const Buffer* newLineBuffer = snap.lineVertexBuffer;
+    ASSERT_NE(nullptr, newLineBuffer);
+
+    // 新版本高度应为 700(与 HeightOnlyReclamp 同口径);旧版本应为 100。
+    const auto* newVb = dynamic_cast<const DummyBuffer*>(newLineBuffer);
+    ASSERT_NE(nullptr, newVb);
+    EXPECT_NE(newVb->bytes(), oldBytes)
+        << "sliced reclamp must replace the vertex buffer with a new-height "
+           "version (no in-place partial overwrite)";
+    // 完整顶点数:lineVerts × 12 float × 4B。分片不得丢顶点/重复顶点。
+    EXPECT_EQ(lineVerts * 12 * 4u, newVb->bytes().size());
+    // 分片最终应用到的 revision 应为递增后的 generation。
+    EXPECT_EQ(changedGeneration, snap.appliedRevision);
+}
+
+// ============================================================
+// 标注烘焙桶预算(2026-09):瓦片换代一帧对全部未烘桶全量 bake 实测
+// 25-39ms 掉帧。kLabelBakeBucketsPerFrame=16 每帧限烘 N 桶,烘焙幂等
+// (labelBakeSettled 短路 + 每帧重试),未烘桶由 hasPendingLabelWork 持续
+// 供帧。本测验证:1) 单次 build 不烘完全部(预算生效,摊多帧);
+// 2) 多次 build 后全部烘完(不饿死不丢标)。
+// ============================================================
+TEST_F(FeatureRenderLayerTest, LabelBakeBudgetSlicesLargeRebakeAcrossFrames) {
+    std::vector<uint8_t> font = loadHostFont();
+    if (font.empty() ||
+        !renderer_->glyphAtlas()->setFontData(std::move(font))) {
+        GTEST_SKIP() << "no host TrueType font for label VBO verification";
+    }
+    build();  // 缓存 glyph atlas(避免首个 build 混入 atlas 一次性准备)
+
+    // 构造 > kLabelBakeBucketsPerFrame 个待烘焙桶,每个带一个标签符号。
+    const size_t bucketCount = FeatureRenderLayer::kLabelBakeBucketsPerFrame + 6;
+    for (size_t i = 0; i < bucketCount; ++i) {
+        FeatureTileMesh mesh;
+        mesh.origin = Ellipsoid::WGS84().cartographicToCartesian(
+            Cartographic(0.0, static_cast<double>(i) * 1e-5));
+        mesh.hasOrigin = true;
+        TileSymbolCpu symbol;
+        symbol.lonRad = 0.0;
+        symbol.latRad = static_cast<double>(i) * 1e-5;
+        genericVisual(symbol).colorPacked = 1.0f;
+        symbol.name = "N";  // 单字,减少字形依赖
+        symbol.rank = 1;
+        symbol.minZoom = 0;
+        symbol.maxZoom = 30;
+        mesh.symbols = {symbol};
+        layer_->commitTileMesh(
+            TileKey{SchemeId("XYZ-WebMercator"), 14,
+                    static_cast<int>(100 + i), 200},
+            std::move(mesh));
+    }
+
+    // 首次 build:预算生效,不应一帧烘完全部桶。
+    // (host 环境 glyphAtlas 恒 needsFrame,不能靠 hasPendingLabelWork 判收敛,
+    // 用已烘焙标签数 candidates 作收敛信号。)
+    ++frame_.frameId;
+    {
+        RenderCommandList cmds;
+        layer_->buildRenderCommands(frame_, *renderer_, cmds);
+    }
+    const int afterFirst = layer_->labelPlacementStats().candidates;
+    EXPECT_LT(static_cast<size_t>(afterFirst), bucketCount)
+        << ">16 pending label buckets must not all bake in one frame "
+           "(kLabelBakeBucketsPerFrame budget); got candidates="
+        << afterFirst;
+
+    // 多次 build 推进:每次重算 placement,候选应单调逼近 bucketCount。
+    int guard = 0;
+    int candidates = afterFirst;
+    while (candidates < static_cast<int>(bucketCount) && guard++ < 2000) {
+        ++frame_.frameId;
+        RenderCommandList cmds;
+        layer_->buildRenderCommands(frame_, *renderer_, cmds);
+        candidates = layer_->labelPlacementStats().candidates;
+    }
+    ASSERT_LT(guard, 2000)
+        << "label bake must terminate; candidates=" << candidates
+        << " target=" << bucketCount;
+    EXPECT_EQ(static_cast<int>(bucketCount), candidates)
+        << "after sufficient frames every label bucket must be baked";
+}
