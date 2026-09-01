@@ -100,8 +100,7 @@ struct TileEdgeSnapResolver {
         const TileSelectionFrameState& st = e.selectedTile->selectionFrameState;
         const int grid = decidedOrPredictGridSize(
             st.displacementGridSize, st.screenSpaceError);
-        return e.selectedKey.z +
-               (grid >= kTerrainDenseGridSize ? 2 : 0);
+        return e.selectedKey.z + terrainGridOctaveForGridSize(grid);
     }
 
 private:

@@ -238,20 +238,36 @@ TEST(DecodedHeightmapSamplerTest,
 // ============================================================
 
 TEST(TerrainGridSizeForSseTest, UpgradesOnlyAboveThresholdAndHasHysteresis) {
-    // 未定档(0):用升档阈值 64px。
-    EXPECT_EQ(kTerrainDisplacementGridSize, terrainGridSizeForSse(63.9, 0));
-    EXPECT_EQ(kTerrainDenseGridSize, terrainGridSizeForSse(64.0, 0));
+    // 多档表(kGridTiers):base 64 / mid 128 / dense 256。
+    const GridTier& base = kGridTiers[0];
+    const GridTier& mid = kGridTiers[1];
+    const GridTier& dense = kGridTiers[2];
+    // 未定档(0):按各档 acquire 阈值升到最高可达档。
+    EXPECT_EQ(base.gridSize, terrainGridSizeForSse(mid.acquireSsePx - 0.1, 0));
+    EXPECT_EQ(mid.gridSize, terrainGridSizeForSse(mid.acquireSsePx, 0));
+    EXPECT_EQ(dense.gridSize, terrainGridSizeForSse(dense.acquireSsePx, 0));
 
-    // 已在 dense 档:用更低的降档阈值 48px = 迟滞带。缺了它,SSE 在阈值附近
-    // 抖动的瓦片会逐帧换档,而换档要重建常驻命令 + 重烘 257² 高度纹理。
-    EXPECT_EQ(kTerrainDenseGridSize,
-              terrainGridSizeForSse(50.0, kTerrainDenseGridSize));
-    EXPECT_EQ(kTerrainDisplacementGridSize,
-              terrainGridSizeForSse(47.9, kTerrainDenseGridSize));
+    // 已在 mid 档:SSE 低于 mid.release → 降回 base;达 dense.acquire → 升 dense。
+    EXPECT_EQ(base.gridSize,
+              terrainGridSizeForSse(mid.releaseSsePx - 0.1, mid.gridSize));
+    EXPECT_EQ(mid.gridSize,
+              terrainGridSizeForSse(mid.releaseSsePx, mid.gridSize));
+    EXPECT_EQ(dense.gridSize,
+              terrainGridSizeForSse(dense.acquireSsePx, mid.gridSize));
 
-    // 同一个 SSE(50)在两个档下给出不同结果 —— 这正是迟滞的定义。
-    EXPECT_NE(terrainGridSizeForSse(50.0, kTerrainDisplacementGridSize),
-              terrainGridSizeForSse(50.0, kTerrainDenseGridSize));
+    // 已在 dense 档:SSE 低于 dense.release → 降一级到 mid。
+    EXPECT_EQ(mid.gridSize,
+              terrainGridSizeForSse(dense.releaseSsePx - 0.1, dense.gridSize));
+    EXPECT_EQ(dense.gridSize,
+              terrainGridSizeForSse(dense.releaseSsePx, dense.gridSize));
+
+    // 迟滞:同一 SSE(mid 迟滞带 [mid.release, mid.acquire) 内)在不同档下结果不同
+    // —— 缺迟滞带会让 SSE 在阈值附近抖动的瓦片逐帧换档。
+    const double inMidBand = (mid.releaseSsePx + mid.acquireSsePx) * 0.5;
+    EXPECT_EQ(base.gridSize, terrainGridSizeForSse(inMidBand, base.gridSize));
+    EXPECT_EQ(mid.gridSize, terrainGridSizeForSse(inMidBand, mid.gridSize));
+    EXPECT_NE(terrainGridSizeForSse(inMidBand, base.gridSize),
+              terrainGridSizeForSse(inMidBand, mid.gridSize));
 }
 
 TEST(DecodedHeightmapSamplerTest, DenseGridResolvesDetailCoarseGridMisses) {

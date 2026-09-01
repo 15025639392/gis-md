@@ -72,15 +72,17 @@ TEST(TileEdgeSnapResolverTest, CoarserNorthNeighborTwoLevels) {
     EXPECT_EQ(128.0f, f.snapOf(a));
 }
 
-// 同 z 异档:本瓦片 dense(+2 八度),邻居 coarse → 邻居向我?不:我更细,
-// **我**向邻居吸 2 级。dense 判定走 terrainGridSizeForSse(SSE 超阈值)。
+// 同 z 异档:本瓦片更细档(高 octave),邻居 coarse → 我更细,**我**向邻居吸
+// 到差档级数。dense 判定走 terrainGridSizeForSse(SSE 超该档 acquire)。
 TEST(TileEdgeSnapResolverTest, TierMismatchSameLevel) {
     PlanFixture f;
-    TilesetTile& dense = f.addEntry(
-        10, 4, 4, kTerrainDenseGridSseThresholdPixels + 1.0);
+    const GridTier& dense = kGridTiers[kGridTierCount - 1];  // 最高档 257²
+    TilesetTile& densetile = f.addEntry(
+        10, 4, 4, dense.acquireSsePx + 1.0);
     f.addEntry(10, 3, 4, 10.0);  // 西邻 coarse
     TileEdgeSnapResolver::resolve(f.plan);
-    EXPECT_EQ(2.0f, f.snapOf(dense));       // W=2(档差)
+    EXPECT_EQ(static_cast<float>(terrainGridOctaveForGridSize(dense.gridSize)),
+              f.snapOf(densetile));        // W=档差八度
     EXPECT_EQ(0.0f, f.snapOf(f.tiles[1]));  // 粗侧不吸
 }
 

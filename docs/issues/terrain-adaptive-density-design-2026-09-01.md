@@ -3,7 +3,12 @@
 > 冻结设计。代码落点 `TerrainDisplacementTemplatePool.{h,cpp}`、
 > `TerrainDisplacementTemplate.cpp`、`TileRenderPlanFrameRefresher.cpp`、
 > `DecodedHeightmapSampler.{h,cpp}`。
-> 状态:2026-09-01 约定「本轮只出设计,不混入实现」。
+> **2026-09-01 已实施(多档机制 + 3 档)**:档位表 `kGridTiers`(64/128/256)取代
+> 二元;`terrainGridSizeForSse` 表格驱动带迟滞;`layersForGridSize`/`templateLayersFor`
+> 表格驱动;逐档构建预算(`buildsPerFrameForGridSize`);接缝八度泛化
+> `terrainGridOctaveForGridSize`(65→129→257 = 0→1→2)。host 212 全绿,模拟器无崩溃。
+> 档位阈值(129² 升 12/降 9、257² 升 40/降 30)是**初始猜测**,需真机/模拟器 A/B 调优
+> (T-V1 观感归用户像素判定)。跨档 morph(档间 hCoarse↔hFine 平滑)未做,留后续。
 
 ## 问题
 

@@ -30,12 +30,12 @@ std::vector<uint8_t> bakeTerrainHeightNormalTexels(
     const DecodedHeightmap& heightmap, const Rectangle& bounds, int gridSize,
     float minHeight, float heightRange);
 
-// 共享模板固定栅格单元数（n=65=2^6+1，GE 嵌套栅格约定；与 grid64 一致）。
+// 共享模板最低档栅格单元数（n=65=2^6+1，GE 嵌套栅格约定；与 grid64 一致）。
 // 模板独立于瓦片原始网格密度——所有地形瓦片用同一密度共享模板，UV 均匀。
 inline constexpr int kTerrainDisplacementGridSize = 64;
 
 // ============================================================
-// 自适应几何密度(解 65×65 钉死)
+// 自适应几何密度多档(替代二元 coarse/dense)
 // ============================================================
 // 背景:整条高度链原本锁死在 64 格 —— z12 瓦片地面宽 8510m / 64 = **每顶点
 // 133m**,而源数据 514px = 16.6m/px,8 倍高程细节解码后留在 CPU 从未上 GPU。
@@ -44,41 +44,58 @@ inline constexpr int kTerrainDisplacementGridSize = 64;
 // **为什么不能全局抬密度**:真机实测峰值可见 103 片(camH 67km)。全局 64→128
 // 即 103×2×128² = 3.4M 三角/帧,手机不可行(现状 844k)。
 //
-// **档位由屏幕空间误差驱动**,与 TerrainPageStore 选影像页 LOD 同一模式
-// (见 TerrainPageStore.cpp:230 的 log2(tileSse/threshold))。关键性质:正常
-// 细化的瓦片 SSE ≈ 阈值(它想细就细了),只有**几何 cap 在 DEM native max LOD、
-// 想细化却细化不了**的瓦片 SSE 会远超阈值 —— 那批正是该加密的,且数量少
-// (钉死场景实测 maxTileSse=675 vs 阈值 16)。于是总三角数由屏幕面积封顶,
-// 不随可见瓦片数线性增长。
-//
-// 只设两档而非连续分档:每多一档就多一个高度纹理 array(层边长是 array 的硬
-// 约束),而"正常细化 / 被 cap"本身就是二分,两档已覆盖。
-inline constexpr int kTerrainDenseGridSize = 256;
+// 档位由屏幕空间误差(SSE)驱动,带迟滞。档位表取代固定 coarse/dense 二元:
+// 每档一套共享模板 VBO + 高度 texture2DArray(array 层边长是硬约束,同档各层
+// 必须等尺寸)。档间 2× 几何(65/129/257),阈值几何递推。最低档恒为候选;
+// 越高档显存越多(见 docs/issues/terrain-adaptive-density-design 代价账)。
+inline constexpr int kTerrainDenseGridSize = 256;  // 最高档(保留旧名供调用)
 
-// 升档阈值:瓦片几何误差投到屏幕 ≥ 这么多像素时升 dense 档。
-//
-// 判据用**绝对像素**而非"maximumScreenSpaceError 的倍数",两个理由:
-// ① SSE 本身就是像素量纲,绝对阈值是直接可解释的("这块地的几何误差已占 64px");
-// ② maximumScreenSpaceError 是用户可调的性能旋钮——若有人为了省电把它调到 64,
-//    绝不该连带把几何密度翻四倍(倍数判据会,绝对判据不会)。
-// 代价:与 TerrainPageStore 的倍数判据不再是同一个表达式,但两者目标不同
-//    (那边是选影像页 LOD,跟随细化阈值才对齐清晰度)。
-inline constexpr double kTerrainDenseGridSseThresholdPixels = 64.0;
-// 降档阈值低于升档阈值 = 迟滞带。缺了它,SSE 在阈值附近抖动的瓦片会逐帧
-// 升降档,而换档要重建常驻 draw 命令 + 重烘高度纹理(257² 上传)——每帧一次
-// 就是可见卡顿。0.75 给出 25% 的死区,相机缓慢推进时只换一次。
-inline constexpr double kTerrainDenseGridSseReleasePixels = 48.0;
+struct GridTier {
+    int gridSize;
+    int templateSlots;        // 该档模板槽位(淘汰池容量上限)
+    int heightArrayLayers;    // 该档高度 array 层预算
+    double acquireSsePx;      // SSE ≥ 此值 → 升到本档
+    double releaseSsePx;      // 从本档降回上一档的阈值(迟滞,< acquire)
+};
+// 档位表:gridSize 是**单元数**(gridN=64/128/256 → 顶点 (gridN+1)²),与代码其他
+// 处 gridSize 参数同口径。最低档恒候选;越高档越密、显存越多(design doc 代价账)。
+// 阈值:65→129 升 12/降 9(默认相机 z12 被 cap 瓦 SSE 集中在 [12,16],加密它 →
+// 133m/三角形降到 66m,T-V1 地块感缓解);129→257 升 40/降 30(近景更细)。
+inline constexpr GridTier kGridTiers[] = {
+    {64,  128, 256,  0.0,  0.0},   // 最低档 = kTerrainDisplacementGridSize
+    {128,  40,  96, 12.0,  9.0},   // 129² 中间档
+    {256,  16,  48, 40.0, 30.0},   // 最高档 = kTerrainDenseGridSize
+};
+inline constexpr int kGridTierCount =
+    static_cast<int>(sizeof(kGridTiers) / sizeof(kGridTiers[0]));
 
 // **单一事实源**:draw 侧(模板 + 高度纹理 acquire)与 CPU 侧渲染网格一致采样
 // (DecodedHeightmapSampler::sampleHeightRenderGrid,矢量贴地用)必须用同一函数。
 // 两侧不一致会让贴地矢量浮起或陷进地面(P3 已踩过一次)。
 // currentGridSize = 该瓦片当前所在档(0 = 尚未定档),用于迟滞。
+// 语义:SSE 低于当前档 release → 降回上一档(一次一档,下帧再降);否则 SSE 达
+// 更高档 acquire → 升到最高可达档。与旧二元一致(65 默认、257 升 64/降 48)。
 inline int terrainGridSizeForSse(double tileSse, int currentGridSize = 0) {
-    const bool wasDense = currentGridSize >= kTerrainDenseGridSize;
-    const double threshold = wasDense ? kTerrainDenseGridSseReleasePixels
-                                      : kTerrainDenseGridSseThresholdPixels;
-    return tileSse >= threshold ? kTerrainDenseGridSize
-                                : kTerrainDisplacementGridSize;
+    int cur = 0;
+    for (int i = 0; i < kGridTierCount; ++i) {
+        if (currentGridSize >= kGridTiers[i].gridSize) cur = i;
+    }
+    if (cur > 0 && tileSse < kGridTiers[cur].releaseSsePx) {
+        return kGridTiers[cur - 1].gridSize;
+    }
+    int target = cur;
+    for (int i = cur + 1; i < kGridTierCount; ++i) {
+        if (tileSse >= kGridTiers[i].acquireSsePx) target = i;
+    }
+    return kGridTiers[target].gridSize;
+}
+
+// 档位 → 数据八度偏移(接缝吸附用):每翻一倍 gridSize,八度 +1(65→129→257 =
+// 0→1→2)。供 TileEdgeSnapResolver 计算邻居档差吸附步长。
+inline int terrainGridOctaveForGridSize(int gridSize) {
+    int oct = 0;
+    for (int g = kTerrainDisplacementGridSize; g < gridSize; g *= 2) ++oct;
+    return oct;
 }
 
 // 档位**单一决策点**读法。档位每帧只在 update 期决策一次(refresher 带迟滞
@@ -234,8 +251,11 @@ public:
     static constexpr int kDenseHeightArrayLayers = 48;
 
     static constexpr int layersForGridSize(int gridSize) {
-        return gridSize >= kTerrainDenseGridSize ? kDenseHeightArrayLayers
-                                                 : kHeightArrayLayers;
+        int layers = kGridTiers[0].heightArrayLayers;
+        for (const GridTier& t : kGridTiers) {
+            if (gridSize >= t.gridSize) layers = t.heightArrayLayers;
+        }
+        return layers;
     }
 
     // bounds:瓦片地理范围(弧度),仅法线烘焙用 —— 把 uv 方向的高度差换算成
@@ -311,8 +331,11 @@ private:
     static constexpr int kTemplatePoolLayers = 128;      // 132KB×128 ≈ 16.9MB
     static constexpr int kDenseTemplatePoolLayers = 16;  // 2.02MB×16 ≈ 32.3MB
     static constexpr int templateLayersFor(int gridSize) {
-        return gridSize >= kTerrainDenseGridSize ? kDenseTemplatePoolLayers
-                                                 : kTemplatePoolLayers;
+        int slots = kGridTiers[0].templateSlots;
+        for (const GridTier& t : kGridTiers) {
+            if (gridSize >= t.gridSize) slots = t.templateSlots;
+        }
+        return slots;
     }
 
     // 按 gridSize 共享的索引缓冲(内容纯拓扑,与瓦片位置无关)。生命周期与池
@@ -406,21 +429,37 @@ private:
     // 帧号变化即清零(与 tryConsumeDenseBudget 同一套帧边界语义)。
     void beginHeightStatsFrame(uint64_t frameId);
 
-    // 每帧最多新建几片 dense 瓦片。release 实测单片 dense 构建
-    // (高度烘焙 ~6ms + 模板 ~18ms)最坏 23.6ms;两片叠在同一帧 = 25.7ms 的
-    // rebuild,超 60fps 的 16.7ms 预算。限到 1 片后单帧 rebuild ≈13ms 落回预算内。
-    // 超预算的瓦片本帧回落 coarse 档(acquireHeightTexture 返回 nullptr,draw 侧
-    // 已有降级重试),下一帧再升 —— 推近时逐帧升几片,不掉瓦片、不卡帧。
-    static constexpr int kMaxDenseBuildsPerFrame = 1;
-
-    // 帧号变化即重置计数。返回 false = 本帧 dense 预算已用完。
-    bool tryConsumeDenseBudget(uint64_t frameId) {
-        if (frameId != denseBudgetFrame_) {
-            denseBudgetFrame_ = frameId;
-            denseBuiltThisFrame_ = 0;
+    // 逐档每帧最多新建几片。release 实测 257² 单片构建(高度烘焙 ~6ms + 模板
+    // ~18ms)最坏 23.6ms → 限 1 片/帧;129² ~6ms → 限 4 片/帧;65² 亚毫秒不限(-1)。
+    // 超预算瓦片本帧回落低档(acquireHeightTexture 返回 nullptr,draw 侧降级重试),
+    // 下一帧再升 —— 推近时逐帧升几片,不掉瓦片、不卡帧。
+    static constexpr int buildsPerFrameForGridSize(int gridSize) {
+        return gridSize >= kTerrainDenseGridSize
+                   ? 1
+                   : (gridSize > kTerrainDisplacementGridSize ? 4 : -1);
+    }
+    struct TierBudget {
+        uint64_t frameId = 0;
+        int built = 0;
+    };
+    static int tierIndexFor(int gridSize) {
+        int idx = 0;
+        for (int i = 0; i < kGridTierCount; ++i) {
+            if (gridSize >= kGridTiers[i].gridSize) idx = i;
         }
-        if (denseBuiltThisFrame_ >= kMaxDenseBuildsPerFrame) return false;
-        ++denseBuiltThisFrame_;
+        return idx;
+    }
+    // 帧号变化即重置计数(逐档独立)。返回 false = 本档预算已用完。
+    bool tryConsumeBuildBudget(int gridSize, uint64_t frameId) {
+        const int cap = buildsPerFrameForGridSize(gridSize);
+        if (cap < 0) return true;
+        TierBudget& b = buildBudget_[tierIndexFor(gridSize)];
+        if (b.frameId != frameId) {
+            b.frameId = frameId;
+            b.built = 0;
+        }
+        if (b.built >= cap) return false;
+        ++b.built;
         return true;
     }
 
@@ -442,8 +481,7 @@ private:
     // 唯一键、避免"哪个成员对应哪档"的隐式约定。
     std::map<int, HeightArray> heightArrays_;
     std::map<int, SharedIndexBuffer> sharedIndexBuffers_;
-    uint64_t denseBudgetFrame_ = 0;
-    int denseBuiltThisFrame_ = 0;
+    TierBudget buildBudget_[kGridTierCount];
 
     // ---- B 方案:GPU 烘焙 ----
     // 一次 bake 请求:源已打包(hi/lo→RG8,含重叠环)按值自持(不留 heightmap

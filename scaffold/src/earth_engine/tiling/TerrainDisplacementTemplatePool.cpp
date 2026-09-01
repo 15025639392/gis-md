@@ -467,7 +467,8 @@ TerrainDisplacementTemplatePool::acquireHeightTexture(
     // 走到这里 = 该瓦片在本档未驻留,必须现烘 + 现传。dense 档单片最坏 23.6ms
     // (release 实测),故按帧限流;超额者本帧回落 coarse,下一帧再升。
     // 只拦"新建",缓存命中已在上面早退,不受限流影响。
-    if (gridSize >= kTerrainDenseGridSize && !tryConsumeDenseBudget(frameId)) {
+    if (gridSize > kTerrainDisplacementGridSize &&
+        !tryConsumeBuildBudget(gridSize, frameId)) {
         ++heightFrameStats_.denseBudgetRejected;
         return nullptr;
     }
@@ -836,7 +837,7 @@ void TerrainDisplacementTemplatePool::beginHeightStatsFrame(uint64_t frameId) {
         const HeightArray& arr = entry.second;
         const int resident = static_cast<int>(arr.index.size());
         const int capacity = layersForGridSize(arr.gridSize);
-        if (arr.gridSize >= kTerrainDenseGridSize) {
+        if (arr.gridSize > kTerrainDisplacementGridSize) {
             heightFrameStats_.denseResident += resident;
             heightFrameStats_.denseCapacity += capacity;
         } else {
