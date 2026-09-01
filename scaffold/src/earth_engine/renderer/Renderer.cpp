@@ -851,6 +851,7 @@ uniform vec4 u_terrainLayers;  // x=高度纹理层号
 // 核心。v_texcoord01 输出重映射后的祖先 UV → 片元所有以瓦片 UV 为基的消费
 // 者(影像 scale-bias/法线场/页表)原样工作。
 uniform vec4 u_clipUV;
+uniform vec4 u_heightClipUV;
 uniform float u_clipEnabled;
 
 out vec3 v_normal;
@@ -899,15 +900,22 @@ void main() {
     // 双线性(osgEarth 邻居平均:偶点=self→delta0,奇点=相邻偶点均值)。按 SSE 驱动
     // morphFactor(=u_geomorphUpFactor.w:0=粗起点≈父面,1=细真实)mix→跨 LOD 无 pop、
     // 相邻瓦片共享偶点高度一致→无接缝。enabled=0 的瓦片跳过(零回归)。
-    // remap 模式:模板 UV → 祖先 UV(高度采样与下游 varying 都用它)。
+    // remap 模式:模板 UV → 祖先 UV(影像与下游 varying 都用它,overlay 投影)。
     vec2 tileUv = a_texcoord01.xy;
     if (u_clipEnabled > 1.5) {
         tileUv = u_clipUV.xy + tileUv * u_clipUV.zw;
     }
+    // 高度采样用独立的 tile-local(地理/纬度线性)clip UV:overlay 投影的
+    // u_clipUV 在 WebMercator 下 v 轴纬度非线性,采祖先 DEM 会选错纬度区间。
+    // 影像保持 u_clipUV(overlay 投影)。
+    vec2 heightUv = a_texcoord01.xy;
+    if (u_clipEnabled > 1.5) {
+        heightUv = u_heightClipUV.xy + heightUv * u_heightClipUV.zw;
+    }
     if (u_heightDisplace.z > 0.5) {
         float gridN = u_heightDisplace.w;
         int hLayer = int(u_terrainLayers.x + 0.5);
-        vec2 gf = tileUv * gridN;                          // 栅格坐标 [0,gridN]
+        vec2 gf = heightUv * gridN;                    // 栅格坐标 [0,gridN]
         vec2 mr = u_heightDisplace.xy;                      // (minHeight, heightRange)
         // fine = 1× 手工双线性。常规模式下模板节点与纹素重合(gf 整),权重
         // 退化为 0 → 逐位等于原 texelFetch 最近邻;remap 模式下 gf 落在祖先
@@ -2931,6 +2939,7 @@ struct GltfUniforms {
     packed_float4 waterMaskState;
     packed_float4 clipUV;
     float clipEnabled;
+    packed_float4 heightClipUV;  // 高度 remap 的 tile-local(地理)clip UV,镜像 GltfUniformBlock
     packed_float4 pageStoreParams;
     packed_float4 pageStoreUv;
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)
@@ -3743,6 +3752,7 @@ struct GltfUniforms {
     packed_float4 waterMaskState;
     packed_float4 clipUV;
     float clipEnabled;
+    packed_float4 heightClipUV;  // 高度 remap 的 tile-local(地理)clip UV,镜像 GltfUniformBlock
     packed_float4 pageStoreParams;
     packed_float4 pageStoreUv;
     packed_float4 heightDisplace;  // Phase 2c Stage B(顶点消费,fragment 仅占位对齐)

@@ -58,6 +58,18 @@ constexpr size_t kAmapTessellationThreadsFallback = 2;
 constexpr const char* kAmapWebKey =
     "14656ce3418e226459ecead9f67c7681";
 
+// === 官方 Amap 场景真实地形源(掩码面路径的前提) ===
+// 地形掩码合成(u_terrainFillMask)只在真实地形(RealTerrain,有模板几何/heightmap)
+// 上绑定;椭球(kind=None → EllipsoidFallback)无模板,掩码永不绑 → 面缺失。
+// 故官方场景必须接真实 heightmap。历史两源:全球 NASA Terrain-RGB(直连,覆盖全球)
+// 与本地 FABDEM(127.0.0.1:8091,离线)。生产默认用全球 NASA(2026-09-01)。
+constexpr const char* kAmapGlobalTerrainTemplate =
+    "https://mapoverlay.xinzhi.space/3dterrain/nasa/tiles/{z}/{x}/{y}.png";
+constexpr int kAmapTerrainMinZoom = 6;
+constexpr int kAmapTerrainMaxZoom = 12;
+constexpr int kAmapTerrainTileSize = 514;
+constexpr float kAmapTerrainBorderInset = 0.5f;
+
 // === 北极星测量台:编译期钉死相机(改 kMeasure* 常量→重建→采一个 stop)。
 // 同一点(重庆)变高度做 zoom 梯度 + 改影像 maxZoom 做耦合/去耦对拍。
 // heightMeters = 眼睛离椭球面(海拔 0)高度;重庆地表 ~300m,最小离地 clamp 50m。

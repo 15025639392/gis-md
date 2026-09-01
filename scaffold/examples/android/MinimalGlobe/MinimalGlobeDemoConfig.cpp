@@ -80,6 +80,21 @@ EarthSceneConfig makeDefaultDemoSceneConfig() {
     // RasterOverlayTileProvider fallback 纹理，造成远景灰色碎纹并占用
     // imagery cache；有真实地形/影像时才保留它作为加载期兜底。
     config.tileset.enableTerrainFillProxy = false;
+    // 官方 Amap 场景接真实地形(掩码面路径前提,见 header kAmap*Terrain 常量)。
+    // 椭球(kind=None)无模板几何,掩码在 ancestor 顶替时不绑 → 面缺失。用全球
+    // NASA Terrain-RGB heightmap(RealTerrain),让掩码 remap 路径成立。
+    config.terrain.kind = TerrainSourceKind::Heightmap;
+    config.terrain.urlTemplate = kAmapGlobalTerrainTemplate;
+    config.terrain.heightmapEncoding = TerrainHeightmapEncoding::MapboxTerrainRgb;
+    config.terrain.tileSize = kAmapTerrainTileSize;
+    config.terrain.minimumZoom = kAmapTerrainMinZoom;
+    config.terrain.maximumZoom = kAmapTerrainMaxZoom;
+    config.terrain.heightmapMaxNativeZoom = kAmapTerrainMaxZoom;
+    config.terrain.heightmapBorderInset = kAmapTerrainBorderInset;
+    config.terrain.attribution = "NASA/Mapbox Terrain-RGB (514 global)";
+    // 无细数据区(如重庆外)回落椭球,避免停成粗叶子 + 巨型裙墙。
+    config.terrain.ellipsoidFallback = true;
+    config.terrain.ellipsoidFallbackMaxZoom = 13;
     // 接边错位诊断探针默认关(常开每帧 ~4ms=selPlan 大头,无缝已收官)。
     config.tileset.seamEdgeMismatchProbe = kEnableSeamEdgeMismatchProbe;
     // LOD geomorph:距离连续 geomorph 已启用(P2 引擎 + P3 skirt 之上)。morph 进度

@@ -759,6 +759,18 @@ void applyPerFrameCommandState(
                     cmd.surfaceClipEnabled = 2.0f;
                     u.clipUv = *context.surfaceClipUv;
                     u.clipEnabled = 2.0f;
+                    // Height sampling reads the ancestor DEM in tile-local
+                    // (geographic/linear-lat) UV, but the ordinary clipUv is
+                    // in the overlay projection. For WebMercator the clipUv
+                    // v-axis is non-linear in latitude and would select the
+                    // wrong DEM latitude interval, so feed height sampling a
+                    // separately-computed geographic clip UV. Imagery keeps
+                    // the overlay-projection clipUv.
+                    const auto heightClip =
+                        TileSurfaceClip::forDescendantBoundsTileLocal(
+                            tile, desc.bounds);
+                    u.heightClipUv =
+                        heightClip.value_or(*context.surfaceClipUv);
                     remapped = true;
                     selectedLocalMaskUvAvailable = true;
                     pool->noteSurfaceClipRemap(context.frameNumber);

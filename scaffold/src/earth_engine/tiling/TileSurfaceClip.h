@@ -32,22 +32,43 @@ struct TileSurfaceClip {
 
     static bool supportsTerrainHeightRemap(
         const TilesetTile& commandTile) {
-        // Height textures are sampled in the retained DEM's geographic UV.
-        // A WebMercator clip UV is valid for imagery/discard, but reusing it
-        // for height lookup selects the wrong latitude interval.
-        return projectionFor(commandTile) ==
-               RasterOverlayProjection::Geographic;
+        // Height-remap requires the ancestor's retained DEM to be available so
+        // the descendant template can sample it. The remap clip UV is now
+        // computed in tile-local (geographic/linear-lat) space independent of
+        // the overlay projection (see forDescendantBoundsTileLocal), so
+        // WebMercator terrain is supported too. The only hard requirement is
+        // real height data (a fill/ellipsoid-only tile has no DEM to sample).
+        return commandTile.content.renderContent.retainedHeightmap() != nullptr;
     }
 
     static std::optional<std::array<float, 4>> forDescendantBounds(
         const TilesetTile& commandTile,
         const Rectangle& descendantBounds) {
+        return forDescendantBoundsInProjection(
+            commandTile, descendantBounds, projectionFor(commandTile));
+    }
+
+    /// Clip UV for height remap, computed in tile-local (geographic / linear
+    /// latitude) space regardless of the overlay projection. The ordinary
+    /// clip UV (forDescendantBounds) is expressed in the overlay projection,
+    /// whose v-axis is non-linear in latitude for WebMercator; reusing it for
+    /// height lookup would select the wrong latitude interval of the ancestor
+    /// DEM. Height sampling must therefore use this tile-local UV.
+    static std::optional<std::array<float, 4>> forDescendantBoundsTileLocal(
+        const TilesetTile& commandTile,
+        const Rectangle& descendantBounds) {
+        return forDescendantBoundsInProjection(
+            commandTile, descendantBounds, RasterOverlayProjection::Geographic);
+    }
+
+    static std::optional<std::array<float, 4>> forDescendantBoundsInProjection(
+        const TilesetTile& commandTile,
+        const Rectangle& descendantBounds,
+        RasterOverlayProjection projection) {
         constexpr double kTwoPiForLongitudeWrap =
             3.14159265358979323846264338327950288 * 2.0;
 
         Rectangle texcoordRect = commandTile.bounds;
-        const RasterOverlayProjection projection =
-            projectionFor(commandTile);
         const TileFillGeometrySignature* fillSignature =
             commandTile.content.renderContent.fillGeometrySignature();
         if (commandTile.content.renderContent.drawsFill() &&

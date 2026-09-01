@@ -134,6 +134,11 @@ struct alignas(16) GltfUniformBlock {
 
     std::array<float, 4> clipUv{0.0f, 0.0f, 1.0f, 1.0f};
     float clipEnabled = 0.0f;
+    // Height-remap clip UV in tile-local (geographic/linear-lat) space. The
+    // ordinary clipUv is in the overlay projection (WebMercator v is nonlinear
+    // in latitude); height sampling must use this geographic version so the
+    // ancestor DEM is read on the correct latitude interval.
+    std::array<float, 4> heightClipUv{0.0f, 0.0f, 1.0f, 1.0f};
 
     // 北极星合成方案页存储采样(Step 3):
     //   x = enabled(0=走原 directComposite 路径,不动;>0.5=改采 sampler2DArray 页存储)
@@ -234,7 +239,7 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 96> table = {{
+    static const std::array<GltfUniformTableEntry, 97> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),
@@ -318,6 +323,7 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_gltfWaterMaskState", waterMaskState, 4),
         EE_GLTF_ENTRY("u_clipUV", clipUv, 4),
         EE_GLTF_ENTRY("u_clipEnabled", clipEnabled, 1),
+        EE_GLTF_ENTRY("u_heightClipUV", heightClipUv, 4),
         EE_GLTF_ENTRY("u_pageStoreParams", pageStoreParams, 4),
         EE_GLTF_ENTRY("u_pageStoreUv", pageStoreUv, 4),
         EE_GLTF_ENTRY("u_pageGeomA", pageGeomA, 4),

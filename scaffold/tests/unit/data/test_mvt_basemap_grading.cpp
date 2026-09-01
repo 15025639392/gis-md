@@ -32,6 +32,11 @@ TEST(DemoSourceConfig, PureVectorAmapStyleHasNoRasterOverlays) {
     const auto config = makeDefaultDemoSceneConfig();
     EXPECT_FALSE(config.terrainPageStore);
     EXPECT_TRUE(config.rasterOverlays.empty());
-    EXPECT_EQ(config.terrain.kind, earth_engine::TerrainSourceKind::None);
+    // 官方 Amap 场景必须接真实 heightmap(掩码面路径前提):椭球(kind=None)无
+    // 模板几何,掩码在 ancestor 顶替时不绑 → 面缺失。heightmap 是 RealTerrain,
+    // 让掩码 remap 路径成立。断言从 None(椭球)改为 Heightmap 是根因修复。
+    EXPECT_EQ(config.terrain.kind, earth_engine::TerrainSourceKind::Heightmap);
+    EXPECT_FALSE(config.terrain.urlTemplate.empty());
+    EXPECT_GT(config.terrain.maximumZoom, 0);
     EXPECT_FALSE(config.gltf.enabled);
 }

@@ -1220,7 +1220,7 @@ The 32-byte `TerrainGpuVertex` async upload path is end-to-end (2026-07-01): pro
 | `useTerrainVertexFormat` (32 vs 120 selector) | TileRenderContentState.h:111 | set in coordinator (.h:176) |
 | Async push/upload/drain | TilesetContentLifecycleCoordinator.h:143-261 | upload side done |
 | DRAW side wired (2026-07-01) | `GltfDrawCommandBuilder.cpp:71` branches on `useTerrainVertexFormat` → `renderer.makeTerrainPrimitiveCommand` (stride 32, `kind=GltfPrimitive`, `shader=terrainShader`) | **done** (compiles + unit-tested both backends; pixel-verify pending a reachable QM terrain server) |
-| `Renderer::terrainShader()` defined + terrain shaders added | `terrainShader()` getter (Renderer.cpp:4743-4748) returns `kTerrainVertex/FragmentGLSL`, `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23) + `makeTerrainPrimitiveCommand` | **done** |
+| `Renderer::terrainShader()` defined + terrain shaders added | `terrainShader()` getter (Renderer.cpp:4753-4758) returns `kTerrainVertex/FragmentGLSL`, `kTerrainVertex/FragmentMSL` (Metal, buffers ≤23) + `makeTerrainPrimitiveCommand` | **done** |
 
 Files read and verified: all listed content-lifecycle files under `/Users/ldy/Desktop/work/gis-md/scaffold/src/earth_engine/tiling/`, plus `content/GltfModel.h` and `renderer/Renderer.h`. Line numbers above are current as read.
 
@@ -1571,7 +1571,7 @@ Emits per-primitive `RenderCommand`s from prepared `GltfPrimitiveRenderResources
 | `GltfDrawCommandBuildContext` | .h:23-38 | `frameNumber`, `generation`, `transitionOpacity`, optional `surfaceClipUv`, `edgeLutTables`(①-1 A′ 查表入口). |
 | `alphaModeUniform` | .cpp:62-71 | Opaque→0, Mask→1, Blend→2. |
 | `renderPrimitiveType` | .cpp:74-88 | `GltfPrimitiveMode` → `RenderCommand::PrimitiveType` (Fan→Triangles). |
-| `build` | .cpp:909-1026 | Per resource: chooses `makeGltfPrimitiveInstancedCommand` vs `makeGltfPrimitiveCommand` (.cpp:909-1026); sets frame/gen, `terrainRenderContent` flag, `u_modelOrigin`=renderLocalOrigin, world sort center, opacity, surface-clip UV for terrain (.cpp:909-1026); emits full PBR uniform block + texture-transform uniforms + 15-slot texture array (.cpp:909-1026); water-mask slot `kGltfWaterMaskTextureSlot` (.cpp:909-1026); binds up to `kMaxGltfRasterOverlays` overlay textures at `kGltfRasterOverlayTextureBase+i` with per-overlay UV/opacity/texCoord (.cpp:909-1026); blend/depth for translucent (.cpp:909-1026). |
+| `build` | .cpp:921-1038 | Per resource: chooses `makeGltfPrimitiveInstancedCommand` vs `makeGltfPrimitiveCommand` (.cpp:921-1038); sets frame/gen, `terrainRenderContent` flag, `u_modelOrigin`=renderLocalOrigin, world sort center, opacity, surface-clip UV for terrain (.cpp:921-1038); emits full PBR uniform block + texture-transform uniforms + 15-slot texture array (.cpp:921-1038); water-mask slot `kGltfWaterMaskTextureSlot` (.cpp:921-1038); binds up to `kMaxGltfRasterOverlays` overlay textures at `kGltfRasterOverlayTextureBase+i` with per-overlay UV/opacity/texCoord (.cpp:921-1038); blend/depth for translucent (.cpp:921-1038). |
 | Terrain draw wired (2026-07-01) | .cpp:71-77 | When `primitive.useTerrainVertexFormat`, emits `renderer.makeTerrainPrimitiveCommand` (stride 32, `kind=GltfPrimitive`, `shader=terrainShader`) instead of `makeGltfPrimitiveCommand`; GLES keys the 32B layout on stride, Metal on the terrain PSO (`PipelineLayout::Surface`). Compiles + unit-tested both backends; pixel-verify pending a reachable QM terrain server. |
 
 ### TileRenderContentState.h
@@ -2636,15 +2636,15 @@ Platform-agnostic renderer owning shared GPU resources (shaders, geometry) via `
 
 | Method | Lines | Notes |
 | --- | --- | --- |
-| `initialize()` (no-arg) | .h:34, .cpp:4391-4636 | Builds the neutral placeholder and compiles the terrain/glTF/vector shader set. glTF shader failure is non-fatal; terrain shader failure is fatal. |
-| `submit` | .cpp:4637-4641 | Forwards to `device->submit` if initialized. |
-| `dispose` | .cpp:4642-4664 | Resets the shader/texture resources. |
-| Shared-resource getters | .cpp:4636-4699 | Depth/color/vector/atlas/placeholder/glTF/terrain resource accessors. Removed globe-resource getters remain absent. |
-| `terrainShader()` | .h:123 / .cpp:4743-4748 | 32-byte terrain vertex, no PBR extensions; the draw side calls `makeTerrainPrimitiveCommand`. |
-| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4749-4774 | `GltfPrimitive`, **`vertexStride`=120**; defaults live in `GltfUniformBlock` and the factory does not populate the string-map. |
-| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4775-4803 | Live compact-terrain command with **`vertexStride`=32**, `terrainShader`, and glTF uniform block enabled. |
-| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4804-4824 | EXT_mesh_gpu_instancing path; delegates to the glTF command then installs the instance stream. |
-| `makeTerrainInstancedCommand(...)` | .cpp:4825-4846 | Terrain batching path; delegates to the compact command then installs the terrain instance stream/shader. |
+| `initialize()` (no-arg) | .h:34, .cpp:4401-4646 | Builds the neutral placeholder and compiles the terrain/glTF/vector shader set. glTF shader failure is non-fatal; terrain shader failure is fatal. |
+| `submit` | .cpp:4647-4651 | Forwards to `device->submit` if initialized. |
+| `dispose` | .cpp:4652-4674 | Resets the shader/texture resources. |
+| Shared-resource getters | .cpp:4647-4746 | Depth/color/vector/atlas/placeholder/glTF/terrain resource accessors. Removed globe-resource getters remain absent. |
+| `terrainShader()` | .h:123 / .cpp:4753-4758 | 32-byte terrain vertex, no PBR extensions; the draw side calls `makeTerrainPrimitiveCommand`. |
+| `makeGltfPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4759-4784 | `GltfPrimitive`, **`vertexStride`=120**; defaults live in `GltfUniformBlock` and the factory does not populate the string-map. |
+| `makeTerrainPrimitiveCommand(vb,ib,idxCount,vtxCount)` | .cpp:4785-4813 | Live compact-terrain command with **`vertexStride`=32**, `terrainShader`, and glTF uniform block enabled. |
+| `makeGltfPrimitiveInstancedCommand(...)` | .cpp:4814-4834 | EXT_mesh_gpu_instancing path; delegates to the glTF command then installs the instance stream. |
+| `makeTerrainInstancedCommand(...)` | .cpp:4835-4856 | Terrain batching path; delegates to the compact command then installs the terrain instance stream/shader. |
 | `attachRasterInMainThread` / `detachRasterInMainThread` | .cpp:4872-4877 | No-op notification hooks; raster ownership stays in `DirectRasterMapping` / `SurfaceRasterBinding`. |
 
 `makeTileGeometry` (.cpp:3892-3873) builds a UV-only grid VBO (`TileVertex{{u,v}}`) + `uint32_t` index buffer.
@@ -3266,7 +3266,7 @@ selected/render footprint、位移模板密度、morph/fade、clip 模式和 edg
 
 ### style/AmapClassicRuntime.h / .cpp
 
-官方 classic-normal runtime 的唯一装配根。构造阶段安装 sealed style、assets 与 transport；`update` (.cpp:74-88) 只推进官方 manifest、字体和 icon atlas 生命周期。调用方不能注入替代样式或 transport。
+官方 classic-normal runtime 的唯一装配根。构造阶段安装 sealed style、assets 与 transport；`update` (.cpp:82-96) 只推进官方 manifest、字体和 icon atlas 生命周期。调用方不能注入替代样式或 transport。
 
 ### style/AmapClassicTransport.cpp
 
@@ -3778,7 +3778,7 @@ Per-kind fixed render state (defaults set in the Renderer command factories, enf
 | `makeGltfPrimitiveInstancedCommand` | GltfPrimitiveInstanced, delegates to `makeGltfPrimitiveCommand` then sets `instanceStride=kGltfInstanceMatrixStride`=**100** (mat4 64B + mat3 36B) | .cpp:4154-4173 |
 | `makeTerrainInstancedCommand` | GltfPrimitiveInstanced **but vertexStride=32**, delegates to `makeTerrainPrimitiveCommand` then sets `terrainInstancedShader` + `instanceStride=kTerrainInstanceStride`=**96** (6×vec4) | .cpp:4175-4195 |
 
-`terrainShader()` is **defined** (getter Renderer.h:123 / Renderer.cpp:4743-4748; `kTerrainVertex/FragmentGLSL` + `kTerrainVertex/FragmentMSL`, Metal buffers ≤23). The draw side is wired through `makeTerrainPrimitiveCommand` (.cpp:4775-4803) and `makeGltfPrimitiveInstancedCommand` (.cpp:4804-4824).
+`terrainShader()` is **defined** (getter Renderer.h:123 / Renderer.cpp:4753-4758; `kTerrainVertex/FragmentGLSL` + `kTerrainVertex/FragmentMSL`, Metal buffers ≤23). The draw side is wired through `makeTerrainPrimitiveCommand` (.cpp:4785-4813) and `makeGltfPrimitiveInstancedCommand` (.cpp:4814-4834).
 
 ### Reverse-Z convention
 

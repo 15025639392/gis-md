@@ -10,6 +10,7 @@
 #include "earth_engine/providers/DebugImageryProvider.h"
 #include "earth_engine/providers/RasterOverlayTile.h"
 #include "earth_engine/providers/RasterOverlayTileProvider.h"
+#include "earth_engine/providers/TerrainProvider.h"
 #include "earth_engine/renderer/RenderDevice.h"
 #include "earth_engine/tiling/DirectRasterMapping.h"
 #include "earth_engine/core/resources/FrameResourceBudget.h"
@@ -356,6 +357,19 @@ TEST(
     parent.content.renderContent.setTerrainRenderContent(true);
     parent.content.renderContent.addGltfPrimitiveResource(
         GltfPrimitiveRenderResources{});
+    // Height-remap now requires a real retained DEM to sample; without one a
+    // Geographic tile no longer reports "supports remap" (no height data to
+    // read). Install a minimal heightmap so the Geographic ancestor-fallback
+    // remap path is exercised as intended.
+    {
+        auto hm = std::make_unique<DecodedHeightmap>();
+        hm->tileSize = 2;
+        hm->quantizedHeights.assign(4u, 64u);  // 码 64 → quantBase+8m flat
+        hm->quantBase = 0;
+        hm->minHeight = 8.0f;
+        hm->maxHeight = 8.0f;
+        parent.content.renderContent.setRetainedHeightmap(std::move(hm));
+    }
     parent.content.renderContent.markRenderContentReady();
     parent.markRenderContentDone();
 
