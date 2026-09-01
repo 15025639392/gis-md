@@ -101,6 +101,19 @@ public:
         float minX, float minY, float maxX, float maxY,
         double directionX, double directionY);
 
+    /// 热点③ 视锥预剔除:锚点投影后保守判"整盒必在屏外"。盒各角到锚点最大
+    /// 距离 + padding = 外接圆半径,锚点越出视口余量即整盒(含 secondary 盒)
+    /// 必在屏外;旋转是绕锚点刚体变换,角距不变,外接圆恒覆盖旋转盒。相机背后
+    /// 也返回 true。**collisionParts 非空(沿线标签,部件锚点独立于主锚点)时
+    /// 本判据不可用,调用方负责跳过**。collect(省建候选)与 update(省投影)
+    /// 共用,保证两处剔除口径一致。
+    static bool boxFullyOffscreenScreen(
+        const Vec3& anchorEcef, const Mat4& viewProj,
+        double viewportW, double viewportH,
+        float boxMinXPx, float boxMinYPx, float boxMaxXPx, float boxMaxYPx,
+        bool hasSecondary, float sMinXPx, float sMinYPx, float sMaxXPx,
+        float sMaxYPx, float paddingXPx, float paddingYPx);
+
     struct FrameInput {
         Mat4 viewProj;          ///< double viewProjection(绝对 ECEF)
         Vec3 cameraEcef;

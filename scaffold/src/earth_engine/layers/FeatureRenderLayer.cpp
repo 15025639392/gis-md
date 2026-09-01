@@ -5857,10 +5857,20 @@ void FeatureRenderLayer::updateLabelPlacement(
     lastPlacementPriority_ = labelPlacement_.priorityFeature();
     lastPlacementZoomBucket_ = zoomBucket;
     const double placeStartMs = perf::nowMs();
+    const double vpW = static_cast<double>(frameState.viewportWidthPixels);
+    const double vpH = static_cast<double>(frameState.viewportHeightPixels);
+    const Mat4 viewProj = cam.viewProjectionMatrix(vpW, vpH);
 
     // collect:可见桶 + 预览的 LabelEntry → 候选。视野外桶不进候选:
     // 它们的 fade 状态由 placement 状态机按"消失要素"清扫,重入视野按
     // 新候选淡入;其顶点 opacity 停留旧值无妨——桶本身不出命令。
+    //
+    // [热点③] 瓦片桶(驻留集远大于视口,98.7% 候选屏外)同样在此预剔除:
+    // 屏外 entry 直接跳过建候选 + dedup,省掉纯浪费的结构体构建与哈希插入
+    // (collect 曾占 placement 大头 4.5ms)。剔除口径与 update 共用
+    // boxFullyOffscreenScreen(盒外接半径越出视口),collisionParts 非空的
+    // 沿线标签保留原路径。屏外标签 fade 状态随之被清扫、重入时淡入——与
+    // 上方"视野外桶"设计意图一致。
     //
     // [V29 刀3] 同 id 候选按代去重,细代(高 tileZ)胜(maplibre
     // seenCrossTileIDs 最小版)。刀1/2 让换代双桶并存期的同一标注**共享
@@ -5871,10 +5881,24 @@ void FeatureRenderLayer::updateLabelPlacement(
     // drop 后自然消失 —— holdingForFade 的最小等价。
     std::vector<LabelCandidate> candidates;
     std::unordered_map<FeatureId, std::pair<size_t, int>> dedup;  // id→(下标,代)
+    size_t collectCulled = 0;  // 热点③ 屏外预剔除计数(诊断)
     auto collect = [&](const BucketGpu& gpu, int generation) {
         for (const LabelEntry& e : gpu.labelEntries) {
             if (gateZoom < static_cast<double>(e.minZoom) ||
                 gateZoom >= static_cast<double>(e.maxZoom)) {
+                continue;
+            }
+            // 热点③:屏外 entry 不建候选(省结构体拷贝 + dedup 插入)。
+            // 保守:只用盒外接半径界定整盒,屏外才剔除;collisionParts 非空
+            // (沿线标签)部件锚点独立,保留全量进 update 处理。
+            if (e.collisionParts.empty() &&
+                LabelPlacement::boxFullyOffscreenScreen(
+                    e.anchorEcef, viewProj, vpW, vpH,
+                    e.boxMinXPx, e.boxMinYPx, e.boxMaxXPx, e.boxMaxYPx,
+                    e.hasIconBox, e.iconBoxMinXPx, e.iconBoxMinYPx,
+                    e.iconBoxMaxXPx, e.iconBoxMaxYPx,
+                    e.paddingXPx, e.paddingYPx)) {
+                ++collectCulled;
                 continue;
             }
             LabelCandidate c;
@@ -5917,16 +5941,14 @@ void FeatureRenderLayer::updateLabelPlacement(
         if (it != buckets_.end()) collect(it->second, std::numeric_limits<int>::max());
     }
     // 瓦片桶(符号刀B):驻留集即渲染集,无空间桶可见性判定(同
-    // buildRenderCommands 的理由),标签候选全量进 placement——地平线/
-    // 视锥剔除由 placement 逐锚点做。代 = 瓦 z(细代胜)。
+    // buildRenderCommands 的理由)。热点③ 屏外候选在 collect 内逐 entry
+    // 预剔除(见上),不必全量进 placement;代 = 瓦 z(细代胜)。
     for (auto& entry : tileBuckets_) collect(entry.second, entry.first.z);
     if (previewGpuValid_) collect(previewGpu_, std::numeric_limits<int>::max());
 
     const double collectMs = perf::nowMs() - placeStartMs;
     LabelPlacement::FrameInput in;
-    in.viewProj = cam.viewProjectionMatrix(
-        static_cast<double>(frameState.viewportWidthPixels),
-        static_cast<double>(frameState.viewportHeightPixels));
+    in.viewProj = viewProj;
     in.cameraEcef = cam.position();
     in.ellipsoidRadii = ellipsoid_.radii();
     in.viewportWidthPx = frameState.viewportWidthPixels;
@@ -5947,8 +5969,9 @@ void FeatureRenderLayer::updateLabelPlacement(
     if (placeMs > 4.0) {
         platformLog(LogLevel::Warning, "TileSymbol",
                     "placement 全量 %.2fms collect=%.2f update=%.2f "
-                    "cand=%zu(超 4ms,考虑时间片增量)",
-                    placeMs, collectMs, updateMs, candidates.size());
+                    "cand=%zu culled=%zu(超 4ms,考虑时间片增量)",
+                    placeMs, collectMs, updateMs, candidates.size(),
+                    collectCulled);
     }
 
     applyLabelOpacity(visibleKeys);

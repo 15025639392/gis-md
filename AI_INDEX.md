@@ -3105,12 +3105,12 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `bakeTileBucketLabels` / `dropTileMesh` | .cpp:4815-5126 / :5127-5142 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
 | `buildRenderCommands` | .cpp:5238-5748 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
 | `visibleBucketKeys` | .cpp:5760-5829 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:5830-5957 | 标签避让 + fade + 地平线剔除(P5c) |
-| `dumpLabelLifecycle` | .cpp:6064-6183 | 七态只读聚合 dump |
-| `appendTerrainOcclusion` | .cpp:6204-6224 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:6225-6987 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:6988-7004 / :7005-7011 / :7012-7039 | 编辑预览三接口 |
-| `pick` | .cpp:7083-7378 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
+| `updateLabelPlacement` | .cpp:5830-5979 | 标签避让 + fade + 地平线剔除(P5c)。collect 含热点③ 屏外预剔除(culled 计数入哨兵日志) |
+| `dumpLabelLifecycle` | .cpp:6087-6206 | 七态只读聚合 dump |
+| `appendTerrainOcclusion` | .cpp:6227-6247 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:6248-7010 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:7011-7027 / :7028-7034 / :7035-7062 | 编辑预览三接口 |
+| `pick` | .cpp:7106-7401 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。
@@ -3252,8 +3252,9 @@ selected/render footprint、位移模板密度、morph/fade、clip 模式和 edg
 | 项 | 行 | 说明 |
 |---|---|---|
 | `LabelCandidate` / `LabelPlacementStats` | .h:15-23 / :25-50 | 候选与统计 |
-| `update` | .cpp:181-456 | **主入口**:碰撞消解 → 每个 id 的目标 opacity |
-| `opacity` | .cpp:491-496 | 查询当前 opacity(供桶回写) |
+| `update` | .cpp:203-528 | **主入口**:碰撞消解 → 每个 id 的目标 opacity。投影循环含热点③ 视锥预剔除屏外候选 |
+| `boxFullyOffscreenScreen` | .cpp:181-201 | 热点③ 屏外保守剔除助手(盒外接半径),collect 与 update 共用口径 |
+| `opacity` | .cpp:530-535 | 查询当前 opacity(供桶回写) |
 
 ⚠️ 根因教训:桶重镶后 **opacity 永不回写** —— fade 收敛的"变化位"早退把它吞了,
 `subdata` 是无辜的。地平线 fade 用缩放空间 margin 公式。

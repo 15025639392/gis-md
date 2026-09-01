@@ -178,6 +178,28 @@ std::array<double, 4> LabelPlacement::rotatedScreenBounds(
     return bounds;
 }
 
+bool LabelPlacement::boxFullyOffscreenScreen(
+    const Vec3& anchorEcef, const Mat4& viewProj,
+    double viewportW, double viewportH,
+    float boxMinXPx, float boxMinYPx, float boxMaxXPx, float boxMaxYPx,
+    bool hasSecondary, float sMinXPx, float sMinYPx, float sMaxXPx,
+    float sMaxYPx, float paddingXPx, float paddingYPx) {
+    const glm::dvec4 cp = viewProj.raw() * glm::dvec4(
+        anchorEcef.x(), anchorEcef.y(), anchorEcef.z(), 1.0);
+    if (cp.w <= 0.0) return true;  // 相机背后(与 update 的 cp.w<=0 剔除一致)
+    const double sx = (cp.x / cp.w * 0.5 + 0.5) * viewportW;
+    const double sy = (cp.y / cp.w * 0.5 + 0.5) * viewportH;
+    float maxR = std::max({std::abs(boxMinXPx), std::abs(boxMaxXPx),
+                           std::abs(boxMinYPx), std::abs(boxMaxYPx)});
+    if (hasSecondary) {
+        maxR = std::max({maxR, std::abs(sMinXPx), std::abs(sMinYPx),
+                         std::abs(sMaxXPx), std::abs(sMaxYPx)});
+    }
+    maxR += std::max(0.0f, std::max(paddingXPx, paddingYPx));
+    return sx < -maxR || sx > viewportW + maxR ||
+           sy < -maxR || sy > viewportH + maxR;
+}
+
 bool LabelPlacement::update(const FrameInput& in,
                             const std::vector<LabelCandidate>& candidates) {
     stats_ = LabelPlacementStats{};
@@ -211,6 +233,23 @@ bool LabelPlacement::update(const FrameInput& in,
         }
         const double sx = (cp.x / cp.w * 0.5 + 0.5) * vpW;
         const double sy = (cp.y / cp.w * 0.5 + 0.5) * vpH;
+
+        // [热点③] 视锥预剔除:锚点投影后立刻用盒最大外接半径做保守剔除,
+        // 跳过切线/沿线碰撞部件投影/旋转包围盒等昂贵计算(热点来源 —— V27
+        // 实测候选 98.7% 是驻留远瓦的屏外候选,此前它们算完整盒才被 311 行
+        // 剔除,纯浪费)。沿线标签(collisionParts 非空)部件锚点独立于主锚点,
+        // 不可用主锚点外接圆界定 → 保留原路径。
+        if (cand.collisionParts.empty() &&
+            boxFullyOffscreenScreen(
+                cand.anchorEcef, in.viewProj, vpW, vpH,
+                cand.boxMinXPx, cand.boxMinYPx, cand.boxMaxXPx,
+                cand.boxMaxYPx, cand.hasSecondaryBox,
+                cand.secondaryBoxMinXPx, cand.secondaryBoxMinYPx,
+                cand.secondaryBoxMaxXPx, cand.secondaryBoxMaxYPx,
+                cand.paddingXPx, cand.paddingYPx)) {
+            ++stats_.culledProjection;
+            continue;
+        }
 
         double dirX = 1.0;
         double dirY = 0.0;

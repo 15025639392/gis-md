@@ -382,6 +382,69 @@ TEST_F(LabelPlacementTest, BehindCameraCulled) {
     EXPECT_FLOAT_EQ(0.0f, placement.opacity(1));
 }
 
+// 热点③ 视锥预剔除:锚点投到屏外(超出盒外接半径余量)时,整盒必在屏外,
+// 在昂贵计算(tangent/沿线部件投影/旋转包围盒)之前即被剔除,结果与先算
+// 完再剔等价 —— placed/collided 不变,只省白算。锚点 (0,3,0) 在相机
+// (2,0,0) 前方、高横向角投到屏右外侧(单位球面点水平角上限 30° < 半视场,
+// 故须用超球面半径锚点),小盒 maxR 小 → 应预剔除。
+// 热点③ boxFullyOffscreenScreen:屏外保守剔除助手(collect/update 共用)。
+// 锚点投影 + 盒外接半径:屏外返回 true,屏上/跨屏返回 false。相机背后 true。
+TEST_F(LabelPlacementTest, BoxFullyOffscreenHelperCullsAndPreserves) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    const auto& vp = in.viewProj;
+    const double vpW = in.viewportWidthPx, vpH = in.viewportHeightPx;
+
+    // 屏中央小盒 → 不剔除。
+    EXPECT_FALSE(LabelPlacement::boxFullyOffscreenScreen(
+        spherePoint(0.0), vp, vpW, vpH, -20, -10, 20, 10, false, 0, 0, 0, 0,
+        0, 0));
+
+    // 屏右外侧小盒 → 剔除。
+    EXPECT_TRUE(LabelPlacement::boxFullyOffscreenScreen(
+        Vec3(0.0, 3.0, 0.0), vp, vpW, vpH, -4, -4, 4, 4, false, 0, 0, 0, 0,
+        0, 0));
+
+    // 锚点屏外但盒跨入屏内(大左盒)→ 不剔除。
+    EXPECT_FALSE(LabelPlacement::boxFullyOffscreenScreen(
+        Vec3(0.6, 1.5, 0.0), vp, vpW, vpH, -500, -15, 300, 15, false, 0, 0,
+        0, 0, 0, 0));
+
+    // 相机背后 → 剔除。
+    EXPECT_TRUE(LabelPlacement::boxFullyOffscreenScreen(
+        Vec3(3.0, 0.0, 0.0), vp, vpW, vpH, -20, -10, 20, 10, false, 0, 0, 0,
+        0, 0, 0));
+
+    // secondary 盒跨入屏内 → 主盒屏外也不剔除。
+    EXPECT_FALSE(LabelPlacement::boxFullyOffscreenScreen(
+        Vec3(0.0, 3.0, 0.0), vp, vpW, vpH, -4, -4, 4, 4, true, -900, -10, 300,
+        10, 0, 0));
+}
+
+TEST_F(LabelPlacementTest, FullyOffscreenAnchorPreCulled) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    const std::vector<LabelCandidate> cands = {
+        makeCandidate(1, Vec3(0.0, 3.0, 0.0))};
+
+    placement.update(in, cands);
+    EXPECT_EQ(1, placement.stats().culledProjection);
+    EXPECT_EQ(0, placement.stats().placed);
+    EXPECT_FLOAT_EQ(0.0f, placement.opacity(1));
+}
+
+// 预剔除不得误伤"锚点屏外但盒跨入屏内"的渐进平移标签:锚点 (0.6,1.5,0)
+// 高横向角投到屏右外侧(px>0.5 避开 horizon 剔除),盒向屏内延伸跨入视口
+// → 预剔除(整盒必屏外)判定不应触发,应 placed。这钉死 pre-cull 只用"外接
+// 圆半径"界定、不误杀盒跨入视口的标签。
+TEST_F(LabelPlacementTest, AnchorOffscreenWithBoxCrossingInSurvivesPreCull) {
+    const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
+    auto c = makeCandidate(1, Vec3(0.6, 1.5, 0.0), 400.0f, 15.0f);
+    c.boxMinXPx = -500.0f;
+    c.boxMaxXPx = 300.0f;
+    placement.update(in, {c});
+    EXPECT_EQ(1, placement.stats().placed);
+    EXPECT_FLOAT_EQ(1.0f, placement.opacity(1));
+}
+
 TEST_F(LabelPlacementTest, PartiallyOffscreenLabelRemainsPlaced) {
     const auto in = makeInput(Vec3(2, 0, 0), Vec3(0, 0, 0));
     // The point is visible, but the label crosses the left edge. Continuous

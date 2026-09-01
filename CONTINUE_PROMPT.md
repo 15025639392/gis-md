@@ -25,13 +25,18 @@
 - 真机 release: 稳态拖动 request 62ms→近 0；剩余 20-41ms 是新瓦 miss（必须加载）。
 - 诊断埋点保留：`fillMaskBreakdown`（fillMask/req/up 拆分，>2ms 才打）。
 
+**4. 热点③ 标签 placement**（**本次**）
+- 根因:98.7% 屏外候选(驻留远瓦)collect 建结构体+dedup 白算、update 全量投影白算 → placement 4-6ms。
+- 修=`LabelPlacement::boxFullyOffscreenScreen`(盒外接半径越出视口判屏外)在 **collect 与 update 双处共用**:collect 挡 97.6% 屏外候选(cand 2278→54),update 省投影(update 4.5→0.35ms);沿线标签(collisionParts 非空)保留原路径。
+- 真机 release:placement 4-6ms→0-0.65ms,**4ms 哨兵 0 触发**;LabelDump placed=30 正常渲染。屏外标签 fade 清扫、重入淡入(用户拍板,对齐设计注释)。host 测试 27/27(新增 `BoxFullyOffscreenHelperCullsAndPreserves` 等),全量 212/212。
+
 ### 关键定位结论（供续接参考）
 - **瓦片数不是浪费**：`upd=0.5ms`（瓦片选择）证伪选择瓶颈；45-103 瓦是 1240×2772 屏满足 SSE 的合理结果。
 - **热点④ 根因**：`buildBreakdown` 的 `layers=22-88ms` 主要来自 `prepareTerrainFillMasks` 的 `AmapTerrainFillMaskStore::request`（锁/scheme/map 固定开销，62-150ms），**非**命令重建（8ms）、**非**瓦片选择（0.5ms）、**非**纹理上传（2ms）。
 - **测试**：全量 native 212/212 绿（含新增分片/预算测试）；AI_INDEX 行号已同步。
 
 ### 遗留（下一步候选）
-1. **热点③ 标签避让 placement**（原三热点唯一未动）：每帧 4-6ms，cand 775-900。参考引擎（Cesium/OpenGlobus）都无避让，是本项目增值功能。方向：P4 时间片增量 + 视锥预剔除屏外候选（V27 已证 98.7% 屏外）。
+1. ~~热点③ 标签避让 placement~~ **已完成(本次)**。原方向"P4 时间片增量 + 视锥预剔除屏外候选"——预剔除即消尖刺,时间片因哨兵不再触发而暂不做(万级候选真现再议)。
 2. **新瓦 miss 的 request**（20-41ms，拖动进未加载区域）：可看 `AmapTerrainFillMaskStore::request` 的 `state->fetch` 同步部分或 Landing 票开销，但属加载期，收益递减。
 3. **release 全链路帧率**：真机 117 帧中 16 帧慢（13.7%），慢帧 max 88→50ms；是否继续压由需求决定。
 
