@@ -5,6 +5,7 @@
 #include "TileRasterOverlayReadinessPolicy.h"
 #include "TileSurfaceClip.h"
 #include "TilesetTile.h"
+#include "TerrainDisplacementTemplatePool.h"  // terrainTierMorphForSse / kGridTiers
 
 #include <algorithm>
 #include <array>
@@ -279,26 +280,25 @@ struct TileRenderPlanFinalizer {
                 continue;
             }
             plan.tilesToRenderThisFrame.push_back(tile);
-            // 距离连续 geomorph:地形瓦片的 morph 进度由其自身 SSE 在有效 LOD 频带
-            // 内的位置决定(而非定时器),随相机连续移动平滑推进,消除硬 pop。halving
-            // 四叉树中,父级在 sse=maxSSE/2 时接管(parent.sse≈2·sse≤maxSSE),本瓦片
-            // 在 sse=maxSSE 时下钻,故有效频带 (maxSSE/2, maxSSE]:
-            //   t = clamp((sse/maxSSE − ½)/½, 0, 1) = clamp(2·sse/maxSSE − 1, 0, 1)
-            //   sse→maxSSE(相机近/将下钻)→ 1 全细节;
-            //   sse→maxSSE/2(刚从父级细化出)→ 0 粗起点≈父面。
-            // morph 纯由 SSE 驱动,故仅 gate 在 maxSSE>0。非规则栅格内容 heightDelta=0 自动无位移(自门控),
-            // 非地形不读此值(见 applyPerFrameCommandState)。skirt 遮盖相邻瓦片不同
-            // morph 进度间的边缝。
+            // 距离连续 geomorph + 跨档 morph 合成。LOD 频带(上面注释)给
+            // 「父↔子细化」的 morph;档位频带给「密度档切换」(65²→129²→257²)
+            // 的 morph —— 刚进更密档时 morph 压低(长得像上一档),随 SSE 在
+            // ramp 宽度内推进长到全细节,消除档位硬跳。两轴取 **min**:细节只
+            // 在两轴都允许时才显示(LOD 要求 + 档位要求),切档瞬间旧档/新档
+            // 同 morph → 表面连续。最低档 tierMorph=1 → min(lod,1)=lod,交 LOD。
             constexpr double kMorphStartRatio = 0.5;  // parent-takeover 点(halving)
             float terrainMorph = 1.0f;
             if (options.maximumScreenSpaceError > 0.0) {
                 const double ratio =
                     tile->selectionFrameState.screenSpaceError /
                     options.maximumScreenSpaceError;
-                terrainMorph = static_cast<float>(std::clamp(
+                const float lodMorph = static_cast<float>(std::clamp(
                     (ratio - kMorphStartRatio) / (1.0 - kMorphStartRatio),
-                    0.0,
-                    1.0));
+                    0.0, 1.0));
+                const float tierMorph = terrainTierMorphForSse(
+                    tile->selectionFrameState.screenSpaceError,
+                    tile->selectionFrameState.displacementGridSize);
+                terrainMorph = std::min(lodMorph, tierMorph);
             }
             tile->selectionFrameState.terrainMorphFactor = terrainMorph;
             appendRenderEntry(*tile);

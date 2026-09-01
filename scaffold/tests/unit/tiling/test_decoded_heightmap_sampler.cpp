@@ -270,6 +270,32 @@ TEST(TerrainGridSizeForSseTest, UpgradesOnlyAboveThresholdAndHasHysteresis) {
               terrainGridSizeForSse(inMidBand, mid.gridSize));
 }
 
+// 跨档 morph:最低档交 LOD morph(返回 1);密档在 acquire 处为 0(长得像上一
+// 档),随 SSE 在 ramp 宽度内推进到 1(全细节)。单调、有界。
+TEST(TerrainGridSizeForSseTest, CrossTierMorphRampsWithinTierBand) {
+    const GridTier& base = kGridTiers[0];
+    const GridTier& mid = kGridTiers[1];
+    const GridTier& dense = kGridTiers[2];
+    // 最低档:无更粗态 → 恒 1(交 LOD morph)。
+    EXPECT_EQ(1.0f, terrainTierMorphForSse(0.0, base.gridSize));
+    EXPECT_EQ(1.0f, terrainTierMorphForSse(100.0, base.gridSize));
+    // mid 档:acquire 处 0,ramp 宽度后 1,中间单调。
+    EXPECT_EQ(0.0f, terrainTierMorphForSse(mid.acquireSsePx, mid.gridSize));
+    EXPECT_EQ(1.0f, terrainTierMorphForSse(
+                        mid.acquireSsePx + kTerrainTierMorphRampSsePx,
+                        mid.gridSize));
+    const float half =
+        terrainTierMorphForSse(mid.acquireSsePx + kTerrainTierMorphRampSsePx * 0.5,
+                               mid.gridSize);
+    EXPECT_GT(half, 0.0f);
+    EXPECT_LT(half, 1.0f);
+    // dense 档:同样从 acquire 处 0 爬到 ramp 后 1。
+    EXPECT_EQ(0.0f, terrainTierMorphForSse(dense.acquireSsePx, dense.gridSize));
+    EXPECT_EQ(1.0f, terrainTierMorphForSse(
+                        dense.acquireSsePx + kTerrainTierMorphRampSsePx,
+                        dense.gridSize));
+}
+
 TEST(DecodedHeightmapSamplerTest, DenseGridResolvesDetailCoarseGridMisses) {
     // 这条锁死本次改动的**目的**:coarse 档(64 格)在 129 源上每 2 个源像素才
     // 取一个节点,落在奇数源像素上的尖峰整个丢失;dense 档(256,被 min 收敛到

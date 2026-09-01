@@ -98,6 +98,23 @@ inline int terrainGridOctaveForGridSize(int gridSize) {
     return oct;
 }
 
+// 跨档 morph 进度(档位切换消除硬跳)。刚进某密档时 morph=0(表面 = 上一档,
+// 因 shader 的 hCoarse 恰为 2× 自降采样 ≈ 上档表面),随 SSE 在 ramp 宽度内
+// 推进长到 morph=1(全细节)。最低档(65²)返回 1 —— 无更粗态,交 LOD morph。
+// ramp 宽度固定(px)而非跨满整个档带:避免被 cap 近景瓦在档带低段长期只显
+// 低细节。供 TileRenderPlanFinalizer 与 LOD morph 取 min 合成。
+inline constexpr double kTerrainTierMorphRampSsePx = 8.0;
+inline float terrainTierMorphForSse(double sse, int gridSize) {
+    int i = 0;
+    for (int t = 0; t < kGridTierCount; ++t) {
+        if (gridSize >= kGridTiers[t].gridSize) i = t;
+    }
+    if (i <= 0) return 1.0f;
+    const double lo = kGridTiers[i].acquireSsePx;
+    const double t = (sse - lo) / kTerrainTierMorphRampSsePx;
+    return static_cast<float>(std::clamp(t, 0.0, 1.0));
+}
+
 // 档位**单一决策点**读法。档位每帧只在 update 期决策一次(refresher 带迟滞
 // 写进 selectionFrameState.displacementGridSize),draw/接缝 resolver/边高度
 // LUT/错位探针一律经本函数读那份决策 —— 此前四处消费者各自从 SSE 重推一遍
