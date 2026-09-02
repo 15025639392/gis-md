@@ -57,7 +57,7 @@
 | **A-L2** | 网络在途/总 pending、CPU worker、渲染 commit 是三个独立预算 | 机制 | ✅ | Curl 20 槽（High 预留 2）、Tree 每 source pending 上限 64、decode/POI/tess 分池、source tess 上限 8、commit 每 source/update 默认 4。具体数值是本地策略，不冒充 Cesium 规格。 |
 | **A-L3** | 可见/中心/紧迫工作优先，单 source 不长期饿死其他 source | 机制 | ⚠️ | Tree 中心优先、type1 与 POI 解码分池；共享 Curl 仍按 Low 竞争，尚无跨 source 公平性 p95 gate。 |
 | **A-L4** | 父/祖先覆盖在 replacement 子树完整前继续顶住，交接同帧完成 | 机制 | ✅ | R* 置换单元要求全部 ready，再 commit 新瓦并 drop 占位者；失败保留旧占位者。 |
-| **A-L5** | 渲染线程只做有界 finalize/upload，且预算覆盖全部高德 source | 机制 | ⚠️ | 当前 `maxTileCommitsPerUpdate=4` 是每个 source 独立计数；R* 单元不可拆时可超额，尚无全链 `commitMs` gate。 |
+| **A-L5** | 渲染线程只做有界 finalize/upload，且预算覆盖全部高德 source | 机制 | ⚠️ | 当前 `maxTileCommitsPerUpdate=4` 是每个 source 独立计数；R* 单元不可拆时可超额，尚无全链 `commitMs` gate。**2026-09-02 排查（解耦接缝已建、调度接线暂缓）**:`commitTileMesh` 已拆 `prepareTileGpu`(GPU 重活) + 廉价可见化(`16359db6`),并建 GPU-prep 存储 + `prepareTile`/`activatePreparedTile`/`abandonPreparedTile` 钩子(`37088a54`),使"GPU 上传"与"原子可见性翻转"解耦。**探针 `MvtUnitBurst`(单原子置换单元 commit 超 4 瓦)在模拟器+PHK110 均未触发** —— 渲染线程 MVT commit 逐瓦、单瓦 <5ms(无 `TileCommitSlow`),重活(镶嵌)在 worker。故"R* 单元不可拆可超额"的理论单帧卡**未作为实测瓶颈出现**;MvtVectorSource 把 prep 摊到单元组装帧的接线因高风险(V24/R* 原子换手)+无真机突发证据,暂缓,待真机能复验病态观感或真机数据现突发再动。全链 `commitMs` gate 仍未做(→A-P5)。 |
 | **A-L6** | 取消解除真实成本并保证 exactly-once；不能制造 `pending=0` 假收敛 | 机制 | ⚠️ | 当前只有逻辑取消：旧 key 从 pending/视野中移除，迟到 mesh 由 `viewEpoch` 丢弃；HTTP、已排队 decode/tess 尚不能真正 cancel。 |
 | **A-P1** | 同一 inflight/缓存驻留期内，相同数据 key 网络只取一次，跨 regions/main 共享 type1 raw 与 decoded payload | 机制 | ✅ | 两个 source 共用同一个 `gAmapRegionCache` typed cache，在途合并、L1 decoded 和 L2 raw 均可复用；raw L2 淘汰后允许重新联网。 |
 | **A-P2** | 解码不被几何镶嵌的 FIFO 队头阻塞，POI 独立前进 | 机制+性能 | ✅ | type1 decode、POI decode、tess 分池；`BlockedTessellationDoesNotStarveDecode`。 |
@@ -282,6 +282,8 @@ AmapSource regions/main/poi:
 5. tess queue wait/work；
 6. render-thread commit/GPU buffer upload；
 7. camera/tree 遍历和高空视口枚举。
+
+**2026-09-02 新增探针与真机解锁**：`MvtUnitBurst`(单原子置换单元 commit 超 `maxTileCommitsPerUpdate` 即打,直接探测"R* 单元不可拆可超额"是否真成 >1 帧卡)；`TileCommitSlow` 增 `[clampCPU= gpuUpload=]` 拆 CPU 钳高 vs GPU makeBuffer 两段。**PHK110 崩溃修复**(commit `b7e4ed20`: `gltfUniformTable` 表声明 97 却只列 96 条,末槽零填充成 `name=nullptr`,`glGetUniformLocation(id_,nullptr)` 在 Adreno 驱动 strcmp 崩;swiftshader 宽容故仅真机炸)解锁了真机 Amap 复测 —— 此前首帧必崩挡所有 PHK110 验证。真机/模拟器探针均**未触发 `MvtUnitBurst`**(MVT 渲染线程 commit 逐瓦、单瓦 <5ms),详见 A-L5 记录。
 
 ### 性能验收门槛
 
