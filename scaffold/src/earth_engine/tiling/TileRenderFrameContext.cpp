@@ -28,7 +28,6 @@ void TileRenderFrameContext::buildTileDrawCommand(
     float transitionOpacity,
     bool allowSynchronousMeshPrep,
     const std::optional<std::array<float, 4>>& surfaceClipUv,
-    const TilesetTile* terrainFillMaskOwner,
     const TilesetTile* surfaceClipDescendant) const {
     renderCommands.buildTileDrawCommand(renderer,
                                         tile,
@@ -36,7 +35,6 @@ void TileRenderFrameContext::buildTileDrawCommand(
                                         transitionOpacity,
                                         allowSynchronousMeshPrep,
                                         surfaceClipUv,
-                                        terrainFillMaskOwner,
                                         surfaceClipDescendant);
 }
 

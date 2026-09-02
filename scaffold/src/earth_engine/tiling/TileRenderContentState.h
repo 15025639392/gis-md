@@ -453,26 +453,6 @@ public:
     Texture* surfaceWaterMaskTexture() const {
         return surfaceWaterMaskTexture_.get();
     }
-    Texture* terrainFillMaskTexture() const {
-        return terrainFillMaskTexture_.get();
-    }
-    uint64_t terrainFillMaskRevision() const {
-        return terrainFillMaskRevision_;
-    }
-    void setTerrainFillMaskTexture(
-        std::unique_ptr<Texture> texture, uint64_t revision) {
-        if (terrainFillMaskTexture_ || texture) {
-            markRetainedBytesChanged();  // 掩码不进缓存命令,只更新字节记账
-        }
-        terrainFillMaskTexture_ = std::move(texture);
-        terrainFillMaskRevision_ = terrainFillMaskTexture_ ? revision : 0;
-    }
-    void clearTerrainFillMaskTexture() {
-        if (!terrainFillMaskTexture_ && terrainFillMaskRevision_ == 0) return;
-        terrainFillMaskTexture_.reset();
-        terrainFillMaskRevision_ = 0;
-        markRetainedBytesChanged();  // 掩码不进缓存命令,只更新字节记账
-    }
     const Vec3& renderLocalOrigin() const { return surface_.localOrigin; }
     const std::vector<GltfPrimitiveRenderResources>&
     gltfPrimitiveResourcesForDraw() const {
@@ -721,10 +701,6 @@ public:
             bytes += static_cast<int64_t>(
                 surfaceWaterMaskTexture_->sizeBytes());
         }
-        if (terrainFillMaskTexture_) {
-            bytes += static_cast<int64_t>(
-                terrainFillMaskTexture_->sizeBytes());
-        }
         for (const std::unique_ptr<Texture>& texture : gltfTextureResources) {
             if (texture) {
                 bytes += static_cast<int64_t>(texture->sizeBytes());
@@ -956,7 +932,6 @@ public:
         const bool hadTextures = !gltfTextureResources.empty();
         const bool hadPrimitives = !gltfPrimitiveResources.empty();
         clearSurfaceMeshResources();
-        clearTerrainFillMaskTexture();
         surface_.heightmap.reset();
         gltfModel.reset();
         gltfContentTransform = Mat4::identity();
@@ -1065,14 +1040,6 @@ private:
         ++drawCommandReadSetRevision_;
     }
 
-    // Terrain-fill-mask 纹理是**每帧**从 terrainFillMaskOwner 经
-    // applyPerFrameCommandState 绑定的(GltfDrawCommandBuilder 的 per-frame
-    // 状态),从不进缓存命令的读取集/裸指针。掩码上传/释放只改变字节占用,
-    // 不使缓存命令 stale —— 若走 markRetainedResourcesChanged 会让每次掩码
-    // 上传都强制该瓦命令重建(换代帧大量瓦同时上传 = 卡顿尖峰)。故只 bump
-    // 字节记账 revision,不动命令读取集代次。
-    void markRetainedBytesChanged() { ++retainedResourcesRevision_; }
-
     bool isGltfOwnedContentState() const {
         return gltfModel != nullptr ||
                surface_.surfaceSource == SurfaceDrawableSource::GltfContent ||
@@ -1090,8 +1057,6 @@ private:
     uint64_t drawCommandReadSetRevision_ = 1;
     uint64_t cachedDrawCommandsBuiltRevision_ = 0;
     std::unique_ptr<Texture> surfaceWaterMaskTexture_;
-    std::unique_ptr<Texture> terrainFillMaskTexture_;
-    uint64_t terrainFillMaskRevision_ = 0;
     std::unique_ptr<GltfModel> gltfModel;
     Mat4 gltfContentTransform = Mat4::identity();
     bool gltfResourcesReady_ = false;

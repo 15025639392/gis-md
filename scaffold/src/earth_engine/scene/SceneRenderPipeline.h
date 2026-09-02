@@ -23,7 +23,6 @@ class SkyBox;
 class SkyGradient;
 class Tileset;
 class VectorLayer;
-class AmapTerrainFillMaskStore;
 struct TileRenderEntry;
 
 /// Lightweight render pass coordinator for Scene's main color pipeline.
@@ -48,7 +47,6 @@ public:
         SkyGradient* skyGradient = nullptr;
         Tileset* terrainTileset = nullptr;
         Tileset* pendingTerrainTileset = nullptr;
-        AmapTerrainFillMaskStore* terrainFillMaskStore = nullptr;
         const std::vector<std::unique_ptr<Tileset>>& additionalTilesets;
         std::vector<std::unique_ptr<VectorLayer>>& vectorLayers;
         // FeatureStore 渲染桥接层(矢量 P1),与 vectorLayers 平行的新路径
@@ -81,11 +79,6 @@ private:
     void buildLayerCommands(Context& context,
                             double& layerCommandsMs,
                             double& vectorCommandsMs) const;
-    void prepareTerrainFillMasks(
-        Context& context,
-        const std::vector<TileRenderEntry>& entries,
-        double* requestMsOut = nullptr,
-        double* uploadMsOut = nullptr) const;
     void assembleTerrainBatches(Context& context, double& batchMs) const;
     void applyMvpUniforms(Context& context, double& mvpUniformsMs) const;
     void sortAndValidate(Context& context,

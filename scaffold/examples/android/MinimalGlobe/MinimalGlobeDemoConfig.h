@@ -58,11 +58,9 @@ constexpr size_t kAmapTessellationThreadsFallback = 2;
 constexpr const char* kAmapWebKey =
     "14656ce3418e226459ecead9f67c7681";
 
-// === 官方 Amap 场景真实地形源(掩码面路径的前提) ===
-// 地形掩码合成(u_terrainFillMask)只在真实地形(RealTerrain,有模板几何/heightmap)
-// 上绑定;椭球(kind=None → EllipsoidFallback)无模板,掩码永不绑 → 面缺失。
-// 故官方场景必须接真实 heightmap。历史两源:全球 NASA Terrain-RGB(直连,覆盖全球)
-// 与本地 FABDEM(127.0.0.1:8091,离线)。生产默认用全球 NASA(2026-09-01)。
+// === 官方 Amap 场景真实地形源 ===
+// 历史两源:全球 NASA Terrain-RGB(直连,覆盖全球)与本地 FABDEM
+// (127.0.0.1:8091,离线)。生产默认用全球 NASA(2026-09-01)。
 constexpr const char* kAmapGlobalTerrainTemplate =
     "https://mapoverlay.xinzhi.space/3dterrain/nasa/tiles/{z}/{x}/{y}.png";
 constexpr int kAmapTerrainMinZoom = 6;

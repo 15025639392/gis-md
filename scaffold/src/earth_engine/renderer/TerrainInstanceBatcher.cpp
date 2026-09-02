@@ -42,9 +42,6 @@ RejectReason rejectReasonFor(const RenderCommand& cmd) {
     if (cmd.gltfUniforms.hasBaseColorTexture > 0.5f) {
         return RejectReason::HasBaseColorTexture;
     }
-    if (cmd.terrainFillMaskActive) {
-        return RejectReason::HasTerrainFillMask;
-    }
     if (cmd.blend) return RejectReason::Blended;
     return RejectReason::Count;  // 全通过
 }
@@ -96,7 +93,6 @@ const char* TerrainInstanceBatcher::rejectReasonName(RejectReason reason) {
         case RejectReason::NotFullyResident:    return "notFullyResident";
         case RejectReason::HasWaterMask:        return "waterMask";
         case RejectReason::HasBaseColorTexture: return "baseColorTex";
-        case RejectReason::HasTerrainFillMask:  return "terrainFillMask";
         case RejectReason::Blended:             return "blend";
         case RejectReason::Count:               break;
     }

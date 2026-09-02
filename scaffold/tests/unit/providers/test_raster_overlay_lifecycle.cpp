@@ -215,6 +215,8 @@ public:
     int maxZoomValue = 18;
     int tileWidthValue = 256;
     int tileHeightValue = 256;
+    int targetSourceZoomValue = -1;
+    int targetSourceZoom() const override { return targetSourceZoomValue; }
 };
 
 class ImmediateImageryProvider final : public ImageryProvider {
@@ -950,6 +952,26 @@ TEST(RasterOverlaySourcePlanTest, PreservesAntimeridianSplitAndTextureLimitDowng
         0,
         8);
     EXPECT_GE(unrestrictedZoom, constrainedZoom);
+}
+
+TEST(RasterOverlaySourcePlanTest, TargetSourceZoomOverridesScreenPixelDerivation) {
+    ConfigurableImageryProvider imagery;
+    imagery.minZoomValue = 0;
+    imagery.maxZoomValue = 8;
+    imagery.targetSourceZoomValue = 6;
+    auto scheme = TileScheme::createXYZWebMercator();
+    // A tiny screen footprint would normally push the derived source zoom far
+    // down; the provider's target source zoom must win (subject to clamp).
+    const Rectangle tiny = Rectangle::fromDegrees(106.5, 29.5, 106.6, 29.6);
+    const int zoom = chooseRasterOverlaySourceZoom(
+        *scheme, imagery, tiny, tiny,
+        /*targetScreenPixelsX*/ 16.0,
+        /*targetScreenPixelsY*/ 16.0,
+        /*maximumScreenSpaceError*/ 2.0,
+        /*maximumTextureSize*/ 1 << 20,
+        /*minimumLevel*/ 0,
+        /*maximumLevel*/ 8);
+    EXPECT_EQ(6, zoom);
 }
 
 // GCJ-02 只在源网格是严格 EPSG:3857 时接管。这条钉的是**拒绝要可见**:

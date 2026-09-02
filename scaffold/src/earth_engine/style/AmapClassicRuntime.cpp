@@ -2,7 +2,7 @@
 #include "../Engine.h"
 #include "../layers/FeatureRenderLayer.h"
 #include "../providers/AmapSurfaceMaskImageryProvider.h"
-#include "../renderer/AmapTerrainFillMaskStore.h"
+#include "../providers/VectorSurfaceFillImageryProvider.h"
 
 #include <algorithm>
 #include <cmath>
@@ -54,14 +54,7 @@ AmapClassicRuntime::AmapClassicRuntime(
                std::move(poiDecodePool), std::move(tessellationPool),
                std::move(options.sources)),
       surfaceMaskStyleState_(
-          std::make_shared<AmapSurfaceMaskStyleState>()),
-      terrainFillMaskStore_(std::make_unique<AmapTerrainFillMaskStore>(
-          [this](const TileKey& key, CancellationToken token,
-                 AmapTerrainFillMaskStore::FeatureFetchCallback callback) {
-              requestSurfaceFeatures(
-                  key, std::move(token), std::move(callback));
-          },
-          surfaceMaskStyleState_)) {
+          std::make_shared<AmapSurfaceMaskStyleState>()) {
     if (auto* poiLayer = sources_.poiLayer_) {
         poiLayer->setOfficialIconAtlasDemand(
             [this](int atlas) { assets_.requireAtlas(atlas); });
@@ -77,25 +70,6 @@ void AmapClassicRuntime::setOfficialSurfaceFillBaked(bool enabled) {
     sources_.setOfficialSurfaceFillBaked(enabled);
 }
 
-void AmapClassicRuntime::setSurfaceMaskStyleState(
-    std::shared_ptr<AmapSurfaceMaskStyleState> state) {
-    if (!state) {
-        state = std::make_shared<AmapSurfaceMaskStyleState>();
-    }
-    surfaceMaskStyleState_ = std::move(state);
-    if (terrainFillMaskStore_) {
-        terrainFillMaskStore_->setStyleState(surfaceMaskStyleState_);
-    }
-}
-
-AmapTerrainFillMaskStore::Probe AmapClassicRuntime::maskProbe() const {
-    if (!terrainFillMaskStore_) return AmapTerrainFillMaskStore::Probe{};
-    // takeProbe() only resets diagnostic counters; the const_cast is
-    // diagnostic-only and never alters render state.
-    return const_cast<AmapTerrainFillMaskStore*>(terrainFillMaskStore_.get())
-        ->takeProbe();
-}
-
 void AmapClassicRuntime::update(const Rectangle& viewRectangle,
                                 double cameraHeightMeters,
                                 SceneFrameResourceArbiter& resourceArbiter) {
@@ -104,6 +78,15 @@ void AmapClassicRuntime::update(const Rectangle& viewRectangle,
             24.0, std::max(0.0, std::log2(
                 4.0e7 / std::max(1.0, cameraHeightMeters))));
         surfaceMaskStyleState_->setDisplayZoom(displayZoom);
+    }
+    // The generic surface-fill overlay subdivides with the camera display zoom
+    // (fine near the camera).  The mask is CPU-generated, so raising the source
+    // zoom is cheap and independent of the coarse terrain mesh zoom.
+    if (surfaceFillOverlayProvider_) {
+        const double displayZoom = std::min(
+            24.0, std::max(0.0, std::log2(
+                4.0e7 / std::max(1.0, cameraHeightMeters))));
+        surfaceFillOverlayProvider_->setDisplayZoom(displayZoom);
     }
     assets_.update(resourceArbiter);
     transport_->update();

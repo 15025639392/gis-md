@@ -367,6 +367,14 @@ int chooseRasterOverlaySourceZoom(
         maximumScreenSpaceError,
         minZoom,
         maxZoom);
+    // CPU-local generated overlays (e.g. vector surface fill) declare a target
+    // source zoom so the page subdivides with the camera display zoom, not with
+    // the coarse terrain mesh zoom.  The maxTextureSize loop below still bounds
+    // the composite page, so an unbounded value degrades gracefully.
+    const int targetSourceZoom = provider.targetSourceZoom();
+    if (targetSourceZoom >= 0) {
+        zoom = std::clamp(targetSourceZoom, minZoom, maxZoom);
+    }
     const int maxTextureSize = maximumTextureSize > 0
         ? maximumTextureSize
         : kMaximumTextureSizeFallback;

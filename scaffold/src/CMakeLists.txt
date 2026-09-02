@@ -157,8 +157,6 @@ target_sources(earth_engine_core PRIVATE
     earth_engine/renderer/RenderDevice.h
     earth_engine/renderer/RenderCommand.h
     earth_engine/renderer/RenderCommand.cpp
-    earth_engine/renderer/AmapTerrainFillMaskStore.h
-    earth_engine/renderer/AmapTerrainFillMaskStore.cpp
     earth_engine/renderer/Renderer.h
     earth_engine/renderer/Renderer.cpp
     earth_engine/renderer/GlyphAtlas.h

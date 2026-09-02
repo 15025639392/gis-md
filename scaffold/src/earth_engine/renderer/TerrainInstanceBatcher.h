@@ -103,7 +103,6 @@ public:
         NotFullyResident,       // 页未全 cell 驻留(会采 directComposite 回落)
         HasWaterMask,           // 带水面掩码,走别的着色路径
         HasBaseColorTexture,    // 带基色纹理
-        HasTerrainFillMask,     // 每瓦片 fill page 不能复用批首纹理表
         Blended,                // 混合(淡入淡出期)
         Count
     };

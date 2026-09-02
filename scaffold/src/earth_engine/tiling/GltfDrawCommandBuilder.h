@@ -27,10 +27,6 @@ struct GltfDrawCommandBuildContext {
     uint64_t generation = 0;
     float transitionOpacity = 1.0f;
     std::optional<std::array<float, 4>> surfaceClipUv;
-    // Fill mask is owned by the selected tile, even when this command renders
-    // an ancestor renderTile footprint. It is intentionally separate from the
-    // height/clip descendant so ancestor UV remapping cannot affect mask UVs.
-    const TilesetTile* terrainFillMaskOwner = nullptr;
     // 机制 A(祖先高度重映射):surfaceClipUv 所属的后代瓦片。非空且模板/高度
     // 纹理就绪时,盖章期把命令换成"后代模板几何 + 祖先高度子矩形采样"(真边
     // 真裙墙,无 discard 切缝);任一资源未就绪回落旧 discard 裁剪(mode 1)。

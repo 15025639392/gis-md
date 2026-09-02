@@ -17,6 +17,7 @@ class PlatformBridge;
 class RasterOverlay;
 class RenderDevice;
 class TileScheme;
+class VectorSurfaceFillImageryProvider;
 
 /// Thin SDK entry point for installing a configured earth scene into an
 /// already-created Engine.
@@ -83,6 +84,10 @@ private:
     std::vector<std::unique_ptr<ActivatedRasterOverlay>>
         activatedRasterOverlays_;
     std::vector<std::string> installedMvtSourceIds_;
+    /// Raw pointer into the surface-fill overlay provider owned by
+    /// activatedRasterOverlays_ (kept so the AMap runtime can push the display
+    /// zoom each frame).  Null when the AMap overlay is not installed.
+    VectorSurfaceFillImageryProvider* surfaceFillOverlayProvider_ = nullptr;
 };
 
 } // namespace earth_engine

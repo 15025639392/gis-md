@@ -1158,12 +1158,6 @@ add_executable(test_amap_surface_mask_imagery_provider
 target_link_libraries(test_amap_surface_mask_imagery_provider PRIVATE earth_engine_core GTest::gtest_main)
 add_test(NAME test_amap_surface_mask_imagery_provider COMMAND test_amap_surface_mask_imagery_provider)
 
-add_executable(test_amap_terrain_fill_mask_store
-    unit/renderer/test_amap_terrain_fill_mask_store.cpp
-)
-target_link_libraries(test_amap_terrain_fill_mask_store PRIVATE earth_engine_core GTest::gtest_main)
-add_test(NAME test_amap_terrain_fill_mask_store COMMAND test_amap_terrain_fill_mask_store)
-
 add_executable(test_vector_surface_fill
     unit/providers/test_vector_surface_fill.cpp
 )

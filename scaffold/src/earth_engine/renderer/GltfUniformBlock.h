@@ -190,7 +190,6 @@ struct alignas(16) GltfUniformBlock {
     // 真实网格 glTF 地形 FS 不消费(其 psUv 是逐顶点精确 texcoord)。
     std::array<float, 4> pageGeomA{0.0f, 0.0f, 1.0f, 0.0f};
     std::array<float, 4> pageGeomB{0.0f, 1.0f, 0.0f, 0.0f};
-    float terrainFillMaskEnabled = 0.0f;
 };
 
 static_assert(alignof(GltfUniformBlock) == 16,
@@ -328,7 +327,6 @@ inline const auto& gltfUniformTable() {
         EE_GLTF_ENTRY("u_pageStoreUv", pageStoreUv, 4),
         EE_GLTF_ENTRY("u_pageGeomA", pageGeomA, 4),
         EE_GLTF_ENTRY("u_pageGeomB", pageGeomB, 4),
-        EE_GLTF_ENTRY("u_terrainFillMaskEnabled", terrainFillMaskEnabled, 1),
         EE_GLTF_ENTRY("u_heightDisplace", heightDisplace, 4),
         EE_GLTF_ENTRY("u_terrainLayers", terrainLayers, 4),
         EE_GLTF_ENTRY("u_sunTint", sunTint, 3),

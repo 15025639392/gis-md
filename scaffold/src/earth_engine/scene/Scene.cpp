@@ -27,7 +27,6 @@
 #include "../tiling/Tileset.h"
 #include "../layers/ActivatedRasterOverlay.h"
 #include "../renderer/TerrainPageStore.h"
-#include "../renderer/AmapTerrainFillMaskStore.h"
 #include "../style/AmapClassicRuntime.h"
 
 #include <utility>
@@ -126,10 +125,6 @@ Scene::~Scene() {
     if (tilesets_) {
         tilesets_->clearAll();
     }
-    if (renderer_) {
-        renderer_->setTerrainFillMaskStore(nullptr);
-    }
-    terrainFillMaskStore_ = nullptr;
     amapClassicRuntime_.reset();
     clearMvtVectorSources();
     renderer_.reset();
@@ -169,9 +164,6 @@ bool Scene::setRenderDevice(RenderDevice* device) {
         renderPipeline_.reset();
         return false;
     }
-    renderer_->setTerrainFillMaskStore(
-        terrainFillMaskStore_);
-
     environment_->initializeRenderResources(device);
 
     return true;
@@ -321,7 +313,6 @@ bool Scene::render() {
         environment_->skyGradient(),
         tilesets_->primary(),
         tilesets_->pendingPrimary(),
-        terrainFillMaskStore_,
         tilesets_->contentTilesets(),
         layers_->vectorLayers(),
         layers_->mutableFeatureRenderLayers(),
@@ -367,10 +358,6 @@ bool Scene::hasConvergingWork(const char** outReason) const {
     if (renderer_ && renderer_->terrainPageStore() &&
         renderer_->terrainPageStore()->hasWorkInFlight()) {
         return hit("pageStoreInFlight");
-    }
-    if (terrainFillMaskStore_ &&
-        terrainFillMaskStore_->hasWorkInFlight()) {
-        return hit("amapTerrainFillMaskInFlight");
     }
 
     // ④ V27 标注收敛:字形烘焙/换代 placement/fade 三段全在渲染帧里推进,
@@ -491,17 +478,6 @@ void Scene::auditWorkLedger() const {
                std::strcmp(oldReason, "pageStoreInFlight") == 0) {
         sourceTicketed =
             ledger.outstandingForLabel("terrainPageUpload") > 0;
-    } else if (oldReason &&
-               std::strcmp(oldReason,
-                           "amapTerrainFillMaskInFlight") == 0) {
-        sourceTicketed =
-            ledger.outstandingForLabel(
-                "amapTerrainFillMaskFetch") > 0 ||
-            // The callback publishes the page before releasing its Landing
-            // ticket.  Until the release pulse is consumed, the legacy store
-            // predicate can still observe the just-landed entry as pending on
-            // an adjacent snapshot without representing a missing wakeup.
-            ledger.hasUnconsumedLanding();
     } else if (oldReason &&
                (std::strcmp(oldReason, "amapOfficialPending") == 0 ||
                 std::strcmp(oldReason, "mvtVectorPending") == 0)) {
@@ -778,18 +754,10 @@ const AmapClassicRuntime* Scene::installAmapClassicRuntime(
         return nullptr;
     }
     amapClassicRuntime_ = std::move(runtime);
-    terrainFillMaskStore_ = amapClassicRuntime_->terrainFillMaskStore();
-    if (renderer_) {
-        renderer_->setTerrainFillMaskStore(terrainFillMaskStore_);
-    }
     return amapClassicRuntime_.get();
 }
 
 void Scene::removeAmapClassicRuntime() {
-    if (renderer_) {
-        renderer_->setTerrainFillMaskStore(nullptr);
-    }
-    terrainFillMaskStore_ = nullptr;
     amapClassicRuntime_.reset();
 }
 

@@ -25,6 +25,8 @@
 #include "../providers/GoogleMapTilesImageryProvider.h"
 #include "../providers/TileMapServiceImageryProvider.h"
 #include "../providers/TileMapServiceUrl.h"
+#include "../providers/AmapSurfaceMaskImageryProvider.h"
+#include "../providers/VectorSurfaceFillImageryProvider.h"
 #include "../providers/WebMapServiceImageryProvider.h"
 #include "../providers/WebMapTileServiceImageryProvider.h"
 #include "../providers/XYZImageryProvider.h"
@@ -808,6 +810,42 @@ void EarthEngineSdkFacade::installScene(EarthSceneConfig config) {
                                   std::move(pending.scheme), pending.options);
     }
     pendingCustomOverlays_.clear();
+
+    // AMap: register the ordinary surface-fill as a generic raster overlay so it
+    // is sampled on the terrain at the display zoom (chooseRasterOverlaySourceZoom)
+    // instead of being bound to the coarse terrain tile zoom.  The source zoom
+    // follows the camera display zoom each frame, so the mask subdivides finely
+    // near the camera (the old per-tile AmapTerrainFillMaskStore is retired).
+    if (officialAmapRuntime && officialRuntime) {
+        VectorSurfaceFillImageryProvider::FeatureFetch surfaceFetch =
+            [officialRuntime](
+                const TileKey& key, CancellationToken token,
+                std::function<void(VectorSurfaceFillImageryProvider::FeatureSet)> callback,
+                HttpRequestPriority /*priority*/) {
+                officialRuntime->requestSurfaceFeatures(
+                    key, token, std::move(callback));
+            };
+        auto maskProvider = std::make_unique<VectorSurfaceFillImageryProvider>(
+            TileScheme::createGeographicTMS(), std::move(surfaceFetch),
+            amapSurfaceFillResolver(), /*displayZoom*/ 12.0);
+        surfaceFillOverlayProvider_ = maskProvider.get();
+        RasterOverlay::Options maskOptions;
+        maskOptions.maximumScreenSpaceError = 0.05;
+        maskOptions.maximumZoom = 25;
+        maskOptions.maximumTextureSize = 8192;
+        // The mask is a transparent overlay: while its source pages are still
+        // loading (or when the source has no data for a region) the terrain
+        // tile must still render without it, instead of blocking the frame.
+        maskOptions.blocksCompleteRenderable = false;
+        addActivatedRasterOverlay(
+            rasterOverlays, std::move(maskProvider),
+            TileScheme::createGeographicTMS(), maskOptions);
+        // Drive the overlay's source zoom from the camera display zoom each
+        // frame (AmapClassicRuntime::update), so the mask subdivides finely
+        // near the camera.
+        officialRuntime->setSurfaceFillOverlayProvider(
+            surfaceFillOverlayProvider_);
+    }
 
     const TilesetOptions tilesetOptions =
         makeSceneTilesetOptions(config_.tileset);

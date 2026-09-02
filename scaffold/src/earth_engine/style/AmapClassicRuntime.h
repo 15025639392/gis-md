@@ -2,7 +2,6 @@
 
 #include "AmapClassicAssets.h"
 #include "../data/AmapVectorSource.h"
-#include "../renderer/AmapTerrainFillMaskStore.h"
 
 #include <memory>
 #include <utility>
@@ -17,7 +16,7 @@ class Scene;
 class SceneFrameResourceArbiter;
 class ThreadPool;
 class AmapSurfaceMaskStyleState;
-class AmapTerrainFillMaskStore;
+class VectorSurfaceFillImageryProvider;
 
 /// Single production owner for the sealed AMap classic runtime.
 ///
@@ -52,10 +51,6 @@ public:
     const AmapClassicAssets& assets() const { return assets_; }
     const AmapClassicSourceBundle& sources() const { return sources_; }
 
-    /// Diagnostics probe for the terrain-fill mask request path.  Reading it
-    /// does not change rendering; it resets the store's rolling counters.
-    /// Returns empty counters when no mask store is installed.
-    AmapTerrainFillMaskStore::Probe maskProbe() const;
 #if defined(EARTH_ENGINE_TESTING)
     void requireAtlasForContractTest(int atlas) {
         assets_.requireAtlasForContractTest(atlas);
@@ -124,19 +119,22 @@ private:
     /// 256x256 overlay has been installed. Buildings and line/label paths are
     /// intentionally unaffected.
     void setOfficialSurfaceFillBaked(bool enabled);
-    void setSurfaceMaskStyleState(
-        std::shared_ptr<AmapSurfaceMaskStyleState> state);
-    AmapTerrainFillMaskStore* terrainFillMaskStore() {
-        return terrainFillMaskStore_.get();
+
+    /// Register the generic surface-fill raster overlay provider so its source
+    /// zoom follows the camera display zoom each frame (the mask is CPU-generated
+    /// and can subdivide finely near the camera).  Null clears the reference.
+    void setSurfaceFillOverlayProvider(
+        VectorSurfaceFillImageryProvider* provider) {
+        surfaceFillOverlayProvider_ = provider;
     }
 
     AmapClassicAssets assets_;
     std::unique_ptr<Transport> transport_;
     AmapClassicSourceBundle sources_;
     std::shared_ptr<AmapSurfaceMaskStyleState> surfaceMaskStyleState_;
-    // Declared after sources_: destruction runs in reverse order, so every
-    // pending mask callback is cancelled before the shared decoded cache dies.
-    std::unique_ptr<AmapTerrainFillMaskStore> terrainFillMaskStore_;
+    // Generic surface-fill raster overlay (if registered); its source zoom is
+    // driven by the camera display zoom each frame.  Non-owning.
+    VectorSurfaceFillImageryProvider* surfaceFillOverlayProvider_ = nullptr;
 };
 
 } // namespace earth_engine

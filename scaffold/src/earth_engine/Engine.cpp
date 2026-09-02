@@ -1394,13 +1394,25 @@ size_t Engine::vectorLayerCount() const {
 }
 
 bool Engine::installAmapClassicTerrainTileset(std::unique_ptr<Tileset> tileset) {
-    if (!scene_->hasAmapClassicRuntime() || !tileset ||
-        !tileset->rasterOverlays().empty()) {
+    if (!scene_->hasAmapClassicRuntime() || !tileset) {
         platformLog(LogLevel::Error, "Engine",
-                    "reject invalid AMap official terrain Tileset: official "
-                    "surface fill is terrain-local and permits no raster "
-                    "overlay");
+                    "reject invalid AMap official terrain Tileset");
         return false;
+    }
+    // The official AMap surface fill may be installed as a surface-fill raster
+    // overlay (VectorSurfaceFillImageryProvider) so it is sampled on the terrain
+    // at the display zoom and follows the camera (instead of the old terrain-local
+    // per-tile mask bound to the coarse terrain zoom).  Any OTHER raster overlay
+    // is still rejected: the official basemap contract owns the color of
+    // everything above the terrain.
+    for (ActivatedRasterOverlay* overlay : tileset->rasterOverlays()) {
+        if (overlay->getOverlay().getProvider().type() !=
+            "vector-surface-fill-imagery") {
+            platformLog(LogLevel::Error, "Engine",
+                        "reject invalid AMap official terrain Tileset: official "
+                        "basemap permits only the surface-fill raster overlay");
+            return false;
+        }
     }
     // The official runtime owns exactly one primary terrain Tileset, but the
     // terrain source itself is scene configuration and may be replaced.  Use

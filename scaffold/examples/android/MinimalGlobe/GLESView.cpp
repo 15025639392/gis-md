@@ -773,17 +773,6 @@ static void renderFrame() {
             logSource("regions", sourceBundle.regionsSourceStats());
             logSource("main", sourceBundle.mainSourceStats());
             logSource("poi", sourceBundle.poiSourceStats());
-            const auto probe = gAmapOfficialRuntime->maskProbe();
-            const uint64_t req = probe.presentHits + probe.asyncPending +
-                                 probe.startedFetches + probe.failed;
-            LOGI("AmapMask probe req=%llu present=%llu pending=%llu "
-                 "fetchStart=%llu failed=%llu lastKey=%s z=%d resident=%zu",
-                 static_cast<unsigned long long>(req),
-                 static_cast<unsigned long long>(probe.presentHits),
-                 static_cast<unsigned long long>(probe.asyncPending),
-                 static_cast<unsigned long long>(probe.startedFetches),
-                 static_cast<unsigned long long>(probe.failed),
-                 probe.lastScheme.c_str(), probe.lastZ, probe.residentPages);
         }
     }
     // 阶段 4:假载体在**引擎 update 之前**推进,这样本帧 tether 读到的就是新

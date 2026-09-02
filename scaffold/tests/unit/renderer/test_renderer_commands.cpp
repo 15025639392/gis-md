@@ -516,9 +516,8 @@ TEST(RendererCommandTest, GltfFragmentShaderStaysWithinGlesSamplerLimit) {
     EXPECT_LE(samplerCount, 16u)
         << "GLES glTF fragment shader declares " << samplerCount
         << " sampler2D; must stay <= 16 to link on GL_MAX_TEXTURE_IMAGE_UNITS==16";
-    // Selected-tile fill adds one terrain-only sampler. Eleven remains below
-    // the GLES 3.0 fragment-stage floor of 16 texture units.
-    EXPECT_EQ(samplerCount, 11u);
+    // Ten remains below the GLES 3.0 fragment-stage floor of 16 texture units.
+    EXPECT_EQ(samplerCount, 10u);
 
     // The samplers the engine actually feeds must remain real declarations.
     for (const char* kept : {

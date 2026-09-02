@@ -217,8 +217,6 @@ uniform highp sampler2DArray u_pageStore;
 // 合批 Step 2:per-tile 间接纹理搬共享 texture2DArray(固定 64² 每层,texel 写
 // 左上 gridN² 区),层号由 u_terrainLayers.y 给出,texelFetch 整数寻址。
 uniform highp sampler2DArray u_pageStoreIndir;
-uniform sampler2D u_terrainFillMask;
-uniform float u_terrainFillMaskEnabled;
 uniform vec4 u_pageStoreParams;
 uniform vec4 u_pageStoreUv;
 uniform vec4 u_terrainLayers;  // x=高度纹理层(顶点) y=间接纹理层(片元)
@@ -504,9 +502,6 @@ void main() {
             base, psUv, vec4(u_pageStoreUv.xy, u_pageStoreUv.z, 0.0),
             vec2(0.0, u_pageStoreUv.w), psPhase, cells,
             int(u_terrainLayers.y + 0.5));
-    }
-    if (u_terrainFillMaskEnabled > 0.5) {
-        base = alphaOver(base, texture(u_terrainFillMask, v_texcoord01.xy), 1.0);
     }
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     // B2 刀2:HDR 下把 sRGB 反照率解到线性(glTF PBR 本为线性设计),BRDF 随之在
@@ -1038,8 +1033,6 @@ uniform sampler2D u_directRasterTexture1;
 uniform sampler2D u_directRasterTexture2;
 uniform sampler2D u_directRasterTexture3;
 uniform sampler2D u_gltfWaterMaskTexture;
-uniform sampler2D u_terrainFillMask;
-uniform float u_terrainFillMaskEnabled;
 uniform float u_directRasterTextureCount;
 uniform vec4 u_directRasterTileUV0;
 uniform vec4 u_directRasterTileUV1;
@@ -1269,9 +1262,7 @@ void main() {
     // Exact selected footprint, composed after imagery/page-store and before
     // terrain water/light. This UV is the original template UV, never the
     // ancestor-remapped terrainUv or surface clip window.
-    if (u_terrainFillMaskEnabled > 0.5) {
-        base = alphaOver(base, texture(u_terrainFillMask, v_selectedTileUv), 1.0);
-    }
+
     base = applyGltfWaterMask(base, N, L, normalize(u_eyePositionRTC - v_position));
     if (u_alphaMode > 0.5 && u_alphaMode < 1.5 && base.a < u_alphaCutoff) {
         discard;
@@ -2947,7 +2938,6 @@ struct GltfUniforms {
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
     packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留
-    float terrainFillMaskEnabled;
 };
 
 float2 gltfTransformUv(float2 uv, float4 offsetScale, float2 sinCos) {
@@ -3192,7 +3182,6 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
                              // 合批 Step 2:间接纹理搬 array(64² 每层,层号 u.terrainLayers.y)。
                              texture2d_array<float> u_pageStore [[texture(20)]],
                              texture2d_array<float> u_pageStoreIndir [[texture(21)]],
-                             texture2d<float> u_terrainFillMask [[texture(23)]],
                              sampler u_baseColorSampler [[sampler(0)]],
                              sampler u_metallicRoughnessSampler [[sampler(1)]],
                              sampler u_normalSampler [[sampler(2)]],
@@ -3291,12 +3280,6 @@ fragment float4 gltfFragment(GltfVertexOut in [[stage_in]],
             float4(u.pageStoreUv.x, u.pageStoreUv.y, u.pageStoreUv.z, 0.0),
             float2(0.0, u.pageStoreUv.w), psPhase, cells,
             int(u.terrainLayers.y + 0.5));
-    }
-    if (u.terrainFillMaskEnabled > 0.5) {
-        base = gltfAlphaOver(
-            base,
-            u_terrainFillMask.sample(u_tileSharedSampler, in.texcoord01.xy),
-            1.0);
     }
     base = gltfApplyWaterMask(
         base,
@@ -3760,7 +3743,6 @@ struct GltfUniforms {
     packed_float4 sunTint;         // 日落太阳色温(rgb;MSL 地形暂用内部常量,此处为字节对齐镜像)
     packed_float4 pageGeomA;       // [瓦界对齐] 几何仿射 c0.xy, dU.xy(位移路径)
     packed_float4 pageGeomB;       // [瓦界对齐] 几何仿射 dV.xy + 保留
-    float terrainFillMaskEnabled;
 };
 
 // TerrainVertexOut is provided by the vertex MSL (the backend concatenates the
@@ -3846,7 +3828,6 @@ fragment float4 terrainFragment(
     // 稀疏虚拟纹理(Step B1):间接纹理(RGBA8 编 layer 索引)。合批 Step 2:搬
     // array(64² 每层,层号 u.terrainLayers.y),read() 整数寻址不占 sampler 槽。
     texture2d_array<float> u_pageStoreIndir [[texture(21)]],
-    texture2d<float> u_terrainFillMask [[texture(23)]],
     // Metal argument tables cap samplers at 0-15; terrain imagery all uses the
     // same clamp/linear sampling, so a single shared sampler at slot 0 covers
     // the base color, raster overlay (textures 15-18) and water mask (19)
@@ -3932,12 +3913,6 @@ fragment float4 terrainFragment(
             base, psUv, float4(u.pageGeomA),
             float2(u.pageGeomB.x, u.pageGeomB.y), psPhase, cells,
             int(u.terrainLayers.y + 0.5));
-    }
-    if (u.terrainFillMaskEnabled > 0.5) {
-        base = terrainAlphaOver(
-            base,
-            u_terrainFillMask.sample(u_terrainSampler, in.selectedTileUv),
-            1.0);
     }
     base = terrainApplyWaterMask(
         base, in, u_gltfWaterMaskTexture, u_terrainSampler,
@@ -4725,25 +4700,6 @@ Texture* Renderer::surfacePlaceholderTexture() const {
     return impl_->surfacePlaceholderTexture.get();
 }
 
-std::unique_ptr<Texture> Renderer::uploadTerrainFillMask(
-    const std::vector<uint8_t>& pixels) const {
-    constexpr int kSize = 256;
-    constexpr size_t kExpectedBytes =
-        static_cast<size_t>(kSize) * kSize * 4u;
-    if (!impl_->device || pixels.size() != kExpectedBytes) return nullptr;
-    TextureDesc desc;
-    desc.width = kSize;
-    desc.height = kSize;
-    desc.format = TextureDesc::Format::RGBA8;
-    desc.data = pixels.data();
-    desc.dataSize = pixels.size();
-    desc.mipmap = false;
-    desc.minFilter = TextureDesc::Filter::Linear;
-    desc.magFilter = TextureDesc::Filter::Linear;
-    desc.wrapS = TextureDesc::Wrap::Clamp;
-    desc.wrapT = TextureDesc::Wrap::Clamp;
-    return impl_->device->createTexture(desc);
-}
 ShaderProgram* Renderer::gltfShader() const { return impl_->gltfShader.get(); }
 
 ShaderProgram* Renderer::gltfInstancedShader() const {

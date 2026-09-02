@@ -60,6 +60,12 @@ public:
                key.z <= maxZoom();
     }
 
+    /// 目标源 zoom 覆盖：>=0 时源 zoom 选择直接用该值（不再按屏幕像素 /
+    /// SSE 反推），否则（-1）按默认屏幕误差反推。用于 CPU 本地即时生成的
+    /// overlay（如矢量面填充）：栅格分辨率完全由该 zoom 决定，可随相机
+    /// displayZoom 无限细分。默认 -1 = 未设置。
+    virtual int targetSourceZoom() const { return -1; }
+
     /// 将引擎逻辑 TileKey 映射为 provider URL 模板使用的 TileKey。
     /// 标准 XYZ/TMS 通常是 identity；OpenGlobus-Earth 三分区 provider
     /// 必须在这里显式处理 grouped-y 语义。

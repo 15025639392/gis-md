@@ -36,8 +36,6 @@ static constexpr int kGltfPageStoreIndirTextureSlot =
 // 顶点 shader texelFetch 取回归一化高度反量化位移)。紧接页存储 indir 槽(21→22)。
 static constexpr int kGltfHeightTextureSlot =
     kGltfPageStoreIndirTextureSlot + 1;
-static constexpr int kGltfTerrainFillMaskTextureSlot =
-    kGltfHeightTextureSlot + 1;
 
 // GLES only guarantees 16 fragment texture units. The shared command layout
 // keeps Metal's full glTF slots, while GLES aliases extension slots 5-14 and
@@ -74,7 +72,7 @@ static constexpr int kTerrainInstanceStride = 128;
 class RenderCommandTextureList {
 public:
     static constexpr size_t kCapacity =
-        static_cast<size_t>(kGltfTerrainFillMaskTextureSlot) + 1u;
+        static_cast<size_t>(kGltfHeightTextureSlot) + 1u;
 
     RenderCommandTextureList() = default;
     RenderCommandTextureList(std::initializer_list<Texture*> init) {
@@ -176,7 +174,6 @@ struct RenderCommand {
     uint64_t frameId = 0;
     uint64_t generation = 0;
     bool terrainRenderContent = false;
-    bool terrainFillMaskActive = false;
     TerrainSurfaceCommandSource terrainSurfaceSource =
         TerrainSurfaceCommandSource::Unknown;
 

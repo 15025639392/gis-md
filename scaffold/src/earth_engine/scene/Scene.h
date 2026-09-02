@@ -32,7 +32,6 @@ class SceneTilesetCoordinator;
 class SkyGradient;
 class TerrainPageStore;
 class TerrainDisplacementTemplatePool;
-class AmapTerrainFillMaskStore;
 class Tileset;
 class FeatureRenderLayer;
 class VectorLayer;
@@ -236,7 +235,7 @@ private:
     std::unique_ptr<AmapClassicRuntime> amapClassicRuntime_;
     size_t mvtUpdateCursor_ = 0;
     TerrainPageStore* terrainPageStore_ = nullptr;
-    AmapTerrainFillMaskStore* terrainFillMaskStore_ = nullptr;
+
 
     // 统一 Tileset（cesium-native 对齐）
     std::unique_ptr<SceneTilesetCoordinator> tilesets_;

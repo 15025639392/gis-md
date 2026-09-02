@@ -39,7 +39,6 @@ public:
         bool allowSynchronousMeshPrep = true,
         const std::optional<std::array<float, 4>>& surfaceClipUv =
             std::nullopt,
-        const TilesetTile* terrainFillMaskOwner = nullptr,
         const TilesetTile* surfaceClipDescendant = nullptr);
 
     const TileRenderCommandPerformanceTimings& frameTimings() const {

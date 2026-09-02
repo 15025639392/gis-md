@@ -45,6 +45,13 @@ public:
     std::string schemeId() const override;
     int minZoom() const override { return 0; }
     int maxZoom() const override { return 25; }
+    /// Source zoom follows the display zoom: the mask is CPU-generated, so the
+    /// page is finely subdivided near the camera (fine pages) independent of the
+    /// coarse terrain mesh zoom.
+    int targetSourceZoom() const override {
+        return static_cast<int>(packedState_.load(
+            std::memory_order_acquire) & 0xFFu);
+    }
     int tileWidth() const override { return 256; }
     int tileHeight() const override { return 256; }
     uint64_t contentRevision() const override;

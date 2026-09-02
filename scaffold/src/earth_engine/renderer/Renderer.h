@@ -15,7 +15,7 @@ class RasterOverlayTile;
 struct TileKey;
 class TerrainPageStore;
 class TerrainDisplacementTemplatePool;
-class AmapTerrainFillMaskStore;
+
 
 /// 平台无关渲染器。
 /// 管理共享 GPU 资源（shader、几何 buffer），供 Scene 和各 Layer 使用。
@@ -128,21 +128,6 @@ public:
     /// Neutral 1x1 texture used only while required base imagery is not ready.
     Texture* surfacePlaceholderTexture() const;
 
-    /// Upload one selected-terrain 256² RGBA fill page. The returned texture is
-    /// owned by the selected tile; no imagery quadtree or fallback is involved.
-    std::unique_ptr<Texture> uploadTerrainFillMask(
-        const std::vector<uint8_t>& pixels) const;
-
-    /// Non-owning selected-tile mask store used by the terrain command path.
-    /// The store is owned by the runtime; Renderer only exposes it while the
-    /// runtime is alive and must be cleared before that owner is destroyed.
-    void setTerrainFillMaskStore(AmapTerrainFillMaskStore* store) {
-        terrainFillMaskStore_ = store;
-    }
-    AmapTerrainFillMaskStore* terrainFillMaskStore() const {
-        return terrainFillMaskStore_;
-    }
-
     /// glTF primitive shader.
     ShaderProgram* gltfShader() const;
 
@@ -249,7 +234,6 @@ private:
     std::unique_ptr<Impl> impl_;
     TerrainPageStore* terrainPageStore_ = nullptr;
     TerrainDisplacementTemplatePool* terrainDisplacementPool_ = nullptr;
-    AmapTerrainFillMaskStore* terrainFillMaskStore_ = nullptr;
     // P5b skip flag(默认开,见 setTerrainBakedVboSkipEnabled 注释)。
     bool terrainBakedVboSkipEnabled_ = true;
 };

@@ -14,7 +14,6 @@
 #include "../layers/FeatureRenderLayer.h"
 #include "../layers/VectorLayer.h"
 #include "../renderer/Renderer.h"
-#include "../renderer/AmapTerrainFillMaskStore.h"
 #include "../renderer/TerrainPageStore.h"
 #include "../tiling/RenderedTerrainSurfaceSampler.h"
 #include "../tiling/TerrainDisplacementTemplatePool.h"  // B:flushHeightBakes
@@ -463,22 +462,6 @@ void SceneRenderPipeline::buildLayerCommands(
     // Tileset 命令来自各 tile 的常驻命令缓存(见 GltfDrawCommandBuilder),
     // 直接追加进帧列表:每命令每帧一次拷贝,无中转缓存。
     const double layerStartMs = perf::nowMs();
-    // ⚠️ 2026-09 热点④ 定位:release 下 Tileset.buildRenderCommands 仅 ~8ms,
-    // 而 buildBreakdown 的 layers=23-56ms。剩余大头怀疑是 prepareTerrainFillMasks
-    // (拖动带新瓦 → 每瓦 uploadTerrainFillMask createTexture 256KB)。累计计时
-    // 拆分确认。
-    double fillMaskMs = 0.0;
-    double fillMaskRequestMs = 0.0;
-    double fillMaskUploadMs = 0.0;
-    auto timeFillMasks = [&](auto&& fn) {
-        const double s = perf::nowMs();
-        double req = 0.0, up = 0.0;
-        fn(&req, &up);
-        const double e = perf::nowMs();
-        fillMaskMs += e - s;
-        fillMaskRequestMs += req;
-        fillMaskUploadMs += up;
-    };
     std::vector<TileRenderEntry> submittedPrimaryTerrainEntries;
     const TileScheme* submittedPrimaryTerrainScheme = nullptr;
     if (context.terrainTileset) {
@@ -503,20 +486,12 @@ void SceneRenderPipeline::buildLayerCommands(
                 lastPrimaryCurrentEntryCount_ = currentEntryCount;
                 lastPrimaryPendingEntryCount_ = pendingEntryCount;
             }
-            timeFillMasks([&](double* rq, double* up) {
-                prepareTerrainFillMasks(
-                    context, composition.currentEntries, rq, up);
-            });
             context.terrainTileset->buildRenderCommands(
                 context.renderer,
                 context.commands,
                 context.frameState.frameId,
                 &composition.currentEntries);
             if (composition.hasPendingCoverage()) {
-                timeFillMasks([&](double* rq, double* up) {
-                    prepareTerrainFillMasks(
-                        context, composition.pendingEntries, rq, up);
-                });
                 context.pendingTerrainTileset->buildRenderCommands(
                     context.renderer,
                     context.commands,
@@ -531,11 +506,6 @@ void SceneRenderPipeline::buildLayerCommands(
         } else {
             lastPrimaryCurrentEntryCount_ = -1;
             lastPrimaryPendingEntryCount_ = -1;
-            timeFillMasks([&](double* rq, double* up) {
-                prepareTerrainFillMasks(
-                    context,
-                    context.terrainTileset->tilePlan().renderEntries, rq, up);
-            });
             context.terrainTileset->buildRenderCommands(
                 context.renderer,
                 context.commands,
@@ -546,12 +516,6 @@ void SceneRenderPipeline::buildLayerCommands(
     } else if (context.pendingTerrainTileset) {
         submittedPrimaryTerrainScheme =
             &context.pendingTerrainTileset->tileScheme();
-        timeFillMasks([&](double* rq, double* up) {
-            prepareTerrainFillMasks(
-                context,
-                context.pendingTerrainTileset->tilePlan().renderEntries,
-                rq, up);
-        });
         context.pendingTerrainTileset->buildRenderCommands(
             context.renderer,
             context.commands,
@@ -568,14 +532,6 @@ void SceneRenderPipeline::buildLayerCommands(
         }
     }
     layerCommandsMs = perf::nowMs() - layerStartMs;
-    if (fillMaskMs > 2.0) {
-        char detail[96];
-        std::snprintf(detail, sizeof(detail), "fillMask=%.2f req=%.2f up=%.2f",
-                      fillMaskMs, fillMaskRequestMs, fillMaskUploadMs);
-        perf::logTiming(context.frameState.frameId,
-                        "Scene.layers.fillMaskBreakdown",
-                        fillMaskMs, detail);
-    }
 
     // Edge LUT acceptance during command build only means the bytes were
     // queued. Official vectors must not sample those bytes until the batched
@@ -786,73 +742,6 @@ void SceneRenderPipeline::buildLayerCommands(
             static_cast<int>(stats.areaCandidateCopies);
     }
     vectorCommandsMs = perf::nowMs() - vectorStartMs;
-}
-
-void SceneRenderPipeline::prepareTerrainFillMasks(
-    Context& context,
-    const std::vector<TileRenderEntry>& entries,
-    double* requestMsOut,
-    double* uploadMsOut) const {
-    AmapTerrainFillMaskStore* store = context.terrainFillMaskStore;
-    if (!store) return;
-
-    // One selected tile can occur in both the selected and fading passes.
-    // Request/upload once per render frame, but never deduplicate selected and
-    // render owners: an ancestor may supply height geometry while the exact
-    // descendant footprint still owns this page.
-    std::unordered_set<TilesetTile*> prepared;
-    prepared.reserve(entries.size());
-    // ⚠️ 2026-09 热点④ 定位:拖动带新瓦时成本在 store->request(锁 + 样式
-    // snapshot + LRU prune),非纹理上传。真机 request=62.5ms 而 upload 仅
-    // 2.3ms。request 命中率虽高(99.8%)但每帧对全部可见瓦(45+)都调,白付
-    // 锁/scheme/map 固定开销。修复:已就绪纹理(纹理存在且 revision 与当前
-    // style 一致)的瓦**跳过 request**,只对需更新的瓦调。styleRevision 在
-    // 循环外取一次,避免每瓦重复加锁。
-    const uint64_t currentStyleRevision = store->styleRevision();
-    double requestMs = 0.0, uploadMs = 0.0;
-    for (const TileRenderEntry& entry : entries) {
-        TilesetTile* selectedTile = entry.selectedTile;
-        if (!selectedTile || !prepared.insert(selectedTile).second) continue;
-
-        TileRenderContentState& content =
-            selectedTile->content.renderContent;
-        // 已就绪且 style 未变:纹理是最新,无需 request/upload,直接跳过。
-        if (content.terrainFillMaskTexture() &&
-            content.terrainFillMaskRevision() == currentStyleRevision) {
-            continue;
-        }
-
-        const double reqStart = perf::nowMs();
-        AmapTerrainFillMaskStore::Result result =
-            store->request(selectedTile->key);
-        requestMs += perf::nowMs() - reqStart;
-        if (!result.pixels) {
-            // Never display a previous style generation while the exact new
-            // page is pending. There is deliberately no ancestor or
-            // placeholder fallback; the terrain simply has no ordinary fill
-            // until its local page is ready.
-            if (content.terrainFillMaskRevision() != result.revision) {
-                content.clearTerrainFillMaskTexture();
-            }
-            continue;
-        }
-        if (content.terrainFillMaskTexture() &&
-            content.terrainFillMaskRevision() == result.revision) {
-            continue;
-        }
-        const double upStart = perf::nowMs();
-        std::unique_ptr<Texture> texture =
-            context.renderer.uploadTerrainFillMask(*result.pixels);
-        uploadMs += perf::nowMs() - upStart;
-        if (texture) {
-            content.setTerrainFillMaskTexture(
-                std::move(texture), result.revision);
-        } else if (content.terrainFillMaskRevision() != result.revision) {
-            content.clearTerrainFillMaskTexture();
-        }
-    }
-    if (requestMsOut) *requestMsOut = requestMs;
-    if (uploadMsOut) *uploadMsOut = uploadMs;
 }
 
 void SceneRenderPipeline::assembleTerrainBatches(

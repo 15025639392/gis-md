@@ -1256,11 +1256,10 @@ void RenderDeviceMetal::submit(const RenderCommandList& commands) {
         // sampler2DArray at slot 20, SVT 间接纹理 at slot 21)。纹理槽上限远高于
         // sampler 上限(16);页存储复用共享 terrain sampler(0)、间接纹理用着色器
         // 内 constexpr NEAREST sampler,均不占新 sampler 槽。
-        // Fill mask occupies logical/Metal texture slot 23. slot22(height) is
-        // a vertex texture; binding it to fragment as well is harmless, while
-        // extending through slot23 is required for selected-tile fill pages.
+        // slot22(height) is a vertex texture; binding it to fragment as well
+        // is harmless, and it is the highest logical/Metal texture slot.
         const NSUInteger maxMaterialTextures =
-            kGltfTerrainFillMaskTextureSlot + 1;
+            kGltfHeightTextureSlot + 1;
         const NSUInteger materialTextureCount =
             std::min<NSUInteger>(cmd.textures.size(), maxMaterialTextures);
         id<MTLSamplerState> sharedTileSampler = nil;

@@ -1317,13 +1317,13 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
 
     GLuint currentProgram = 0;
     GLuint currentVao = 0;
-    // +1 覆盖最高纹理槽(kGltfTerrainFillMaskTextureSlot=23):此
+    // +1 覆盖最高纹理槽(kGltfHeightTextureSlot=22):此
     // 数组既是逐 unit 绑定缓存,也隐式界定纹理绑定循环的最大 vec 索引
     // (min(cmd.textures.size(), 本数组 size))。定容小于最高槽会把该槽排除出循环
     // → 新纹理永不绑定(真机踩过的孪生 bug:高度纹理槽 22 加入时此处未同步扩容,
     // 导致 GPU 位移瓦片高度纹理永不绑定 → texelFetch 恒 0 → 地形平抬无起伏),故
     // **每新增最高纹理槽都必须同步扩容此数组**。
-    std::array<GLuint, kGltfTerrainFillMaskTextureSlot + 1> currentTextures{};
+    std::array<GLuint, kGltfHeightTextureSlot + 1> currentTextures{};
     bool depthTestEnabled = true;
     bool blendEnabled = false;
     bool alphaToCoverageEnabled = false;
@@ -1624,12 +1624,6 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
             // 成 unit 12,仍 ≤16 底线)。非地形 program 未声明此名 → loc=-1 无副作用。
             setSampler("u_heightTexture",
                        glesGltfTextureUnit(kGltfHeightTextureSlot));
-            // Selected-tile terrain fill mask: logical slot 23 compresses to
-            // GLES unit 13 (the extension slots 5-14 are aliased away).
-            // Non-terrain programs do not declare this sampler, so location -1
-            // is harmless; the uniform gate keeps stale bindings inert.
-            setSampler("u_terrainFillMask",
-                       glesGltfTextureUnit(kGltfTerrainFillMaskTextureSlot));
             setSampler("u_waterMask", 5);
             for (int i = 0; i < kMaxSurfaceImageryOverlays; ++i) {
                 std::string name = "u_overlayTexture" + std::to_string(i);
@@ -1961,7 +1955,7 @@ void RenderDeviceGLES::submit(const RenderCommandList& commands) {
     // 10-13, above the legacy water unit 9.  Page-store uses a 2D-array target
     // while the other live samplers use 2D, so clear both target bindings;
     // otherwise unit 10 retains the tile-owned page array across submits.
-    for (int textureUnit = glesGltfTextureUnit(kGltfTerrainFillMaskTextureSlot);
+    for (int textureUnit = glesGltfTextureUnit(kGltfHeightTextureSlot);
          textureUnit >= 0;
          --textureUnit) {
         glActiveTexture(GL_TEXTURE0 + textureUnit);

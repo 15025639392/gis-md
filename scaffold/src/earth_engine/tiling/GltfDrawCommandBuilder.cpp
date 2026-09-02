@@ -669,12 +669,6 @@ void applyPerFrameCommandState(
         cmd.terrainVisibleEdgeSnapPacked = snapPacked;
         logEdgeLutStats(context.frameNumber);
     }
-    // A selected-tile mask may sample raw a_texcoord01 only when the submitted
-    // geometry footprint is the selected tile itself. Ancestor height remap
-    // swaps in the descendant template and therefore restores that invariant;
-    // the legacy ancestor-discard fallback does not, so it must not bind an
-    // exact selected page with ancestor UVs.
-    bool selectedLocalMaskUvAvailable = !context.surfaceClipUv.has_value();
     if (cmd.terrainRenderContent && context.surfaceClipUv) {
         // 机制 A(无缝北极星 P1):祖先回退不再"画祖先几何+片元 discard 裁剪"
         // (切边是像素级的,无裙墙 → 掠视透天细缝,cesium-native#269 列为最差
@@ -772,7 +766,6 @@ void applyPerFrameCommandState(
                     u.heightClipUv =
                         heightClip.value_or(*context.surfaceClipUv);
                     remapped = true;
-                    selectedLocalMaskUvAvailable = true;
                     pool->noteSurfaceClipRemap(context.frameNumber);
                 }
             }
@@ -889,30 +882,6 @@ void applyPerFrameCommandState(
     // 未启用(指针空)或非目标瓦片时 no-op → 逐字节走现状路径,零回归。
     if (TerrainPageStore* pageStore = renderer.terrainPageStore()) {
         pageStore->applyToTerrainCommand(cmd, tile);
-    }
-
-    // Selected-tile local fill mask: unlike terrain height remapping, this
-    // page never follows an ancestor.  The owner is supplied by the render
-    // entry (selectedTile) and can therefore differ from `tile`, which may be
-    // the ancestor geometry used for this frame. Reset the per-frame gate on
-    // every copy so a previously cached binding cannot leak across frames.
-    cmd.terrainFillMaskActive = false;
-    u.terrainFillMaskEnabled = 0.0f;
-    if (cmd.terrainRenderContent && selectedLocalMaskUvAvailable &&
-        context.terrainFillMaskOwner) {
-        Texture* mask = context.terrainFillMaskOwner->content.renderContent
-                            .terrainFillMaskTexture();
-        if (mask) {
-            if (cmd.textures.size() <=
-                static_cast<size_t>(kGltfTerrainFillMaskTextureSlot)) {
-                cmd.textures.resize(
-                    static_cast<size_t>(kGltfTerrainFillMaskTextureSlot) + 1u,
-                    nullptr);
-            }
-            cmd.textures[kGltfTerrainFillMaskTextureSlot] = mask;
-            cmd.terrainFillMaskActive = true;
-            u.terrainFillMaskEnabled = 1.0f;
-        }
     }
 }
 
