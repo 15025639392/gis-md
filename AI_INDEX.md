@@ -3103,14 +3103,14 @@ Default `maximumSimultaneousTileLoads_` = 20 (.h:70).
 | `stencilClassificationSupported` / `resolvePaintOrder` / `flattenPaintRanges` | .cpp:2973-2976 / :2977-2988 / :2989-3017 | 能力快照；属性表达式解析 ordinal；按 ordinal flatten 到共享 buffer ranges |
 | `appendTileSymbol` / `commitTileMesh` / `resolveTileSymbols` / `materializeTileSymbols` | .cpp:3483-3566 / :3692-3898 / :3899-3963 / :3964-4112 | MVT worker 保留完整符号源,渲染线程按当前 zoom 派生/cap。resolve 解析样式/图集/选中并缓存;height-only 重钳只重跑 materialize(采当刻地形高),不重 resolve |
 | `bakeTileBucketLabels` / `dropTileMesh` | .cpp:4845-5156 / :5157-5172 | 字体就绪后按当前 zoom 窗口补烘标签并按 ordinal 分段；移除瓦片桶 |
-| `buildRenderCommands` | .cpp:5268-5789 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
-| `visibleBucketKeys` | .cpp:5790-5859 | 可见桶筛选 |
-| `updateLabelPlacement` | .cpp:5860-6010 | 标签避让 + fade + 地平线剔除(P5c)。collect 含热点③ 屏外预剔除(culled 计数入哨兵日志) |
-| `dumpLabelLifecycle` | .cpp:6117-6236 | 七态只读聚合 dump |
-| `appendTerrainOcclusion` | .cpp:6257-6277 | 接地形深度 prepass 做符号遮挡(T2) |
-| `appendBucketCommands` | .cpp:6278-7040 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
-| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:7041-7057 / :7058-7064 / :7065-7092 | 编辑预览三接口 |
-| `pick` | .cpp:7136-7431 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
+| `buildRenderCommands` | .cpp:5305-5826 | 出命令总入口；同步当前 zoom 符号派生、字形预算与标签工作票 |
+| `visibleBucketKeys` | .cpp:5827-5896 | 可见桶筛选 |
+| `updateLabelPlacement` | .cpp:5897-6047 | 标签避让 + fade + 地平线剔除(P5c)。collect 含热点③ 屏外预剔除(culled 计数入哨兵日志) |
+| `dumpLabelLifecycle` | .cpp:6154-6273 | 七态只读聚合 dump |
+| `appendTerrainOcclusion` | .cpp:6294-6314 | 接地形深度 prepass 做符号遮挡(T2) |
+| `appendBucketCommands` | .cpp:6315-7077 | 逐桶发命令；fill/line/extrusion/point/label ranges 与 stencil group 均写入 `vectorPaintOrder` |
+| `beginEditPreview` / `updateEditPreview` / `endEditPreview` | .cpp:7078-7094 / :7095-7101 / :7102-7129 | 编辑预览三接口 |
+| `pick` | .cpp:7173-7468 | 要素拾取；`ScenePickingCoordinator` 将结果转换为统一 `PickResult`，与 terrain/legacy vector 按相机距离取最近命中 |
 
 ⚠️ **本节为 2026-08-06 新建**,基于当时源码逐个符号定位;此前该文件在 AI_INDEX 中
 **0 次提及**。

@@ -1231,6 +1231,25 @@ public:
     /// **渲染线程**:移除一块瓦片的 GPU 资源。
     void dropTileMesh(const TileKey& key);
 
+    // ---- 解耦(增量 2):GPU 预建(不可见)与原子可见性 flip 分离 ----
+    //
+    // 让调度方(MvtVectorSource)在置换单元成员陆续 ready 时用 prepareTile
+    // 把每块瓦的 GPU 资源提前建好(preparedBuckets_ 里、不写 tileBuckets_、
+    // 不可见),整单元齐备时用 activatePreparedTile 廉价翻转(移进
+    // tileBuckets_ + seed)。这样原子 flip 帧不再做整单元的重 GPU 上传。
+
+    /// 渲染线程:为 key 预建 GPU 资源(CPU 钳高 + makeBuffer),结果存进
+    /// preparedBuckets_ 而非 tileBuckets_ —— 不改变可见性。mesh 被消费
+    /// (move 进桶)。返回 false = 上传失败,调用方保留 mesh 后续重试。
+    bool prepareTile(const TileKey& key, TileMeshCpu& mesh);
+    /// 渲染线程:把已预建的 key 翻转可见(move 进 tileBuckets_ + seed 符号)。
+    /// 预建不存在 → EmptyTerminal。代价应远低于 prepareTile。
+    TileMeshCommitResult activatePreparedTile(const TileKey& key);
+    /// 渲染线程:丢弃一块未激活的预建桶(单元未凑齐/相机移走),释放其 GPU。
+    void abandonPreparedTile(const TileKey& key);
+    /// 诊断:预建未激活桶数(增量 2 状态可观测性)。
+    size_t preparedTileCount() const { return preparedBuckets_.size(); }
+
     enum class TileLabelBakeResult {
         Settled,
         Deferred,
@@ -1557,6 +1576,10 @@ private:
     std::unordered_map<BucketKey, BucketGpu> buckets_;
     /// E1:MVT 瓦片桶(瓦片即桶)。与 buckets_ 平行,同一命令层消费。
     std::unordered_map<TileKey, BucketGpu> tileBuckets_;
+    /// 增量 2:已预建但未激活(不可见)的瓦片桶。prepareTile 存入、翻转时
+    /// 移进 tileBuckets_。这些桶不参与命令构建,只占 GPU 暂存,须在弃用
+    /// (单元未凑齐/相机移走/层析构)时由 abandonPreparedTile/drop 清理。
+    std::unordered_map<TileKey, BucketGpu> preparedBuckets_;
     /// Render-thread equivalent of the official worker Util.stamp stream.
     /// Assigned once when a sealed-provider tile is admitted, then carried
     /// through terrain/zoom/glyph rebuilds. Zero remains the generic sentinel.

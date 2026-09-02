@@ -198,6 +198,35 @@ TEST_F(FeatureRenderLayerTest, PolygonDefaultEmitsFillOnly) {
     EXPECT_EQ(RenderCommandKind::VectorFill, commands[0].kind);
 }
 
+TEST_F(FeatureRenderLayerTest, PrepareActivateDecouplesGpuFromVisibility) {
+    // 增量 2:prepareTile 建 GPU 但不可见;activatePreparedTile 翻转可见且
+    // 不再建 GPU(原子 flip 廉价化);abandonPreparedTile 清理未激活预建。
+    auto mesh = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(),
+        std::vector<Feature>{makePolygon(6.0, 29.0, 0.01)});
+    const TileKey key{SchemeId("XYZ-WebMercator"), 10, 100, 200};
+    const int buffersBefore = device_.createdBufferCount;
+    ASSERT_TRUE(layer_->prepareTile(key, mesh));
+    EXPECT_EQ(1u, layer_->preparedTileCount());
+    EXPECT_EQ(0u, layer_->tileMeshCount());  // 未可见
+    EXPECT_GT(device_.createdBufferCount, buffersBefore);  // GPU 已建
+    const int buffersAfterPrepare = device_.createdBufferCount;
+    ASSERT_EQ(TileMeshCommitResult::Committed,
+              layer_->activatePreparedTile(key));
+    EXPECT_EQ(0u, layer_->preparedTileCount());
+    EXPECT_EQ(1u, layer_->tileMeshCount());  // 已可见
+    EXPECT_EQ(buffersAfterPrepare, device_.createdBufferCount);  // 无新 GPU
+    // abandon 清理一块未激活预建桶
+    auto mesh2 = FeatureRenderLayer::tessellateTileMesh(
+        layer_->workerTessellationContext(),
+        std::vector<Feature>{makePolygon(6.0, 29.0, 0.01)});
+    const TileKey key2{SchemeId("XYZ-WebMercator"), 10, 100, 201};
+    ASSERT_TRUE(layer_->prepareTile(key2, mesh2));
+    EXPECT_EQ(1u, layer_->preparedTileCount());
+    layer_->abandonPreparedTile(key2);
+    EXPECT_EQ(0u, layer_->preparedTileCount());
+}
+
 TEST_F(FeatureRenderLayerTest, DefaultPaintOrderPreservesFillBeforePoint) {
     layer_->store().addFeature(makePolygon(6.0, 29.0, 0.01));
     Feature point;

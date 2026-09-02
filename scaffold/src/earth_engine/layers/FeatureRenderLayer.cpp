@@ -5168,6 +5168,43 @@ void FeatureRenderLayer::dropTileMesh(const TileKey& key) {
     tileBuckets_.erase(it);
 }
 
+bool FeatureRenderLayer::prepareTile(const TileKey& key, TileMeshCpu& mesh) {
+    // 增量 2:只预建 GPU(钳高+makeBuffer),存进 preparedBuckets_ 不写
+    // tileBuckets_ → 不可见。mesh 被消费。失败返回 false,调用方保留 mesh。
+    BucketGpu gpu;
+    if (!prepareTileGpu(key, mesh, gpu)) return false;
+    preparedBuckets_[key] = std::move(gpu);
+    return true;
+}
+
+TileMeshCommitResult FeatureRenderLayer::activatePreparedTile(
+    const TileKey& key) {
+    // 增量 2:把已预建(不可见)的桶翻转可见 —— move 进 tileBuckets_ + seed。
+    // 纯引用搬移,无 makeBuffer/钳高,代价应远低于 prepareTile。
+    auto it = preparedBuckets_.find(key);
+    if (it == preparedBuckets_.end()) {
+        return TileMeshCommitResult::EmptyTerminal;
+    }
+    BucketGpu& stored = tileBuckets_[key];
+    stored = std::move(it->second);
+    preparedBuckets_.erase(it);
+    // (seed 逻辑与 commitTileMesh 尾部一致:提交可能落在本层 build 之后,
+    // 用源 zoom 先 seed 一个有界初始符号集,下帧相机帧按精确 view zoom 重建。)
+    if (!stored.tileSymbolSources.empty()) {
+        if (!rebuildTileBucketSymbolsForZoom(stored, key.z, true)) {
+            symbolBucketsAwaitingRebuild_ = true;
+        }
+        labelsAwaitingPlacement_ = true;
+        syncLabelWorkTicket();
+    }
+    return TileMeshCommitResult::Committed;
+}
+
+void FeatureRenderLayer::abandonPreparedTile(const TileKey& key) {
+    // 增量 2:丢弃一块未激活的预建桶(单元未凑齐/相机移走),释放其 GPU。
+    preparedBuckets_.erase(key);
+}
+
 #if defined(EARTH_ENGINE_TESTING)
 std::optional<FeatureRenderLayer::LabelCollisionBoundsForTest>
 FeatureRenderLayer::firstTileLabelCollisionBoundsForTest() const {
