@@ -238,7 +238,11 @@ inline const auto& gltfUniformTable() {
             (index) * (componentCount)),                                   \
         componentCount                                                     \
     }
-    static const std::array<GltfUniformTableEntry, 97> table = {{
+    // ⚠️ 数组大小必须与实际条目数一致:曾因退役某个 uniform 而未同步减 size,
+    // 最后一个槽被聚合初始化零填充成 {name=nullptr,...},gltfBlockLocations()
+    // 对 nullptr 调 glGetUniformLocation → Adreno 驱动 strcmp 崩(swiftshader 宽容)。
+    // 改表时若增删条目,必须同步这里;宁可用 static_assert 兜底也别留空槽。
+    static const std::array<GltfUniformTableEntry, 96> table = {{
         EE_GLTF_ENTRY("u_modelViewProjection", modelViewProjection, 16),
         EE_GLTF_ENTRY("u_geomorphUpFactor", geomorphUpFactor, 4),
         EE_GLTF_ENTRY("u_lightDir", lightDir, 3),

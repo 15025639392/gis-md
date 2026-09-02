@@ -248,6 +248,13 @@ const std::vector<int>& GLShaderProgram::gltfBlockLocations() {
         const auto& table = gltfUniformTable();
         gltfBlockLocations_.resize(table.size());
         for (size_t i = 0; i < table.size(); ++i) {
+            // 防御:表里出现 null name(增删 uniform 忘同步 size)时置 -1 跳过。
+            // 绝不对 nullptr 调 glGetUniformLocation —— Adreno 驱动内部对 name
+            // 做 strcmp 会崩(swiftshader 宽容不崩),PHK110 首帧必现。
+            if (!table[i].name) {
+                gltfBlockLocations_[i] = -1;
+                continue;
+            }
             gltfBlockLocations_[i] = glGetUniformLocation(id_, table[i].name);
         }
         gltfBlockLocationsResolved_ = true;
@@ -260,6 +267,12 @@ const std::vector<int>& GLShaderProgram::vectorBlockLocations() {
         const auto& table = vectorUniformTable();
         vectorBlockLocations_.resize(table.size());
         for (size_t i = 0; i < table.size(); ++i) {
+            // 防御同 gltfBlockLocations:null name 置 -1,别对 nullptr 调
+            // glGetUniformLocation(Adreno 驱动 strcmp 崩)。
+            if (!table[i].name) {
+                vectorBlockLocations_[i] = -1;
+                continue;
+            }
             vectorBlockLocations_[i] =
                 glGetUniformLocation(id_, table[i].name);
         }
