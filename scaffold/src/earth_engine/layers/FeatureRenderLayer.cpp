@@ -3792,10 +3792,8 @@ TileMeshCommitResult FeatureRenderLayer::commitTileMesh(
     // 点/标签必须按当前 view zoom 再做 rank 容量闸；commit 不知道相机
     // zoom，任何此处的破坏性截断都会永久删掉其它档位的数据。这里只登记
     // 完整 CPU source，buildRenderCommands 在本帧按当前窗口物化 top-N。
-    std::vector<float> pointVerts;
-    std::vector<uint32_t> pointIndices;
-    std::vector<PaintRange> pointRanges;
-    std::vector<BucketGpu::TileLabelSource> labelSources;
+    // (point/label 顶点在此恒为空——符号顶点物化在 buildRenderCommands 按
+    // view zoom 预算推进;prepareTileGpu 内部以空集构建点/标签缓冲,见增量1。)
 
     // 符号刀A/B 诊断:worker→commit 链路的落点计数(排查「数据有点但屏上
     // 无符号」时,第一眼看这行有没有出现、syms/labelSrc 是否为 0)。
@@ -3817,43 +3815,14 @@ TileMeshCommitResult FeatureRenderLayer::commitTileMesh(
                         ? 1 : 0);
     }
 
-    const auto tUpload = PClock::now();
-    // 整瓦原子替换:先建好新 GPU 资源,成功了才换掉旧的。中途失败保留旧瓦
-    // 而不是留半张 —— 半张瓦片在画面上是缺口,比旧数据糟。
+    const auto tPrepStart = PClock::now();
+    double clampCpuMs = 0.0, gpuUploadMs = 0.0;
     BucketGpu gpu;
-    // E 方案 P2:commit 时同源采样钳高(worker 只给了椭球面高度 +
-    // lineClampSource;store 路径在镶嵌期已钳真高,无源可空转)。
-    clampTileFillHeights(mesh);
-    clampTileExtrusionHeights(mesh);
-    clampTileLineHeights(mesh);
-    static const std::vector<uint32_t> kNoIndices;
-    const bool gpuUploaded = uploadBucketGpu(
-        mesh.origin, mesh.fillVerts, mesh.fillIndices, mesh.fillRanges,
-        mesh.lineVerts, mesh.lineIndices, mesh.lineRanges, pointVerts,
-        pointIndices, pointRanges, std::vector<float>(), kNoIndices,
-        std::vector<PaintRange>(), std::vector<LabelEntry>(),
-        mesh.fillVolumeGroups, mesh.lineVolumeGroups, mesh.extrudeVerts,
-        mesh.extrudeIndices, mesh.extrudeRanges, gpu);
-    const bool hasNonSymbolGeometry =
-        !mesh.fillIndices.empty() || !mesh.lineIndices.empty() ||
-        !mesh.fillVolumeGroups.empty() || !mesh.lineVolumeGroups.empty() ||
-        !mesh.extrudeIndices.empty();
-    if (!gpuUploaded && (mesh.symbols.empty() || hasNonSymbolGeometry)) {
+    if (!prepareTileGpu(key, mesh, gpu, &clampCpuMs, &gpuUploadMs)) {
+        // GPU 上传失败:保留旧瓦不换(半张=缺口,比旧数据糟)。调用方保留
+        // CPU mesh 后续重试。行为与解耦前一致。
         return TileMeshCommitResult::RetryableFailure;
     }
-    const auto tStore = PClock::now();
-    gpu.lineClampSource = std::move(mesh.lineClampSource);
-    gpu.lineClampSurfaceCache.clear();
-    gpu.lineClampSurfaceCache.reserve(mesh.lineClampSurfaceCache.size());
-    for (auto& [key, kn] : mesh.lineClampSurfaceCache) {
-        gpu.lineClampSurfaceCache.emplace(std::move(key), std::move(kn));
-    }
-    gpu.fillClampSource = std::move(mesh.fillClampSource);
-    gpu.extrudeClampSource = std::move(mesh.extrudeClampSource);
-    gpu.tileLabelSources = std::move(labelSources);
-    gpu.tileSymbolSources = std::move(mesh.symbols);
-    gpu.sourceTileZoom = key.z;
-    gpu.symbolViewZoomBucket = -1;
     BucketGpu& stored = tileBuckets_[key];
     stored = std::move(gpu);
     // A tile can land after this layer's final command-build pass. Seed a
@@ -3874,6 +3843,7 @@ TileMeshCommitResult FeatureRenderLayer::commitTileMesh(
         labelsAwaitingPlacement_ = true;
         syncLabelWorkTicket();
     }
+    const auto tStore = PClock::now();  // 廉价可见化+seed 起点(解耦后应≈0)
     const auto tEnd = PClock::now();
     auto pms = [](PClock::time_point a, PClock::time_point b) {
         return std::chrono::duration<double, std::milli>(b - a).count();
@@ -3881,18 +3851,78 @@ TileMeshCommitResult FeatureRenderLayer::commitTileMesh(
     const double totalMs = pms(tSym, tEnd);
     if (totalMs >= 5.0) {
         platformLog(LogLevel::Info, "TileCommitSlow",
-                    "z=%d x=%d y=%d %.1fms = sym %.2f + upload %.2f "
-                    "+ store %.2f | verts f=%zu l=%zu p=%zu labels=%d "
-                    "newGlyphs=%zu",
-                    key.z, key.x, key.y, totalMs, pms(tSym, tUpload),
-                    pms(tUpload, tStore), pms(tStore, tEnd),
+                    "z=%d x=%d y=%d %.1fms = diag %.2f + prep %.2f "
+                    "+ flip %.2f [clampCPU=%.2f gpuUpload=%.2f] | verts "
+                    "f=%zu l=%zu labels=%d newGlyphs=%zu",
+                    key.z, key.x, key.y, totalMs, pms(tSym, tPrepStart),
+                    clampCpuMs + gpuUploadMs, pms(tStore, tEnd),
+                    clampCpuMs, gpuUploadMs,
                     stored.fillIndexCount ? mesh.fillVerts.size() : 0u,
-                    mesh.lineVerts.size(), pointVerts.size(),
+                    mesh.lineVerts.size(),
                     stored.labelIndexCount,
                     (glyphAtlas_ ? glyphAtlas_->residentGlyphCount() : 0) -
                         glyphsBefore);
     }
     return TileMeshCommitResult::Committed;
+}
+
+bool FeatureRenderLayer::prepareTileGpu(
+    const TileKey& key, TileMeshCpu& mesh, BucketGpu& gpu,
+    double* outClampCpuMs, double* outGpuUploadMs) {
+    // 解耦(增量1)接缝:commitTileMesh 里的 GPU 重活(CPU 钳高 + uploadBucketGpu
+    // makeBuffer + clamp 源收进桶)在这里完成,但**不写 tileBuckets_(不改变
+    // 可见性)**。上传失败且无几何/符号 → false,由调用方回 RetryableFailure。
+    // 行为与原 commit 逐字节一致,只是把"构建 GPU"从"原子翻转"里拆出,供
+    // 后续把上传摊到 per-frame 预算(增量2)。
+    using PClock = std::chrono::steady_clock;
+    const auto tClampStart = PClock::now();
+    // E 方案 P2:commit 时同源采样钳高(worker 只给了椭球面高度 +
+    // lineClampSource;store 路径在镶嵌期已钳真高,无源可空转)。
+    clampTileFillHeights(mesh);
+    clampTileExtrusionHeights(mesh);
+    clampTileLineHeights(mesh);
+    const auto tClampDone = PClock::now();
+    // 点/标签顶点在此恒为空(物化在 buildRenderCommands 按 view zoom 预算
+    // 推进,commit 只登记 CPU source),与解耦前一致。
+    static const std::vector<uint32_t> kNoIndices;
+    const bool gpuUploaded = uploadBucketGpu(
+        mesh.origin, mesh.fillVerts, mesh.fillIndices, mesh.fillRanges,
+        mesh.lineVerts, mesh.lineIndices, mesh.lineRanges,
+        std::vector<float>(), std::vector<uint32_t>(), std::vector<PaintRange>(),
+        std::vector<float>(), kNoIndices, std::vector<PaintRange>(),
+        std::vector<LabelEntry>(), mesh.fillVolumeGroups, mesh.lineVolumeGroups,
+        mesh.extrudeVerts, mesh.extrudeIndices, mesh.extrudeRanges, gpu);
+    const auto tGpuDone = PClock::now();
+    const bool hasNonSymbolGeometry =
+        !mesh.fillIndices.empty() || !mesh.lineIndices.empty() ||
+        !mesh.fillVolumeGroups.empty() || !mesh.lineVolumeGroups.empty() ||
+        !mesh.extrudeIndices.empty();
+    if (!gpuUploaded && (mesh.symbols.empty() || hasNonSymbolGeometry)) {
+        return false;  // 调用方 → RetryableFailure
+    }
+    gpu.lineClampSource = std::move(mesh.lineClampSource);
+    gpu.lineClampSurfaceCache.clear();
+    gpu.lineClampSurfaceCache.reserve(mesh.lineClampSurfaceCache.size());
+    for (auto& [srcKey, kn] : mesh.lineClampSurfaceCache) {
+        gpu.lineClampSurfaceCache.emplace(std::move(srcKey), std::move(kn));
+    }
+    gpu.fillClampSource = std::move(mesh.fillClampSource);
+    gpu.extrudeClampSource = std::move(mesh.extrudeClampSource);
+    gpu.tileLabelSources = {};  // 空:标签在 buildRenderCommands 按预算物化
+    gpu.tileSymbolSources = std::move(mesh.symbols);
+    gpu.sourceTileZoom = key.z;
+    gpu.symbolViewZoomBucket = -1;
+    if (outClampCpuMs) {
+        *outClampCpuMs =
+            std::chrono::duration<double, std::milli>(tClampDone - tClampStart)
+                .count();
+    }
+    if (outGpuUploadMs) {
+        *outGpuUploadMs =
+            std::chrono::duration<double, std::milli>(tGpuDone - tClampDone)
+                .count();
+    }
+    return true;
 }
 
 std::vector<FeatureRenderLayer::ResolvedTileSymbol>

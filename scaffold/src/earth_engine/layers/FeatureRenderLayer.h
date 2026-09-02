@@ -1319,6 +1319,16 @@ public:
     void reclampTileBucketFills(BucketGpu& gpu);
     void clampTileExtrusionHeights(TileMeshCpu& mesh);
     void reclampTileBucketExtrusions(BucketGpu& gpu);
+    /// 解耦(增量 1):把 commitTileMesh 里的 GPU 重活(CPU 钳高 + uploadBucketGpu
+    /// makeBuffer + clamp 源收进桶)**拆出来,不写 tileBuckets_(不改变可见性)**。
+    /// 构建结果写入 out;失败(无几何且无符号)返回 false → 调用方回
+    /// RetryableFailure。outClampCpuMs/outGpuUploadMs 可空,诊断用。这是后续把
+    /// GPU 上传从原子翻转里摊薄出去(增量 2)的接缝。
+    bool prepareTileGpu(const TileKey& key,
+                        TileMeshCpu& mesh,
+                        BucketGpu& out,
+                        double* outClampCpuMs = nullptr,
+                        double* outGpuUploadMs = nullptr);
     /// 按需重钳:计算某桶 clamp 几何的 lon/lat bbox,用于对该区域求地形
     /// areaRevision 判断是否需要重钳。无 clamp 几何返回 nullopt(回退全量)。
     static std::optional<Rectangle> reclampAreaOf(

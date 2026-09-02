@@ -171,6 +171,7 @@ public:
         double dispatchMs = 0.0;  ///< 请求发起 + 镶嵌派单
         double commitMs = 0.0;    ///< **渲染线程**上传:commit/drop 差分
         int commits = 0;
+        int maxUnitCommits = 0;   ///< [probe] 单个原子置换单元本次 update 最多 commit 的瓦数(突发探针)
         int drops = 0;
         int tessellateDispatched = 0;
         int selectedZoom = 0;
@@ -789,6 +790,19 @@ void VectorTileSourceT<Payload, DecodeTraits, ToFeaturesFn>::update(
             activeTiles_.insert(r);
             committedInUnit.push_back(r);
             ++commits;
+        }
+        // [probe] 单元突发探针:预算只按单元计数(maxTileCommitsPerUpdate)，
+        // 内层循环(:778)不查预算 —— 单单元若远超预算瓦数，即 >1 帧卡的结构
+        // 信号。记录本帧最大单单元 commit 数，超预算打 MvtUnitBurst。
+        lastStats_.maxUnitCommits = std::max<int>(
+            lastStats_.maxUnitCommits,
+            static_cast<int>(committedInUnit.size()));
+        if (static_cast<int>(committedInUnit.size()) >
+            static_cast<int>(budget)) {
+            platformLog(
+                LogLevel::Info, "MvtUnitBurst",
+                "unit=%zu budget=%zu activeNow=%zu",
+                committedInUnit.size(), budget, activeTiles_.size());
         }
         if (!ready) {
             // GPU commit 不是可回滚事务；若单元中的后续瓦片上传失败，
